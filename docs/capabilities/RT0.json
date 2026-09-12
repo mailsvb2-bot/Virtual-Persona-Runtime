@@ -1,0 +1,23 @@
+{
+  "release_train": "RT0",
+  "catalogue_version": "0.1.0",
+  "status_semantics": "Canon section 40",
+  "capabilities": [
+    {"id": "persona.identity_skeleton", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "persona.digital_twin_mode", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "persona.owner_attribution_boundary", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "policy.authority_intersection", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "policy.global_egress_minimum", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "integration.provider_neutral_ports", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "runtime.turn_cancellation_authority", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "runtime.output_delivery_evidence", "maturity": "IMPLEMENTED", "user_reachable": false},
+    {"id": "capture.guided_owner_interview", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "provider.real_llm", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "provider.real_stt", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "provider.real_tts", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "provider.real_avatar", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "ui.rt0_owner_lab", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "evaluation.rt0_golden_set", "maturity": "NOT_IMPLEMENTED", "user_reachable": false},
+    {"id": "release.rt0_exit_gate", "maturity": "NOT_IMPLEMENTED", "user_reachable": false}
+  ]
+}
