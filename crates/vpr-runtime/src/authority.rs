@@ -9,8 +9,10 @@ use vpr_policy::{
     EffectiveAuthority, EgressDecision, EgressReason, EgressRequest, decide_egress,
 };
 
-use crate::cancellation::TurnCancellation;
+use crate::cancellation::{ProviderCancellation, TurnCancellation};
+use crate::clock::RuntimeClock;
 use crate::error::RuntimeDenyReason;
+use crate::execution_gate::SessionExecutionGate;
 use crate::provider::ProviderExecutionPermit;
 
 #[derive(Debug)]
@@ -33,12 +35,14 @@ struct AuthorizationRuntimeState {
 #[derive(Debug, Clone)]
 pub(crate) struct AuthorizationController {
     state: Arc<RwLock<AuthorizationRuntimeState>>,
+    gate: SessionExecutionGate,
 }
 
 pub(crate) struct ProviderCallContext<'a> {
     pub(crate) egress_policy: &'a EgressPolicyController,
     pub(crate) egress_snapshot: EgressPolicySnapshot,
     pub(crate) cancellation: &'a TurnCancellation,
+    pub(crate) clock: &'a Arc<dyn RuntimeClock>,
     pub(crate) required_scope: &'a AuthorityScope,
     pub(crate) data_class: DataClass,
 }
@@ -48,6 +52,7 @@ impl AuthorizationController {
     pub(crate) fn new(
         expires_at_millis: Option<u64>,
         effective_authority: EffectiveAuthority,
+        gate: SessionExecutionGate,
     ) -> Self {
         Self {
             state: Arc::new(RwLock::new(AuthorizationRuntimeState {
@@ -55,6 +60,7 @@ impl AuthorizationController {
                 effective_authority,
                 bound_turns: Vec::new(),
             })),
+            gate,
         }
     }
 
@@ -95,6 +101,10 @@ impl AuthorizationController {
     /// # Errors
     /// Returns `INTERNAL_ERROR` if state cannot be updated or the epoch is exhausted.
     pub(crate) fn revoke(&self) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()
@@ -112,6 +122,10 @@ impl AuthorizationController {
     /// # Errors
     /// Returns `INTERNAL_ERROR` if state cannot be updated or the epoch is exhausted.
     pub(crate) fn replace(&self, expires_at_millis: Option<u64>) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()
@@ -129,6 +143,10 @@ impl AuthorizationController {
         effective_authority: EffectiveAuthority,
         expires_at_millis: Option<u64>,
     ) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()
@@ -194,7 +212,11 @@ impl AuthorizationController {
         });
         match egress {
             EgressDecision::Allow(_) => Ok(ProviderExecutionPermit {
-                cancellation: context.cancellation.clone(),
+                cancellation: ProviderCancellation::new(
+                    context.cancellation.clone(),
+                    Arc::clone(context.clock),
+                    authorization_state.authorization.expires_at_millis(),
+                ),
             }),
             EgressDecision::LocalOnly(_) => Err(RuntimeDenyReason::LocalOnlyRequired),
             EgressDecision::Deny(EgressReason::ConsentRequired) => {
@@ -222,6 +244,7 @@ struct EgressPolicyRuntimeState {
 #[derive(Debug, Clone)]
 pub(crate) struct EgressPolicyController {
     state: Arc<RwLock<EgressPolicyRuntimeState>>,
+    gate: SessionExecutionGate,
 }
 
 impl EgressPolicyController {
@@ -230,6 +253,7 @@ impl EgressPolicyController {
         provider_policy_allows: bool,
         consent: ConsentState,
         local_only_required: bool,
+        gate: SessionExecutionGate,
     ) -> Self {
         Self {
             state: Arc::new(RwLock::new(EgressPolicyRuntimeState {
@@ -239,6 +263,7 @@ impl EgressPolicyController {
                 local_only_required,
                 bound_turns: Vec::new(),
             })),
+            gate,
         }
     }
 
@@ -300,6 +325,10 @@ impl EgressPolicyController {
     /// # Errors
     /// Returns `INTERNAL_ERROR` when policy state cannot be updated.
     pub(crate) fn set_provider_policy_allows(&self, allows: bool) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()
@@ -316,6 +345,10 @@ impl EgressPolicyController {
     /// # Errors
     /// Returns `INTERNAL_ERROR` when policy state cannot be updated.
     pub(crate) fn set_consent(&self, consent: ConsentState) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()
@@ -332,6 +365,10 @@ impl EgressPolicyController {
     /// # Errors
     /// Returns `INTERNAL_ERROR` when policy state cannot be updated.
     pub(crate) fn set_local_only_required(&self, required: bool) -> Result<(), RuntimeDenyReason> {
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         let mut state = self
             .state
             .write()

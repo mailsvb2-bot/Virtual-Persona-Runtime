@@ -2,6 +2,7 @@ mod authority;
 mod cancellation;
 mod clock;
 mod error;
+mod execution_gate;
 mod output;
 mod provider;
 mod session;

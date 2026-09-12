@@ -2,7 +2,10 @@ use super::*;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
+    mpsc,
 };
+use std::thread;
+use std::time::Duration;
 
 use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
@@ -326,7 +329,7 @@ fn authority_narrowing_invalidates_old_turn_and_denies_new_scope() {
 
 #[test]
 fn provider_operation_classification_is_runtime_owned() {
-    assert_eq!(ProviderOperation::Llm.data_class(), DataClass::Personal);
+    assert_eq!(ProviderOperation::Llm.data_class(), DataClass::Biometric);
     assert_eq!(ProviderOperation::Stt.data_class(), DataClass::Biometric);
     assert_eq!(ProviderOperation::Tts.data_class(), DataClass::Biometric);
     assert_eq!(ProviderOperation::Avatar.data_class(), DataClass::Biometric);
@@ -394,6 +397,90 @@ fn retained_operation_cannot_bypass_expired_lease() {
         denied,
         Err(RuntimeDenyReason::AuthorizationExpired)
     ));
+}
+
+#[test]
+fn policy_update_waits_for_execution_gate() {
+    let session = Arc::new(active_session());
+    let execution = session.gate.read().unwrap();
+    let worker_session = Arc::clone(&session);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+
+    let worker = thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        worker_session.set_consent(ConsentState::Revoked).unwrap();
+        done_tx.send(()).unwrap();
+    });
+
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(done_rx.recv_timeout(Duration::from_millis(25)).is_err());
+    drop(execution);
+    done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    worker.join().unwrap();
+}
+
+#[test]
+fn active_provider_permit_observes_lease_expiry() {
+    let identity = persona();
+    let clock = Arc::new(ManualClock::new(100));
+    let (scope, authority) = allowed_provider_authority();
+    let mut session = ActiveSession::with_clock(
+        SessionId::new("session-stream-expiry").unwrap(),
+        identity.id().clone(),
+        SessionSecurityConfig::new(authority, Some(200), true, ConsentState::Granted, false),
+        clock.clone(),
+    );
+    session.activate().unwrap();
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-stream-expiry").unwrap(),
+        CorrelationId::new("corr-stream-expiry").unwrap(),
+        &identity,
+        &session,
+    )
+    .unwrap();
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let permit = turn
+        .issue_provider_permit(&scope, DataClass::Personal)
+        .unwrap();
+
+    assert!(!CancellationProbe::is_cancelled(&permit.cancellation));
+    clock.set(200);
+    assert!(CancellationProbe::is_cancelled(&permit.cancellation));
+}
+
+#[test]
+fn lease_expiry_blocks_late_output_evidence_and_completion() {
+    let identity = persona();
+    let clock = Arc::new(ManualClock::new(100));
+    let (_, authority) = allowed_provider_authority();
+    let mut session = ActiveSession::with_clock(
+        SessionId::new("session-output-expiry").unwrap(),
+        identity.id().clone(),
+        SessionSecurityConfig::new(authority, Some(200), true, ConsentState::Granted, false),
+        clock.clone(),
+    );
+    session.activate().unwrap();
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-output-expiry").unwrap(),
+        CorrelationId::new("corr-output-expiry").unwrap(),
+        &identity,
+        &session,
+    )
+    .unwrap();
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    turn.begin_output().unwrap();
+    let segment = turn.begin_output_segment().unwrap();
+    turn.mark_output_sent(segment).unwrap();
+
+    clock.set(200);
+    assert_eq!(
+        turn.mark_output_played(segment),
+        Err(Rt0ReasonCode::AuthExpired)
+    );
+    assert_eq!(turn.complete(), Err(Rt0ReasonCode::AuthExpired));
 }
 
 #[test]

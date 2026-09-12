@@ -16,6 +16,7 @@ use crate::authority::{
 use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
+use crate::execution_gate::SessionExecutionGate;
 use crate::output::{OutputSegmentEvidence, OutputSegmentId};
 use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
@@ -29,6 +30,7 @@ pub struct ActiveTurn {
     pub(crate) egress_policy: EgressPolicyController,
     pub(crate) egress_policy_snapshot: EgressPolicySnapshot,
     pub(crate) clock: Arc<dyn RuntimeClock>,
+    pub(crate) gate: SessionExecutionGate,
     pub(crate) cancellation: TurnCancellation,
     pub(crate) output_segments: Vec<OutputSegmentEvidence>,
     pub(crate) next_segment_id: u64,
@@ -45,15 +47,23 @@ impl ActiveTurn {
         persona: &PersonaIdentity,
         session: &ActiveSession,
     ) -> Result<Self, RuntimeDenyReason> {
-        if session.session.state() != RealtimeSessionState::Active {
-            return Err(RuntimeDenyReason::InvalidTurnState);
-        }
-        if session.session.persona_id() != persona.id() {
-            return Err(RuntimeDenyReason::AuthorityDenied);
-        }
         let cancellation = TurnCancellation::default();
-        let authorization_snapshot = session.authorization.bind_turn(&cancellation)?;
-        let egress_policy_snapshot = session.egress_policy.bind_turn(&cancellation)?;
+        let (authorization_snapshot, egress_policy_snapshot) = {
+            let _execution = session
+                .gate
+                .read()
+                .map_err(|()| RuntimeDenyReason::InternalError)?;
+            if session.session.state() != RealtimeSessionState::Active {
+                return Err(RuntimeDenyReason::InvalidTurnState);
+            }
+            if session.session.persona_id() != persona.id() {
+                return Err(RuntimeDenyReason::AuthorityDenied);
+            }
+            (
+                session.authorization.bind_turn(&cancellation)?,
+                session.egress_policy.bind_turn(&cancellation)?,
+            )
+        };
         let turn = Turn::new(turn_id, correlation_id);
         let snapshot = TurnExecutionSnapshot::new(
             turn.id().clone(),
@@ -72,6 +82,7 @@ impl ActiveTurn {
             egress_policy: session.egress_policy.clone(),
             egress_policy_snapshot,
             clock: Arc::clone(&session.clock),
+            gate: session.gate.clone(),
             cancellation,
             output_segments: Vec::new(),
             next_segment_id: 1,
@@ -98,6 +109,11 @@ impl ActiveTurn {
     /// # Errors
     /// Returns a stable authorization reason if the bound revision is no longer current.
     pub fn authorize(&mut self) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         let now_millis = self
             .clock
             .now_millis()
@@ -127,6 +143,8 @@ impl ActiveTurn {
         required_scope: &AuthorityScope,
         data_class: DataClass,
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
+        let gate = self.gate.clone();
+        let _execution = gate.read().map_err(|()| RuntimeDenyReason::InternalError)?;
         if !matches!(
             self.turn.state(),
             TurnState::Authorized | TurnState::Processing | TurnState::Outputting
@@ -144,6 +162,7 @@ impl ActiveTurn {
                 egress_policy: &self.egress_policy,
                 egress_snapshot: self.egress_policy_snapshot,
                 cancellation: &self.cancellation,
+                clock: &self.clock,
                 required_scope,
                 data_class,
             },
@@ -234,7 +253,12 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn begin_processing(&mut self) -> Result<(), Rt0ReasonCode> {
-        self.require_not_cancelled()?;
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
+        self.require_execution_active()?;
         self.turn
             .transition(TurnState::Processing)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -245,7 +269,12 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn begin_output(&mut self) -> Result<(), Rt0ReasonCode> {
-        self.require_not_cancelled()?;
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
+        self.require_execution_active()?;
         self.turn
             .transition(TurnState::Outputting)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -256,7 +285,12 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn complete(&mut self) -> Result<(), Rt0ReasonCode> {
-        self.require_not_cancelled()?;
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
+        self.require_execution_active()?;
         self.turn
             .transition(TurnState::Completed)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -267,6 +301,11 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` when denial is not valid from the current state.
     pub fn deny(&mut self) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Denied)
@@ -280,6 +319,11 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` when failure is not valid from the current state.
     pub fn fail(&mut self) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Failed)
@@ -293,6 +337,11 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` unless the turn is currently `OUTPUTTING`.
     pub fn begin_output_segment(&mut self) -> Result<OutputSegmentId, Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         self.require_outputting()?;
         let id = OutputSegmentId(self.next_segment_id);
         self.next_segment_id = self
@@ -314,6 +363,11 @@ impl ActiveTurn {
     /// Returns `INVALID_STATE_TRANSITION` unless the turn is `OUTPUTTING` and the segment exists
     /// in the expected checkpoint.
     pub fn mark_output_sent(&mut self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         self.require_outputting()?;
         self.segment_mut(id)?
             .evidence
@@ -327,6 +381,11 @@ impl ActiveTurn {
     /// Returns `INVALID_STATE_TRANSITION` unless the turn is `OUTPUTTING` and the segment exists
     /// in the expected checkpoint.
     pub fn mark_output_played(&mut self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         self.require_outputting()?;
         self.segment_mut(id)?
             .evidence
@@ -339,6 +398,11 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` if the turn is already terminal.
     pub fn interrupt(&mut self) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
         let interruptible = matches!(
             self.turn.state(),
             TurnState::Received
@@ -385,6 +449,20 @@ impl ActiveTurn {
         Ok(())
     }
 
+    fn require_execution_active(&self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
+        let now_millis = self
+            .clock
+            .now_millis()
+            .ok_or(Rt0ReasonCode::InternalError)?;
+        self.authorization
+            .validate_bound(self.authorization_snapshot, now_millis)
+            .map_err(RuntimeDenyReason::reason_code)?;
+        self.egress_policy
+            .validate_snapshot(self.egress_policy_snapshot)
+            .map_err(RuntimeDenyReason::reason_code)
+    }
+
     fn require_not_cancelled(&self) -> Result<(), Rt0ReasonCode> {
         if self.cancellation.is_cancelled() {
             Err(Rt0ReasonCode::TurnCancelled)
@@ -394,7 +472,7 @@ impl ActiveTurn {
     }
 
     fn require_outputting(&self) -> Result<(), Rt0ReasonCode> {
-        self.require_not_cancelled()?;
+        self.require_execution_active()?;
         if self.turn.state() == TurnState::Outputting {
             Ok(())
         } else {

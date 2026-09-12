@@ -171,6 +171,49 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 }
 
 #[test]
+fn unstructured_llm_context_is_biometric_fail_closed_without_consent() {
+    let persona = PersonaIdentity::new(
+        PersonaId::new("persona-llm-consent").unwrap(),
+        PersonaVersion::new(1).unwrap(),
+        PersonaMode::DigitalTwin,
+    );
+    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
+    let authority = EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope], [])]);
+    let mut session = ActiveSession::new(
+        SessionId::new("session-llm-consent").unwrap(),
+        persona.id().clone(),
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
+    );
+    session.activate().unwrap();
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-llm-consent").unwrap(),
+        CorrelationId::new("corr-llm-consent").unwrap(),
+        &persona,
+        &session,
+    )
+    .unwrap();
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+
+    let provider = TestLlm::default();
+    let result = turn.execute_llm(
+        &provider,
+        &LlmRequest {
+            locale: "ru-RU".into(),
+            context: "arbitrary unstructured context".into(),
+        },
+        &mut TestSink::default(),
+    );
+    assert!(matches!(
+        result,
+        Err(ProviderExecutionError::Denied(
+            RuntimeDenyReason::ConsentRequired
+        ))
+    ));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn missing_consent_blocks_tts_before_adapter_start() {
     let persona = PersonaIdentity::new(
         PersonaId::new("persona-tts-consent").unwrap(),

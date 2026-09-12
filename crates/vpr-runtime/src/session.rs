@@ -6,6 +6,7 @@ use vpr_policy::{ConsentState, EffectiveAuthority};
 use crate::authority::{AuthorizationController, EgressPolicyController};
 use crate::clock::{RuntimeClock, SystemClock};
 use crate::error::RuntimeDenyReason;
+use crate::execution_gate::SessionExecutionGate;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSecurityConfig {
@@ -41,6 +42,7 @@ pub struct ActiveSession {
     pub(crate) authorization: AuthorizationController,
     pub(crate) egress_policy: EgressPolicyController,
     pub(crate) clock: Arc<dyn RuntimeClock>,
+    pub(crate) gate: SessionExecutionGate,
 }
 
 impl ActiveSession {
@@ -55,18 +57,24 @@ impl ActiveSession {
         security: SessionSecurityConfig,
         clock: Arc<dyn RuntimeClock>,
     ) -> Self {
+        let gate = SessionExecutionGate::default();
+        let authorization = AuthorizationController::new(
+            security.expires_at_millis,
+            security.effective_authority,
+            gate.clone(),
+        );
+        let egress_policy = EgressPolicyController::new(
+            security.provider_policy_allows,
+            security.consent,
+            security.local_only_required,
+            gate.clone(),
+        );
         Self {
             session: RealtimeSession::new(id, persona_id),
-            authorization: AuthorizationController::new(
-                security.expires_at_millis,
-                security.effective_authority,
-            ),
-            egress_policy: EgressPolicyController::new(
-                security.provider_policy_allows,
-                security.consent,
-                security.local_only_required,
-            ),
+            authorization,
+            egress_policy,
             clock,
+            gate,
         }
     }
 

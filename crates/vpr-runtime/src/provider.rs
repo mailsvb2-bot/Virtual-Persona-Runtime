@@ -1,6 +1,6 @@
 use vpr_policy::{AuthorityScope, DataClass};
 
-use crate::cancellation::TurnCancellation;
+use crate::cancellation::ProviderCancellation;
 
 /// Internal linearized capability for one immediate provider operation.
 ///
@@ -8,7 +8,7 @@ use crate::cancellation::TurnCancellation;
 /// inside one runtime call, eliminating delayed or repeated permit use.
 #[derive(Debug)]
 pub(crate) struct ProviderExecutionPermit {
-    pub(crate) cancellation: TurnCancellation,
+    pub(crate) cancellation: ProviderCancellation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,11 +20,12 @@ pub(crate) enum ProviderOperation {
 }
 
 impl ProviderOperation {
+    /// RT0 fail-closed rule: until payload provenance can prove a lower class,
+    /// every unstructured external-provider payload is treated as biometric.
     #[must_use]
     pub(crate) const fn data_class(self) -> DataClass {
         match self {
-            Self::Llm => DataClass::Personal,
-            Self::Stt | Self::Tts | Self::Avatar => DataClass::Biometric,
+            Self::Llm | Self::Stt | Self::Tts | Self::Avatar => DataClass::Biometric,
         }
     }
 

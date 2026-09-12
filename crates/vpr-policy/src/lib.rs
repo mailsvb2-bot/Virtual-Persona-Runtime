@@ -162,6 +162,11 @@ impl AuthorizationState {
         self.epoch
     }
 
+    #[must_use]
+    pub const fn expires_at_millis(&self) -> Option<u64> {
+        self.expires_at_millis
+    }
+
     /// Revokes current authority and invalidates every earlier snapshot.
     ///
     /// # Errors
