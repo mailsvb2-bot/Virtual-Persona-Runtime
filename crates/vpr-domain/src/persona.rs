@@ -1,3 +1,6 @@
+use std::error::Error;
+use std::fmt::{Display, Formatter};
+
 use crate::PersonaId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,10 +21,32 @@ impl PersonaVersion {
     }
 
     #[must_use]
-    pub fn get(self) -> u64 {
+    pub const fn get(self) -> u64 {
         self.0
     }
+
+    /// Returns the next canonical Persona version.
+    ///
+    /// # Errors
+    /// Returns `PersonaVersionExhausted` if the numeric version cannot advance.
+    pub fn next(self) -> Result<Self, PersonaVersionExhausted> {
+        self.0
+            .checked_add(1)
+            .map(Self)
+            .ok_or(PersonaVersionExhausted)
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PersonaVersionExhausted;
+
+impl Display for PersonaVersionExhausted {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("persona version exhausted")
+    }
+}
+
+impl Error for PersonaVersionExhausted {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonaIdentity {
@@ -52,8 +77,12 @@ impl PersonaIdentity {
     }
 
     #[must_use]
-    pub fn is_rt0_supported(&self) -> bool {
-        self.mode == PersonaMode::DigitalTwin
+    pub const fn is_rt0_supported(&self) -> bool {
+        matches!(self.mode, PersonaMode::DigitalTwin)
+    }
+
+    pub(crate) const fn apply_version(&mut self, version: PersonaVersion) {
+        self.version = version;
     }
 }
 

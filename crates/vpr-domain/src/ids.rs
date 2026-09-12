@@ -39,6 +39,7 @@ macro_rules! canonical_id {
 }
 
 canonical_id!(PersonaId);
+canonical_id!(ClaimId);
 canonical_id!(SessionId);
 canonical_id!(TurnId);
 canonical_id!(CorrelationId);

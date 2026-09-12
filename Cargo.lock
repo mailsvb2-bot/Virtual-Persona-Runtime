@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "vpr-capture"
+version = "0.1.0"
+dependencies = [
+ "vpr-domain",
+]
+
+[[package]]
 name = "vpr-domain"
 version = "0.1.0"
 

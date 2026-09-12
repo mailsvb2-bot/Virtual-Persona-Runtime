@@ -1,0 +1,11 @@
+[package]
+name = "vpr-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vpr-domain = { path = "../vpr-domain" }
+
+[lints]
+workspace = true

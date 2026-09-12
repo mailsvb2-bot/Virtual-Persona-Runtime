@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import tomllib
 
@@ -9,6 +10,7 @@ allowed_internal_dependencies = {
     "vpr-domain": set(),
     "vpr-policy": {"vpr-domain"},
     "vpr-integration": {"vpr-domain"},
+    "vpr-capture": {"vpr-domain"},
     "vpr-runtime": {"vpr-domain", "vpr-policy", "vpr-integration"},
 }
 
@@ -75,7 +77,7 @@ for crate, allowed in allowed_internal_dependencies.items():
             f"{crate} has forbidden inward/cyclic VPR dependencies: {sorted(forbidden)}"
         )
 
-# The canonical domain must stay provider/infrastructure free, including third-party crates.
+# The canonical domain must stay provider/infrastructure/workflow free, including third-party crates.
 domain_manifest = tomllib.loads(
     (CRATES / "vpr-domain" / "Cargo.toml").read_text(encoding="utf-8")
 )
@@ -84,10 +86,32 @@ if all_dependency_names(domain_manifest):
 
 for path in (CRATES / "vpr-domain" / "src").glob("*.rs"):
     text = path.read_text(encoding="utf-8")
-    for forbidden in ("vpr_integration", "vpr_policy", "vpr_runtime"):
+    for forbidden in ("vpr_capture", "vpr_integration", "vpr_policy", "vpr_runtime"):
         if forbidden in text:
             raise SystemExit(
                 f"forbidden inward dependency {forbidden!r} in {path.relative_to(ROOT)}"
+            )
+
+# The mutable canonical Persona profile must not split into independently mutable clones.
+profile_source = (CRATES / "vpr-domain" / "src" / "profile.rs").read_text(encoding="utf-8")
+profile_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub struct PersonaProfile\b",
+    profile_source,
+    re.MULTILINE,
+)
+if profile_derive is not None and any(
+    item.strip() == "Clone" for item in profile_derive.group(1).split(",")
+):
+    raise SystemExit("PersonaProfile must remain non-cloneable canonical mutable state")
+
+# Guided capture may orchestrate canonical Persona state, but it must not become another provider/runtime brain.
+capture_src = CRATES / "vpr-capture" / "src"
+for path in capture_src.rglob("*.rs"):
+    text = path.read_text(encoding="utf-8")
+    for forbidden in ("vpr_integration", "vpr_policy", "vpr_runtime"):
+        if forbidden in text:
+            raise SystemExit(
+                f"guided capture has forbidden runtime/provider dependency {forbidden!r} in {path.relative_to(ROOT)}"
             )
 
 # Canonical mutable runtime identities must not regain split-brain clone/permit escape hatches.

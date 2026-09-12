@@ -4,6 +4,7 @@ members = [
   "crates/vpr-domain",
   "crates/vpr-policy",
   "crates/vpr-integration",
+  "crates/vpr-capture",
   "crates/vpr-runtime",
 ]
 
