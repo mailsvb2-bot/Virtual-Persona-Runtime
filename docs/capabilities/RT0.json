@@ -69,6 +69,11 @@
       "user_reachable": false
     },
     {
+      "id": "preparation.modality_readiness",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
       "id": "provider.real_llm",
       "maturity": "NOT_IMPLEMENTED",
       "user_reachable": false
