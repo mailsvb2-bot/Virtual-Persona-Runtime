@@ -130,12 +130,12 @@ pub struct AuthorizationSnapshot {
 
 impl AuthorizationSnapshot {
     #[must_use]
-    pub const fn epoch(self) -> AuthorizationEpoch {
+    pub const fn epoch(&self) -> AuthorizationEpoch {
         self.epoch
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct AuthorizationState {
     epoch: AuthorizationEpoch,
     revoked: bool,
@@ -153,12 +153,12 @@ impl AuthorizationState {
     }
 
     #[must_use]
-    pub const fn snapshot(self) -> AuthorizationSnapshot {
+    pub const fn snapshot(&self) -> AuthorizationSnapshot {
         AuthorizationSnapshot { epoch: self.epoch }
     }
 
     #[must_use]
-    pub const fn epoch(self) -> AuthorizationEpoch {
+    pub const fn epoch(&self) -> AuthorizationEpoch {
         self.epoch
     }
 
@@ -193,7 +193,7 @@ impl AuthorizationState {
     /// # Errors
     /// Fails closed for stale, revoked, or expired authority.
     pub const fn validate(
-        self,
+        &self,
         snapshot: AuthorizationSnapshot,
         now_millis: u64,
     ) -> Result<(), AuthorizationValidityError> {

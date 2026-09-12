@@ -4,13 +4,12 @@ use vpr_domain::{
     TurnState,
 };
 use vpr_policy::{
-    AuthorityLayer, AuthorityScope, AuthorizationState, EffectiveAuthority, EgressDecision,
-    EgressReason,
+    AuthorityLayer, AuthorityScope, EffectiveAuthority, EgressDecision, EgressReason,
 };
-use vpr_runtime::{ActiveTurn, RuntimeDenyReason, authorize_external_provider_call};
+use vpr_runtime::{ActiveTurn, AuthorizationController, RuntimeDenyReason};
 
 #[test]
-fn revoke_during_active_turn_blocks_next_egress_and_interrupts_unplayed_tail() {
+fn revoke_during_stream_blocks_next_egress_and_preserves_spoken_prefix_only() {
     let persona = PersonaIdentity::new(
         PersonaId::new("persona-owner").unwrap(),
         PersonaVersion::new(1).unwrap(),
@@ -25,38 +24,37 @@ fn revoke_during_active_turn_blocks_next_egress_and_interrupts_unplayed_tail() {
     let provider_scope = AuthorityScope::new("provider.egress").unwrap();
     let authority =
         EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope.clone()], [])]);
-    let mut authorization = AuthorizationState::new(Some(10_000));
-    let cached = authorization.snapshot();
+    let authorization = AuthorizationController::new(Some(10_000));
+    let revoker = authorization.clone();
 
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-owner-test").unwrap(),
         CorrelationId::new("corr-owner-test").unwrap(),
         &persona,
-        cached,
-    );
-    turn.transition(TurnState::Authorized).unwrap();
-    turn.transition(TurnState::Processing).unwrap();
-
-    authorize_external_provider_call(
-        authorization,
-        cached,
+        &authorization,
+    )
+    .unwrap();
+    turn.authorize(1_000).unwrap();
+    turn.begin_processing().unwrap();
+    turn.authorize_external_provider_call(
         1_000,
         &authority,
         &provider_scope,
         EgressDecision::Allow(EgressReason::Allowed),
     )
     .unwrap();
+    turn.begin_output().unwrap();
 
-    turn.transition(TurnState::Outputting).unwrap();
-    turn.mark_output_generated().unwrap();
-    turn.mark_output_sent().unwrap();
+    let spoken = turn.begin_output_segment().unwrap();
+    turn.mark_output_sent(spoken).unwrap();
+    turn.mark_output_played(spoken).unwrap();
+    let tail = turn.begin_output_segment().unwrap();
+    turn.mark_output_sent(tail).unwrap();
 
     session.transition(RealtimeSessionState::Revoked).unwrap();
-    authorization.revoke().unwrap();
+    revoker.revoke().unwrap();
 
-    let denied = authorize_external_provider_call(
-        authorization,
-        cached,
+    let denied = turn.authorize_external_provider_call(
         1_001,
         &authority,
         &provider_scope,
@@ -70,16 +68,20 @@ fn revoke_during_active_turn_blocks_next_egress_and_interrupts_unplayed_tail() {
 
     turn.interrupt().unwrap();
     assert_eq!(turn.state(), TurnState::Cancelled);
+    let segments = turn.output_segments();
+    assert_eq!(segments.len(), 2);
     assert_eq!(
-        turn.output().state(),
+        segments[0].state(),
+        OutputDeliveryState::Cancelled {
+            reached: OutputCheckpoint::Played
+        }
+    );
+    assert!(segments[0].eligible_as_spoken());
+    assert_eq!(
+        segments[1].state(),
         OutputDeliveryState::Cancelled {
             reached: OutputCheckpoint::Sent
         }
     );
-    assert!(!turn.output().eligible_as_spoken());
-    assert_eq!(
-        turn.snapshot().authorization_epoch(),
-        cached.epoch(),
-        "execution evidence stays bound to the authority revision actually used"
-    );
+    assert!(!segments[1].eligible_as_spoken());
 }
