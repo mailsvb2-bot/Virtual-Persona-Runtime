@@ -17,8 +17,8 @@ pub use persona::{
     ConstitutionBoundary, PersonaIdentity, PersonaMode, PersonaVersion, PersonaVersionExhausted,
 };
 pub use profile::{
-    ClaimRevision, ClaimRevisionExhausted, OwnerClaimRecord, OwnerClaimRevision, PersonaCaptureState,
-    PersonaProfile, ProfileError,
+    ClaimRevision, ClaimRevisionExhausted, OwnerClaimRecord, OwnerClaimRevision,
+    PersonaCaptureState, PersonaProfile, ProfileError,
 };
 pub use reason::Rt0ReasonCode;
 pub use session::{
