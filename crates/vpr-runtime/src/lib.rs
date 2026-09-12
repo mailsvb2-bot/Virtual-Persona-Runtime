@@ -106,14 +106,14 @@ pub fn capture_turn_execution_snapshot(
     persona: &PersonaIdentity,
     authorization: AuthorizationSnapshot,
 ) -> TurnExecutionSnapshot {
-    TurnExecutionSnapshot {
-        turn_id: turn.id.clone(),
-        correlation_id: turn.correlation_id.clone(),
-        persona_id: persona.id.clone(),
-        persona_version: persona.version,
-        persona_mode: persona.mode,
-        authorization_epoch: authorization.epoch,
-    }
+    TurnExecutionSnapshot::new(
+        turn.id().clone(),
+        turn.correlation_id().clone(),
+        persona.id().clone(),
+        persona.version(),
+        persona.mode(),
+        authorization.epoch(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -252,11 +252,11 @@ mod tests {
     use vpr_policy::{AuthorityLayer, EgressReason};
 
     fn persona() -> PersonaIdentity {
-        PersonaIdentity {
-            id: PersonaId::new("persona-1").unwrap(),
-            version: PersonaVersion::new(1).unwrap(),
-            mode: PersonaMode::DigitalTwin,
-        }
+        PersonaIdentity::new(
+            PersonaId::new("persona-1").unwrap(),
+            PersonaVersion::new(1).unwrap(),
+            PersonaMode::DigitalTwin,
+        )
     }
 
     #[test]
@@ -317,9 +317,12 @@ mod tests {
             &persona(),
             authorization.snapshot(),
         );
-        assert_eq!(active.snapshot().persona_id.as_str(), "persona-1");
-        assert_eq!(active.snapshot().persona_version.get(), 1);
-        assert_eq!(active.snapshot().authorization_epoch, authorization.epoch());
+        assert_eq!(active.snapshot().persona_id().as_str(), "persona-1");
+        assert_eq!(active.snapshot().persona_version().get(), 1);
+        assert_eq!(
+            active.snapshot().authorization_epoch(),
+            authorization.epoch()
+        );
     }
 
     #[test]

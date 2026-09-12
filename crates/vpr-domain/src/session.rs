@@ -16,8 +16,8 @@ pub enum RealtimeSessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RealtimeSession {
-    pub id: SessionId,
-    pub persona_id: PersonaId,
+    id: SessionId,
+    persona_id: PersonaId,
     state: RealtimeSessionState,
 }
 
@@ -29,6 +29,16 @@ impl RealtimeSession {
             persona_id,
             state: RealtimeSessionState::Created,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn persona_id(&self) -> &PersonaId {
+        &self.persona_id
     }
 
     #[must_use]
@@ -85,12 +95,63 @@ impl Error for SessionTransitionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnExecutionSnapshot {
-    pub turn_id: TurnId,
-    pub correlation_id: CorrelationId,
-    pub persona_id: PersonaId,
-    pub persona_version: PersonaVersion,
-    pub persona_mode: PersonaMode,
-    pub authorization_epoch: AuthorizationEpoch,
+    turn_id: TurnId,
+    correlation_id: CorrelationId,
+    persona_id: PersonaId,
+    persona_version: PersonaVersion,
+    persona_mode: PersonaMode,
+    authorization_epoch: AuthorizationEpoch,
+}
+
+impl TurnExecutionSnapshot {
+    #[must_use]
+    pub const fn new(
+        turn_id: TurnId,
+        correlation_id: CorrelationId,
+        persona_id: PersonaId,
+        persona_version: PersonaVersion,
+        persona_mode: PersonaMode,
+        authorization_epoch: AuthorizationEpoch,
+    ) -> Self {
+        Self {
+            turn_id,
+            correlation_id,
+            persona_id,
+            persona_version,
+            persona_mode,
+            authorization_epoch,
+        }
+    }
+
+    #[must_use]
+    pub fn turn_id(&self) -> &TurnId {
+        &self.turn_id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
+    }
+
+    #[must_use]
+    pub fn persona_id(&self) -> &PersonaId {
+        &self.persona_id
+    }
+
+    #[must_use]
+    pub const fn persona_version(&self) -> PersonaVersion {
+        self.persona_version
+    }
+
+    #[must_use]
+    pub const fn persona_mode(&self) -> PersonaMode {
+        self.persona_mode
+    }
+
+    #[must_use]
+    pub const fn authorization_epoch(&self) -> AuthorizationEpoch {
+        self.authorization_epoch
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,8 +168,8 @@ pub enum TurnState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
-    pub id: TurnId,
-    pub correlation_id: CorrelationId,
+    id: TurnId,
+    correlation_id: CorrelationId,
     state: TurnState,
 }
 
@@ -120,6 +181,16 @@ impl Turn {
             correlation_id,
             state: TurnState::Received,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &TurnId {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
     }
 
     #[must_use]

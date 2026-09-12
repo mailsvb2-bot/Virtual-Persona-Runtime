@@ -125,7 +125,14 @@ pub const fn decide_egress(request: EgressRequest) -> EgressDecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthorizationSnapshot {
-    pub epoch: AuthorizationEpoch,
+    epoch: AuthorizationEpoch,
+}
+
+impl AuthorizationSnapshot {
+    #[must_use]
+    pub const fn epoch(self) -> AuthorizationEpoch {
+        self.epoch
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +197,7 @@ impl AuthorizationState {
         snapshot: AuthorizationSnapshot,
         now_millis: u64,
     ) -> Result<(), AuthorizationValidityError> {
-        if snapshot.epoch.get() != self.epoch.get() {
+        if snapshot.epoch().get() != self.epoch.get() {
             return Err(AuthorizationValidityError::StaleEpoch);
         }
         if self.revoked {

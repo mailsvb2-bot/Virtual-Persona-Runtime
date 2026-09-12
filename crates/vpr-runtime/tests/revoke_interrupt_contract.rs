@@ -11,14 +11,14 @@ use vpr_runtime::{ActiveTurn, RuntimeDenyReason, authorize_external_provider_cal
 
 #[test]
 fn revoke_during_active_turn_blocks_next_egress_and_interrupts_unplayed_tail() {
-    let persona = PersonaIdentity {
-        id: PersonaId::new("persona-owner").unwrap(),
-        version: PersonaVersion::new(1).unwrap(),
-        mode: PersonaMode::DigitalTwin,
-    };
+    let persona = PersonaIdentity::new(
+        PersonaId::new("persona-owner").unwrap(),
+        PersonaVersion::new(1).unwrap(),
+        PersonaMode::DigitalTwin,
+    );
     let mut session = RealtimeSession::new(
         SessionId::new("session-owner-test").unwrap(),
-        persona.id.clone(),
+        persona.id().clone(),
     );
     session.transition(RealtimeSessionState::Active).unwrap();
 
@@ -78,8 +78,8 @@ fn revoke_during_active_turn_blocks_next_egress_and_interrupts_unplayed_tail() {
     );
     assert!(!turn.output().eligible_as_spoken());
     assert_eq!(
-        turn.snapshot().authorization_epoch,
-        cached.epoch,
+        turn.snapshot().authorization_epoch(),
+        cached.epoch(),
         "execution evidence stays bound to the authority revision actually used"
     );
 }
