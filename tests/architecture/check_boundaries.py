@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import tomllib
 
@@ -90,6 +91,16 @@ for path in (CRATES / "vpr-domain" / "src").glob("*.rs"):
             raise SystemExit(
                 f"forbidden inward dependency {forbidden!r} in {path.relative_to(ROOT)}"
             )
+
+# The mutable canonical Persona profile must not split into independently mutable clones.
+profile_source = (CRATES / "vpr-domain" / "src" / "profile.rs").read_text(encoding="utf-8")
+profile_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub struct PersonaProfile\b",
+    profile_source,
+    re.MULTILINE,
+)
+if profile_derive is not None and "Clone" in profile_derive.group(1).split(","):
+    raise SystemExit("PersonaProfile must remain non-cloneable canonical mutable state")
 
 # Guided capture may orchestrate canonical Persona state, but it must not become another provider/runtime brain.
 capture_src = CRATES / "vpr-capture" / "src"
