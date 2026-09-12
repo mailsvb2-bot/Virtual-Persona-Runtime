@@ -414,7 +414,11 @@ mod tests {
         profile.approve_claim(&id).unwrap();
         profile.approve_initial_review().unwrap();
         profile
-            .correct_claim(&id, "Теперь я предпочитаю другой подход", ClaimKind::Opinion)
+            .correct_claim(
+                &id,
+                "Теперь я предпочитаю другой подход",
+                ClaimKind::Opinion,
+            )
             .unwrap();
 
         let record = profile.claim(&id).unwrap();
