@@ -36,7 +36,7 @@ fn revoke_during_stream_blocks_next_egress_and_preserves_spoken_prefix_only() {
     .unwrap();
     turn.authorize(1_000).unwrap();
     turn.begin_processing().unwrap();
-    turn.authorize_external_provider_call(
+    turn.begin_external_provider_call(
         1_000,
         &authority,
         &provider_scope,
@@ -54,13 +54,13 @@ fn revoke_during_stream_blocks_next_egress_and_preserves_spoken_prefix_only() {
     session.transition(RealtimeSessionState::Revoked).unwrap();
     revoker.revoke().unwrap();
 
-    let denied = turn.authorize_external_provider_call(
+    let denied = turn.begin_external_provider_call(
         1_001,
         &authority,
         &provider_scope,
         EgressDecision::Allow(EgressReason::Allowed),
     );
-    assert_eq!(denied, Err(RuntimeDenyReason::AuthorizationStale));
+    assert!(matches!(denied, Err(RuntimeDenyReason::AuthorizationStale)));
     assert_eq!(
         denied.unwrap_err().reason_code(),
         Rt0ReasonCode::AuthRevoked

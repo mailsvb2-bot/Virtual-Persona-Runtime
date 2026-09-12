@@ -1,5 +1,5 @@
 use std::sync::{
-    Arc, RwLock,
+    Arc, RwLock, Weak,
     atomic::{AtomicBool, Ordering},
 };
 
@@ -27,6 +27,10 @@ impl TurnCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
+
+    fn downgrade(&self) -> Weak<AtomicBool> {
+        Arc::downgrade(&self.cancelled)
+    }
 }
 
 impl CancellationProbe for TurnCancellation {
@@ -45,6 +49,7 @@ pub enum RuntimeDenyReason {
     ConsentRequired,
     LocalOnlyRequired,
     InvalidTurnState,
+    TurnCancelled,
     InternalError,
 }
 
@@ -59,6 +64,7 @@ impl RuntimeDenyReason {
             Self::ConsentRequired => Rt0ReasonCode::ConsentRequired,
             Self::LocalOnlyRequired => Rt0ReasonCode::EgressLocalOnly,
             Self::InvalidTurnState => Rt0ReasonCode::InvalidStateTransition,
+            Self::TurnCancelled => Rt0ReasonCode::TurnCancelled,
             Self::InternalError => Rt0ReasonCode::InternalError,
         }
     }
@@ -74,23 +80,39 @@ impl From<AuthorizationValidityError> for RuntimeDenyReason {
     }
 }
 
+#[derive(Debug)]
+struct BoundTurnCancellation {
+    epoch: vpr_domain::AuthorizationEpoch,
+    cancellation: Weak<AtomicBool>,
+}
+
+#[derive(Debug)]
+struct AuthorizationRuntimeState {
+    authorization: AuthorizationState,
+    bound_turns: Vec<BoundTurnCancellation>,
+}
+
 /// Shared canonical authorization owner for active runtime work.
 ///
-/// Clones share the same state. Callers cannot authorize against a detached copy of the state.
+/// Clones share the same state. Binding a turn and revoking/replacing authority are serialized
+/// through the same state boundary, so revocation cannot miss a concurrently created turn.
 #[derive(Debug, Clone)]
 pub struct AuthorizationController {
-    state: Arc<RwLock<AuthorizationState>>,
+    state: Arc<RwLock<AuthorizationRuntimeState>>,
 }
 
 impl AuthorizationController {
     #[must_use]
     pub fn new(expires_at_millis: Option<u64>) -> Self {
         Self {
-            state: Arc::new(RwLock::new(AuthorizationState::new(expires_at_millis))),
+            state: Arc::new(RwLock::new(AuthorizationRuntimeState {
+                authorization: AuthorizationState::new(expires_at_millis),
+                bound_turns: Vec::new(),
+            })),
         }
     }
 
-    /// Captures the current authority revision for immutable turn evidence.
+    /// Captures the current authority revision without binding runtime work.
     ///
     /// # Errors
     /// Returns `INTERNAL_ERROR` if the shared state lock is poisoned.
@@ -98,10 +120,42 @@ impl AuthorizationController {
         self.state
             .read()
             .map_err(|_| RuntimeDenyReason::InternalError)
-            .map(|state| state.snapshot())
+            .map(|state| state.authorization.snapshot())
     }
 
-    /// Revokes the active authority and invalidates all earlier snapshots.
+    fn bind_turn(
+        &self,
+        cancellation: &TurnCancellation,
+    ) -> Result<AuthorizationSnapshot, RuntimeDenyReason> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        state
+            .bound_turns
+            .retain(|bound| bound.cancellation.strong_count() > 0);
+        let snapshot = state.authorization.snapshot();
+        state.bound_turns.push(BoundTurnCancellation {
+            epoch: snapshot.epoch(),
+            cancellation: cancellation.downgrade(),
+        });
+        Ok(snapshot)
+    }
+
+    fn cancel_stale_bound_turns(state: &mut AuthorizationRuntimeState) {
+        let current_epoch = state.authorization.epoch();
+        state.bound_turns.retain(|bound| {
+            let Some(cancellation) = bound.cancellation.upgrade() else {
+                return false;
+            };
+            if bound.epoch != current_epoch {
+                cancellation.store(true, Ordering::Release);
+            }
+            true
+        });
+    }
+
+    /// Revokes the active authority, invalidates earlier snapshots, and cancels bound active work.
     ///
     /// # Errors
     /// Returns `INTERNAL_ERROR` if state cannot be updated or the epoch is exhausted.
@@ -110,10 +164,15 @@ impl AuthorizationController {
             .state
             .write()
             .map_err(|_| RuntimeDenyReason::InternalError)?;
-        state.revoke().map_err(|_| RuntimeDenyReason::InternalError)
+        state
+            .authorization
+            .revoke()
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        Self::cancel_stale_bound_turns(&mut state);
+        Ok(())
     }
 
-    /// Replaces authority with a fresh active epoch.
+    /// Replaces authority with a fresh active epoch and cancels work bound to the prior epoch.
     ///
     /// # Errors
     /// Returns `INTERNAL_ERROR` if state cannot be updated or the epoch is exhausted.
@@ -123,8 +182,11 @@ impl AuthorizationController {
             .write()
             .map_err(|_| RuntimeDenyReason::InternalError)?;
         state
+            .authorization
             .replace(expires_at_millis)
-            .map_err(|_| RuntimeDenyReason::InternalError)
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        Self::cancel_stale_bound_turns(&mut state);
+        Ok(())
     }
 
     fn validate_bound(
@@ -135,30 +197,72 @@ impl AuthorizationController {
         self.state
             .read()
             .map_err(|_| RuntimeDenyReason::InternalError)?
+            .authorization
             .validate(snapshot, now_millis)
             .map_err(Into::into)
     }
 
-    fn authorize_bound_provider_call(
+    fn issue_provider_permit(
         &self,
         snapshot: AuthorizationSnapshot,
+        cancellation: &TurnCancellation,
         now_millis: u64,
         authority: &EffectiveAuthority,
         required_scope: &AuthorityScope,
         egress: EgressDecision,
-    ) -> Result<(), RuntimeDenyReason> {
-        self.validate_bound(snapshot, now_millis)?;
+    ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        state
+            .authorization
+            .validate(snapshot, now_millis)
+            .map_err(RuntimeDenyReason::from)?;
+        if cancellation.is_cancelled() {
+            return Err(RuntimeDenyReason::TurnCancelled);
+        }
         if !authority.allows(required_scope) {
             return Err(RuntimeDenyReason::AuthorityDenied);
         }
         match egress {
-            EgressDecision::Allow(_) => Ok(()),
+            EgressDecision::Allow(_) => Ok(ProviderExecutionPermit {
+                authorization_epoch: snapshot.epoch(),
+                cancellation: cancellation.clone(),
+            }),
             EgressDecision::LocalOnly(_) => Err(RuntimeDenyReason::LocalOnlyRequired),
             EgressDecision::Deny(EgressReason::ConsentRequired) => {
                 Err(RuntimeDenyReason::ConsentRequired)
             }
             EgressDecision::Deny(_) => Err(RuntimeDenyReason::EgressDenied),
         }
+    }
+}
+
+/// Linearized permission to start one provider operation.
+///
+/// Issuance is serialized against revoke/replace. A permit issued before revocation represents
+/// already-started work and carries the same cancellation signal that revocation flips.
+#[derive(Debug)]
+pub struct ProviderExecutionPermit {
+    authorization_epoch: vpr_domain::AuthorizationEpoch,
+    cancellation: TurnCancellation,
+}
+
+impl ProviderExecutionPermit {
+    #[must_use]
+    pub const fn authorization_epoch(&self) -> vpr_domain::AuthorizationEpoch {
+        self.authorization_epoch
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
+    }
+
+    #[must_use]
+    pub fn cancellation_probe(&self) -> &dyn CancellationProbe {
+        &self.cancellation
     }
 }
 
@@ -217,7 +321,8 @@ impl ActiveTurn {
         persona: &PersonaIdentity,
         authorization: &AuthorizationController,
     ) -> Result<Self, RuntimeDenyReason> {
-        let authorization_snapshot = authorization.snapshot()?;
+        let cancellation = TurnCancellation::default();
+        let authorization_snapshot = authorization.bind_turn(&cancellation)?;
         let turn = Turn::new(turn_id, correlation_id);
         let snapshot = TurnExecutionSnapshot::new(
             turn.id().clone(),
@@ -232,7 +337,7 @@ impl ActiveTurn {
             snapshot,
             authorization: authorization.clone(),
             authorization_snapshot,
-            cancellation: TurnCancellation::default(),
+            cancellation,
             output_segments: Vec::new(),
             next_segment_id: 1,
         })
@@ -276,21 +381,22 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `RuntimeDenyReason` if the turn's bound authority is stale/revoked/expired or the
     /// current scope/egress policy forbids the call.
-    pub fn authorize_external_provider_call(
+    pub fn begin_external_provider_call(
         &self,
         now_millis: u64,
         authority: &EffectiveAuthority,
         required_scope: &AuthorityScope,
         egress: EgressDecision,
-    ) -> Result<(), RuntimeDenyReason> {
+    ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
         if !matches!(
             self.turn.state(),
             TurnState::Authorized | TurnState::Processing | TurnState::Outputting
         ) {
             return Err(RuntimeDenyReason::InvalidTurnState);
         }
-        self.authorization.authorize_bound_provider_call(
+        self.authorization.issue_provider_permit(
             self.authorization_snapshot,
+            &self.cancellation,
             now_millis,
             authority,
             required_scope,
@@ -482,15 +588,15 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            turn.authorize_external_provider_call(
+        assert!(matches!(
+            turn.begin_external_provider_call(
                 0,
                 &authority,
                 &scope,
                 EgressDecision::Allow(EgressReason::Allowed),
             ),
             Err(RuntimeDenyReason::InvalidTurnState)
-        );
+        ));
     }
 
     #[test]
@@ -505,13 +611,13 @@ mod tests {
         )
         .unwrap();
         turn.authorize(0).unwrap();
-        let result = turn.authorize_external_provider_call(
+        let result = turn.begin_external_provider_call(
             0,
             &authority,
             &scope,
             EgressDecision::LocalOnly(EgressReason::LocalOnlyRequired),
         );
-        assert_eq!(result, Err(RuntimeDenyReason::LocalOnlyRequired));
+        assert!(matches!(result, Err(RuntimeDenyReason::LocalOnlyRequired)));
     }
 
     #[test]
@@ -529,13 +635,13 @@ mod tests {
         turn.authorize(0).unwrap();
         revoker.revoke().unwrap();
 
-        let result = turn.authorize_external_provider_call(
+        let result = turn.begin_external_provider_call(
             1,
             &authority,
             &scope,
             EgressDecision::Allow(EgressReason::Allowed),
         );
-        assert_eq!(result, Err(RuntimeDenyReason::AuthorizationStale));
+        assert!(matches!(result, Err(RuntimeDenyReason::AuthorizationStale)));
         assert_eq!(
             result.unwrap_err().reason_code(),
             Rt0ReasonCode::AuthRevoked
@@ -556,15 +662,56 @@ mod tests {
         turn.authorize(0).unwrap();
         authorization.replace(None).unwrap();
 
-        assert_eq!(
-            turn.authorize_external_provider_call(
+        assert!(matches!(
+            turn.begin_external_provider_call(
                 0,
                 &authority,
                 &scope,
                 EgressDecision::Allow(EgressReason::Allowed),
             ),
             Err(RuntimeDenyReason::AuthorizationStale)
+        ));
+    }
+
+    #[test]
+    fn issued_provider_permit_is_cancelled_by_later_revocation() {
+        let (scope, authority) = allowed_provider_authority();
+        let authorization = AuthorizationController::new(None);
+        let mut turn = ActiveTurn::new(
+            TurnId::new("turn-permit").unwrap(),
+            CorrelationId::new("corr-permit").unwrap(),
+            &persona(),
+            &authorization,
+        )
+        .unwrap();
+        turn.authorize(0).unwrap();
+        turn.begin_processing().unwrap();
+        let permit = turn
+            .begin_external_provider_call(
+                0,
+                &authority,
+                &scope,
+                EgressDecision::Allow(EgressReason::Allowed),
+            )
+            .unwrap();
+        assert!(!permit.is_cancelled());
+        assert_eq!(
+            permit.authorization_epoch(),
+            turn.snapshot().authorization_epoch()
         );
+
+        authorization.revoke().unwrap();
+        assert!(permit.is_cancelled());
+        assert!(CancellationProbe::is_cancelled(permit.cancellation_probe()));
+        assert!(matches!(
+            turn.begin_external_provider_call(
+                1,
+                &authority,
+                &scope,
+                EgressDecision::Allow(EgressReason::Allowed),
+            ),
+            Err(RuntimeDenyReason::AuthorizationStale)
+        ));
     }
 
     #[test]
@@ -672,13 +819,13 @@ mod tests {
         )
         .unwrap();
         turn.authorize(0).unwrap();
-        let denied = turn.authorize_external_provider_call(
+        let denied = turn.begin_external_provider_call(
             0,
             &authority,
             &scope,
             EgressDecision::Deny(EgressReason::ConsentRequired),
         );
-        assert_eq!(denied, Err(RuntimeDenyReason::ConsentRequired));
+        assert!(matches!(denied, Err(RuntimeDenyReason::ConsentRequired)));
         assert_eq!(
             denied.unwrap_err().reason_code(),
             Rt0ReasonCode::ConsentRequired

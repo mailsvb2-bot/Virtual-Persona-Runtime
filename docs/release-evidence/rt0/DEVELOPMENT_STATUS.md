@@ -7,7 +7,9 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - Persona identity/version/mode skeleton;
 - owner-opinion attribution boundary;
 - authority intersection and minimal global egress policy;
-- authorization epoch invalidation for stale/revoked cached authority;
+- shared authorization epoch invalidation for stale/revoked cached authority;
+- linearized provider execution permits bound to the turn authorization epoch;
+- revoke/replace propagation into active turn/provider cancellation signals;
 - realtime session lifecycle including terminal revocation semantics;
 - immutable per-turn execution snapshot binding Persona + authorization epoch;
 - provider-neutral STT/LLM/TTS/avatar ports;
