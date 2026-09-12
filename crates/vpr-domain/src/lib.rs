@@ -9,8 +9,8 @@ pub use claim::{
     VerifiedOwnerOpinion,
 };
 pub use ids::{
-    AuthorizationEpoch, AuthorizationEpochExhausted, CorrelationId, IdError, PersonaId, SessionId,
-    TurnId,
+    AuthorizationEpoch, AuthorizationEpochExhausted, CorrelationId, IdError, PersonaId,
+    PolicyRevision, PolicyRevisionExhausted, SessionId, TurnId,
 };
 pub use persona::{ConstitutionBoundary, PersonaIdentity, PersonaMode, PersonaVersion};
 pub use reason::Rt0ReasonCode;

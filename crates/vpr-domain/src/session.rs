@@ -2,7 +2,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use crate::{
-    AuthorizationEpoch, CorrelationId, PersonaId, PersonaMode, PersonaVersion, SessionId, TurnId,
+    AuthorizationEpoch, CorrelationId, PersonaId, PersonaMode, PersonaVersion, PolicyRevision,
+    SessionId, TurnId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +102,7 @@ pub struct TurnExecutionSnapshot {
     persona_version: PersonaVersion,
     persona_mode: PersonaMode,
     authorization_epoch: AuthorizationEpoch,
+    egress_policy_revision: PolicyRevision,
 }
 
 impl TurnExecutionSnapshot {
@@ -112,6 +114,7 @@ impl TurnExecutionSnapshot {
         persona_version: PersonaVersion,
         persona_mode: PersonaMode,
         authorization_epoch: AuthorizationEpoch,
+        egress_policy_revision: PolicyRevision,
     ) -> Self {
         Self {
             turn_id,
@@ -120,6 +123,7 @@ impl TurnExecutionSnapshot {
             persona_version,
             persona_mode,
             authorization_epoch,
+            egress_policy_revision,
         }
     }
 
@@ -151,6 +155,11 @@ impl TurnExecutionSnapshot {
     #[must_use]
     pub const fn authorization_epoch(&self) -> AuthorizationEpoch {
         self.authorization_epoch
+    }
+
+    #[must_use]
+    pub const fn egress_policy_revision(&self) -> PolicyRevision {
+        self.egress_policy_revision
     }
 }
 
@@ -213,13 +222,19 @@ impl Turn {
                     | TurnState::Cancelled
             ) | (
                 TurnState::Authorized,
-                TurnState::Processing | TurnState::Failed | TurnState::Cancelled
+                TurnState::Processing
+                    | TurnState::Denied
+                    | TurnState::Failed
+                    | TurnState::Cancelled
             ) | (
                 TurnState::Processing,
-                TurnState::Outputting | TurnState::Failed | TurnState::Cancelled
+                TurnState::Outputting
+                    | TurnState::Denied
+                    | TurnState::Failed
+                    | TurnState::Cancelled
             ) | (
                 TurnState::Outputting,
-                TurnState::Completed | TurnState::Failed | TurnState::Cancelled
+                TurnState::Completed | TurnState::Denied | TurnState::Failed | TurnState::Cancelled
             )
         );
         if !valid {

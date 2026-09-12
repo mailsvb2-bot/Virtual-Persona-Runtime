@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +35,21 @@ REQUIRED_REASON_CODES = {
 }
 
 catalogue = json.loads(CATALOGUE.read_text(encoding="utf-8"))
+spec_text = SPEC.read_text(encoding="utf-8")
+ceiling_match = re.search(r"Maturity ceiling during RT0:\*\* `([A-Z_]+)`", spec_text)
+if ceiling_match is None:
+    raise SystemExit("RT0 ReleaseSpec is missing a parseable maturity ceiling")
+maturity_ceiling = ceiling_match.group(1)
+MATURITY_RANK = {
+    "NOT_IMPLEMENTED": 0,
+    "RESEARCH_REQUIRED": 1,
+    "EXPERIMENTAL": 2,
+    "IMPLEMENTED": 3,
+    "USER_REACHABLE": 4,
+    "PRODUCTION_READY": 5,
+}
+if maturity_ceiling not in MATURITY_RANK:
+    raise SystemExit(f"unsupported RT0 maturity ceiling: {maturity_ceiling}")
 if catalogue.get("release_train") != "RT0":
     raise SystemExit("RT0 capability catalogue has the wrong release_train")
 
@@ -51,6 +67,10 @@ for capability in capabilities:
     ids.append(capability_id)
     if maturity not in ALLOWED_MATURITY:
         raise SystemExit(f"invalid maturity {maturity!r} for {capability_id}")
+    if maturity != "DEPRECATED" and MATURITY_RANK.get(maturity, 999) > MATURITY_RANK[maturity_ceiling]:
+        raise SystemExit(
+            f"{capability_id} exceeds active RT0 {maturity_ceiling} maturity ceiling: {maturity}"
+        )
     if not isinstance(user_reachable, bool):
         raise SystemExit(f"user_reachable must be boolean for {capability_id}")
     if user_reachable and maturity not in {"USER_REACHABLE", "PRODUCTION_READY"}:
@@ -61,7 +81,6 @@ for capability in capabilities:
 if len(ids) != len(set(ids)):
     raise SystemExit("RT0 capability catalogue contains duplicate capability ids")
 
-spec_text = SPEC.read_text(encoding="utf-8")
 reason_source = REASON_SOURCE.read_text(encoding="utf-8")
 for code in sorted(REQUIRED_REASON_CODES):
     if f"`{code}`" not in spec_text:

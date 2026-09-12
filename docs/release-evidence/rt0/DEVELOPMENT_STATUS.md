@@ -2,14 +2,17 @@
 
 This file records development evidence only. It is **not** RT0 exit evidence.
 
-## Implemented canonical foundation
+## Experimental canonical foundation present in code
 
 - Persona identity/version/mode skeleton;
 - owner-opinion attribution boundary;
 - authority intersection and minimal global egress policy;
 - shared authorization epoch invalidation for stale/revoked cached authority;
+- authoritative session-scoped egress policy revision and enforcement;
 - linearized provider execution permits bound to the turn authorization epoch;
-- revoke/replace propagation into active turn/provider cancellation signals;
+- revoke/replace/policy-change propagation into active turn/provider cancellation signals;
+- session revoke bound to the same active-turn authorization authority;
+- explicit terminal `DENIED` / `FAILED` runtime paths;
 - realtime session lifecycle including terminal revocation semantics;
 - immutable per-turn execution snapshot binding Persona + authorization epoch;
 - provider-neutral STT/LLM/TTS/avatar ports;

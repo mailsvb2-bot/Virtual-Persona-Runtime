@@ -12,10 +12,31 @@ allowed_internal_dependencies = {
     "vpr-runtime": {"vpr-domain", "vpr-policy", "vpr-integration"},
 }
 
+DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+
+def all_dependency_names(manifest):
+    names = set()
+    for table in DEPENDENCY_TABLES:
+        names.update(manifest.get(table, {}))
+    for target in manifest.get("target", {}).values():
+        for table in DEPENDENCY_TABLES:
+            names.update(target.get(table, {}))
+    return names
+
+_target_probe = {
+    "target": {
+        "cfg(target_os = \"windows\")": {
+            "dependencies": {"vpr-runtime": {"path": "../vpr-runtime"}}
+        }
+    }
+}
+if "vpr-runtime" not in all_dependency_names(_target_probe):
+    raise SystemExit("architecture checker failed its target-specific dependency self-test")
+
 for crate, allowed in allowed_internal_dependencies.items():
     manifest_path = CRATES / crate / "Cargo.toml"
     manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
-    dependencies = set(manifest.get("dependencies", {}))
+    dependencies = all_dependency_names(manifest)
     internal = {name for name in dependencies if name.startswith("vpr-")}
     forbidden = internal - allowed
     if forbidden:
@@ -27,8 +48,8 @@ for crate, allowed in allowed_internal_dependencies.items():
 domain_manifest = tomllib.loads(
     (CRATES / "vpr-domain" / "Cargo.toml").read_text(encoding="utf-8")
 )
-if domain_manifest.get("dependencies", {}):
-    raise SystemExit("vpr-domain must remain dependency-free in RT0")
+if all_dependency_names(domain_manifest):
+    raise SystemExit("vpr-domain must remain dependency-free in RT0, including target/dev/build dependencies")
 
 for path in (CRATES / "vpr-domain" / "src").glob("*.rs"):
     text = path.read_text(encoding="utf-8")

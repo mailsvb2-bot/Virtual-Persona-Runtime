@@ -79,3 +79,40 @@ impl Display for AuthorizationEpochExhausted {
 }
 
 impl Error for AuthorizationEpochExhausted {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PolicyRevision(u64);
+
+impl PolicyRevision {
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self(1)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Returns the next policy revision.
+    ///
+    /// # Errors
+    /// Returns `PolicyRevisionExhausted` if the numeric revision cannot advance.
+    pub fn next(self) -> Result<Self, PolicyRevisionExhausted> {
+        self.0
+            .checked_add(1)
+            .map(Self)
+            .ok_or(PolicyRevisionExhausted)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyRevisionExhausted;
+
+impl Display for PolicyRevisionExhausted {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("policy revision exhausted")
+    }
+}
+
+impl Error for PolicyRevisionExhausted {}

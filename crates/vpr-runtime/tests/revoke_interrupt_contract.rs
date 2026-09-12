@@ -1,48 +1,42 @@
 use vpr_domain::{
     CorrelationId, OutputCheckpoint, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode,
-    PersonaVersion, RealtimeSession, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
-    TurnState,
+    PersonaVersion, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
-use vpr_policy::{
-    AuthorityLayer, AuthorityScope, EffectiveAuthority, EgressDecision, EgressReason,
-};
-use vpr_runtime::{ActiveTurn, AuthorizationController, RuntimeDenyReason};
+use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
+use vpr_runtime::{ActiveSession, ActiveTurn, RuntimeDenyReason};
 
 #[test]
-fn revoke_during_stream_blocks_next_egress_and_preserves_spoken_prefix_only() {
+fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_only() {
     let persona = PersonaIdentity::new(
         PersonaId::new("persona-owner").unwrap(),
         PersonaVersion::new(1).unwrap(),
         PersonaMode::DigitalTwin,
     );
-    let mut session = RealtimeSession::new(
+    let mut session = ActiveSession::new(
         SessionId::new("session-owner-test").unwrap(),
         persona.id().clone(),
+        Some(10_000),
+        true,
+        ConsentState::Granted,
+        false,
     );
-    session.transition(RealtimeSessionState::Active).unwrap();
+    session.activate().unwrap();
 
     let provider_scope = AuthorityScope::new("provider.egress").unwrap();
     let authority =
         EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope.clone()], [])]);
-    let authorization = AuthorizationController::new(Some(10_000));
-    let revoker = authorization.clone();
-
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-owner-test").unwrap(),
         CorrelationId::new("corr-owner-test").unwrap(),
         &persona,
-        &authorization,
+        &session,
     )
     .unwrap();
     turn.authorize(1_000).unwrap();
     turn.begin_processing().unwrap();
-    turn.begin_external_provider_call(
-        1_000,
-        &authority,
-        &provider_scope,
-        EgressDecision::Allow(EgressReason::Allowed),
-    )
-    .unwrap();
+    let permit = turn
+        .begin_external_provider_call(1_000, &authority, &provider_scope, DataClass::Biometric)
+        .unwrap();
     turn.begin_output().unwrap();
 
     let spoken = turn.begin_output_segment().unwrap();
@@ -51,15 +45,10 @@ fn revoke_during_stream_blocks_next_egress_and_preserves_spoken_prefix_only() {
     let tail = turn.begin_output_segment().unwrap();
     turn.mark_output_sent(tail).unwrap();
 
-    session.transition(RealtimeSessionState::Revoked).unwrap();
-    revoker.revoke().unwrap();
-
-    let denied = turn.begin_external_provider_call(
-        1_001,
-        &authority,
-        &provider_scope,
-        EgressDecision::Allow(EgressReason::Allowed),
-    );
+    session.revoke().unwrap();
+    assert!(permit.is_cancelled());
+    let denied =
+        turn.begin_external_provider_call(1_001, &authority, &provider_scope, DataClass::Biometric);
     assert!(matches!(denied, Err(RuntimeDenyReason::AuthorizationStale)));
     assert_eq!(
         denied.unwrap_err().reason_code(),
