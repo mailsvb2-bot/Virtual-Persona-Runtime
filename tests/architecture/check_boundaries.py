@@ -67,6 +67,8 @@ if "pub struct ProviderExecutionPermit" in runtime_source:
     raise SystemExit("provider execution permits must remain internal to runtime execution methods")
 if "pub fn begin_external_provider_call" in runtime_source:
     raise SystemExit("raw provider-call permit issuance must not be public")
+if "pub struct TurnCancellation" in runtime_source or "pub fn cancellation(&self)" in runtime_source:
+    raise SystemExit("raw turn cancellation authority must remain internal to ActiveTurn::interrupt")
 
 print("architecture-boundaries: PASS")
 sys.exit(0)

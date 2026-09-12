@@ -19,12 +19,12 @@ use vpr_policy::{
 };
 
 #[derive(Debug, Clone, Default)]
-pub struct TurnCancellation {
+struct TurnCancellation {
     cancelled: Arc<AtomicBool>,
 }
 
 impl TurnCancellation {
-    pub fn cancel(&self) {
+    fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
 
@@ -660,11 +660,6 @@ impl ActiveTurn {
     }
 
     #[must_use]
-    pub fn cancellation(&self) -> TurnCancellation {
-        self.cancellation.clone()
-    }
-
-    #[must_use]
     pub fn output_segments(&self) -> &[OutputSegmentEvidence] {
         &self.output_segments
     }
@@ -1204,7 +1199,7 @@ mod tests {
     fn interruption_preserves_played_prefix_and_unplayed_tail_per_segment() {
         let session = active_session();
         let mut turn = turn(&session, "stream");
-        let provider_view = turn.cancellation();
+        let provider_view = turn.cancellation.clone();
         turn.authorize(0).unwrap();
         turn.begin_processing().unwrap();
         turn.begin_output().unwrap();
@@ -1279,7 +1274,7 @@ mod tests {
         turn.deny().unwrap();
         assert_eq!(turn.interrupt(), Err(Rt0ReasonCode::InvalidStateTransition));
         assert!(turn.output_segments().is_empty());
-        assert!(!turn.cancellation().is_cancelled());
+        assert!(!turn.cancellation.is_cancelled());
     }
 
     #[test]
