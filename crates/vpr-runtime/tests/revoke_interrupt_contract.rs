@@ -60,7 +60,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
     let mut session = ActiveSession::new(
         SessionId::new("session-owner-test").unwrap(),
         persona.id().clone(),
-        Some(10_000),
+        None,
         true,
         ConsentState::Granted,
         false,
@@ -77,12 +77,12 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         &session,
     )
     .unwrap();
-    turn.authorize(1_000).unwrap();
+    turn.authorize().unwrap();
     turn.begin_processing().unwrap();
 
     let mut sink = TestSink::default();
     turn.execute_llm(
-        ProviderExecutionContext::new(1_000, &authority, &provider_scope, DataClass::Biometric),
+        ProviderExecutionContext::new(&authority, &provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -102,7 +102,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 
     session.revoke().unwrap();
     let denied = turn.execute_llm(
-        ProviderExecutionContext::new(1_001, &authority, &provider_scope, DataClass::Biometric),
+        ProviderExecutionContext::new(&authority, &provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -142,7 +142,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 }
 
 #[test]
-fn expired_authority_blocks_adapter_before_provider_start() {
+fn expired_authority_fails_closed_before_provider_start() {
     let persona = PersonaIdentity::new(
         PersonaId::new("persona-expiry").unwrap(),
         PersonaVersion::new(1).unwrap(),
@@ -151,15 +151,12 @@ fn expired_authority_blocks_adapter_before_provider_start() {
     let mut session = ActiveSession::new(
         SessionId::new("session-expiry").unwrap(),
         persona.id().clone(),
-        Some(10),
+        Some(0),
         true,
         ConsentState::Granted,
         false,
     );
     session.activate().unwrap();
-    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
-    let authority =
-        EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope.clone()], [])]);
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-expiry").unwrap(),
         CorrelationId::new("corr-expiry").unwrap(),
@@ -167,24 +164,7 @@ fn expired_authority_blocks_adapter_before_provider_start() {
         &session,
     )
     .unwrap();
-    turn.authorize(1).unwrap();
-    turn.begin_processing().unwrap();
-
     let provider = TestLlm::default();
-    let result = turn.execute_llm(
-        ProviderExecutionContext::new(10, &authority, &provider_scope, DataClass::Public),
-        &provider,
-        &LlmRequest {
-            locale: "ru-RU".into(),
-            context: "must not leave runtime".into(),
-        },
-        &mut TestSink::default(),
-    );
-    assert!(matches!(
-        result,
-        Err(ProviderExecutionError::Denied(
-            RuntimeDenyReason::AuthorizationExpired
-        ))
-    ));
+    assert_eq!(turn.authorize(), Err(Rt0ReasonCode::AuthExpired));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
