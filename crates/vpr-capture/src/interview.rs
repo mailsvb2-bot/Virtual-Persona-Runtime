@@ -153,8 +153,12 @@ impl Display for CaptureError {
                 formatter.write_str("guided capture requires one clean canonical Persona draft")
             }
             Self::BlankAnswer => formatter.write_str("guided capture answer must not be blank"),
-            Self::InterviewAlreadyComplete => formatter.write_str("guided interview is already complete"),
-            Self::InterviewIncomplete => formatter.write_str("guided interview still has unanswered questions"),
+            Self::InterviewAlreadyComplete => {
+                formatter.write_str("guided interview is already complete")
+            }
+            Self::InterviewIncomplete => {
+                formatter.write_str("guided interview still has unanswered questions")
+            }
             Self::Profile(error) => Display::fmt(error, formatter),
         }
     }
@@ -216,7 +220,8 @@ mod tests {
 
     #[test]
     fn capture_does_not_silently_verify_owner_material() {
-        let mut interview = GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
+        let mut interview =
+            GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
         interview.submit_answer("Сергей, предприниматель").unwrap();
         let id = ClaimId::new("identity-self-description").unwrap();
         let claim = interview.profile().claim(&id).unwrap().current().claim();
@@ -225,7 +230,8 @@ mod tests {
 
     #[test]
     fn full_review_makes_verified_owner_opinion_eligible() {
-        let mut interview = GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
+        let mut interview =
+            GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
         interview.submit_answer("Сергей, предприниматель").unwrap();
         interview.submit_answer("Люблю быстрые итерации").unwrap();
         interview.finish_capture().unwrap();
@@ -236,7 +242,10 @@ mod tests {
         interview.approve_claim(&opinion).unwrap();
         interview.complete_initial_review().unwrap();
 
-        assert_eq!(interview.profile().capture_state(), PersonaCaptureState::Reviewed);
+        assert_eq!(
+            interview.profile().capture_state(),
+            PersonaCaptureState::Reviewed
+        );
         assert_eq!(interview.profile().identity().version().get(), 2);
         let claim = interview
             .profile()
@@ -250,7 +259,8 @@ mod tests {
 
     #[test]
     fn cannot_finalize_incomplete_interview() {
-        let mut interview = GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
+        let mut interview =
+            GuidedOwnerInterview::new(profile(PersonaMode::DigitalTwin), plan()).unwrap();
         interview.submit_answer("Сергей").unwrap();
         assert_eq!(
             interview.finish_capture(),
