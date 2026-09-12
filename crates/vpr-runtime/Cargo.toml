@@ -1,0 +1,13 @@
+[package]
+name = "vpr-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vpr-domain = { path = "../vpr-domain" }
+vpr-integration = { path = "../vpr-integration" }
+vpr-policy = { path = "../vpr-policy" }
+
+[lints]
+workspace = true
