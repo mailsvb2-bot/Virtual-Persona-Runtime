@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use vpr_domain::{AuthorizationEpoch, AuthorizationEpochExhausted};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AuthorityScope(String);
@@ -122,6 +123,95 @@ pub const fn decide_egress(request: EgressRequest) -> EgressDecision {
     EgressDecision::Allow(EgressReason::Allowed)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthorizationSnapshot {
+    pub epoch: AuthorizationEpoch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthorizationState {
+    epoch: AuthorizationEpoch,
+    revoked: bool,
+    expires_at_millis: Option<u64>,
+}
+
+impl AuthorizationState {
+    #[must_use]
+    pub const fn new(expires_at_millis: Option<u64>) -> Self {
+        Self {
+            epoch: AuthorizationEpoch::initial(),
+            revoked: false,
+            expires_at_millis,
+        }
+    }
+
+    #[must_use]
+    pub const fn snapshot(self) -> AuthorizationSnapshot {
+        AuthorizationSnapshot { epoch: self.epoch }
+    }
+
+    #[must_use]
+    pub const fn epoch(self) -> AuthorizationEpoch {
+        self.epoch
+    }
+
+    /// Revokes current authority and invalidates every earlier snapshot.
+    ///
+    /// # Errors
+    /// Returns `AuthorizationEpochExhausted` if the revision cannot advance.
+    pub fn revoke(&mut self) -> Result<(), AuthorizationEpochExhausted> {
+        if !self.revoked {
+            self.epoch = self.epoch.next()?;
+            self.revoked = true;
+        }
+        Ok(())
+    }
+
+    /// Replaces authority with a new active epoch.
+    ///
+    /// # Errors
+    /// Returns `AuthorizationEpochExhausted` if the revision cannot advance.
+    pub fn replace(
+        &mut self,
+        expires_at_millis: Option<u64>,
+    ) -> Result<(), AuthorizationEpochExhausted> {
+        self.epoch = self.epoch.next()?;
+        self.revoked = false;
+        self.expires_at_millis = expires_at_millis;
+        Ok(())
+    }
+
+    /// Validates that cached authority still belongs to the current active epoch.
+    ///
+    /// # Errors
+    /// Fails closed for stale, revoked, or expired authority.
+    pub const fn validate(
+        self,
+        snapshot: AuthorizationSnapshot,
+        now_millis: u64,
+    ) -> Result<(), AuthorizationValidityError> {
+        if snapshot.epoch.get() != self.epoch.get() {
+            return Err(AuthorizationValidityError::StaleEpoch);
+        }
+        if self.revoked {
+            return Err(AuthorizationValidityError::Revoked);
+        }
+        if let Some(expires_at_millis) = self.expires_at_millis
+            && now_millis >= expires_at_millis
+        {
+            return Err(AuthorizationValidityError::Expired);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationValidityError {
+    StaleEpoch,
+    Revoked,
+    Expired,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,6 +262,26 @@ mod tests {
                 local_only_required: true,
             }),
             EgressDecision::LocalOnly(EgressReason::LocalOnlyRequired)
+        );
+    }
+
+    #[test]
+    fn revocation_invalidates_cached_authorization_snapshot() {
+        let mut state = AuthorizationState::new(None);
+        let cached = state.snapshot();
+        state.revoke().unwrap();
+        assert_eq!(
+            state.validate(cached, 0),
+            Err(AuthorizationValidityError::StaleEpoch)
+        );
+    }
+
+    #[test]
+    fn current_authorization_expires_fail_closed() {
+        let state = AuthorizationState::new(Some(100));
+        assert_eq!(
+            state.validate(state.snapshot(), 100),
+            Err(AuthorizationValidityError::Expired)
         );
     }
 }

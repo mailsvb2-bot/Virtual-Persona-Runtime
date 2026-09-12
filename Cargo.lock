@@ -13,6 +13,9 @@ version = "0.1.0"
 [[package]]
 name = "vpr-policy"
 version = "0.1.0"
+dependencies = [
+ "vpr-domain",
+]
 
 [[package]]
 name = "vpr-runtime"

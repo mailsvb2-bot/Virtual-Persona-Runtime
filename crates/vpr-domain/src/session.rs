@@ -1,7 +1,97 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use crate::{CorrelationId, TurnId};
+use crate::{
+    AuthorizationEpoch, CorrelationId, PersonaId, PersonaMode, PersonaVersion, SessionId, TurnId,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealtimeSessionState {
+    Created,
+    Active,
+    Draining,
+    Revoked,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeSession {
+    pub id: SessionId,
+    pub persona_id: PersonaId,
+    state: RealtimeSessionState,
+}
+
+impl RealtimeSession {
+    #[must_use]
+    pub fn new(id: SessionId, persona_id: PersonaId) -> Self {
+        Self {
+            id,
+            persona_id,
+            state: RealtimeSessionState::Created,
+        }
+    }
+
+    #[must_use]
+    pub fn state(&self) -> RealtimeSessionState {
+        self.state
+    }
+
+    /// Advances the canonical realtime-session lifecycle.
+    ///
+    /// # Errors
+    /// Returns `SessionTransitionError` when the transition is forbidden.
+    pub fn transition(&mut self, next: RealtimeSessionState) -> Result<(), SessionTransitionError> {
+        let valid = matches!(
+            (self.state, next),
+            (
+                RealtimeSessionState::Created,
+                RealtimeSessionState::Active | RealtimeSessionState::Revoked
+            ) | (
+                RealtimeSessionState::Active,
+                RealtimeSessionState::Draining | RealtimeSessionState::Revoked
+            ) | (
+                RealtimeSessionState::Draining,
+                RealtimeSessionState::Closed | RealtimeSessionState::Revoked
+            ) | (RealtimeSessionState::Revoked, RealtimeSessionState::Closed)
+        );
+        if !valid {
+            return Err(SessionTransitionError {
+                from: self.state,
+                to: next,
+            });
+        }
+        self.state = next;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTransitionError {
+    pub from: RealtimeSessionState,
+    pub to: RealtimeSessionState,
+}
+
+impl Display for SessionTransitionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "invalid session transition: {:?} -> {:?}",
+            self.from, self.to
+        )
+    }
+}
+
+impl Error for SessionTransitionError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnExecutionSnapshot {
+    pub turn_id: TurnId,
+    pub correlation_id: CorrelationId,
+    pub persona_id: PersonaId,
+    pub persona_version: PersonaVersion,
+    pub persona_mode: PersonaMode,
+    pub authorization_epoch: AuthorizationEpoch,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
@@ -229,6 +319,19 @@ mod tests {
         output.mark_sent().unwrap();
         output.mark_cancelled().unwrap();
         assert!(!output.eligible_as_spoken());
+    }
+
+    #[test]
+    fn revoked_session_can_only_close() {
+        let mut session = RealtimeSession::new(
+            SessionId::new("session-1").unwrap(),
+            crate::PersonaId::new("persona-1").unwrap(),
+        );
+        session.transition(RealtimeSessionState::Active).unwrap();
+        assert!(session.transition(RealtimeSessionState::Closed).is_err());
+        session.transition(RealtimeSessionState::Revoked).unwrap();
+        assert!(session.transition(RealtimeSessionState::Active).is_err());
+        session.transition(RealtimeSessionState::Closed).unwrap();
     }
 
     #[test]
