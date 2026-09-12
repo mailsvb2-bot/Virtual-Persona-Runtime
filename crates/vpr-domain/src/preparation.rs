@@ -25,6 +25,8 @@ pub struct PersonaReadiness {
     text: ModalityReadiness,
     voice: ModalityReadiness,
     video: ModalityReadiness,
+    active_voice_job: Option<PreparationJobId>,
+    active_video_job: Option<PreparationJobId>,
 }
 
 impl PersonaReadiness {
@@ -46,6 +48,8 @@ impl PersonaReadiness {
             text: ModalityReadiness::Ready,
             voice: ModalityReadiness::NotReady,
             video: ModalityReadiness::NotReady,
+            active_voice_job: None,
+            active_video_job: None,
         })
     }
 
@@ -80,10 +84,33 @@ impl PersonaReadiness {
         self.is_current_for(profile) && self.text == ModalityReadiness::Ready
     }
 
-    /// Applies preparation evidence without mutating canonical Persona identity.
+    /// Starts one canonical preparation attempt for a non-text modality.
     ///
     /// # Errors
-    /// Returns `ReadinessError` when the job belongs to another Persona or an older/newer revision.
+    /// Rejects text, an already-ready modality, or a concurrent active attempt.
+    pub fn start_preparation(
+        &mut self,
+        id: PreparationJobId,
+        modality: Modality,
+    ) -> Result<PreparationJob, ReadinessError> {
+        if modality == Modality::Text {
+            return Err(ReadinessError::TextPreparationNotRequired);
+        }
+        if self.modality(modality) == ModalityReadiness::Ready {
+            return Err(ReadinessError::ModalityAlreadyReady);
+        }
+        if self.active_job(modality).is_some() {
+            return Err(ReadinessError::PreparationAlreadyActive);
+        }
+        self.set_active_job(modality, Some(id.clone()));
+        self.set_modality(modality, ModalityReadiness::Preparing);
+        Ok(PreparationJob::bound(id, self, modality))
+    }
+
+    /// Applies evidence only from the canonical active attempt.
+    ///
+    /// # Errors
+    /// Rejects evidence for another Persona/revision, text preparation, or a stale/superseded job.
     pub fn apply_job(&mut self, job: &PreparationJob) -> Result<(), ReadinessError> {
         if self.persona_id != job.persona_id {
             return Err(ReadinessError::ForeignPersona);
@@ -91,18 +118,41 @@ impl PersonaReadiness {
         if self.persona_version != job.persona_version {
             return Err(ReadinessError::StalePersonaVersion);
         }
-
-        let next = match job.state {
-            PreparationJobState::Queued => return Ok(()),
-            PreparationJobState::Preparing | PreparationJobState::Validating => {
-                ModalityReadiness::Preparing
-            }
-            PreparationJobState::Ready => ModalityReadiness::Ready,
-            PreparationJobState::Failed => ModalityReadiness::Failed,
-            PreparationJobState::Cancelled => ModalityReadiness::NotReady,
+        if job.modality == Modality::Text {
+            return Err(ReadinessError::TextPreparationNotRequired);
+        }
+        if self.active_job(job.modality) != Some(&job.id) {
+            return Err(ReadinessError::StalePreparationJob);
+        }
+        let (next, terminal) = match job.state {
+            PreparationJobState::Queued
+            | PreparationJobState::Preparing
+            | PreparationJobState::Validating => (ModalityReadiness::Preparing, false),
+            PreparationJobState::Ready => (ModalityReadiness::Ready, true),
+            PreparationJobState::Failed => (ModalityReadiness::Failed, true),
+            PreparationJobState::Cancelled => (ModalityReadiness::NotReady, true),
         };
         self.set_modality(job.modality, next);
+        if terminal {
+            self.set_active_job(job.modality, None);
+        }
         Ok(())
+    }
+
+    fn active_job(&self, modality: Modality) -> Option<&PreparationJobId> {
+        match modality {
+            Modality::Text => None,
+            Modality::Voice => self.active_voice_job.as_ref(),
+            Modality::Video => self.active_video_job.as_ref(),
+        }
+    }
+
+    fn set_active_job(&mut self, modality: Modality, id: Option<PreparationJobId>) {
+        match modality {
+            Modality::Text => {}
+            Modality::Voice => self.active_voice_job = id,
+            Modality::Video => self.active_video_job = id,
+        }
     }
 
     fn set_modality(&mut self, modality: Modality, readiness: ModalityReadiness) {
@@ -119,6 +169,10 @@ pub enum ReadinessError {
     ProfileNotReviewed,
     ForeignPersona,
     StalePersonaVersion,
+    TextPreparationNotRequired,
+    ModalityAlreadyReady,
+    PreparationAlreadyActive,
+    StalePreparationJob,
 }
 
 impl Display for ReadinessError {
@@ -127,6 +181,16 @@ impl Display for ReadinessError {
             Self::ProfileNotReviewed => "persona must be owner-reviewed before RT0 readiness",
             Self::ForeignPersona => "preparation evidence belongs to another persona",
             Self::StalePersonaVersion => "preparation evidence belongs to another persona version",
+            Self::TextPreparationNotRequired => {
+                "text readiness comes from the reviewed persona profile"
+            }
+            Self::ModalityAlreadyReady => "modality is already ready",
+            Self::PreparationAlreadyActive => {
+                "another preparation job is already active for this modality"
+            }
+            Self::StalePreparationJob => {
+                "preparation job is no longer the canonical active attempt"
+            }
         })
     }
 }
@@ -153,8 +217,7 @@ pub struct PreparationJob {
 }
 
 impl PreparationJob {
-    #[must_use]
-    pub fn new(id: PreparationJobId, readiness: &PersonaReadiness, modality: Modality) -> Self {
+    fn bound(id: PreparationJobId, readiness: &PersonaReadiness, modality: Modality) -> Self {
         Self {
             id,
             persona_id: readiness.persona_id.clone(),
@@ -335,22 +398,18 @@ mod tests {
     fn voice_and_video_fail_independently_without_damaging_text_readiness() {
         let profile = reviewed_profile();
         let mut readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
-        let mut voice = PreparationJob::new(
-            PreparationJobId::new("voice-1").unwrap(),
-            &readiness,
-            Modality::Voice,
-        );
+        let mut voice = readiness
+            .start_preparation(PreparationJobId::new("voice-1").unwrap(), Modality::Voice)
+            .unwrap();
         voice.begin().unwrap();
         readiness.apply_job(&voice).unwrap();
         voice.begin_validation().unwrap();
         voice.mark_ready().unwrap();
         readiness.apply_job(&voice).unwrap();
 
-        let mut video = PreparationJob::new(
-            PreparationJobId::new("video-1").unwrap(),
-            &readiness,
-            Modality::Video,
-        );
+        let mut video = readiness
+            .start_preparation(PreparationJobId::new("video-1").unwrap(), Modality::Video)
+            .unwrap();
         video.begin().unwrap();
         video.fail().unwrap();
         readiness.apply_job(&video).unwrap();
@@ -381,12 +440,10 @@ mod tests {
     #[test]
     fn stale_job_cannot_mutate_new_revision_readiness() {
         let mut profile = reviewed_profile();
-        let old_readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
-        let mut old_job = PreparationJob::new(
-            PreparationJobId::new("voice-old").unwrap(),
-            &old_readiness,
-            Modality::Voice,
-        );
+        let mut old_readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
+        let mut old_job = old_readiness
+            .start_preparation(PreparationJobId::new("voice-old").unwrap(), Modality::Voice)
+            .unwrap();
         old_job.begin().unwrap();
         old_job.begin_validation().unwrap();
         old_job.mark_ready().unwrap();
@@ -409,16 +466,70 @@ mod tests {
     #[test]
     fn preparation_job_cannot_skip_validation_or_leave_terminal_state() {
         let profile = reviewed_profile();
-        let readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
-        let mut job = PreparationJob::new(
-            PreparationJobId::new("video-guard").unwrap(),
-            &readiness,
-            Modality::Video,
-        );
+        let mut readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
+        let mut job = readiness
+            .start_preparation(
+                PreparationJobId::new("video-guard").unwrap(),
+                Modality::Video,
+            )
+            .unwrap();
         assert!(job.mark_ready().is_err());
         job.begin().unwrap();
         job.begin_validation().unwrap();
         job.cancel().unwrap();
         assert!(job.mark_ready().is_err());
+    }
+    #[test]
+    fn concurrent_job_for_same_modality_is_rejected() {
+        let profile = reviewed_profile();
+        let mut readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
+        let _first = readiness
+            .start_preparation(PreparationJobId::new("voice-a").unwrap(), Modality::Voice)
+            .unwrap();
+        assert_eq!(
+            readiness.start_preparation(PreparationJobId::new("voice-b").unwrap(), Modality::Voice),
+            Err(ReadinessError::PreparationAlreadyActive)
+        );
+    }
+
+    #[test]
+    fn terminal_evidence_from_superseded_job_cannot_overwrite_retry() {
+        let profile = reviewed_profile();
+        let mut readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
+        let mut old = readiness
+            .start_preparation(
+                PreparationJobId::new("voice-old-2").unwrap(),
+                Modality::Voice,
+            )
+            .unwrap();
+        old.begin().unwrap();
+        old.fail().unwrap();
+        readiness.apply_job(&old).unwrap();
+        let mut retry = readiness
+            .start_preparation(
+                PreparationJobId::new("voice-retry").unwrap(),
+                Modality::Voice,
+            )
+            .unwrap();
+        retry.begin().unwrap();
+        assert_eq!(
+            readiness.apply_job(&old),
+            Err(ReadinessError::StalePreparationJob)
+        );
+        readiness.apply_job(&retry).unwrap();
+        assert_eq!(
+            readiness.modality(Modality::Voice),
+            ModalityReadiness::Preparing
+        );
+    }
+
+    #[test]
+    fn text_cannot_enter_provider_preparation_plane() {
+        let profile = reviewed_profile();
+        let mut readiness = PersonaReadiness::from_reviewed_profile(&profile).unwrap();
+        assert_eq!(
+            readiness.start_preparation(PreparationJobId::new("text-job").unwrap(), Modality::Text),
+            Err(ReadinessError::TextPreparationNotRequired)
+        );
     }
 }
