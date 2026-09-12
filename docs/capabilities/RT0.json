@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.1.0",
+  "catalogue_version": "0.2.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -70,6 +70,11 @@
     },
     {
       "id": "preparation.modality_readiness",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "provider.openai_compatible_adapter",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },
