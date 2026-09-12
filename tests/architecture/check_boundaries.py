@@ -59,5 +59,14 @@ for path in (CRATES / "vpr-domain" / "src").glob("*.rs"):
                 f"forbidden inward dependency {forbidden!r} in {path.relative_to(ROOT)}"
             )
 
+# Canonical mutable runtime identities must not regain split-brain clone/permit escape hatches.
+runtime_source = (CRATES / "vpr-runtime" / "src" / "lib.rs").read_text(encoding="utf-8")
+if "#[derive(Debug, Clone)]\npub struct ActiveTurn" in runtime_source:
+    raise SystemExit("ActiveTurn must remain non-cloneable canonical mutable state")
+if "pub struct ProviderExecutionPermit" in runtime_source:
+    raise SystemExit("provider execution permits must remain internal to runtime execution methods")
+if "pub fn begin_external_provider_call" in runtime_source:
+    raise SystemExit("raw provider-call permit issuance must not be public")
+
 print("architecture-boundaries: PASS")
 sys.exit(0)

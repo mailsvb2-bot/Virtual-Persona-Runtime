@@ -8,7 +8,10 @@ use vpr_domain::{
     RealtimeSession, RealtimeSessionState, Rt0ReasonCode, SessionId, Turn, TurnExecutionSnapshot,
     TurnId, TurnState,
 };
-use vpr_integration::{CancellationProbe, ProviderErrorKind};
+use vpr_integration::{
+    AudioInput, AudioSink, AvatarPort, CancellationProbe, LlmPort, LlmRequest, ProviderError,
+    ProviderErrorKind, SttPort, TextSink, Transcript, TtsPort, UsageEvidence, VideoSink,
+};
 use vpr_policy::{
     AuthorityScope, AuthorizationSnapshot, AuthorizationState, AuthorizationValidityError,
     ConsentState, DataClass, EffectiveAuthority, EgressDecision, EgressReason, EgressRequest,
@@ -26,7 +29,7 @@ impl TurnCancellation {
     }
 
     #[must_use]
-    pub fn is_cancelled(&self) -> bool {
+    fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
 
@@ -70,6 +73,34 @@ impl RuntimeDenyReason {
             Self::TurnCancelled => Rt0ReasonCode::TurnCancelled,
             Self::InternalError => Rt0ReasonCode::InternalError,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderExecutionError {
+    Denied(RuntimeDenyReason),
+    Provider(ProviderError),
+}
+
+impl ProviderExecutionError {
+    #[must_use]
+    pub const fn reason_code(&self) -> Rt0ReasonCode {
+        match self {
+            Self::Denied(reason) => reason.reason_code(),
+            Self::Provider(error) => provider_reason_code(error.kind),
+        }
+    }
+}
+
+impl From<RuntimeDenyReason> for ProviderExecutionError {
+    fn from(value: RuntimeDenyReason) -> Self {
+        Self::Denied(value)
+    }
+}
+
+impl From<ProviderError> for ProviderExecutionError {
+    fn from(value: ProviderError) -> Self {
+        Self::Provider(value)
     }
 }
 
@@ -226,8 +257,6 @@ impl AuthorizationController {
         });
         match egress {
             EgressDecision::Allow(_) => Ok(ProviderExecutionPermit {
-                authorization_epoch: snapshot.epoch(),
-                egress_policy_revision: policy_state.revision,
                 cancellation: context.cancellation.clone(),
             }),
             EgressDecision::LocalOnly(_) => Err(RuntimeDenyReason::LocalOnlyRequired),
@@ -497,36 +526,37 @@ impl ActiveSession {
     }
 }
 
-/// Linearized permission to start one provider operation.
+/// Internal linearized capability for one immediate provider operation.
 ///
-/// Issuance is serialized against revoke/replace. A permit issued before revocation represents
-/// already-started work and carries the same cancellation signal that revocation flips.
+/// It is never exposed to callers; public provider execution methods acquire and consume it
+/// inside one runtime call, eliminating delayed or repeated permit use.
 #[derive(Debug)]
-pub struct ProviderExecutionPermit {
-    authorization_epoch: vpr_domain::AuthorizationEpoch,
-    egress_policy_revision: PolicyRevision,
+struct ProviderExecutionPermit {
     cancellation: TurnCancellation,
 }
 
-impl ProviderExecutionPermit {
-    #[must_use]
-    pub const fn authorization_epoch(&self) -> vpr_domain::AuthorizationEpoch {
-        self.authorization_epoch
-    }
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderExecutionContext<'a> {
+    now_millis: u64,
+    authority: &'a EffectiveAuthority,
+    required_scope: &'a AuthorityScope,
+    data_class: DataClass,
+}
 
+impl<'a> ProviderExecutionContext<'a> {
     #[must_use]
-    pub const fn egress_policy_revision(&self) -> PolicyRevision {
-        self.egress_policy_revision
-    }
-
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.cancellation.is_cancelled()
-    }
-
-    #[must_use]
-    pub fn cancellation_probe(&self) -> &dyn CancellationProbe {
-        &self.cancellation
+    pub const fn new(
+        now_millis: u64,
+        authority: &'a EffectiveAuthority,
+        required_scope: &'a AuthorityScope,
+        data_class: DataClass,
+    ) -> Self {
+        Self {
+            now_millis,
+            authority,
+            required_scope,
+            data_class,
+        }
     }
 }
 
@@ -563,7 +593,7 @@ impl OutputSegmentEvidence {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ActiveTurn {
     turn: Turn,
     snapshot: TurnExecutionSnapshot,
@@ -675,7 +705,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `RuntimeDenyReason` if the turn's bound authority is stale/revoked/expired or the
     /// current scope/egress policy forbids the call.
-    pub fn begin_external_provider_call(
+    fn issue_provider_permit(
         &self,
         now_millis: u64,
         authority: &EffectiveAuthority,
@@ -700,6 +730,101 @@ impl ActiveTurn {
                 data_class,
             },
         )
+    }
+
+    /// Executes one LLM operation through the canonical provider enforcement boundary.
+    ///
+    /// # Errors
+    /// Returns a runtime denial when current authority/policy forbids the operation, or the typed
+    /// provider error returned by the adapter.
+    pub fn execute_llm(
+        &self,
+        context: ProviderExecutionContext<'_>,
+        port: &dyn LlmPort,
+        request: &LlmRequest,
+        sink: &mut dyn TextSink,
+    ) -> Result<UsageEvidence, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_permit(
+                context.now_millis,
+                context.authority,
+                context.required_scope,
+                context.data_class,
+            )
+            .map_err(ProviderExecutionError::from)?;
+        port.stream(request, &permit.cancellation, sink)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Executes one STT operation through the canonical provider enforcement boundary.
+    ///
+    /// # Errors
+    /// Returns a runtime denial when current authority/policy forbids the operation, or the typed
+    /// provider error returned by the adapter.
+    pub fn execute_stt(
+        &self,
+        context: ProviderExecutionContext<'_>,
+        port: &dyn SttPort,
+        input: &AudioInput,
+    ) -> Result<(Transcript, UsageEvidence), ProviderExecutionError> {
+        let permit = self
+            .issue_provider_permit(
+                context.now_millis,
+                context.authority,
+                context.required_scope,
+                context.data_class,
+            )
+            .map_err(ProviderExecutionError::from)?;
+        port.transcribe(input, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Executes one TTS operation through the canonical provider enforcement boundary.
+    ///
+    /// # Errors
+    /// Returns a runtime denial when current authority/policy forbids the operation, or the typed
+    /// provider error returned by the adapter.
+    pub fn execute_tts(
+        &self,
+        context: ProviderExecutionContext<'_>,
+        port: &dyn TtsPort,
+        text: &str,
+        sink: &mut dyn AudioSink,
+    ) -> Result<UsageEvidence, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_permit(
+                context.now_millis,
+                context.authority,
+                context.required_scope,
+                context.data_class,
+            )
+            .map_err(ProviderExecutionError::from)?;
+        port.synthesize(text, &permit.cancellation, sink)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Executes one avatar-render operation through the canonical provider enforcement boundary.
+    ///
+    /// # Errors
+    /// Returns a runtime denial when current authority/policy forbids the operation, or the typed
+    /// provider error returned by the adapter.
+    pub fn execute_avatar(
+        &self,
+        context: ProviderExecutionContext<'_>,
+        port: &dyn AvatarPort,
+        audio: &AudioInput,
+        sink: &mut dyn VideoSink,
+    ) -> Result<UsageEvidence, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_permit(
+                context.now_millis,
+                context.authority,
+                context.required_scope,
+                context.data_class,
+            )
+            .map_err(ProviderExecutionError::from)?;
+        port.render(audio, &permit.cancellation, sink)
+            .map_err(ProviderExecutionError::from)
     }
 
     /// Moves an authorized turn into processing.
@@ -965,7 +1090,7 @@ mod tests {
         let session = active_session();
         let turn = turn(&session, "premature");
         assert!(matches!(
-            turn.begin_external_provider_call(0, &authority, &scope, DataClass::Public),
+            turn.issue_provider_permit(0, &authority, &scope, DataClass::Public),
             Err(RuntimeDenyReason::InvalidTurnState)
         ));
     }
@@ -978,15 +1103,15 @@ mod tests {
         turn.authorize(0).unwrap();
         turn.begin_processing().unwrap();
         let permit = turn
-            .begin_external_provider_call(0, &authority, &scope, DataClass::Public)
+            .issue_provider_permit(0, &authority, &scope, DataClass::Public)
             .unwrap();
-        assert!(!permit.is_cancelled());
+        assert!(!permit.cancellation.is_cancelled());
 
         session.revoke().unwrap();
         assert_eq!(session.state(), RealtimeSessionState::Revoked);
-        assert!(permit.is_cancelled());
+        assert!(permit.cancellation.is_cancelled());
         assert!(matches!(
-            turn.begin_external_provider_call(1, &authority, &scope, DataClass::Public),
+            turn.issue_provider_permit(1, &authority, &scope, DataClass::Public),
             Err(RuntimeDenyReason::AuthorizationStale)
         ));
     }
@@ -999,7 +1124,7 @@ mod tests {
         let mut turn = turn(&session, "local-only");
         turn.authorize(0).unwrap();
         assert!(matches!(
-            turn.begin_external_provider_call(0, &authority, &scope, DataClass::Public),
+            turn.issue_provider_permit(0, &authority, &scope, DataClass::Public),
             Err(RuntimeDenyReason::LocalOnlyRequired)
         ));
     }
@@ -1012,14 +1137,14 @@ mod tests {
         turn.authorize(0).unwrap();
         turn.begin_processing().unwrap();
         let permit = turn
-            .begin_external_provider_call(0, &authority, &scope, DataClass::Biometric)
+            .issue_provider_permit(0, &authority, &scope, DataClass::Biometric)
             .unwrap();
-        assert!(!permit.is_cancelled());
+        assert!(!permit.cancellation.is_cancelled());
 
         session.set_consent(ConsentState::Revoked).unwrap();
-        assert!(permit.is_cancelled());
+        assert!(permit.cancellation.is_cancelled());
         assert!(matches!(
-            turn.begin_external_provider_call(1, &authority, &scope, DataClass::Biometric),
+            turn.issue_provider_permit(1, &authority, &scope, DataClass::Biometric),
             Err(RuntimeDenyReason::EgressPolicyStale)
         ));
     }
@@ -1031,7 +1156,7 @@ mod tests {
         session.set_consent(ConsentState::Missing).unwrap();
         let mut turn = turn(&session, "consent");
         turn.authorize(0).unwrap();
-        let denied = turn.begin_external_provider_call(0, &authority, &scope, DataClass::Biometric);
+        let denied = turn.issue_provider_permit(0, &authority, &scope, DataClass::Biometric);
         assert!(matches!(denied, Err(RuntimeDenyReason::ConsentRequired)));
         assert_eq!(
             denied.unwrap_err().reason_code(),
@@ -1046,33 +1171,33 @@ mod tests {
         let mut turn = turn(&session, "auth-replace");
         turn.authorize(0).unwrap();
         let permit = turn
-            .begin_external_provider_call(0, &authority, &scope, DataClass::Public)
+            .issue_provider_permit(0, &authority, &scope, DataClass::Public)
             .unwrap();
         session.refresh_authorization(None).unwrap();
-        assert!(permit.is_cancelled());
+        assert!(permit.cancellation.is_cancelled());
         assert!(matches!(
-            turn.begin_external_provider_call(1, &authority, &scope, DataClass::Public),
+            turn.issue_provider_permit(1, &authority, &scope, DataClass::Public),
             Err(RuntimeDenyReason::AuthorizationStale)
         ));
     }
 
     #[test]
-    fn permit_and_execution_snapshot_bind_same_revisions() {
+    fn execution_snapshot_revisions_gate_provider_execution() {
         let (scope, authority) = allowed_provider_authority();
         let session = active_session();
         let mut turn = turn(&session, "snapshot");
         turn.authorize(0).unwrap();
-        let permit = turn
-            .begin_external_provider_call(0, &authority, &scope, DataClass::Public)
-            .unwrap();
-        assert_eq!(
-            permit.authorization_epoch(),
-            turn.snapshot().authorization_epoch()
+        assert!(
+            turn.issue_provider_permit(0, &authority, &scope, DataClass::Public)
+                .is_ok()
         );
-        assert_eq!(
-            permit.egress_policy_revision(),
-            turn.snapshot().egress_policy_revision()
-        );
+        session.refresh_authorization(None).unwrap();
+        assert!(matches!(
+            turn.issue_provider_permit(1, &authority, &scope, DataClass::Public),
+            Err(RuntimeDenyReason::AuthorizationStale)
+        ));
+        assert_eq!(turn.snapshot().authorization_epoch().get(), 1);
+        assert_eq!(turn.snapshot().egress_policy_revision().get(), 1);
     }
 
     #[test]

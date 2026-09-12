@@ -1,9 +1,54 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use vpr_domain::{
     CorrelationId, OutputCheckpoint, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode,
     PersonaVersion, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
+use vpr_integration::{
+    CancellationProbe, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TextSink,
+    UsageEvidence,
+};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
-use vpr_runtime::{ActiveSession, ActiveTurn, RuntimeDenyReason};
+use vpr_runtime::{
+    ActiveSession, ActiveTurn, ProviderExecutionContext, ProviderExecutionError, RuntimeDenyReason,
+};
+
+#[derive(Default)]
+struct TestLlm {
+    calls: AtomicUsize,
+}
+
+impl LlmPort for TestLlm {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "test".into(),
+            model: "test".into(),
+            representation: None,
+        }
+    }
+
+    fn stream(
+        &self,
+        _request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn TextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(!cancellation.is_cancelled());
+        sink.push_text("ok")?;
+        Ok(UsageEvidence::default())
+    }
+}
+
+#[derive(Default)]
+struct TestSink(String);
+
+impl TextSink for TestSink {
+    fn push_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
+        self.0.push_str(chunk);
+        Ok(())
+    }
+}
 
 #[test]
 fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_only() {
@@ -34,11 +79,21 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
     .unwrap();
     turn.authorize(1_000).unwrap();
     turn.begin_processing().unwrap();
-    let permit = turn
-        .begin_external_provider_call(1_000, &authority, &provider_scope, DataClass::Biometric)
-        .unwrap();
-    turn.begin_output().unwrap();
 
+    let mut sink = TestSink::default();
+    turn.execute_llm(
+        ProviderExecutionContext::new(1_000, &authority, &provider_scope, DataClass::Biometric),
+        &TestLlm::default(),
+        &LlmRequest {
+            locale: "ru-RU".into(),
+            context: "test".into(),
+        },
+        &mut sink,
+    )
+    .unwrap();
+    assert_eq!(sink.0, "ok");
+
+    turn.begin_output().unwrap();
     let spoken = turn.begin_output_segment().unwrap();
     turn.mark_output_sent(spoken).unwrap();
     turn.mark_output_played(spoken).unwrap();
@@ -46,10 +101,21 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
     turn.mark_output_sent(tail).unwrap();
 
     session.revoke().unwrap();
-    assert!(permit.is_cancelled());
-    let denied =
-        turn.begin_external_provider_call(1_001, &authority, &provider_scope, DataClass::Biometric);
-    assert!(matches!(denied, Err(RuntimeDenyReason::AuthorizationStale)));
+    let denied = turn.execute_llm(
+        ProviderExecutionContext::new(1_001, &authority, &provider_scope, DataClass::Biometric),
+        &TestLlm::default(),
+        &LlmRequest {
+            locale: "ru-RU".into(),
+            context: "blocked".into(),
+        },
+        &mut TestSink::default(),
+    );
+    assert!(matches!(
+        denied,
+        Err(ProviderExecutionError::Denied(
+            RuntimeDenyReason::AuthorizationStale
+        ))
+    ));
     assert_eq!(
         denied.unwrap_err().reason_code(),
         Rt0ReasonCode::AuthRevoked
@@ -73,4 +139,52 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         }
     );
     assert!(!segments[1].eligible_as_spoken());
+}
+
+#[test]
+fn expired_authority_blocks_adapter_before_provider_start() {
+    let persona = PersonaIdentity::new(
+        PersonaId::new("persona-expiry").unwrap(),
+        PersonaVersion::new(1).unwrap(),
+        PersonaMode::DigitalTwin,
+    );
+    let mut session = ActiveSession::new(
+        SessionId::new("session-expiry").unwrap(),
+        persona.id().clone(),
+        Some(10),
+        true,
+        ConsentState::Granted,
+        false,
+    );
+    session.activate().unwrap();
+    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
+    let authority =
+        EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope.clone()], [])]);
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-expiry").unwrap(),
+        CorrelationId::new("corr-expiry").unwrap(),
+        &persona,
+        &session,
+    )
+    .unwrap();
+    turn.authorize(1).unwrap();
+    turn.begin_processing().unwrap();
+
+    let provider = TestLlm::default();
+    let result = turn.execute_llm(
+        ProviderExecutionContext::new(10, &authority, &provider_scope, DataClass::Public),
+        &provider,
+        &LlmRequest {
+            locale: "ru-RU".into(),
+            context: "must not leave runtime".into(),
+        },
+        &mut TestSink::default(),
+    );
+    assert!(matches!(
+        result,
+        Err(ProviderExecutionError::Denied(
+            RuntimeDenyReason::AuthorizationExpired
+        ))
+    ));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
