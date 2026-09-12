@@ -81,13 +81,8 @@ impl PersonaIdentity {
         matches!(self.mode, PersonaMode::DigitalTwin)
     }
 
-    /// Advances the canonical Persona version after a reviewed material change.
-    ///
-    /// # Errors
-    /// Returns `PersonaVersionExhausted` if the version cannot advance.
-    pub fn advance_version(&mut self) -> Result<(), PersonaVersionExhausted> {
-        self.version = self.version.next()?;
-        Ok(())
+    pub(crate) const fn apply_version(&mut self, version: PersonaVersion) {
+        self.version = version;
     }
 }
 
