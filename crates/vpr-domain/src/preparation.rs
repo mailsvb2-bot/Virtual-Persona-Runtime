@@ -1,9 +1,7 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use crate::{
-    PersonaCaptureState, PersonaId, PersonaProfile, PersonaVersion, PreparationJobId,
-};
+use crate::{PersonaCaptureState, PersonaId, PersonaProfile, PersonaVersion, PreparationJobId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modality {
