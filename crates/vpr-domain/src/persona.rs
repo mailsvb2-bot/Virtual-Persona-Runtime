@@ -25,12 +25,32 @@ impl PersonaVersion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonaIdentity {
-    pub id: PersonaId,
-    pub version: PersonaVersion,
-    pub mode: PersonaMode,
+    id: PersonaId,
+    version: PersonaVersion,
+    mode: PersonaMode,
 }
 
 impl PersonaIdentity {
+    #[must_use]
+    pub const fn new(id: PersonaId, version: PersonaVersion, mode: PersonaMode) -> Self {
+        Self { id, version, mode }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &PersonaId {
+        &self.id
+    }
+
+    #[must_use]
+    pub const fn version(&self) -> PersonaVersion {
+        self.version
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> PersonaMode {
+        self.mode
+    }
+
     #[must_use]
     pub fn is_rt0_supported(&self) -> bool {
         self.mode == PersonaMode::DigitalTwin

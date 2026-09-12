@@ -1,7 +1,167 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
-use crate::{CorrelationId, TurnId};
+use crate::{
+    AuthorizationEpoch, CorrelationId, PersonaId, PersonaMode, PersonaVersion, PolicyRevision,
+    SessionId, TurnId,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RealtimeSessionState {
+    Created,
+    Active,
+    Draining,
+    Revoked,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeSession {
+    id: SessionId,
+    persona_id: PersonaId,
+    state: RealtimeSessionState,
+}
+
+impl RealtimeSession {
+    #[must_use]
+    pub fn new(id: SessionId, persona_id: PersonaId) -> Self {
+        Self {
+            id,
+            persona_id,
+            state: RealtimeSessionState::Created,
+        }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn persona_id(&self) -> &PersonaId {
+        &self.persona_id
+    }
+
+    #[must_use]
+    pub fn state(&self) -> RealtimeSessionState {
+        self.state
+    }
+
+    /// Advances the canonical realtime-session lifecycle.
+    ///
+    /// # Errors
+    /// Returns `SessionTransitionError` when the transition is forbidden.
+    pub fn transition(&mut self, next: RealtimeSessionState) -> Result<(), SessionTransitionError> {
+        let valid = matches!(
+            (self.state, next),
+            (
+                RealtimeSessionState::Created,
+                RealtimeSessionState::Active | RealtimeSessionState::Revoked
+            ) | (
+                RealtimeSessionState::Active,
+                RealtimeSessionState::Draining | RealtimeSessionState::Revoked
+            ) | (
+                RealtimeSessionState::Draining,
+                RealtimeSessionState::Closed | RealtimeSessionState::Revoked
+            ) | (RealtimeSessionState::Revoked, RealtimeSessionState::Closed)
+        );
+        if !valid {
+            return Err(SessionTransitionError {
+                from: self.state,
+                to: next,
+            });
+        }
+        self.state = next;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTransitionError {
+    pub from: RealtimeSessionState,
+    pub to: RealtimeSessionState,
+}
+
+impl Display for SessionTransitionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "invalid session transition: {:?} -> {:?}",
+            self.from, self.to
+        )
+    }
+}
+
+impl Error for SessionTransitionError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnExecutionSnapshot {
+    turn_id: TurnId,
+    correlation_id: CorrelationId,
+    persona_id: PersonaId,
+    persona_version: PersonaVersion,
+    persona_mode: PersonaMode,
+    authorization_epoch: AuthorizationEpoch,
+    egress_policy_revision: PolicyRevision,
+}
+
+impl TurnExecutionSnapshot {
+    #[must_use]
+    pub const fn new(
+        turn_id: TurnId,
+        correlation_id: CorrelationId,
+        persona_id: PersonaId,
+        persona_version: PersonaVersion,
+        persona_mode: PersonaMode,
+        authorization_epoch: AuthorizationEpoch,
+        egress_policy_revision: PolicyRevision,
+    ) -> Self {
+        Self {
+            turn_id,
+            correlation_id,
+            persona_id,
+            persona_version,
+            persona_mode,
+            authorization_epoch,
+            egress_policy_revision,
+        }
+    }
+
+    #[must_use]
+    pub fn turn_id(&self) -> &TurnId {
+        &self.turn_id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
+    }
+
+    #[must_use]
+    pub fn persona_id(&self) -> &PersonaId {
+        &self.persona_id
+    }
+
+    #[must_use]
+    pub const fn persona_version(&self) -> PersonaVersion {
+        self.persona_version
+    }
+
+    #[must_use]
+    pub const fn persona_mode(&self) -> PersonaMode {
+        self.persona_mode
+    }
+
+    #[must_use]
+    pub const fn authorization_epoch(&self) -> AuthorizationEpoch {
+        self.authorization_epoch
+    }
+
+    #[must_use]
+    pub const fn egress_policy_revision(&self) -> PolicyRevision {
+        self.egress_policy_revision
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnState {
@@ -17,8 +177,8 @@ pub enum TurnState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
-    pub id: TurnId,
-    pub correlation_id: CorrelationId,
+    id: TurnId,
+    correlation_id: CorrelationId,
     state: TurnState,
 }
 
@@ -30,6 +190,16 @@ impl Turn {
             correlation_id,
             state: TurnState::Received,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> &TurnId {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn correlation_id(&self) -> &CorrelationId {
+        &self.correlation_id
     }
 
     #[must_use]
@@ -52,13 +222,19 @@ impl Turn {
                     | TurnState::Cancelled
             ) | (
                 TurnState::Authorized,
-                TurnState::Processing | TurnState::Failed | TurnState::Cancelled
+                TurnState::Processing
+                    | TurnState::Denied
+                    | TurnState::Failed
+                    | TurnState::Cancelled
             ) | (
                 TurnState::Processing,
-                TurnState::Outputting | TurnState::Failed | TurnState::Cancelled
+                TurnState::Outputting
+                    | TurnState::Denied
+                    | TurnState::Failed
+                    | TurnState::Cancelled
             ) | (
                 TurnState::Outputting,
-                TurnState::Completed | TurnState::Failed | TurnState::Cancelled
+                TurnState::Completed | TurnState::Denied | TurnState::Failed | TurnState::Cancelled
             )
         );
         if !valid {
@@ -229,6 +405,19 @@ mod tests {
         output.mark_sent().unwrap();
         output.mark_cancelled().unwrap();
         assert!(!output.eligible_as_spoken());
+    }
+
+    #[test]
+    fn revoked_session_can_only_close() {
+        let mut session = RealtimeSession::new(
+            SessionId::new("session-1").unwrap(),
+            crate::PersonaId::new("persona-1").unwrap(),
+        );
+        session.transition(RealtimeSessionState::Active).unwrap();
+        assert!(session.transition(RealtimeSessionState::Closed).is_err());
+        session.transition(RealtimeSessionState::Revoked).unwrap();
+        assert!(session.transition(RealtimeSessionState::Active).is_err());
+        session.transition(RealtimeSessionState::Closed).unwrap();
     }
 
     #[test]

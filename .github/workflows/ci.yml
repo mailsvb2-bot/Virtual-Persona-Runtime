@@ -20,6 +20,8 @@ jobs:
           cargo --version
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
+      - name: Release contracts
+        run: python3 tests/architecture/check_release_contracts.py
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
