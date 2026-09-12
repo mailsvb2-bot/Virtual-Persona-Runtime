@@ -1,4 +1,4 @@
-use vpr_policy::{AuthorityScope, DataClass, EffectiveAuthority};
+use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::TurnCancellation;
 
@@ -13,20 +13,14 @@ pub(crate) struct ProviderExecutionPermit {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderExecutionContext<'a> {
-    pub(crate) authority: &'a EffectiveAuthority,
     pub(crate) required_scope: &'a AuthorityScope,
     pub(crate) data_class: DataClass,
 }
 
 impl<'a> ProviderExecutionContext<'a> {
     #[must_use]
-    pub const fn new(
-        authority: &'a EffectiveAuthority,
-        required_scope: &'a AuthorityScope,
-        data_class: DataClass,
-    ) -> Self {
+    pub const fn new(required_scope: &'a AuthorityScope, data_class: DataClass) -> Self {
         Self {
-            authority,
             required_scope,
             data_class,
         }

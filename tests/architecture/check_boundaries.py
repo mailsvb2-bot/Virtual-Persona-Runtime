@@ -91,6 +91,8 @@ if "pub struct TurnCancellation" in cancellation_source or "pub fn cancellation(
 context_block = provider_source.split("pub struct ProviderExecutionContext", 1)[1].split("}", 1)[0]
 if "now_millis" in context_block:
     raise SystemExit("provider execution context must not accept caller-supplied lease time")
+if "EffectiveAuthority" in provider_source or "authority" in context_block:
+    raise SystemExit("provider execution context must not accept caller-supplied effective authority")
 
 # Prevent production God Files from reappearing. Tests are allowed to be larger evidence bundles.
 MAX_PRODUCTION_RUST_LINES = 600

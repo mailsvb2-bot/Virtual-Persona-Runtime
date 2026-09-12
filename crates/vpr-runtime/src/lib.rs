@@ -10,7 +10,7 @@ mod turn;
 pub use error::{ProviderExecutionError, RuntimeDenyReason, provider_reason_code};
 pub use output::{OutputSegmentEvidence, OutputSegmentId};
 pub use provider::ProviderExecutionContext;
-pub use session::ActiveSession;
+pub use session::{ActiveSession, SessionSecurityConfig};
 pub use turn::ActiveTurn;
 
 #[cfg(test)]

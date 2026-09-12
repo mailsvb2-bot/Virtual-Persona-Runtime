@@ -16,12 +16,13 @@ use crate::provider::ProviderExecutionPermit;
 #[derive(Debug)]
 struct BoundTurnCancellation {
     epoch: vpr_domain::AuthorizationEpoch,
-    pub(crate) cancellation: Weak<AtomicBool>,
+    cancellation: Weak<AtomicBool>,
 }
 
 #[derive(Debug)]
 struct AuthorizationRuntimeState {
     authorization: AuthorizationState,
+    effective_authority: EffectiveAuthority,
     bound_turns: Vec<BoundTurnCancellation>,
 }
 
@@ -38,17 +39,20 @@ pub(crate) struct ProviderCallContext<'a> {
     pub(crate) egress_policy: &'a EgressPolicyController,
     pub(crate) egress_snapshot: EgressPolicySnapshot,
     pub(crate) cancellation: &'a TurnCancellation,
-    pub(crate) authority: &'a EffectiveAuthority,
     pub(crate) required_scope: &'a AuthorityScope,
     pub(crate) data_class: DataClass,
 }
 
 impl AuthorizationController {
     #[must_use]
-    pub(crate) fn new(expires_at_millis: Option<u64>) -> Self {
+    pub(crate) fn new(
+        expires_at_millis: Option<u64>,
+        effective_authority: EffectiveAuthority,
+    ) -> Self {
         Self {
             state: Arc::new(RwLock::new(AuthorizationRuntimeState {
                 authorization: AuthorizationState::new(expires_at_millis),
+                effective_authority,
                 bound_turns: Vec::new(),
             })),
         }
@@ -120,6 +124,24 @@ impl AuthorizationController {
         Ok(())
     }
 
+    pub(crate) fn replace_authority(
+        &self,
+        effective_authority: EffectiveAuthority,
+        expires_at_millis: Option<u64>,
+    ) -> Result<(), RuntimeDenyReason> {
+        let mut state = self
+            .state
+            .write()
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        state
+            .authorization
+            .replace(expires_at_millis)
+            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        state.effective_authority = effective_authority;
+        Self::cancel_stale_bound_turns(&mut state);
+        Ok(())
+    }
+
     pub(crate) fn validate_bound(
         &self,
         snapshot: AuthorizationSnapshot,
@@ -158,7 +180,10 @@ impl AuthorizationController {
         if context.cancellation.is_cancelled() {
             return Err(RuntimeDenyReason::TurnCancelled);
         }
-        if !context.authority.allows(context.required_scope) {
+        if !authorization_state
+            .effective_authority
+            .allows(context.required_scope)
+        {
             return Err(RuntimeDenyReason::AuthorityDenied);
         }
         let egress = decide_egress(EgressRequest {
@@ -187,7 +212,7 @@ pub(crate) struct EgressPolicySnapshot {
 
 #[derive(Debug)]
 struct EgressPolicyRuntimeState {
-    pub(crate) revision: PolicyRevision,
+    revision: PolicyRevision,
     provider_policy_allows: bool,
     consent: ConsentState,
     local_only_required: bool,

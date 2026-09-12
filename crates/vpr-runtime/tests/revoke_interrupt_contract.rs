@@ -11,6 +11,7 @@ use vpr_integration::{
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
 use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionContext, ProviderExecutionError, RuntimeDenyReason,
+    SessionSecurityConfig,
 };
 
 #[derive(Default)]
@@ -57,19 +58,15 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         PersonaVersion::new(1).unwrap(),
         PersonaMode::DigitalTwin,
     );
-    let mut session = ActiveSession::new(
-        SessionId::new("session-owner-test").unwrap(),
-        persona.id().clone(),
-        None,
-        true,
-        ConsentState::Granted,
-        false,
-    );
-    session.activate().unwrap();
-
     let provider_scope = AuthorityScope::new("provider.egress").unwrap();
     let authority =
         EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope.clone()], [])]);
+    let mut session = ActiveSession::new(
+        SessionId::new("session-owner-test").unwrap(),
+        persona.id().clone(),
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
+    );
+    session.activate().unwrap();
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-owner-test").unwrap(),
         CorrelationId::new("corr-owner-test").unwrap(),
@@ -82,7 +79,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 
     let mut sink = TestSink::default();
     turn.execute_llm(
-        ProviderExecutionContext::new(&authority, &provider_scope, DataClass::Biometric),
+        ProviderExecutionContext::new(&provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -102,7 +99,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 
     session.revoke().unwrap();
     let denied = turn.execute_llm(
-        ProviderExecutionContext::new(&authority, &provider_scope, DataClass::Biometric),
+        ProviderExecutionContext::new(&provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -148,13 +145,12 @@ fn expired_authority_fails_closed_before_provider_start() {
         PersonaVersion::new(1).unwrap(),
         PersonaMode::DigitalTwin,
     );
+    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
+    let authority = EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope], [])]);
     let mut session = ActiveSession::new(
         SessionId::new("session-expiry").unwrap(),
         persona.id().clone(),
-        Some(0),
-        true,
-        ConsentState::Granted,
-        false,
+        SessionSecurityConfig::new(authority, Some(0), true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
     let mut turn = ActiveTurn::new(

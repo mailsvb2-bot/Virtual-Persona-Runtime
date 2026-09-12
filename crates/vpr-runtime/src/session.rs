@@ -1,11 +1,39 @@
 use std::sync::Arc;
 
 use vpr_domain::{PersonaId, RealtimeSession, RealtimeSessionState, Rt0ReasonCode, SessionId};
-use vpr_policy::ConsentState;
+use vpr_policy::{ConsentState, EffectiveAuthority};
 
 use crate::authority::{AuthorizationController, EgressPolicyController};
 use crate::clock::{RuntimeClock, SystemClock};
 use crate::error::RuntimeDenyReason;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSecurityConfig {
+    effective_authority: EffectiveAuthority,
+    expires_at_millis: Option<u64>,
+    provider_policy_allows: bool,
+    consent: ConsentState,
+    local_only_required: bool,
+}
+
+impl SessionSecurityConfig {
+    #[must_use]
+    pub const fn new(
+        effective_authority: EffectiveAuthority,
+        expires_at_millis: Option<u64>,
+        provider_policy_allows: bool,
+        consent: ConsentState,
+        local_only_required: bool,
+    ) -> Self {
+        Self {
+            effective_authority,
+            expires_at_millis,
+            provider_policy_allows,
+            consent,
+            local_only_required,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ActiveSession {
@@ -17,41 +45,26 @@ pub struct ActiveSession {
 
 impl ActiveSession {
     #[must_use]
-    pub fn new(
-        id: SessionId,
-        persona_id: PersonaId,
-        expires_at_millis: Option<u64>,
-        provider_policy_allows: bool,
-        consent: ConsentState,
-        local_only_required: bool,
-    ) -> Self {
-        Self::with_clock(
-            id,
-            persona_id,
-            expires_at_millis,
-            provider_policy_allows,
-            consent,
-            local_only_required,
-            Arc::new(SystemClock),
-        )
+    pub fn new(id: SessionId, persona_id: PersonaId, security: SessionSecurityConfig) -> Self {
+        Self::with_clock(id, persona_id, security, Arc::new(SystemClock))
     }
 
     pub(crate) fn with_clock(
         id: SessionId,
         persona_id: PersonaId,
-        expires_at_millis: Option<u64>,
-        provider_policy_allows: bool,
-        consent: ConsentState,
-        local_only_required: bool,
+        security: SessionSecurityConfig,
         clock: Arc<dyn RuntimeClock>,
     ) -> Self {
         Self {
             session: RealtimeSession::new(id, persona_id),
-            authorization: AuthorizationController::new(expires_at_millis),
+            authorization: AuthorizationController::new(
+                security.expires_at_millis,
+                security.effective_authority,
+            ),
             egress_policy: EgressPolicyController::new(
-                provider_policy_allows,
-                consent,
-                local_only_required,
+                security.provider_policy_allows,
+                security.consent,
+                security.local_only_required,
             ),
             clock,
         }
@@ -146,6 +159,24 @@ impl ActiveSession {
     pub fn set_local_only_required(&self, required: bool) -> Result<(), Rt0ReasonCode> {
         self.egress_policy
             .set_local_only_required(required)
+            .map_err(RuntimeDenyReason::reason_code)
+    }
+
+    /// Replaces canonical effective authority, rotates the epoch, and cancels work bound to it.
+    ///
+    /// # Errors
+    /// Returns `INVALID_STATE_TRANSITION` unless the session is active, or a stable RT0 reason
+    /// if the authoritative state cannot be replaced safely.
+    pub fn replace_authority(
+        &self,
+        effective_authority: EffectiveAuthority,
+        expires_at_millis: Option<u64>,
+    ) -> Result<(), Rt0ReasonCode> {
+        if self.session.state() != RealtimeSessionState::Active {
+            return Err(Rt0ReasonCode::InvalidStateTransition);
+        }
+        self.authorization
+            .replace_authority(effective_authority, expires_at_millis)
             .map_err(RuntimeDenyReason::reason_code)
     }
 

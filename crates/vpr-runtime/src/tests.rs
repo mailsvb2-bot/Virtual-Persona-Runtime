@@ -42,13 +42,11 @@ fn persona() -> PersonaIdentity {
 
 fn active_session() -> ActiveSession {
     let identity = persona();
+    let (_, authority) = allowed_provider_authority();
     let mut session = ActiveSession::new(
         SessionId::new("session-1").unwrap(),
         identity.id().clone(),
-        None,
-        true,
-        ConsentState::Granted,
-        false,
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
     session
@@ -82,13 +80,11 @@ fn cancellation_propagates_to_clones() {
 #[test]
 fn turn_requires_active_matching_session() {
     let identity = persona();
+    let (_, authority) = allowed_provider_authority();
     let session = ActiveSession::new(
         SessionId::new("created").unwrap(),
         identity.id().clone(),
-        None,
-        true,
-        ConsentState::Granted,
-        false,
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
     );
     assert!(matches!(
         ActiveTurn::new(
@@ -103,24 +99,24 @@ fn turn_requires_active_matching_session() {
 
 #[test]
 fn provider_call_before_turn_authorization_is_rejected() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     let turn = turn(&session, "premature");
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public),
+        turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::InvalidTurnState)
     ));
 }
 
 #[test]
 fn session_revoke_cancels_existing_permit_and_denies_new_work() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let mut session = active_session();
     let mut turn = turn(&session, "session-revoke");
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     let permit = turn
-        .issue_provider_permit(&authority, &scope, DataClass::Public)
+        .issue_provider_permit(&scope, DataClass::Public)
         .unwrap();
     assert!(!permit.cancellation.is_cancelled());
 
@@ -128,52 +124,52 @@ fn session_revoke_cancels_existing_permit_and_denies_new_work() {
     assert_eq!(session.state(), RealtimeSessionState::Revoked);
     assert!(permit.cancellation.is_cancelled());
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public),
+        turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::AuthorizationStale)
     ));
 }
 
 #[test]
 fn local_only_current_policy_blocks_external_provider() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     session.set_local_only_required(true).unwrap();
     let mut turn = turn(&session, "local-only");
     turn.authorize().unwrap();
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public),
+        turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::LocalOnlyRequired)
     ));
 }
 
 #[test]
 fn policy_change_cancels_existing_permit_and_stales_bound_turn() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     let mut turn = turn(&session, "policy-change");
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     let permit = turn
-        .issue_provider_permit(&authority, &scope, DataClass::Biometric)
+        .issue_provider_permit(&scope, DataClass::Biometric)
         .unwrap();
     assert!(!permit.cancellation.is_cancelled());
 
     session.set_consent(ConsentState::Revoked).unwrap();
     assert!(permit.cancellation.is_cancelled());
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Biometric),
+        turn.issue_provider_permit(&scope, DataClass::Biometric),
         Err(RuntimeDenyReason::EgressPolicyStale)
     ));
 }
 
 #[test]
 fn current_missing_biometric_consent_uses_stable_reason_code() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     session.set_consent(ConsentState::Missing).unwrap();
     let mut turn = turn(&session, "consent");
     turn.authorize().unwrap();
-    let denied = turn.issue_provider_permit(&authority, &scope, DataClass::Biometric);
+    let denied = turn.issue_provider_permit(&scope, DataClass::Biometric);
     assert!(matches!(denied, Err(RuntimeDenyReason::ConsentRequired)));
     assert_eq!(
         denied.unwrap_err().reason_code(),
@@ -183,34 +179,34 @@ fn current_missing_biometric_consent_uses_stable_reason_code() {
 
 #[test]
 fn authorization_replacement_cancels_permit_and_stales_turn() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     let mut turn = turn(&session, "auth-replace");
     turn.authorize().unwrap();
     let permit = turn
-        .issue_provider_permit(&authority, &scope, DataClass::Public)
+        .issue_provider_permit(&scope, DataClass::Public)
         .unwrap();
     session.refresh_authorization(None).unwrap();
     assert!(permit.cancellation.is_cancelled());
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public),
+        turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::AuthorizationStale)
     ));
 }
 
 #[test]
 fn execution_snapshot_revisions_gate_provider_execution() {
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     let mut turn = turn(&session, "snapshot");
     turn.authorize().unwrap();
     assert!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public)
+        turn.issue_provider_permit(&scope, DataClass::Public)
             .is_ok()
     );
     session.refresh_authorization(None).unwrap();
     assert!(matches!(
-        turn.issue_provider_permit(&authority, &scope, DataClass::Public),
+        turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::AuthorizationStale)
     ));
     assert_eq!(turn.snapshot().authorization_epoch().get(), 1);
@@ -300,20 +296,46 @@ fn invalid_interrupt_does_not_partially_mutate_output_evidence() {
 }
 
 #[test]
+fn authority_narrowing_invalidates_old_turn_and_denies_new_scope() {
+    let (scope, _) = allowed_provider_authority();
+    let session = active_session();
+    let mut old_turn = turn(&session, "authority-narrow-old");
+    old_turn.authorize().unwrap();
+    old_turn.begin_processing().unwrap();
+    let permit = old_turn
+        .issue_provider_permit(&scope, DataClass::Public)
+        .unwrap();
+
+    session
+        .replace_authority(EffectiveAuthority::default(), None)
+        .unwrap();
+    assert!(permit.cancellation.is_cancelled());
+    assert!(matches!(
+        old_turn.issue_provider_permit(&scope, DataClass::Public),
+        Err(RuntimeDenyReason::AuthorizationStale)
+    ));
+
+    let mut fresh_turn = turn(&session, "authority-narrow-new");
+    fresh_turn.authorize().unwrap();
+    assert!(matches!(
+        fresh_turn.issue_provider_permit(&scope, DataClass::Public),
+        Err(RuntimeDenyReason::AuthorityDenied)
+    ));
+}
+
+#[test]
 fn retained_execution_context_cannot_bypass_expired_lease() {
     let identity = persona();
     let clock = Arc::new(ManualClock::new(100));
+    let (_, authority) = allowed_provider_authority();
     let mut session = ActiveSession::with_clock(
         SessionId::new("session-clock").unwrap(),
         identity.id().clone(),
-        Some(200),
-        true,
-        ConsentState::Granted,
-        false,
+        SessionSecurityConfig::new(authority, Some(200), true, ConsentState::Granted, false),
         clock.clone(),
     );
     session.activate().unwrap();
-    let (scope, authority) = allowed_provider_authority();
+    let (scope, _authority) = allowed_provider_authority();
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-clock").unwrap(),
         CorrelationId::new("corr-clock").unwrap(),
@@ -323,14 +345,11 @@ fn retained_execution_context_cannot_bypass_expired_lease() {
     .unwrap();
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
-    let retained_context = ProviderExecutionContext::new(&authority, &scope, DataClass::Public);
+    let retained_context = ProviderExecutionContext::new(&scope, DataClass::Public);
     clock.set(201);
 
-    let denied = turn.issue_provider_permit(
-        retained_context.authority,
-        retained_context.required_scope,
-        retained_context.data_class,
-    );
+    let denied =
+        turn.issue_provider_permit(retained_context.required_scope, retained_context.data_class);
     assert!(matches!(
         denied,
         Err(RuntimeDenyReason::AuthorizationExpired)

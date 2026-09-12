@@ -8,7 +8,7 @@ use vpr_integration::{
     AudioInput, AudioSink, AvatarPort, LlmPort, LlmRequest, SttPort, TextSink, Transcript, TtsPort,
     UsageEvidence, VideoSink,
 };
-use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass, EffectiveAuthority};
+use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
 use crate::authority::{
     AuthorizationController, EgressPolicyController, EgressPolicySnapshot, ProviderCallContext,
@@ -124,7 +124,6 @@ impl ActiveTurn {
     /// current scope/egress policy forbids the call.
     pub(crate) fn issue_provider_permit(
         &self,
-        authority: &EffectiveAuthority,
         required_scope: &AuthorityScope,
         data_class: DataClass,
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
@@ -145,7 +144,6 @@ impl ActiveTurn {
                 egress_policy: &self.egress_policy,
                 egress_snapshot: self.egress_policy_snapshot,
                 cancellation: &self.cancellation,
-                authority,
                 required_scope,
                 data_class,
             },
@@ -165,11 +163,7 @@ impl ActiveTurn {
         sink: &mut dyn TextSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(
-                context.authority,
-                context.required_scope,
-                context.data_class,
-            )
+            .issue_provider_permit(context.required_scope, context.data_class)
             .map_err(ProviderExecutionError::from)?;
         port.stream(request, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
@@ -187,11 +181,7 @@ impl ActiveTurn {
         input: &AudioInput,
     ) -> Result<(Transcript, UsageEvidence), ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(
-                context.authority,
-                context.required_scope,
-                context.data_class,
-            )
+            .issue_provider_permit(context.required_scope, context.data_class)
             .map_err(ProviderExecutionError::from)?;
         port.transcribe(input, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
@@ -210,11 +200,7 @@ impl ActiveTurn {
         sink: &mut dyn AudioSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(
-                context.authority,
-                context.required_scope,
-                context.data_class,
-            )
+            .issue_provider_permit(context.required_scope, context.data_class)
             .map_err(ProviderExecutionError::from)?;
         port.synthesize(text, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
@@ -233,11 +219,7 @@ impl ActiveTurn {
         sink: &mut dyn VideoSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(
-                context.authority,
-                context.required_scope,
-                context.data_class,
-            )
+            .issue_provider_permit(context.required_scope, context.data_class)
             .map_err(ProviderExecutionError::from)?;
         port.render(audio, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
