@@ -168,7 +168,7 @@ pub enum PersonaCaptureState {
     Reviewed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PersonaProfile {
     identity: PersonaIdentity,
     constitution: ConstitutionBoundary,
@@ -265,10 +265,15 @@ impl PersonaProfile {
             return Err(ProfileError::InvalidCaptureState);
         }
         let was_reviewed = self.capture_state == PersonaCaptureState::Reviewed;
+        let next_version = if was_reviewed {
+            Some(self.identity.version().next()?)
+        } else {
+            None
+        };
         let record = self.claim_mut(id).ok_or(ProfileError::ClaimNotFound)?;
         record.correct(statement, kind)?;
-        if was_reviewed {
-            self.identity.advance_version()?;
+        if let Some(version) = next_version {
+            self.identity.apply_version(version);
         }
         Ok(())
     }
@@ -282,7 +287,8 @@ impl PersonaProfile {
         if !self.claims.iter().all(OwnerClaimRecord::is_owner_reviewed) {
             return Err(ProfileError::ClaimsNotReviewed);
         }
-        self.identity.advance_version()?;
+        let next_version = self.identity.version().next()?;
+        self.identity.apply_version(next_version);
         self.capture_state = PersonaCaptureState::Reviewed;
         Ok(())
     }
@@ -360,15 +366,19 @@ mod tests {
     use super::*;
     use crate::{PersonaId, PersonaMode, PersonaVersion, VerifiedOwnerOpinion};
 
-    fn profile() -> PersonaProfile {
+    fn profile_with_version(version: u64) -> PersonaProfile {
         PersonaProfile::new(
             PersonaIdentity::new(
                 PersonaId::new("persona-1").unwrap(),
-                PersonaVersion::new(1).unwrap(),
+                PersonaVersion::new(version).unwrap(),
                 PersonaMode::DigitalTwin,
             ),
             ConstitutionBoundary::strict_digital_twin(),
         )
+    }
+
+    fn profile() -> PersonaProfile {
+        profile_with_version(1)
     }
 
     fn captured_opinion() -> OwnerClaimRecord {
@@ -429,5 +439,23 @@ mod tests {
             record.current().claim().statement,
             "Теперь я предпочитаю другой подход"
         );
+    }
+
+    #[test]
+    fn reviewed_correction_is_atomic_when_persona_version_is_exhausted() {
+        let mut profile = profile_with_version(u64::MAX - 1);
+        let id = ClaimId::new("opinion-1").unwrap();
+        profile.add_captured_claim(captured_opinion()).unwrap();
+        profile.mark_capture_complete().unwrap();
+        profile.approve_claim(&id).unwrap();
+        profile.approve_initial_review().unwrap();
+        let before = profile.claim(&id).unwrap().current().clone();
+
+        assert_eq!(
+            profile.correct_claim(&id, "Новая позиция", ClaimKind::Opinion),
+            Err(ProfileError::PersonaVersionExhausted)
+        );
+        assert_eq!(profile.identity().version().get(), u64::MAX);
+        assert_eq!(profile.claim(&id).unwrap().current(), &before);
     }
 }
