@@ -99,7 +99,9 @@ profile_derive = re.search(
     profile_source,
     re.MULTILINE,
 )
-if profile_derive is not None and "Clone" in profile_derive.group(1).split(","):
+if profile_derive is not None and any(
+    item.strip() == "Clone" for item in profile_derive.group(1).split(",")
+):
     raise SystemExit("PersonaProfile must remain non-cloneable canonical mutable state")
 
 # Guided capture may orchestrate canonical Persona state, but it must not become another provider/runtime brain.
