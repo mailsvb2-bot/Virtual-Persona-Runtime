@@ -6,6 +6,7 @@ members = [
   "crates/vpr-integration",
   "crates/vpr-capture",
   "crates/vpr-runtime",
+  "crates/vpr-provider-openai-compatible",
 ]
 
 [workspace.package]

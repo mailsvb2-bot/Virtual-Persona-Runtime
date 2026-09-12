@@ -12,6 +12,7 @@ allowed_internal_dependencies = {
     "vpr-integration": {"vpr-domain"},
     "vpr-capture": {"vpr-domain"},
     "vpr-runtime": {"vpr-domain", "vpr-policy", "vpr-integration"},
+    "vpr-provider-openai-compatible": {"vpr-integration"},
 }
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
