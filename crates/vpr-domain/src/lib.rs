@@ -1,6 +1,7 @@
 mod claim;
 mod ids;
 mod persona;
+mod preparation;
 mod profile;
 mod reason;
 mod session;
@@ -11,10 +12,14 @@ pub use claim::{
 };
 pub use ids::{
     AuthorizationEpoch, AuthorizationEpochExhausted, ClaimId, CorrelationId, IdError, PersonaId,
-    PolicyRevision, PolicyRevisionExhausted, SessionId, TurnId,
+    PolicyRevision, PolicyRevisionExhausted, PreparationJobId, SessionId, TurnId,
 };
 pub use persona::{
     ConstitutionBoundary, PersonaIdentity, PersonaMode, PersonaVersion, PersonaVersionExhausted,
+};
+pub use preparation::{
+    Modality, ModalityReadiness, PersonaReadiness, PreparationJob, PreparationJobState,
+    PreparationTransitionError, ReadinessError,
 };
 pub use profile::{
     ClaimRevision, ClaimRevisionExhausted, OwnerClaimRecord, OwnerClaimRevision,
