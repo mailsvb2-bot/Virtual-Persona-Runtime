@@ -6,6 +6,7 @@ use std::sync::{
 
 use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
+use crate::provider::ProviderOperation;
 use vpr_domain::{
     CorrelationId, OutputCheckpoint, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode,
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId, TurnState,
@@ -324,7 +325,45 @@ fn authority_narrowing_invalidates_old_turn_and_denies_new_scope() {
 }
 
 #[test]
-fn retained_execution_context_cannot_bypass_expired_lease() {
+fn provider_operation_classification_is_runtime_owned() {
+    assert_eq!(ProviderOperation::Llm.data_class(), DataClass::Personal);
+    assert_eq!(ProviderOperation::Stt.data_class(), DataClass::Biometric);
+    assert_eq!(ProviderOperation::Tts.data_class(), DataClass::Biometric);
+    assert_eq!(ProviderOperation::Avatar.data_class(), DataClass::Biometric);
+}
+
+#[test]
+fn revocation_blocks_late_output_mutations_and_completion() {
+    let (scope, _) = allowed_provider_authority();
+    let mut session = active_session();
+    let mut turn = turn(&session, "late-output");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    turn.begin_output().unwrap();
+    let segment = turn.begin_output_segment().unwrap();
+    turn.mark_output_sent(segment).unwrap();
+
+    session.revoke().unwrap();
+    assert_eq!(
+        turn.begin_output_segment(),
+        Err(Rt0ReasonCode::TurnCancelled)
+    );
+    assert_eq!(
+        turn.mark_output_played(segment),
+        Err(Rt0ReasonCode::TurnCancelled)
+    );
+    assert_eq!(turn.complete(), Err(Rt0ReasonCode::TurnCancelled));
+    assert!(matches!(
+        turn.issue_provider_permit(&scope, DataClass::Public),
+        Err(RuntimeDenyReason::AuthorizationStale)
+    ));
+
+    turn.interrupt().unwrap();
+    assert_eq!(turn.state(), TurnState::Cancelled);
+}
+
+#[test]
+fn retained_operation_cannot_bypass_expired_lease() {
     let identity = persona();
     let clock = Arc::new(ManualClock::new(100));
     let (_, authority) = allowed_provider_authority();
@@ -335,7 +374,6 @@ fn retained_execution_context_cannot_bypass_expired_lease() {
         clock.clone(),
     );
     session.activate().unwrap();
-    let (scope, _authority) = allowed_provider_authority();
     let mut turn = ActiveTurn::new(
         TurnId::new("turn-clock").unwrap(),
         CorrelationId::new("corr-clock").unwrap(),
@@ -345,11 +383,13 @@ fn retained_execution_context_cannot_bypass_expired_lease() {
     .unwrap();
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
-    let retained_context = ProviderExecutionContext::new(&scope, DataClass::Public);
+    let retained_operation = ProviderOperation::Llm;
     clock.set(201);
 
-    let denied =
-        turn.issue_provider_permit(retained_context.required_scope, retained_context.data_class);
+    let denied = turn.issue_provider_permit(
+        &retained_operation.required_scope(),
+        retained_operation.data_class(),
+    );
     assert!(matches!(
         denied,
         Err(RuntimeDenyReason::AuthorizationExpired)

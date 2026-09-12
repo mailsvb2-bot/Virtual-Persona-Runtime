@@ -5,13 +5,12 @@ use vpr_domain::{
     PersonaVersion, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
 use vpr_integration::{
-    CancellationProbe, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TextSink,
-    UsageEvidence,
+    AudioSink, CancellationProbe, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TextSink,
+    TtsPort, UsageEvidence,
 };
-use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
+use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionContext, ProviderExecutionError, RuntimeDenyReason,
-    SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RuntimeDenyReason, SessionSecurityConfig,
 };
 
 #[derive(Default)]
@@ -38,6 +37,41 @@ impl LlmPort for TestLlm {
         assert!(!cancellation.is_cancelled());
         sink.push_text("ok")?;
         Ok(UsageEvidence::default())
+    }
+}
+
+#[derive(Default)]
+struct TestTts {
+    calls: AtomicUsize,
+}
+
+impl TtsPort for TestTts {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "test".into(),
+            model: "test-tts".into(),
+            representation: Some("voice-test".into()),
+        }
+    }
+
+    fn synthesize(
+        &self,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+        sink: &mut dyn AudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        sink.push_audio(&[0], 16_000)?;
+        Ok(UsageEvidence::default())
+    }
+}
+
+#[derive(Default)]
+struct TestAudioSink;
+
+impl AudioSink for TestAudioSink {
+    fn push_audio(&mut self, _pcm: &[u8], _sample_rate_hz: u32) -> Result<(), ProviderError> {
+        Ok(())
     }
 }
 
@@ -79,7 +113,6 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 
     let mut sink = TestSink::default();
     turn.execute_llm(
-        ProviderExecutionContext::new(&provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -99,7 +132,6 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
 
     session.revoke().unwrap();
     let denied = turn.execute_llm(
-        ProviderExecutionContext::new(&provider_scope, DataClass::Biometric),
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
@@ -136,6 +168,42 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         }
     );
     assert!(!segments[1].eligible_as_spoken());
+}
+
+#[test]
+fn missing_consent_blocks_tts_before_adapter_start() {
+    let persona = PersonaIdentity::new(
+        PersonaId::new("persona-tts-consent").unwrap(),
+        PersonaVersion::new(1).unwrap(),
+        PersonaMode::DigitalTwin,
+    );
+    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
+    let authority = EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope], [])]);
+    let mut session = ActiveSession::new(
+        SessionId::new("session-tts-consent").unwrap(),
+        persona.id().clone(),
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
+    );
+    session.activate().unwrap();
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-tts-consent").unwrap(),
+        CorrelationId::new("corr-tts-consent").unwrap(),
+        &persona,
+        &session,
+    )
+    .unwrap();
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+
+    let provider = TestTts::default();
+    let result = turn.execute_tts(&provider, "hello", &mut TestAudioSink);
+    assert!(matches!(
+        result,
+        Err(ProviderExecutionError::Denied(
+            RuntimeDenyReason::ConsentRequired
+        ))
+    ));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]

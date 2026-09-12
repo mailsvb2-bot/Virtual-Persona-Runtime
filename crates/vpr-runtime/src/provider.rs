@@ -11,18 +11,28 @@ pub(crate) struct ProviderExecutionPermit {
     pub(crate) cancellation: TurnCancellation,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ProviderExecutionContext<'a> {
-    pub(crate) required_scope: &'a AuthorityScope,
-    pub(crate) data_class: DataClass,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderOperation {
+    Llm,
+    Stt,
+    Tts,
+    Avatar,
 }
 
-impl<'a> ProviderExecutionContext<'a> {
+impl ProviderOperation {
     #[must_use]
-    pub const fn new(required_scope: &'a AuthorityScope, data_class: DataClass) -> Self {
-        Self {
-            required_scope,
-            data_class,
+    pub(crate) const fn data_class(self) -> DataClass {
+        match self {
+            Self::Llm => DataClass::Personal,
+            Self::Stt | Self::Tts | Self::Avatar => DataClass::Biometric,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn required_scope(self) -> AuthorityScope {
+        let scope = match self {
+            Self::Llm | Self::Stt | Self::Tts | Self::Avatar => "provider.egress",
+        };
+        AuthorityScope::new(scope).expect("canonical provider scope is non-empty")
     }
 }

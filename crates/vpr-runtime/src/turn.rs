@@ -17,7 +17,7 @@ use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::output::{OutputSegmentEvidence, OutputSegmentId};
-use crate::provider::{ProviderExecutionContext, ProviderExecutionPermit};
+use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
 
 #[derive(Debug)]
@@ -150,6 +150,14 @@ impl ActiveTurn {
         )
     }
 
+    fn issue_provider_operation(
+        &self,
+        operation: ProviderOperation,
+    ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
+        let required_scope = operation.required_scope();
+        self.issue_provider_permit(&required_scope, operation.data_class())
+    }
+
     /// Executes one LLM operation through the canonical provider enforcement boundary.
     ///
     /// # Errors
@@ -157,13 +165,12 @@ impl ActiveTurn {
     /// provider error returned by the adapter.
     pub fn execute_llm(
         &self,
-        context: ProviderExecutionContext<'_>,
         port: &dyn LlmPort,
         request: &LlmRequest,
         sink: &mut dyn TextSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(context.required_scope, context.data_class)
+            .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
         port.stream(request, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
@@ -176,12 +183,11 @@ impl ActiveTurn {
     /// provider error returned by the adapter.
     pub fn execute_stt(
         &self,
-        context: ProviderExecutionContext<'_>,
         port: &dyn SttPort,
         input: &AudioInput,
     ) -> Result<(Transcript, UsageEvidence), ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(context.required_scope, context.data_class)
+            .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
         port.transcribe(input, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
@@ -194,13 +200,12 @@ impl ActiveTurn {
     /// provider error returned by the adapter.
     pub fn execute_tts(
         &self,
-        context: ProviderExecutionContext<'_>,
         port: &dyn TtsPort,
         text: &str,
         sink: &mut dyn AudioSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(context.required_scope, context.data_class)
+            .issue_provider_operation(ProviderOperation::Tts)
             .map_err(ProviderExecutionError::from)?;
         port.synthesize(text, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
@@ -213,13 +218,12 @@ impl ActiveTurn {
     /// provider error returned by the adapter.
     pub fn execute_avatar(
         &self,
-        context: ProviderExecutionContext<'_>,
         port: &dyn AvatarPort,
         audio: &AudioInput,
         sink: &mut dyn VideoSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
-            .issue_provider_permit(context.required_scope, context.data_class)
+            .issue_provider_operation(ProviderOperation::Avatar)
             .map_err(ProviderExecutionError::from)?;
         port.render(audio, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
@@ -230,6 +234,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn begin_processing(&mut self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Processing)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -240,6 +245,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn begin_output(&mut self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Outputting)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -250,6 +256,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for an invalid lifecycle transition.
     pub fn complete(&mut self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Completed)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
@@ -260,6 +267,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` when denial is not valid from the current state.
     pub fn deny(&mut self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Denied)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)?;
@@ -272,6 +280,7 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` when failure is not valid from the current state.
     pub fn fail(&mut self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         self.turn
             .transition(TurnState::Failed)
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)?;
@@ -376,7 +385,16 @@ impl ActiveTurn {
         Ok(())
     }
 
+    fn require_not_cancelled(&self) -> Result<(), Rt0ReasonCode> {
+        if self.cancellation.is_cancelled() {
+            Err(Rt0ReasonCode::TurnCancelled)
+        } else {
+            Ok(())
+        }
+    }
+
     fn require_outputting(&self) -> Result<(), Rt0ReasonCode> {
+        self.require_not_cancelled()?;
         if self.turn.state() == TurnState::Outputting {
             Ok(())
         } else {
