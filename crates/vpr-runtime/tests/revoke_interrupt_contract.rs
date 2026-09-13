@@ -5,8 +5,9 @@ use vpr_domain::{
     PersonaVersion, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
 use vpr_integration::{
-    AudioSink, CancellationProbe, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TextSink,
-    TtsPort, UsageEvidence,
+    CancellationProbe, GeneratedAudioBuffer, GeneratedAudioSink, GeneratedTextBuffer,
+    GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TtsPort,
+    UsageEvidence,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -31,11 +32,11 @@ impl LlmPort for TestLlm {
         &self,
         _request: &LlmRequest,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn TextSink,
+        sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert!(!cancellation.is_cancelled());
-        sink.push_text("ok")?;
+        sink.push_generated_text("ok")?;
         Ok(UsageEvidence::default())
     }
 }
@@ -58,30 +59,11 @@ impl TtsPort for TestTts {
         &self,
         _text: &str,
         _cancellation: &dyn CancellationProbe,
-        sink: &mut dyn AudioSink,
+        sink: &mut dyn GeneratedAudioSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        sink.push_audio(&[0], 16_000)?;
+        sink.push_generated_audio(&[0], 16_000)?;
         Ok(UsageEvidence::default())
-    }
-}
-
-#[derive(Default)]
-struct TestAudioSink;
-
-impl AudioSink for TestAudioSink {
-    fn push_audio(&mut self, _pcm: &[u8], _sample_rate_hz: u32) -> Result<(), ProviderError> {
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-struct TestSink(String);
-
-impl TextSink for TestSink {
-    fn push_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.0.push_str(chunk);
-        Ok(())
     }
 }
 
@@ -111,7 +93,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
 
-    let mut sink = TestSink::default();
+    let mut sink = GeneratedTextBuffer::default();
     turn.execute_llm(
         &TestLlm::default(),
         &LlmRequest {
@@ -121,7 +103,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         &mut sink,
     )
     .unwrap();
-    assert_eq!(sink.0, "ok");
+    assert_eq!(sink.as_str(), "ok");
 
     turn.begin_output().unwrap();
     let spoken = turn.begin_output_segment().unwrap();
@@ -137,7 +119,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
             locale: "ru-RU".into(),
             context: "blocked".into(),
         },
-        &mut TestSink::default(),
+        &mut GeneratedTextBuffer::default(),
     );
     assert!(matches!(
         denied,
@@ -202,7 +184,7 @@ fn unstructured_llm_context_is_biometric_fail_closed_without_consent() {
             locale: "ru-RU".into(),
             context: "arbitrary unstructured context".into(),
         },
-        &mut TestSink::default(),
+        &mut GeneratedTextBuffer::default(),
     );
     assert!(matches!(
         result,
@@ -239,7 +221,7 @@ fn missing_consent_blocks_tts_before_adapter_start() {
     turn.begin_processing().unwrap();
 
     let provider = TestTts::default();
-    let result = turn.execute_tts(&provider, "hello", &mut TestAudioSink);
+    let result = turn.execute_tts(&provider, "hello", &mut GeneratedAudioBuffer::default());
     assert!(matches!(
         result,
         Err(ProviderExecutionError::Denied(
