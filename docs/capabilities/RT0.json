@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.6.0",
+  "catalogue_version": "0.7.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -50,6 +50,16 @@
     },
     {
       "id": "runtime.turn_cancellation_authority",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "runtime.concurrent_turn_interruption",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_concurrent_interruption_contract",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

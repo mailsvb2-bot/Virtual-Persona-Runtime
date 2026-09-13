@@ -64,7 +64,7 @@ fn run_provider(port: &dyn TtsPort) -> (GeneratedAudioBuffer, UsageEvidence) {
         SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("tts-contract-turn").unwrap(),
         CorrelationId::new("tts-contract-correlation").unwrap(),
         &persona,

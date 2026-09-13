@@ -147,6 +147,22 @@ if "pub fn begin_external_provider_call" in turn_source:
     raise SystemExit("raw provider-call permit issuance must not be public")
 if "pub struct TurnCancellation" in cancellation_source or "pub fn cancellation(&self)" in turn_source:
     raise SystemExit("raw turn cancellation authority must remain internal to ActiveTurn::interrupt")
+turn_state_source = (runtime_src / "turn_state.rs").read_text(encoding="utf-8")
+if "pub struct TurnMutableState" in turn_state_source:
+    raise SystemExit("canonical mutable turn state must remain runtime-internal")
+turn_state_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub\(crate\) struct TurnMutableState\b",
+    turn_state_source,
+    re.MULTILINE,
+)
+if turn_state_derive is not None and any(
+    item.strip() == "Clone" for item in turn_state_derive.group(1).split(",")
+):
+    raise SystemExit("TurnMutableState must remain non-cloneable canonical mutable state")
+if "state: Mutex<TurnMutableState>" not in turn_source:
+    raise SystemExit("ActiveTurn canonical mutable state must remain internally synchronized")
+if "pub(crate) turn: Turn" in turn_source or "pub(crate) output_segments:" in turn_source:
+    raise SystemExit("ActiveTurn must not split canonical mutable state across independent fields")
 if "pub struct ProviderExecutionContext" in provider_source:
     raise SystemExit("provider execution security context must remain runtime-owned")
 if "EffectiveAuthority" in provider_source:

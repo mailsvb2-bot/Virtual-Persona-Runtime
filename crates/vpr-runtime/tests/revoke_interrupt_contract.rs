@@ -114,7 +114,7 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-owner-test").unwrap(),
         CorrelationId::new("corr-owner-test").unwrap(),
         &persona,
@@ -198,7 +198,7 @@ fn unstructured_llm_context_is_biometric_fail_closed_without_consent() {
         SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-llm-consent").unwrap(),
         CorrelationId::new("corr-llm-consent").unwrap(),
         &persona,
@@ -241,7 +241,7 @@ fn missing_consent_blocks_tts_before_adapter_start() {
         SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-tts-consent").unwrap(),
         CorrelationId::new("corr-tts-consent").unwrap(),
         &persona,
@@ -281,7 +281,7 @@ fn expired_authority_fails_closed_before_provider_start() {
         SessionSecurityConfig::new(authority, Some(0), true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-expiry").unwrap(),
         CorrelationId::new("corr-expiry").unwrap(),
         &persona,
@@ -308,7 +308,7 @@ fn missing_consent_blocks_stt_before_adapter_start() {
         SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-stt-consent").unwrap(),
         CorrelationId::new("corr-stt-consent").unwrap(),
         &persona,
