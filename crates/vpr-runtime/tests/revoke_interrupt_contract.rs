@@ -7,12 +7,26 @@ use vpr_domain::{
 use vpr_integration::{
     AudioInput, CancellationProbe, GeneratedAudioBuffer, GeneratedAudioSink, GeneratedTextBuffer,
     GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat, ProviderDescriptor, ProviderError,
-    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    RealtimeOutputPort, RealtimeTextOutputEvent, SttPort, SttRequest, Transcript, TransportError,
+    TtsPort, TtsRequest, UsageEvidence,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RuntimeDenyReason, SessionSecurityConfig,
 };
+
+struct ImmediateTransport;
+
+impl RealtimeOutputPort for ImmediateTransport {
+    fn send_text(
+        &self,
+        _event: &RealtimeTextOutputEvent,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), TransportError> {
+        assert!(!cancellation.is_cancelled());
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 struct TestLlm {
@@ -137,11 +151,9 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
     assert_eq!(sink.as_str(), "ok");
 
     turn.begin_output().unwrap();
-    let spoken = turn.begin_output_segment().unwrap();
-    turn.mark_output_sent(spoken).unwrap();
-    turn.mark_output_played(spoken).unwrap();
-    let tail = turn.begin_output_segment().unwrap();
-    turn.mark_output_sent(tail).unwrap();
+    let spoken = turn.deliver_text(&ImmediateTransport, "spoken").unwrap();
+    turn.acknowledge_output_played(&spoken).unwrap();
+    let _tail = turn.deliver_text(&ImmediateTransport, "sent-tail").unwrap();
 
     session.revoke().unwrap();
     let denied = turn.execute_llm(

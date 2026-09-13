@@ -330,7 +330,8 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` unless the turn is `OUTPUTTING` and the segment exists
     /// in the expected checkpoint.
-    pub fn mark_output_sent(&self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
+    #[cfg(test)]
+    pub(crate) fn mark_output_sent(&self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
         let gate = self.gate.clone();
         let _execution = gate
             .read()
@@ -345,7 +346,8 @@ impl ActiveTurn {
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` unless the turn is `OUTPUTTING` and the segment exists
     /// in the expected checkpoint.
-    pub fn mark_output_played(&self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
+    #[cfg(test)]
+    pub(crate) fn mark_output_played(&self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
         let gate = self.gate.clone();
         let _execution = gate
             .read()

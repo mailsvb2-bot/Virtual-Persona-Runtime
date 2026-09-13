@@ -66,6 +66,7 @@ impl TurnMutableState {
         Ok(id)
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_output_sent(&mut self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
         self.require_outputting()?;
         self.segment_mut(id)?
@@ -74,11 +75,42 @@ impl TurnMutableState {
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
     }
 
+    #[cfg(test)]
     pub(crate) fn mark_output_played(&mut self, id: OutputSegmentId) -> Result<(), Rt0ReasonCode> {
         self.require_outputting()?;
         self.segment_mut(id)?
             .evidence
             .mark_played()
+            .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
+    }
+
+    pub(crate) fn reconcile_output_delivery_uncertain(
+        &mut self,
+        id: OutputSegmentId,
+    ) -> Result<(), Rt0ReasonCode> {
+        self.segment_mut(id)?
+            .evidence
+            .mark_delivery_uncertain()
+            .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
+    }
+
+    pub(crate) fn reconcile_output_sent(
+        &mut self,
+        id: OutputSegmentId,
+    ) -> Result<(), Rt0ReasonCode> {
+        self.segment_mut(id)?
+            .evidence
+            .reconcile_sent()
+            .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
+    }
+
+    pub(crate) fn reconcile_output_played(
+        &mut self,
+        id: OutputSegmentId,
+    ) -> Result<(), Rt0ReasonCode> {
+        self.segment_mut(id)?
+            .evidence
+            .reconcile_played()
             .map_err(|_| Rt0ReasonCode::InvalidStateTransition)
     }
 
@@ -94,6 +126,7 @@ impl TurnMutableState {
             matches!(
                 segment.evidence.state(),
                 OutputDeliveryState::Cancelled { .. }
+                    | OutputDeliveryState::CancelledDeliveryUncertain
             )
         });
         if !interruptible || already_cancelled {
@@ -114,6 +147,7 @@ impl TurnMutableState {
             if !matches!(
                 segment.evidence.state(),
                 OutputDeliveryState::Cancelled { .. }
+                    | OutputDeliveryState::CancelledDeliveryUncertain
             ) {
                 segment
                     .evidence
@@ -124,6 +158,7 @@ impl TurnMutableState {
         Ok(())
     }
 
+    #[cfg(test)]
     fn require_outputting(&self) -> Result<(), Rt0ReasonCode> {
         if self.turn.state() == TurnState::Outputting {
             Ok(())
