@@ -168,6 +168,24 @@ if "pub struct ProviderExecutionContext" in provider_source:
 if "EffectiveAuthority" in provider_source:
     raise SystemExit("provider module must not accept caller-supplied effective authority")
 
+delivery_source = (runtime_src / "delivery.rs").read_text(encoding="utf-8")
+if "pub fn mark_output_sent" in turn_source or "pub fn mark_output_played" in turn_source:
+    raise SystemExit("output delivery checkpoints must not be publicly mutable without transport evidence")
+handle_match = re.search(r"pub struct OutputDeliveryHandle\s*\{([^}]*)\}", delivery_source, re.DOTALL)
+if handle_match is None or re.search(r"\bpub\s+\w+\s*:", handle_match.group(1)):
+    raise SystemExit("OutputDeliveryHandle fields must remain runtime-issued and non-forgeable")
+handle_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub struct OutputDeliveryHandle\b",
+    delivery_source,
+    re.MULTILINE,
+)
+if handle_derive is not None and any(
+    item.strip() == "Clone" for item in handle_derive.group(1).split(",")
+):
+    raise SystemExit("OutputDeliveryHandle must remain non-cloneable capability evidence")
+if "pub fn deliver_text" not in delivery_source or "RealtimeOutputPort" not in delivery_source:
+    raise SystemExit("canonical text delivery must remain bound to RealtimeOutputPort")
+
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
 for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):

@@ -8,10 +8,24 @@ use vpr_domain::{
 };
 use vpr_integration::{
     CancellationProbe, GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, UsageEvidence,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeOutputPort,
+    RealtimeTextOutputEvent, TransportError, UsageEvidence,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{ActiveSession, ActiveTurn, ProviderExecutionError, SessionSecurityConfig};
+
+struct ImmediateTransport;
+
+impl RealtimeOutputPort for ImmediateTransport {
+    fn send_text(
+        &self,
+        _event: &RealtimeTextOutputEvent,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), TransportError> {
+        assert!(!cancellation.is_cancelled());
+        Ok(())
+    }
+}
 
 struct BlockingLlm {
     started: mpsc::Sender<()>,
@@ -72,11 +86,9 @@ fn active_turn() -> ActiveTurn {
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     turn.begin_output().unwrap();
-    let played = turn.begin_output_segment().unwrap();
-    turn.mark_output_sent(played).unwrap();
-    turn.mark_output_played(played).unwrap();
-    let tail = turn.begin_output_segment().unwrap();
-    turn.mark_output_sent(tail).unwrap();
+    let played = turn.deliver_text(&ImmediateTransport, "played").unwrap();
+    turn.acknowledge_output_played(&played).unwrap();
+    let _tail = turn.deliver_text(&ImmediateTransport, "sent-tail").unwrap();
     turn
 }
 

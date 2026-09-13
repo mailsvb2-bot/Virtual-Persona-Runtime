@@ -1072,6 +1072,9 @@ version = "0.1.0"
 [[package]]
 name = "vpr-integration"
 version = "0.1.0"
+dependencies = [
+ "vpr-domain",
+]
 
 [[package]]
 name = "vpr-policy"

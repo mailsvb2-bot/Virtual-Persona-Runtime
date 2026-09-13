@@ -1,3 +1,9 @@
+mod transport;
+
+pub use transport::{
+    RealtimeOutputPort, RealtimeTextOutputEvent, TransportError, TransportErrorKind,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
     pub provider: String,

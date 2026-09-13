@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.7.0",
+  "catalogue_version": "0.8.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -65,6 +65,21 @@
     },
     {
       "id": "runtime.output_delivery_evidence",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "integration.realtime_output_transport",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "runtime.delivery_uncertainty_reconciliation",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_output_delivery_contract",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

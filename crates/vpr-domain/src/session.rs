@@ -278,9 +278,11 @@ pub enum OutputCheckpoint {
 pub enum OutputDeliveryState {
     Pending,
     Generated,
+    DeliveryUncertain,
     Sent,
     Played,
     Cancelled { reached: OutputCheckpoint },
+    CancelledDeliveryUncertain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,25 +328,125 @@ impl OutputEvidence {
         self.transition(OutputDeliveryState::Played)
     }
 
-    /// Cancels the segment while retaining the furthest reached delivery checkpoint.
+    /// Records that transport may have accepted the generated output but its acknowledgement was
+    /// lost. This state forbids blind retry while preserving later receipt reconciliation.
+    ///
+    /// # Errors
+    /// Returns `OutputTransitionError` unless generated output exists and delivery is not confirmed.
+    pub fn mark_delivery_uncertain(&mut self) -> Result<(), OutputTransitionError> {
+        match self.state {
+            OutputDeliveryState::Generated => {
+                self.state = OutputDeliveryState::DeliveryUncertain;
+                Ok(())
+            }
+            OutputDeliveryState::DeliveryUncertain
+            | OutputDeliveryState::CancelledDeliveryUncertain => Ok(()),
+            OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Generated,
+            } => {
+                self.state = OutputDeliveryState::CancelledDeliveryUncertain;
+                Ok(())
+            }
+            _ => Err(OutputTransitionError {
+                from: self.state,
+                to: OutputDeliveryState::DeliveryUncertain,
+            }),
+        }
+    }
+
+    /// Cancels the segment while retaining the furthest reached delivery checkpoint or unresolved
+    /// transport uncertainty.
     ///
     /// # Errors
     /// Returns `OutputTransitionError` if the segment was already cancelled.
     pub fn mark_cancelled(&mut self) -> Result<(), OutputTransitionError> {
         let reached = match self.state {
-            OutputDeliveryState::Pending => OutputCheckpoint::Pending,
-            OutputDeliveryState::Generated => OutputCheckpoint::Generated,
-            OutputDeliveryState::Sent => OutputCheckpoint::Sent,
-            OutputDeliveryState::Played => OutputCheckpoint::Played,
-            OutputDeliveryState::Cancelled { .. } => {
+            OutputDeliveryState::Pending => Some(OutputCheckpoint::Pending),
+            OutputDeliveryState::Generated => Some(OutputCheckpoint::Generated),
+            OutputDeliveryState::DeliveryUncertain => None,
+            OutputDeliveryState::Sent => Some(OutputCheckpoint::Sent),
+            OutputDeliveryState::Played => Some(OutputCheckpoint::Played),
+            OutputDeliveryState::Cancelled { .. }
+            | OutputDeliveryState::CancelledDeliveryUncertain => {
                 return Err(OutputTransitionError {
                     from: self.state,
                     to: self.state,
                 });
             }
         };
-        self.state = OutputDeliveryState::Cancelled { reached };
+        self.state = reached.map_or(OutputDeliveryState::CancelledDeliveryUncertain, |reached| {
+            OutputDeliveryState::Cancelled { reached }
+        });
         Ok(())
+    }
+
+    /// Applies a confirmed transport-send receipt, including a late receipt after cancellation.
+    ///
+    /// This is idempotent for already-sent/played evidence and resolves delivery uncertainty.
+    ///
+    /// # Errors
+    /// Returns `OutputTransitionError` when no generated output existed to reconcile.
+    pub fn reconcile_sent(&mut self) -> Result<(), OutputTransitionError> {
+        match self.state {
+            OutputDeliveryState::Generated | OutputDeliveryState::DeliveryUncertain => {
+                self.state = OutputDeliveryState::Sent;
+                Ok(())
+            }
+            OutputDeliveryState::Sent
+            | OutputDeliveryState::Played
+            | OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Sent | OutputCheckpoint::Played,
+            } => Ok(()),
+            OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Generated,
+            }
+            | OutputDeliveryState::CancelledDeliveryUncertain => {
+                self.state = OutputDeliveryState::Cancelled {
+                    reached: OutputCheckpoint::Sent,
+                };
+                Ok(())
+            }
+            OutputDeliveryState::Pending
+            | OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Pending,
+            } => Err(OutputTransitionError {
+                from: self.state,
+                to: OutputDeliveryState::Sent,
+            }),
+        }
+    }
+
+    /// Applies a confirmed playback receipt, including a late receipt after cancellation.
+    ///
+    /// Playback proves both send and play, so it may also resolve an uncertain send. This is
+    /// idempotent after playback and never reanimates a cancelled turn.
+    ///
+    /// # Errors
+    /// Returns `OutputTransitionError` when no generated output existed to reconcile.
+    pub fn reconcile_played(&mut self) -> Result<(), OutputTransitionError> {
+        match self.state {
+            OutputDeliveryState::Sent | OutputDeliveryState::DeliveryUncertain => {
+                self.state = OutputDeliveryState::Played;
+                Ok(())
+            }
+            OutputDeliveryState::Played
+            | OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Played,
+            } => Ok(()),
+            OutputDeliveryState::Cancelled {
+                reached: OutputCheckpoint::Sent,
+            }
+            | OutputDeliveryState::CancelledDeliveryUncertain => {
+                self.state = OutputDeliveryState::Cancelled {
+                    reached: OutputCheckpoint::Played,
+                };
+                Ok(())
+            }
+            _ => Err(OutputTransitionError {
+                from: self.state,
+                to: OutputDeliveryState::Played,
+            }),
+        }
     }
 
     fn transition(&mut self, next: OutputDeliveryState) -> Result<(), OutputTransitionError> {
