@@ -13,6 +13,13 @@ allowed_internal_dependencies = {
     "vpr-capture": {"vpr-domain"},
     "vpr-runtime": {"vpr-domain", "vpr-policy", "vpr-integration"},
     "vpr-provider-openai-compatible": {"vpr-integration"},
+    "vpr-rt0-smoke": {
+        "vpr-domain",
+        "vpr-integration",
+        "vpr-policy",
+        "vpr-provider-openai-compatible",
+        "vpr-runtime",
+    },
 }
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
@@ -132,6 +139,21 @@ if "pub struct ProviderExecutionContext" in provider_source:
     raise SystemExit("provider execution security context must remain runtime-owned")
 if "EffectiveAuthority" in provider_source:
     raise SystemExit("provider module must not accept caller-supplied effective authority")
+
+# Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
+integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
+for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):
+    sealed_signature = f"pub trait {trait_name}: sealed::{trait_name}"
+    if sealed_signature not in integration_source:
+        raise SystemExit(f"{trait_name} must remain sealed against external transport implementations")
+    for src_dir in CRATES.glob("*/src"):
+        if src_dir.parent.name == "vpr-integration":
+            continue
+        for path in src_dir.rglob("*.rs"):
+            if f"impl {trait_name} for" in path.read_text(encoding="utf-8"):
+                raise SystemExit(
+                    f"external {trait_name} implementation can bypass canonical delivery: {path.relative_to(ROOT)}"
+                )
 
 # Prevent production God Files from reappearing. Tests are allowed to be larger evidence bundles.
 MAX_PRODUCTION_RUST_LINES = 600

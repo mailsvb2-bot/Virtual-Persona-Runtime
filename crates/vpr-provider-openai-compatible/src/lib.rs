@@ -5,13 +5,12 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    TextSink, UsageEvidence,
+    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, UsageEvidence,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Clone)]
 pub struct OpenAiCompatibleConfig {
     endpoint: String,
     api_key: String,
@@ -73,7 +72,7 @@ impl OpenAiCompatibleLlm {
         &self,
         request: &LlmRequest,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn TextSink,
+        sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         if cancellation.is_cancelled() {
             return Err(cancelled());
@@ -103,28 +102,30 @@ impl OpenAiCompatibleLlm {
     fn consume_response(
         response: Response,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn TextSink,
+        sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
         let mut usage = UsageEvidence::default();
+        let mut saw_done = false;
         for line in BufReader::new(response).lines() {
             if cancellation.is_cancelled() {
                 return Err(cancelled());
             }
             let line = line.map_err(|_| invalid_response())?;
-            let Some(payload) = line.strip_prefix("data: ") else {
+            let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
                 continue;
             };
             if payload == "[DONE]" {
+                saw_done = true;
                 break;
             }
             let event: ChatChunk = serde_json::from_str(payload).map_err(|_| invalid_response())?;
             for choice in event.choices {
                 if let Some(content) = choice.delta.content {
                     if !content.is_empty() {
-                        sink.push_text(&content)?;
+                        sink.push_generated_text(&content)?;
                     }
                 }
             }
@@ -132,6 +133,9 @@ impl OpenAiCompatibleLlm {
                 usage.input_units = event_usage.prompt_tokens;
                 usage.output_units = event_usage.completion_tokens;
             }
+        }
+        if !saw_done {
+            return Err(invalid_response());
         }
         Ok(usage)
     }
@@ -146,7 +150,7 @@ impl LlmPort for OpenAiCompatibleLlm {
         &self,
         request: &LlmRequest,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn TextSink,
+        sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.execute(request, cancellation, sink)
     }
@@ -267,22 +271,13 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
+    use vpr_integration::GeneratedTextBuffer;
 
     struct Probe(AtomicBool);
 
     impl CancellationProbe for Probe {
         fn is_cancelled(&self) -> bool {
             self.0.load(Ordering::SeqCst)
-        }
-    }
-
-    #[derive(Default)]
-    struct Sink(String);
-
-    impl TextSink for Sink {
-        fn push_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-            self.0.push_str(chunk);
-            Ok(())
         }
     }
 
@@ -321,7 +316,7 @@ mod tests {
         );
         let provider = adapter(serve_once("200 OK", body));
         let probe = Probe(AtomicBool::new(false));
-        let mut sink = Sink::default();
+        let mut sink = GeneratedTextBuffer::default();
         let usage = provider
             .stream(
                 &LlmRequest {
@@ -332,7 +327,7 @@ mod tests {
                 &mut sink,
             )
             .unwrap();
-        assert_eq!(sink.0, "Привет!");
+        assert_eq!(sink.as_str(), "Привет!");
         assert_eq!(usage.input_units, Some(7));
         assert_eq!(usage.output_units, Some(2));
     }
@@ -348,7 +343,7 @@ mod tests {
                     context: "test".into(),
                 },
                 &probe,
-                &mut Sink::default(),
+                &mut GeneratedTextBuffer::default(),
             )
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::RateLimited);
@@ -366,10 +361,42 @@ mod tests {
                     context: "test".into(),
                 },
                 &probe,
-                &mut Sink::default(),
+                &mut GeneratedTextBuffer::default(),
             )
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn rejects_truncated_stream_without_done_marker() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}],\"usage\":null}\n\n";
+        let provider = adapter(serve_once("200 OK", body));
+        let probe = Probe(AtomicBool::new(false));
+        let error = provider
+            .stream(
+                &LlmRequest {
+                    locale: "ru-RU".into(),
+                    context: "test".into(),
+                },
+                &probe,
+                &mut GeneratedTextBuffer::default(),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(!error.retryable);
+    }
+
+    #[test]
+    fn rejects_plain_http_for_non_loopback_endpoint() {
+        let error = OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
+            "http://example.com/v1/chat/completions",
+            "secret",
+            "model-x",
+        ))
+        .err()
+        .expect("plain external HTTP must be rejected");
+        assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
         assert!(!error.retryable);
     }
 

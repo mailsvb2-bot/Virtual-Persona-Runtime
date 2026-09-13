@@ -1021,6 +1021,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vpr-rt0-smoke"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vpr-domain",
+ "vpr-integration",
+ "vpr-policy",
+ "vpr-provider-openai-compatible",
+ "vpr-runtime",
+]
+
+[[package]]
 name = "vpr-runtime"
 version = "0.1.0"
 dependencies = [

@@ -5,8 +5,8 @@ use vpr_domain::{
     Rt0ReasonCode, Turn, TurnExecutionSnapshot, TurnId, TurnState,
 };
 use vpr_integration::{
-    AudioInput, AudioSink, AvatarPort, LlmPort, LlmRequest, SttPort, TextSink, Transcript, TtsPort,
-    UsageEvidence, VideoSink,
+    AudioInput, AvatarPort, GeneratedAudioSink, GeneratedTextSink, GeneratedVideoSink, LlmPort,
+    LlmRequest, SttPort, Transcript, TtsPort, UsageEvidence,
 };
 use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
@@ -186,7 +186,7 @@ impl ActiveTurn {
         &self,
         port: &dyn LlmPort,
         request: &LlmRequest,
-        sink: &mut dyn TextSink,
+        sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
@@ -221,7 +221,7 @@ impl ActiveTurn {
         &self,
         port: &dyn TtsPort,
         text: &str,
-        sink: &mut dyn AudioSink,
+        sink: &mut dyn GeneratedAudioSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
             .issue_provider_operation(ProviderOperation::Tts)
@@ -239,7 +239,7 @@ impl ActiveTurn {
         &self,
         port: &dyn AvatarPort,
         audio: &AudioInput,
-        sink: &mut dyn VideoSink,
+        sink: &mut dyn GeneratedVideoSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
             .issue_provider_operation(ProviderOperation::Avatar)
