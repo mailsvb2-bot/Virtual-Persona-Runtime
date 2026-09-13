@@ -51,7 +51,8 @@ pub struct GoldenEvidenceBundle {
     pub observations: Vec<GoldenObservation>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct BoundGoldenReport {
     pub evidence_input_sha256: String,
     pub binding: EvidenceBinding,
@@ -168,7 +169,9 @@ fn validate_binding(
     validate_provider_state(&provider_state.providers)
 }
 
-fn validate_provider_state(providers: &[ProviderStateBinding]) -> Result<(), EvidenceBindingError> {
+pub(crate) fn validate_provider_state(
+    providers: &[ProviderStateBinding],
+) -> Result<(), EvidenceBindingError> {
     let mut roles = HashSet::new();
     for provider in providers {
         if !roles.insert(provider.role) {
@@ -190,11 +193,11 @@ fn validate_provider_state(providers: &[ProviderStateBinding]) -> Result<(), Evi
     Ok(())
 }
 
-fn valid_sha256(value: &str) -> bool {
+pub(crate) fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(is_lower_hex)
 }
 
-fn valid_git_sha(value: &str) -> bool {
+pub(crate) fn valid_git_sha(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(is_lower_hex)
 }
 
