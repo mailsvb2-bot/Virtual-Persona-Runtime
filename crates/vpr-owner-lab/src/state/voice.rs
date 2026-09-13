@@ -1,11 +1,12 @@
 use std::time::Instant;
 
 use serde::Serialize;
+use vpr_domain::{Rt0ReasonCode, TurnState};
 use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
     UsageEvidence,
 };
-use vpr_runtime::TurnInterruptHandle;
+use vpr_runtime::{ActiveTurn, ProviderExecutionError, TurnInterruptHandle};
 
 use super::{LabError, OwnerLabEngine, map_provider_execution};
 
@@ -64,6 +65,9 @@ impl OwnerLabEngine {
         if duration == 0 || duration > MAX_VOICE_MILLIS {
             return Err(LabError::InvalidInput);
         }
+        if self.stt.is_none() || self.llm.is_none() || self.avatar.is_none() {
+            return Err(LabError::InvalidState);
+        }
         let turn = self.new_turn()?;
         register_interrupt(turn.interrupt_handle());
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
@@ -80,7 +84,7 @@ impl OwnerLabEngine {
                     locale_hint: Some("ru-RU".to_owned()),
                 },
             )
-            .map_err(map_provider_execution)?;
+            .map_err(|error| terminalize_provider_error(&turn, error))?;
         let stt_millis = elapsed_millis(stt_started);
 
         let llm_started = Instant::now();
@@ -94,17 +98,17 @@ impl OwnerLabEngine {
                 },
                 &mut generated,
             )
-            .map_err(map_provider_execution)?;
+            .map_err(|error| terminalize_provider_error(&turn, error))?;
         let llm_millis = elapsed_millis(llm_started);
         let reply = generated.into_string();
         if reply.trim().is_empty() {
-            return Err(LabError::InvalidInput);
+            return Err(terminalize_failed_turn(&turn, LabError::InvalidInput));
         }
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
         turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
-            .map_err(map_provider_execution)?;
+            .map_err(|error| terminalize_provider_error(&turn, error))?;
         let avatar_millis = elapsed_millis(avatar_started);
         turn.complete().map_err(LabError::Runtime)?;
 
@@ -119,6 +123,25 @@ impl OwnerLabEngine {
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&llm_usage),
         })
+    }
+}
+
+fn terminalize_provider_error(turn: &ActiveTurn, error: ProviderExecutionError) -> LabError {
+    let mapped = map_provider_execution(error);
+    terminalize_failed_turn(turn, mapped)
+}
+
+fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> LabError {
+    match turn.state() {
+        TurnState::Processing | TurnState::Outputting => match turn.fail() {
+            Ok(()) => error,
+            Err(_) if turn.state() == TurnState::Cancelled => {
+                LabError::Runtime(Rt0ReasonCode::TurnCancelled)
+            }
+            Err(reason) => LabError::Runtime(reason),
+        },
+        TurnState::Cancelled => LabError::Runtime(Rt0ReasonCode::TurnCancelled),
+        _ => error,
     }
 }
 

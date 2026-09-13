@@ -207,7 +207,10 @@ fn interrupt_handle_cancels_in_flight_voice_before_avatar_output() {
     let handle = handle_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     handle.interrupt().unwrap();
     let result = worker.join().unwrap();
-    assert!(matches!(result, Err(LabError::Provider(_))));
+    assert_eq!(
+        result,
+        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::TurnCancelled))
+    );
     assert_eq!(stats.stt.load(Ordering::SeqCst), 1);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
