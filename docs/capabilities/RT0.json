@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.10.0",
+  "catalogue_version": "0.11.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -200,6 +200,16 @@
     },
     {
       "id": "evaluation.rt0_did_agents_streams_contract",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "runtime.realtime_avatar_session_binding",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_avatar_runtime_contract",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

@@ -1,4 +1,5 @@
 mod authority;
+mod avatar_runtime;
 mod cancellation;
 mod clock;
 mod delivery;
@@ -12,6 +13,7 @@ mod session;
 mod turn;
 mod turn_state;
 
+pub use avatar_runtime::RealtimeAvatarHandle;
 pub use delivery::{OutputDeliveryError, OutputDeliveryHandle};
 pub use error::{ProviderExecutionError, RuntimeDenyReason, provider_reason_code};
 pub use output::{OutputSegmentEvidence, OutputSegmentId};

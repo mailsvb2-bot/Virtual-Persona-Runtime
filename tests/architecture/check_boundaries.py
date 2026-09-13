@@ -241,6 +241,40 @@ if did_config_derive is not None and any(
 if "impl RealtimeAvatarPort for DidAgentStreamsAvatar" not in did_source:
     raise SystemExit("D-ID adapter must remain behind RealtimeAvatarPort")
 
+avatar_runtime_source = (runtime_src / "avatar_runtime.rs").read_text(encoding="utf-8")
+handle_match = re.search(r"pub struct RealtimeAvatarHandle\s*\{([^}]*)\}", avatar_runtime_source, re.DOTALL)
+if handle_match is None or re.search(r"\bpub\s+\w+\s*:", handle_match.group(1)):
+    raise SystemExit("RealtimeAvatarHandle fields must remain runtime-issued and non-forgeable")
+handle_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub struct RealtimeAvatarHandle\b",
+    avatar_runtime_source,
+    re.MULTILINE,
+)
+if handle_derive is not None and any(
+    item.strip() == "Clone" for item in handle_derive.group(1).split(",")
+):
+    raise SystemExit("RealtimeAvatarHandle must remain non-cloneable session capability evidence")
+for method in (
+    "open_realtime_avatar",
+    "submit_realtime_avatar_answer",
+    "submit_realtime_avatar_ice",
+    "speak_realtime_avatar_text",
+    "speak_realtime_avatar_audio_url",
+    "interrupt_realtime_avatar",
+    "close_realtime_avatar",
+):
+    if f"pub fn {method}" not in avatar_runtime_source:
+        raise SystemExit(f"runtime realtime-avatar contract missing {method}")
+if "session_id: SessionId" not in turn_source:
+    raise SystemExit("ActiveTurn must remain bound to its canonical session for avatar handle validation")
+close_match = re.search(
+    r"fn close_session\(\s*&self,\s*session: &RealtimeAvatarSession\s*\)",
+    avatar_source,
+    re.MULTILINE,
+)
+if close_match is None:
+    raise SystemExit("avatar cleanup must remain independent of cancelled turn work")
+
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
 for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):

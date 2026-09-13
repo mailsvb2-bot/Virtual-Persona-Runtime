@@ -179,15 +179,12 @@ pub trait RealtimeAvatarPort: Send + Sync {
         })
     }
 
-    /// Closes an existing provider realtime-avatar session.
+    /// Closes an existing provider realtime-avatar session. Cleanup is intentionally independent
+    /// of turn cancellation so revoked/cancelled runtime work cannot strand a remote session.
     ///
     /// # Errors
     /// Returns a typed provider failure when close cannot be confirmed.
-    fn close_session(
-        &self,
-        session: &RealtimeAvatarSession,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(), ProviderError>;
+    fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError>;
 }
 
 #[cfg(test)]
