@@ -6,7 +6,7 @@ use vpr_domain::{
 };
 use vpr_integration::{
     AudioInput, AvatarPort, GeneratedAudioSink, GeneratedTextSink, GeneratedVideoSink, LlmPort,
-    LlmRequest, SttPort, SttRequest, Transcript, TtsPort, UsageEvidence,
+    LlmRequest, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
 };
 use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
@@ -220,13 +220,13 @@ impl ActiveTurn {
     pub fn execute_tts(
         &self,
         port: &dyn TtsPort,
-        text: &str,
+        request: &TtsRequest,
         sink: &mut dyn GeneratedAudioSink,
     ) -> Result<UsageEvidence, ProviderExecutionError> {
         let permit = self
             .issue_provider_operation(ProviderOperation::Tts)
             .map_err(ProviderExecutionError::from)?;
-        port.synthesize(text, &permit.cancellation, sink)
+        port.synthesize(request, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
     }
 

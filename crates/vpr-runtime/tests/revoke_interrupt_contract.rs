@@ -7,7 +7,7 @@ use vpr_domain::{
 use vpr_integration::{
     AudioInput, CancellationProbe, GeneratedAudioBuffer, GeneratedAudioSink, GeneratedTextBuffer,
     GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat, ProviderDescriptor, ProviderError,
-    SttPort, SttRequest, Transcript, TtsPort, UsageEvidence,
+    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -88,12 +88,12 @@ impl TtsPort for TestTts {
 
     fn synthesize(
         &self,
-        _text: &str,
+        _request: &TtsRequest,
         _cancellation: &dyn CancellationProbe,
         sink: &mut dyn GeneratedAudioSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        sink.push_generated_audio(&[0], 16_000)?;
+        sink.push_generated_audio(&[0, 0], 16_000, 1, PcmSampleFormat::S16Le)?;
         Ok(UsageEvidence::default())
     }
 }
@@ -252,7 +252,11 @@ fn missing_consent_blocks_tts_before_adapter_start() {
     turn.begin_processing().unwrap();
 
     let provider = TestTts::default();
-    let result = turn.execute_tts(&provider, "hello", &mut GeneratedAudioBuffer::default());
+    let request = TtsRequest {
+        text: "hello".into(),
+        locale_hint: Some("en".into()),
+    };
+    let result = turn.execute_tts(&provider, &request, &mut GeneratedAudioBuffer::default());
     assert!(matches!(
         result,
         Err(ProviderExecutionError::Denied(

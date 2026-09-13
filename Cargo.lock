@@ -1053,6 +1053,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vpr-provider-elevenlabs-tts"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "vpr-integration",
+]
+
+[[package]]
 name = "vpr-provider-gemini"
 version = "0.1.0"
 dependencies = [
@@ -1069,6 +1078,15 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "vpr-integration",
+]
+
+[[package]]
+name = "vpr-provider-openai-speech"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
  "vpr-integration",
 ]
 
@@ -1092,8 +1110,10 @@ dependencies = [
  "vpr-policy",
  "vpr-provider-anthropic",
  "vpr-provider-deepgram-stt",
+ "vpr-provider-elevenlabs-tts",
  "vpr-provider-gemini",
  "vpr-provider-openai-compatible",
+ "vpr-provider-openai-speech",
  "vpr-provider-openai-transcription",
  "vpr-runtime",
 ]
