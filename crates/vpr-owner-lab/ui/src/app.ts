@@ -1,4 +1,5 @@
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type StartResponse = { offer: SessionDescription; ice_servers: IceServer[]; capabilities: string[] };
@@ -24,6 +25,8 @@ const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 
 let csrfToken = "";
+let egressEnabled = false;
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false };
 let peer: RTCPeerConnection | null = null;
 let answerSubmitted = false;
 let pendingIce: IceCandidatePayload[] = [];
@@ -60,6 +63,13 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
+const syncStatus = async (): Promise<LabStatus> => {
+  backendStatus = await api<LabStatus>("/api/status");
+  updateControls();
+  showEvidence(backendStatus);
+  return backendStatus;
+};
+
 const postIce = async (candidate: IceCandidatePayload): Promise<void> => {
   await api<{ ok: true }>("/api/avatar/ice", {
     candidate: candidate.candidate ?? null,
@@ -74,7 +84,19 @@ const flushIce = async (): Promise<void> => {
   for (const candidate of queued) await postIce(candidate);
 };
 
-const closePeer = (): void => {
+const backendSessionPresent = (): boolean => !["none", "closed"].includes(backendStatus.session_state);
+
+const updateControls = (): void => {
+  const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
+  speakButton.disabled = !transportReady || !capabilities.has("text");
+  interruptButton.disabled = !transportReady || !capabilities.has("interrupt");
+  revokeButton.disabled = !backendSessionPresent()
+    || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
+  closeButton.disabled = !backendSessionPresent();
+  connectButton.disabled = !egressEnabled || backendSessionPresent();
+};
+
+const closePeerTransport = (): void => {
   peer?.close();
   peer = null;
   video.srcObject = null;
@@ -82,11 +104,7 @@ const closePeer = (): void => {
   answerSubmitted = false;
   pendingIce = [];
   capabilities.clear();
-  speakButton.disabled = true;
-  interruptButton.disabled = true;
-  revokeButton.disabled = true;
-  closeButton.disabled = true;
-  connectButton.disabled = false;
+  updateControls();
 };
 
 const connectAvatar = async (): Promise<void> => {
@@ -98,7 +116,9 @@ const connectAvatar = async (): Promise<void> => {
   setStatus("Создаю защищённую сессию…");
   try {
     const start = await api<StartResponse>("/api/avatar/start", { consent: true });
+    backendStatus = { session_state: "active", avatar_open: true, egress_enabled: egressEnabled };
     capabilities = new Set(start.capabilities);
+    updateControls();
     peer = new RTCPeerConnection({
       iceServers: start.ice_servers.map((server) => ({
         urls: server.urls,
@@ -134,15 +154,26 @@ const connectAvatar = async (): Promise<void> => {
     answerSubmitted = true;
     await flushIce();
 
-    speakButton.disabled = !capabilities.has("text");
-    interruptButton.disabled = !capabilities.has("interrupt");
-    revokeButton.disabled = false;
-    closeButton.disabled = false;
+    updateControls();
     setStatus("WebRTC согласован", "ready");
     showEvidence({ connectionState: peer.connectionState, capabilities: [...capabilities] });
   } catch (error) {
-    closePeer();
-    setStatus(error instanceof Error ? error.message : "Ошибка подключения", "error");
+    const messageText = error instanceof Error ? error.message : "Ошибка подключения";
+    closePeerTransport();
+    if (backendSessionPresent()) {
+      try {
+        await api<{ ok: true }>("/api/session/close", {});
+        await syncStatus();
+      } catch (cleanupError) {
+        await syncStatus().catch(() => undefined);
+        const cleanupText = cleanupError instanceof Error ? cleanupError.message : "cleanup failed";
+        setStatus(`${messageText}; cleanup: ${cleanupText}`, "error");
+        updateControls();
+        return;
+      }
+    }
+    setStatus(messageText, "error");
+    updateControls();
   }
 };
 
@@ -161,14 +192,33 @@ const speak = async (): Promise<void> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
+  closePeerTransport();
   try {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
-    setStatus(kind === "revoke" ? "Доступ отозван" : "Сессия закрыта", "idle");
+    await syncStatus();
+    setStatus(
+      kind === "revoke" ? "Доступ отозван. Сессию можно закрыть." : "Сессия закрыта",
+      "idle",
+    );
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Ошибка завершения", "error");
+    await syncStatus().catch(() => undefined);
+    setStatus(error instanceof Error ? `${error.message}; повторите завершение` : "Ошибка завершения", "error");
   } finally {
-    closePeer();
+    updateControls();
   }
+};
+
+const closeBackendOnUnload = (): void => {
+  if (!backendSessionPresent() || !csrfToken) return;
+  void fetch("/api/session/close", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
+    body: "{}",
+    credentials: "same-origin",
+    cache: "no-store",
+    keepalive: true,
+  }).catch(() => undefined);
+  closePeerTransport();
 };
 
 connectButton.addEventListener("click", () => void connectAvatar());
@@ -176,18 +226,20 @@ speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void api("/api/avatar/interrupt", {}).catch((error: unknown) => setStatus(String(error), "error")));
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
-window.addEventListener("beforeunload", () => peer?.close());
+window.addEventListener("pagehide", closeBackendOnUnload);
 
 void api<Bootstrap>("/api/bootstrap")
-  .then((bootstrap) => {
+  .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
-    if (!bootstrap.egress_enabled) {
+    egressEnabled = bootstrap.egress_enabled;
+    await syncStatus();
+    if (!egressEnabled) {
       setStatus("Egress выключен на backend", "error");
-      connectButton.disabled = true;
+    } else if (backendSessionPresent()) {
+      setStatus("Найдена незакрытая сессия — доступно безопасное завершение", "error");
     } else {
       setStatus("Готов к подключению");
     }
-    return api("/api/status");
+    updateControls();
   })
-  .then(showEvidence)
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));

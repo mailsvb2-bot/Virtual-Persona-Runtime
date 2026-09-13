@@ -287,6 +287,15 @@ for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secr
         raise SystemExit(f"Owner Lab UI must not contain provider secrets/endpoints: {forbidden}")
 if 'fetch("http' in owner_lab_ui or "fetch('http" in owner_lab_ui:
     raise SystemExit("Owner Lab UI must use same-origin backend APIs only")
+for required_ui_recovery in (
+    "backendSessionPresent",
+    "syncStatus",
+    "/api/session/close",
+    'window.addEventListener("pagehide"',
+    "keepalive: true",
+):
+    if required_ui_recovery not in owner_lab_ui:
+        raise SystemExit(f"Owner Lab UI missing cleanup/recovery contract: {required_ui_recovery}")
 
 avatar_runtime_source = (runtime_src / "avatar_runtime.rs").read_text(encoding="utf-8")
 handle_match = re.search(r"pub struct RealtimeAvatarHandle\s*\{([^}]*)\}", avatar_runtime_source, re.DOTALL)
