@@ -24,6 +24,7 @@ pub struct ProviderError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsageUnit {
     Token,
+    TextCharacter,
     AudioMillisecond,
 }
 
@@ -170,10 +171,18 @@ pub trait SttPort: Send + Sync {
     ) -> Result<(Transcript, UsageEvidence), ProviderError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TtsRequest {
+    pub text: String,
+    pub locale_hint: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedAudioBuffer {
     pcm: Vec<u8>,
     sample_rate_hz: Option<u32>,
+    channels: Option<u16>,
+    sample_format: Option<PcmSampleFormat>,
 }
 
 impl GeneratedAudioBuffer {
@@ -186,6 +195,37 @@ impl GeneratedAudioBuffer {
     pub const fn sample_rate_hz(&self) -> Option<u32> {
         self.sample_rate_hz
     }
+
+    #[must_use]
+    pub const fn channels(&self) -> Option<u16> {
+        self.channels
+    }
+
+    #[must_use]
+    pub const fn sample_format(&self) -> Option<PcmSampleFormat> {
+        self.sample_format
+    }
+
+    #[must_use]
+    pub fn duration_millis(&self) -> Option<u64> {
+        let sample_rate_hz = self.sample_rate_hz?;
+        let channels = self.channels?;
+        let sample_format = self.sample_format?;
+        if self.pcm.is_empty() || sample_rate_hz == 0 || channels == 0 {
+            return None;
+        }
+        let bytes_per_sample = match sample_format {
+            PcmSampleFormat::S16Le => 2_u64,
+        };
+        let frame_bytes = u64::from(channels).checked_mul(bytes_per_sample)?;
+        let pcm_len = u64::try_from(self.pcm.len()).ok()?;
+        if pcm_len % frame_bytes != 0 {
+            return None;
+        }
+        (pcm_len / frame_bytes)
+            .checked_mul(1_000)?
+            .checked_div(u64::from(sample_rate_hz))
+    }
 }
 
 impl sealed::GeneratedAudioSink for GeneratedAudioBuffer {}
@@ -195,30 +235,47 @@ impl GeneratedAudioSink for GeneratedAudioBuffer {
         &mut self,
         pcm: &[u8],
         sample_rate_hz: u32,
+        channels: u16,
+        sample_format: PcmSampleFormat,
     ) -> Result<(), ProviderError> {
+        let same_format = self
+            .sample_rate_hz
+            .is_none_or(|value| value == sample_rate_hz)
+            && self.channels.is_none_or(|value| value == channels)
+            && self
+                .sample_format
+                .is_none_or(|value| value == sample_format);
+        let frame_bytes = usize::from(channels).checked_mul(match sample_format {
+            PcmSampleFormat::S16Le => 2,
+        });
         if sample_rate_hz == 0
-            || self
-                .sample_rate_hz
-                .is_some_and(|existing| existing != sample_rate_hz)
+            || channels == 0
+            || pcm.is_empty()
+            || !same_format
+            || !frame_bytes.is_some_and(|size| size > 0 && pcm.len() % size == 0)
         {
             return Err(invalid_generated_output());
         }
         self.sample_rate_hz = Some(sample_rate_hz);
+        self.channels = Some(channels);
+        self.sample_format = Some(sample_format);
         self.pcm.extend_from_slice(pcm);
         Ok(())
     }
 }
 
 pub trait GeneratedAudioSink: sealed::GeneratedAudioSink {
-    /// Returns synthesized audio to a sealed in-memory generation buffer.
+    /// Returns synthesized PCM to a sealed in-memory generation buffer.
     /// External crates cannot implement this trait, so provider callbacks cannot become transport.
     ///
     /// # Errors
-    /// Returns `ProviderError` for invalid generated audio.
+    /// Returns `ProviderError` for invalid or format-changing generated audio.
     fn push_generated_audio(
         &mut self,
         pcm: &[u8],
         sample_rate_hz: u32,
+        channels: u16,
+        sample_format: PcmSampleFormat,
     ) -> Result<(), ProviderError>;
 }
 
@@ -230,7 +287,7 @@ pub trait TtsPort: Send + Sync {
     /// Returns a typed provider failure, including cancellation or policy denial.
     fn synthesize(
         &self,
-        text: &str,
+        request: &TtsRequest,
         cancellation: &dyn CancellationProbe,
         sink: &mut dyn GeneratedAudioSink,
     ) -> Result<UsageEvidence, ProviderError>;
@@ -343,11 +400,17 @@ mod tests {
     #[test]
     fn generated_audio_buffer_rejects_sample_rate_changes() {
         let mut buffer = GeneratedAudioBuffer::default();
-        buffer.push_generated_audio(&[1, 2], 16_000).unwrap();
-        let error = buffer.push_generated_audio(&[3, 4], 24_000).unwrap_err();
+        buffer
+            .push_generated_audio(&[1, 2], 16_000, 1, PcmSampleFormat::S16Le)
+            .unwrap();
+        let error = buffer
+            .push_generated_audio(&[3, 4], 24_000, 1, PcmSampleFormat::S16Le)
+            .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
         assert_eq!(buffer.pcm(), &[1, 2]);
         assert_eq!(buffer.sample_rate_hz(), Some(16_000));
+        assert_eq!(buffer.channels(), Some(1));
+        assert_eq!(buffer.sample_format(), Some(PcmSampleFormat::S16Le));
     }
 
     #[test]

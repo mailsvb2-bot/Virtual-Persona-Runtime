@@ -11,6 +11,8 @@ members = [
   "crates/vpr-provider-deepgram-stt",
   "crates/vpr-provider-anthropic",
   "crates/vpr-provider-gemini",
+  "crates/vpr-provider-openai-speech",
+  "crates/vpr-provider-elevenlabs-tts",
   "crates/vpr-rt0-smoke",
 ]
 

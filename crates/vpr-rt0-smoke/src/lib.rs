@@ -235,6 +235,7 @@ fn provider_authority() -> Result<EffectiveAuthority, SmokeError> {
 const fn usage_unit_name(unit: UsageUnit) -> &'static str {
     match unit {
         UsageUnit::Token => "token",
+        UsageUnit::TextCharacter => "text_character",
         UsageUnit::AudioMillisecond => "audio_millisecond",
     }
 }
