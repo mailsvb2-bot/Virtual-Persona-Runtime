@@ -14,6 +14,7 @@ members = [
   "crates/vpr-provider-openai-speech",
   "crates/vpr-provider-elevenlabs-tts",
   "crates/vpr-provider-did-agent-streams",
+  "crates/vpr-owner-lab",
   "crates/vpr-rt0-smoke",
 ]
 

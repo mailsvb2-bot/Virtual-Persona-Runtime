@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.11.0",
+  "catalogue_version": "0.12.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -214,13 +214,23 @@
       "user_reachable": false
     },
     {
+      "id": "runtime.owner_lab_avatar_bridge",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_owner_lab_contract",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
       "id": "provider.real_avatar",
       "maturity": "NOT_IMPLEMENTED",
       "user_reachable": false
     },
     {
       "id": "ui.rt0_owner_lab",
-      "maturity": "NOT_IMPLEMENTED",
+      "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },
     {

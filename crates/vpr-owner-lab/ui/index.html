@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VPR Owner Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Virtual Persona Runtime · RT0</p>
+        <h1>Owner Lab</h1>
+        <p class="sub">Локальная проверка realtime-аватара. Ключ провайдера остаётся в Rust backend и никогда не отправляется в браузер.</p>
+      </div>
+      <div id="status" class="status" data-state="idle">Загрузка…</div>
+    </section>
+
+    <section class="stage">
+      <video id="avatar" autoplay playsinline></video>
+      <div id="placeholder" class="placeholder">Видео появится после WebRTC-подключения</div>
+    </section>
+
+    <section class="panel">
+      <label class="consent">
+        <input id="consent" type="checkbox">
+        <span>Я разрешаю отправку данных выбранному внешнему avatar-провайдеру для этой тестовой сессии.</span>
+      </label>
+      <div class="row">
+        <button id="connect" class="primary">Подключить аватар</button>
+        <button id="revoke" disabled>Отозвать доступ</button>
+        <button id="close" disabled>Закрыть</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <label for="message">Что должен сказать аватар</label>
+      <textarea id="message" rows="3" placeholder="Введите короткую фразу на русском"></textarea>
+      <div class="row">
+        <button id="speak" class="primary" disabled>Сказать</button>
+        <button id="interrupt" disabled>Прервать</button>
+      </div>
+    </section>
+
+    <section class="evidence">
+      <h2>Состояние</h2>
+      <pre id="evidence">Ожидание…</pre>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
