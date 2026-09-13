@@ -6,7 +6,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence,
+    ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -217,7 +217,9 @@ fn apply_event(
         "message_start" => {
             let message = event.message.ok_or_else(invalid_response)?;
             usage.input_units = message.usage.input_tokens;
+            usage.input_unit = message.usage.input_tokens.map(|_| UsageUnit::Token);
             usage.output_units = message.usage.output_tokens;
+            usage.output_unit = message.usage.output_tokens.map(|_| UsageUnit::Token);
         }
         "content_block_delta" => {
             let delta = event.delta.ok_or_else(invalid_response)?;
@@ -231,6 +233,7 @@ fn apply_event(
         "message_delta" => {
             if let Some(event_usage) = event.usage {
                 usage.output_units = event_usage.output_tokens;
+                usage.output_unit = event_usage.output_tokens.map(|_| UsageUnit::Token);
             }
         }
         "message_stop" => *saw_stop = true,

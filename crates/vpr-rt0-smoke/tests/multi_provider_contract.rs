@@ -66,7 +66,9 @@ fn one_canonical_runtime_path_accepts_three_provider_protocols() {
         assert_eq!(result.response_text, "Привет!");
         assert_eq!(result.evidence.runtime_path, "authorized_llm_generation");
         assert_eq!(result.evidence.input_units, Some(5));
+        assert_eq!(result.evidence.input_unit.as_deref(), Some("token"));
         assert_eq!(result.evidence.output_units, Some(2));
+        assert_eq!(result.evidence.output_unit.as_deref(), Some("token"));
         assert!(!result.evidence.output_delivery_proven);
     }
     assert_eq!(openai.evidence.provider, "openai-compatible");

@@ -6,7 +6,7 @@ use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence,
+    ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -202,7 +202,9 @@ fn apply_event(
             }
             if let Some(event_usage) = interaction.usage {
                 usage.input_units = event_usage.total_input_tokens;
+                usage.input_unit = event_usage.total_input_tokens.map(|_| UsageUnit::Token);
                 usage.output_units = event_usage.total_output_tokens;
+                usage.output_unit = event_usage.total_output_tokens.map(|_| UsageUnit::Token);
             }
             *saw_completed = true;
         }

@@ -6,7 +6,7 @@ use vpr_domain::{
 };
 use vpr_integration::{
     AudioInput, AvatarPort, GeneratedAudioSink, GeneratedTextSink, GeneratedVideoSink, LlmPort,
-    LlmRequest, SttPort, Transcript, TtsPort, UsageEvidence,
+    LlmRequest, SttPort, SttRequest, Transcript, TtsPort, UsageEvidence,
 };
 use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
@@ -203,12 +203,12 @@ impl ActiveTurn {
     pub fn execute_stt(
         &self,
         port: &dyn SttPort,
-        input: &AudioInput,
+        request: &SttRequest,
     ) -> Result<(Transcript, UsageEvidence), ProviderExecutionError> {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
-        port.transcribe(input, &permit.cancellation)
+        port.transcribe(request, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
     }
 

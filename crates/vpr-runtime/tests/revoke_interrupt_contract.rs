@@ -5,9 +5,9 @@ use vpr_domain::{
     PersonaVersion, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioBuffer, GeneratedAudioSink, GeneratedTextBuffer,
-    GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError, TtsPort,
-    UsageEvidence,
+    AudioInput, CancellationProbe, GeneratedAudioBuffer, GeneratedAudioSink, GeneratedTextBuffer,
+    GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat, ProviderDescriptor, ProviderError,
+    SttPort, SttRequest, Transcript, TtsPort, UsageEvidence,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -44,6 +44,37 @@ impl LlmPort for TestLlm {
 #[derive(Default)]
 struct TestTts {
     calls: AtomicUsize,
+}
+
+#[derive(Default)]
+struct TestStt {
+    calls: AtomicUsize,
+}
+
+impl SttPort for TestStt {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "test".into(),
+            model: "test-stt".into(),
+            representation: Some("speech-to-text".into()),
+        }
+    }
+
+    fn transcribe(
+        &self,
+        request: &SttRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(Transcript, UsageEvidence), ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        assert!(!cancellation.is_cancelled());
+        Ok((
+            Transcript {
+                text: "ok".into(),
+                locale: request.locale_hint.clone().unwrap_or_else(|| "und".into()),
+            },
+            UsageEvidence::default(),
+        ))
+    }
 }
 
 impl TtsPort for TestTts {
@@ -255,5 +286,45 @@ fn expired_authority_fails_closed_before_provider_start() {
     .unwrap();
     let provider = TestLlm::default();
     assert_eq!(turn.authorize(), Err(Rt0ReasonCode::AuthExpired));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn missing_consent_blocks_stt_before_adapter_start() {
+    let persona = PersonaIdentity::new(
+        PersonaId::new("persona-stt-consent").unwrap(),
+        PersonaVersion::new(1).unwrap(),
+        PersonaMode::DigitalTwin,
+    );
+    let provider_scope = AuthorityScope::new("provider.egress").unwrap();
+    let authority = EffectiveAuthority::compose(&[AuthorityLayer::new([provider_scope], [])]);
+    let mut session = ActiveSession::new(
+        SessionId::new("session-stt-consent").unwrap(),
+        persona.id().clone(),
+        SessionSecurityConfig::new(authority, None, true, ConsentState::Missing, false),
+    );
+    session.activate().unwrap();
+    let mut turn = ActiveTurn::new(
+        TurnId::new("turn-stt-consent").unwrap(),
+        CorrelationId::new("corr-stt-consent").unwrap(),
+        &persona,
+        &session,
+    )
+    .unwrap();
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+
+    let provider = TestStt::default();
+    let request = SttRequest {
+        audio: AudioInput {
+            pcm: vec![0; 320],
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+        },
+        locale_hint: Some("ru-RU".into()),
+    };
+    let error = turn.execute_stt(&provider, &request).unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::ConsentRequired);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
 }
