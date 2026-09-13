@@ -82,11 +82,19 @@ impl ActiveTurn {
             sequence: segment_id.get(),
             text: text.to_owned(),
         };
+        self.reconcile_transport_send(segment_id, port.send_text(&event, &self.cancellation))
+    }
+
+    pub(crate) fn reconcile_transport_send(
+        &self,
+        segment_id: OutputSegmentId,
+        result: Result<(), TransportError>,
+    ) -> Result<OutputDeliveryHandle, OutputDeliveryError> {
         let handle = OutputDeliveryHandle {
             turn_id: self.snapshot.turn_id().clone(),
             segment_id,
         };
-        match port.send_text(&event, &self.cancellation) {
+        match result {
             Ok(()) => {
                 self.state.lock().reconcile_output_sent(segment_id)?;
                 Ok(handle)

@@ -186,6 +186,29 @@ if handle_derive is not None and any(
 if "pub fn deliver_text" not in delivery_source or "RealtimeOutputPort" not in delivery_source:
     raise SystemExit("canonical text delivery must remain bound to RealtimeOutputPort")
 
+media_timeline_source = (runtime_src / "media_timeline.rs").read_text(encoding="utf-8")
+media_delivery_source = (runtime_src / "media_delivery.rs").read_text(encoding="utf-8")
+session_source = (runtime_src / "session.rs").read_text(encoding="utf-8")
+transport_source = (CRATES / "vpr-integration" / "src" / "transport.rs").read_text(encoding="utf-8")
+if "media_timeline: MediaTimeline" not in session_source or "media_timeline: MediaTimeline" not in turn_source:
+    raise SystemExit("canonical MediaTimeline must remain session-owned and shared with turns")
+if "bound_epoch: u64" not in media_timeline_source:
+    raise SystemExit("turn media mapping must remain bound to its creation epoch")
+if "pub(crate) struct TurnMediaState" not in media_timeline_source or "Clone" in re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub\(crate\) struct TurnMediaState",
+    media_timeline_source,
+    re.MULTILINE,
+).group(1):
+    raise SystemExit("TurnMediaState must remain runtime-internal and non-cloneable")
+for method in ("send_audio", "send_video", "flush_media"):
+    if f"fn {method}" not in transport_source:
+        raise SystemExit(f"RealtimeOutputPort must retain canonical media method {method}")
+for method in ("deliver_audio", "deliver_video_frame", "interrupt_and_flush_media"):
+    if f"pub fn {method}" not in media_delivery_source:
+        raise SystemExit(f"runtime media contract missing {method}")
+if "frame.timestamp_micros" not in media_delivery_source or "next_video_media_stamp" not in media_delivery_source:
+    raise SystemExit("provider video timestamps must pass through runtime timeline normalization")
+
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
 for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):

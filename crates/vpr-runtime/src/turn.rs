@@ -18,6 +18,7 @@ use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::execution_gate::SessionExecutionGate;
+use crate::media_timeline::MediaTimeline;
 use crate::output::{OutputSegmentEvidence, OutputSegmentId};
 use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
@@ -34,6 +35,7 @@ pub struct ActiveTurn {
     pub(crate) clock: Arc<dyn RuntimeClock>,
     pub(crate) gate: SessionExecutionGate,
     pub(crate) cancellation: TurnCancellation,
+    pub(crate) media_timeline: MediaTimeline,
 }
 
 impl ActiveTurn {
@@ -48,7 +50,7 @@ impl ActiveTurn {
         session: &ActiveSession,
     ) -> Result<Self, RuntimeDenyReason> {
         let cancellation = TurnCancellation::default();
-        let (authorization_snapshot, egress_policy_snapshot) = {
+        let (authorization_snapshot, egress_policy_snapshot, media_epoch) = {
             let _execution = session
                 .gate
                 .read()
@@ -62,6 +64,7 @@ impl ActiveTurn {
             (
                 session.authorization.bind_turn(&cancellation)?,
                 session.egress_policy.bind_turn(&cancellation)?,
+                session.media_timeline.current_epoch(),
             )
         };
         let turn = Turn::new(turn_id, correlation_id);
@@ -75,7 +78,7 @@ impl ActiveTurn {
             egress_policy_snapshot.revision,
         );
         Ok(Self {
-            state: Mutex::new(TurnMutableState::new(turn)),
+            state: Mutex::new(TurnMutableState::new(turn, media_epoch)),
             snapshot,
             authorization: session.authorization.clone(),
             authorization_snapshot,
@@ -84,6 +87,7 @@ impl ActiveTurn {
             clock: Arc::clone(&session.clock),
             gate: session.gate.clone(),
             cancellation,
+            media_timeline: session.media_timeline.clone(),
         })
     }
 

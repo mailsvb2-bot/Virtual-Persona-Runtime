@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.8.0",
+  "catalogue_version": "0.9.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -80,6 +80,26 @@
     },
     {
       "id": "evaluation.rt0_output_delivery_contract",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "runtime.canonical_media_timeline",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "integration.realtime_media_transport",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "runtime.media_interruption_flush",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_media_timeline_contract",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

@@ -7,6 +7,7 @@ use crate::authority::{AuthorizationController, EgressPolicyController};
 use crate::clock::{RuntimeClock, SystemClock};
 use crate::error::RuntimeDenyReason;
 use crate::execution_gate::SessionExecutionGate;
+use crate::media_timeline::MediaTimeline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSecurityConfig {
@@ -43,6 +44,7 @@ pub struct ActiveSession {
     pub(crate) egress_policy: EgressPolicyController,
     pub(crate) clock: Arc<dyn RuntimeClock>,
     pub(crate) gate: SessionExecutionGate,
+    pub(crate) media_timeline: MediaTimeline,
 }
 
 impl ActiveSession {
@@ -58,6 +60,7 @@ impl ActiveSession {
         clock: Arc<dyn RuntimeClock>,
     ) -> Self {
         let gate = SessionExecutionGate::default();
+        let media_timeline = MediaTimeline::new(id.clone());
         let authorization = AuthorizationController::new(
             security.expires_at_millis,
             security.effective_authority,
@@ -75,6 +78,7 @@ impl ActiveSession {
             egress_policy,
             clock,
             gate,
+            media_timeline,
         }
     }
 
@@ -186,6 +190,30 @@ impl ActiveSession {
         self.authorization
             .replace_authority(effective_authority, expires_at_millis)
             .map_err(RuntimeDenyReason::reason_code)
+    }
+
+    /// Rebases provider/device media mappings onto a new canonical session timeline epoch.
+    ///
+    /// Existing turns retain their old epoch and fail closed if they attempt to emit new media.
+    ///
+    /// # Errors
+    /// Returns `INVALID_STATE_TRANSITION` unless the session is active, or `INTERNAL_ERROR` on
+    /// clock/timeline overflow.
+    pub fn rebase_media_timeline(&self) -> Result<u64, Rt0ReasonCode> {
+        if self.session.state() != RealtimeSessionState::Active {
+            return Err(Rt0ReasonCode::InvalidStateTransition);
+        }
+        let _execution = self
+            .gate
+            .write()
+            .map_err(|()| Rt0ReasonCode::InternalError)?;
+        let now_millis = self
+            .clock
+            .now_millis()
+            .ok_or(Rt0ReasonCode::InternalError)?;
+        self.media_timeline
+            .rebase(now_millis)
+            .map_err(|_| Rt0ReasonCode::InternalError)
     }
 
     /// Rotates the active authorization epoch and invalidates all work bound to the old epoch.
