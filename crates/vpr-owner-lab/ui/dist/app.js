@@ -32,6 +32,8 @@ let micChunks = [];
 let recording = false;
 let recordingTimer = null;
 let voiceRequestInFlight = false;
+const MAX_VOICE_SAMPLES = 480_000;
+const AUTO_STOP_MILLIS = 29_500;
 const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
@@ -256,7 +258,7 @@ const startMicrophone = async () => {
     micSource.connect(micWorklet);
     micWorklet.connect(audioContext.destination);
     recording = true;
-    recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), 30_000);
+    recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
     setStatus("Слушаю… нажмите ещё раз, чтобы отправить", "ready");
     updateControls();
 };
@@ -275,7 +277,11 @@ const finishMicrophoneTurn = async () => {
     updateControls();
     setStatus("Распознаю и формирую ответ…");
     try {
-        const pcm = encodeS16Le(resampleMono(samples, inputRate));
+        const resampled = resampleMono(samples, inputRate);
+        const bounded = resampled.length > MAX_VOICE_SAMPLES
+            ? resampled.subarray(0, MAX_VOICE_SAMPLES)
+            : resampled;
+        const pcm = encodeS16Le(bounded);
         const result = await apiBinary("/api/voice/turn", pcm);
         showEvidence(result);
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");

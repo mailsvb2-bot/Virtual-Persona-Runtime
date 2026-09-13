@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -486,4 +486,201 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert!(did_requests[2].starts_with("POST /agents/agent-voice/streams/stream-voice "));
     assert!(did_requests[2].contains("Здравствуйте"));
     assert!(did_requests[3].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
+}
+
+fn mock_did_revoke_during_voice() -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let responses = [
+            (
+                "201 Created",
+                r#"{"id":"stream-revoke","session_id":"session-revoke","offer":{"type":"offer","sdp":"v=0 revoke-offer"},"ice_servers":[]}"#,
+            ),
+            ("200 OK", "{}"),
+        ];
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            let _ = tx.send(request);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    (format!("http://{address}"), rx)
+}
+
+fn mock_heartbeat_llm() -> (String, mpsc::Receiver<String>, mpsc::Receiver<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (request_tx, request_rx) = mpsc::channel();
+    let (started_tx, started_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_http_request(&mut stream);
+        let _ = request_tx.send(request);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        stream
+            .write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"never-spoken\"}}],\"usage\":null}\n\n")
+            .unwrap();
+        stream.flush().unwrap();
+        let _ = started_tx.send(());
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while Instant::now() < deadline {
+            if stream.write_all(b": keepalive\n\n").is_err() || stream.flush().is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    });
+    (
+        format!("http://{address}/v1/chat/completions"),
+        request_rx,
+        started_rx,
+    )
+}
+
+#[test]
+fn revoke_preempts_active_voice_before_any_avatar_output() {
+    let (did_endpoint, did_captured) = mock_did_revoke_during_voice();
+    let (stt_base, _) = mock_once(
+        "application/json",
+        r#"{"text":"Отмени ответ","language":"ru-RU"}"#,
+    );
+    let (llm_endpoint, llm_captured, llm_started) = mock_heartbeat_llm();
+    let stt_endpoint = format!("{stt_base}/v1/audio/transcriptions");
+    let port = free_port();
+    let host = format!("127.0.0.1:{port}");
+    let _guard = launch_owner_lab_voice(port, &did_endpoint, &stt_endpoint, &llm_endpoint);
+    let csrf = bootstrap(port, &host);
+    assert_eq!(
+        post(
+            port,
+            &host,
+            &csrf,
+            "/api/avatar/start",
+            r#"{"consent":true}"#,
+        )
+        .status,
+        200
+    );
+
+    let voice_host = host.clone();
+    let voice_csrf = csrf.clone();
+    let voice = thread::spawn(move || {
+        post_binary(
+            port,
+            &voice_host,
+            &voice_csrf,
+            "/api/voice/turn",
+            &vec![0_u8; 3_200],
+        )
+    });
+    llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let revoke_started = Instant::now();
+    let revoke = post(port, &host, &csrf, "/api/session/revoke", "{}");
+    assert_eq!(revoke.status, 200, "{}", revoke.body);
+    assert!(
+        revoke_started.elapsed() < Duration::from_millis(1_500),
+        "revoke waited for the provider instead of preempting the voice turn"
+    );
+
+    let voice = voice.join().unwrap();
+    assert_eq!(voice.status, 409, "{}", voice.body);
+    assert!(voice.body.contains("TURN_CANCELLED"));
+    assert_eq!(
+        post(port, &host, &csrf, "/api/session/close", "{}").status,
+        200
+    );
+
+    let llm_request = llm_captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(llm_request.contains("Отмени ответ"));
+    let did_requests: Vec<String> = (0..2)
+        .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
+        .collect();
+    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[1].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
+    assert!(
+        did_captured
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
+}
+
+#[test]
+fn close_preempts_active_voice_before_any_avatar_output() {
+    let (did_endpoint, did_captured) = mock_did_revoke_during_voice();
+    let (stt_base, _) = mock_once(
+        "application/json",
+        r#"{"text":"Закрой сессию","language":"ru-RU"}"#,
+    );
+    let (llm_endpoint, llm_captured, llm_started) = mock_heartbeat_llm();
+    let stt_endpoint = format!("{stt_base}/v1/audio/transcriptions");
+    let port = free_port();
+    let host = format!("127.0.0.1:{port}");
+    let _guard = launch_owner_lab_voice(port, &did_endpoint, &stt_endpoint, &llm_endpoint);
+    let csrf = bootstrap(port, &host);
+    assert_eq!(
+        post(
+            port,
+            &host,
+            &csrf,
+            "/api/avatar/start",
+            r#"{"consent":true}"#,
+        )
+        .status,
+        200
+    );
+
+    let voice_host = host.clone();
+    let voice_csrf = csrf.clone();
+    let voice = thread::spawn(move || {
+        post_binary(
+            port,
+            &voice_host,
+            &voice_csrf,
+            "/api/voice/turn",
+            &vec![0_u8; 3_200],
+        )
+    });
+    llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
+
+    let close_started = Instant::now();
+    let close = post(port, &host, &csrf, "/api/session/close", "{}");
+    assert_eq!(close.status, 200, "{}", close.body);
+    assert!(
+        close_started.elapsed() < Duration::from_millis(1_500),
+        "close waited for the provider instead of preempting the voice turn"
+    );
+
+    let voice = voice.join().unwrap();
+    assert_eq!(voice.status, 409, "{}", voice.body);
+    assert!(voice.body.contains("TURN_CANCELLED"));
+
+    let status = http(port, "GET", "/api/status", &host, &[], "");
+    let status_json: Value = serde_json::from_str(&status.body).unwrap();
+    assert_eq!(status_json["session_state"], "closed");
+    assert_eq!(status_json["avatar_open"], false);
+
+    let llm_request = llm_captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(llm_request.contains("Закрой сессию"));
+    let did_requests: Vec<String> = (0..2)
+        .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
+        .collect();
+    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[1].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
+    assert!(
+        did_captured
+            .recv_timeout(Duration::from_millis(100))
+            .is_err()
+    );
 }

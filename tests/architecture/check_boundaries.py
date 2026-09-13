@@ -320,6 +320,9 @@ for required_voice_http in (
     "application/octet-stream",
     "active_voice_interrupt",
     "voice_busy",
+    "voice_cancel_requested",
+    "session_end_requested",
+    "request_voice_cancel",
     "compare_exchange",
 ):
     if required_voice_http not in owner_lab_main:
@@ -343,6 +346,8 @@ for forbidden_browser_secret in (
         raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
 if "AudioWorkletNode" not in owner_lab_ui or "apiBinary" not in owner_lab_ui:
     raise SystemExit("Owner Lab voice UI must use AudioWorklet plus binary same-origin upload")
+if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" not in owner_lab_ui:
+    raise SystemExit("Owner Lab voice UI must cap actual PCM samples before upload")
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
 

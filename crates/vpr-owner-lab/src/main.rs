@@ -34,6 +34,8 @@ struct AppState {
     engine: Mutex<OwnerLabEngine>,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
+    voice_cancel_requested: AtomicBool,
+    session_end_requested: AtomicBool,
     csrf_token: String,
     port: u16,
 }
@@ -113,6 +115,8 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         engine: Mutex::new(engine),
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
+        voice_cancel_requested: AtomicBool::new(false),
+        session_end_requested: AtomicBool::new(false),
         csrf_token: generate_csrf_token()?,
         port,
     });
@@ -179,13 +183,15 @@ fn handle_request(mut request: Request, state: &AppState) {
 
 fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpResponse {
     match path {
-        "/api/avatar/start" => parse_json::<StartBody>(request).and_then(|body| {
-            with_engine_result(state, |engine| {
-                engine
-                    .start(OwnerLabStartRequest {
-                        consent: body.consent,
-                    })
-                    .map(|bundle| json_response(200, &bundle))
+        "/api/avatar/start" => reject_if_session_ending(state).and_then(|()| {
+            parse_json::<StartBody>(request).and_then(|body| {
+                with_engine_result(state, |engine| {
+                    engine
+                        .start(OwnerLabStartRequest {
+                            consent: body.consent,
+                        })
+                        .map(|bundle| json_response(200, &bundle))
+                })
             })
         }),
         "/api/avatar/answer" => parse_json::<AnswerBody>(request).and_then(|body| {
@@ -212,26 +218,63 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/audio" => parse_json::<AudioBody>(request)
             .and_then(|body| apply_input(state, OwnerLabTurnInput::AudioUrl(body.audio_url))),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
-        "/api/session/revoke" => with_engine_result(state, |engine| {
-            engine
-                .revoke()
-                .map(|()| json_response(200, &OkResponse { ok: true }))
-        }),
-        "/api/session/close" => with_engine_result(state, |engine| {
-            engine
-                .close()
-                .map(|()| json_response(200, &OkResponse { ok: true }))
-        }),
+        "/api/session/revoke" => end_session(state, false),
+        "/api/session/close" => end_session(state, true),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
 }
 
-fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse {
-    let audio = match read_body(request, MAX_VOICE_BODY_BYTES) {
-        Ok(audio) => audio,
-        Err(response) => return response,
+fn reject_if_session_ending(state: &AppState) -> Result<(), HttpResponse> {
+    if state.session_end_requested.load(Ordering::Acquire) {
+        Err(error_response(409, "INVALID_STATE_TRANSITION"))
+    } else {
+        Ok(())
+    }
+}
+
+fn request_voice_cancel(state: &AppState) {
+    if !state.voice_busy.load(Ordering::Acquire) {
+        return;
+    }
+    state.voice_cancel_requested.store(true, Ordering::Release);
+    if let Some(handle) = state.active_voice_interrupt.lock().clone() {
+        let _ = handle.interrupt();
+    }
+}
+
+fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
+    state.session_end_requested.store(true, Ordering::Release);
+    request_voice_cancel(state);
+    let mut engine = state
+        .engine
+        .lock()
+        .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+    let result = if close {
+        engine.close()
+    } else {
+        engine.revoke()
     };
+    match result {
+        Ok(()) => {
+            if close {
+                state.session_end_requested.store(false, Ordering::Release);
+            }
+            Ok(json_response(200, &OkResponse { ok: true }))
+        }
+        Err(error) => {
+            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
+                state.session_end_requested.store(false, Ordering::Release);
+            }
+            Err(lab_error_response(&error))
+        }
+    }
+}
+
+fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse {
+    if let Err(response) = reject_if_session_ending(state) {
+        return response;
+    }
     if state
         .voice_busy
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -239,12 +282,25 @@ fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse 
     {
         return error_response(409, "INVALID_STATE_TRANSITION");
     }
-    let _busy = VoiceBusyGuard(&state.voice_busy);
+    let _busy = VoiceBusyGuard {
+        busy: &state.voice_busy,
+        cancel_requested: &state.voice_cancel_requested,
+    };
+    if let Err(response) = reject_if_session_ending(state) {
+        return response;
+    }
+    let audio = match read_body(request, MAX_VOICE_BODY_BYTES) {
+        Ok(audio) => audio,
+        Err(response) => return response,
+    };
     let Ok(mut engine) = state.engine.lock() else {
         return error_response(500, "INTERNAL_ERROR");
     };
     let result = engine.voice_turn(audio, |handle| {
-        *state.active_voice_interrupt.lock() = Some(handle);
+        *state.active_voice_interrupt.lock() = Some(handle.clone());
+        if state.voice_cancel_requested.load(Ordering::Acquire) {
+            let _ = handle.interrupt();
+        }
     });
     *state.active_voice_interrupt.lock() = None;
     match result {
@@ -253,26 +309,34 @@ fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse 
     }
 }
 
-struct VoiceBusyGuard<'a>(&'a AtomicBool);
+struct VoiceBusyGuard<'a> {
+    busy: &'a AtomicBool,
+    cancel_requested: &'a AtomicBool,
+}
 
 impl Drop for VoiceBusyGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.cancel_requested.store(false, Ordering::Release);
+        self.busy.store(false, Ordering::Release);
     }
 }
 
 fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse> {
-    let active = state.active_voice_interrupt.lock().clone();
-    if let Some(handle) = active {
-        return handle
-            .interrupt()
-            .map(|()| json_response(200, &OkResponse { ok: true }))
-            .map_err(|reason| lab_error_response(&LabError::Runtime(reason)));
+    if state.voice_busy.load(Ordering::Acquire) {
+        state.voice_cancel_requested.store(true, Ordering::Release);
+        if let Some(handle) = state.active_voice_interrupt.lock().clone() {
+            return handle
+                .interrupt()
+                .map(|()| json_response(200, &OkResponse { ok: true }))
+                .map_err(|reason| lab_error_response(&LabError::Runtime(reason)));
+        }
+        return Ok(json_response(200, &OkResponse { ok: true }));
     }
     apply_input(state, OwnerLabTurnInput::Interrupt)
 }
 
 fn apply_input(state: &AppState, input: OwnerLabTurnInput) -> Result<HttpResponse, HttpResponse> {
+    reject_if_session_ending(state)?;
     with_engine_result(state, |engine| {
         engine
             .apply(input)
