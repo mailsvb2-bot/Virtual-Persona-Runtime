@@ -127,7 +127,7 @@ fn full_agents_streams_control_plane_matches_contract() {
     provider
         .speak_audio_url(&live, "https://cdn.example.com/voice.mp3", &probe)
         .unwrap();
-    provider.close_session(&live, &probe).unwrap();
+    provider.close_session(&live).unwrap();
 
     let requests: Vec<String> = (0..6).map(|_| captured.recv().unwrap()).collect();
     let lower = requests

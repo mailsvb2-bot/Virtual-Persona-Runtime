@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use vpr_domain::{
-    CorrelationId, PersonaIdentity, RealtimeSessionState, Rt0ReasonCode, Turn,
+    CorrelationId, PersonaIdentity, RealtimeSessionState, Rt0ReasonCode, SessionId, Turn,
     TurnExecutionSnapshot, TurnId, TurnState,
 };
 use vpr_integration::{
@@ -36,6 +36,7 @@ pub struct ActiveTurn {
     pub(crate) gate: SessionExecutionGate,
     pub(crate) cancellation: TurnCancellation,
     pub(crate) media_timeline: MediaTimeline,
+    pub(crate) session_id: SessionId,
 }
 
 impl ActiveTurn {
@@ -88,6 +89,7 @@ impl ActiveTurn {
             gate: session.gate.clone(),
             cancellation,
             media_timeline: session.media_timeline.clone(),
+            session_id: session.id().clone(),
         })
     }
 
@@ -166,7 +168,7 @@ impl ActiveTurn {
         )
     }
 
-    fn issue_provider_operation(
+    pub(crate) fn issue_provider_operation(
         &self,
         operation: ProviderOperation,
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {

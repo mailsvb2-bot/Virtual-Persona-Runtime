@@ -1,0 +1,206 @@
+use std::fmt::{Debug, Formatter, Result as FmtResult};
+
+use vpr_domain::SessionId;
+use vpr_integration::{
+    ProviderDescriptor, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
+};
+
+use crate::error::{ProviderExecutionError, RuntimeDenyReason};
+use crate::provider::ProviderOperation;
+use crate::{ActiveSession, ActiveTurn};
+
+pub struct RealtimeAvatarHandle {
+    session_id: SessionId,
+    provider: ProviderDescriptor,
+    provider_session: RealtimeAvatarSession,
+    closed: bool,
+}
+
+impl Debug for RealtimeAvatarHandle {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter
+            .debug_struct("RealtimeAvatarHandle")
+            .field("provider", &self.provider.provider)
+            .field("closed", &self.closed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RealtimeAvatarHandle {
+    #[must_use]
+    pub fn offer(&self) -> &WebRtcSessionDescription {
+        &self.provider_session.offer
+    }
+
+    #[must_use]
+    pub fn ice_servers(&self) -> &[WebRtcIceServer] {
+        &self.provider_session.ice_servers
+    }
+
+    #[must_use]
+    pub const fn is_closed(&self) -> bool {
+        self.closed
+    }
+}
+
+impl ActiveTurn {
+    /// Opens one session-scoped realtime avatar resource through the canonical turn egress gate.
+    ///
+    /// # Errors
+    /// Returns a runtime denial or typed provider failure. If cancellation races with a successful
+    /// provider create, runtime performs best-effort remote cleanup before returning cancellation.
+    pub fn open_realtime_avatar(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+    ) -> Result<RealtimeAvatarHandle, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_operation(ProviderOperation::Avatar)
+            .map_err(ProviderExecutionError::from)?;
+        let provider_session = port
+            .create_session(&permit.cancellation)
+            .map_err(ProviderExecutionError::from)?;
+        if vpr_integration::CancellationProbe::is_cancelled(&permit.cancellation) {
+            let _cleanup = port.close_session(&provider_session);
+            return Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::TurnCancelled,
+            ));
+        }
+        Ok(RealtimeAvatarHandle {
+            session_id: self.session_id.clone(),
+            provider: port.descriptor(),
+            provider_session,
+            closed: false,
+        })
+    }
+
+    /// Submits the local WebRTC answer through the current turn authorization boundary.
+    ///
+    /// # Errors
+    /// Returns a denial for cross-session/provider/closed handles or a typed provider failure.
+    pub fn submit_realtime_avatar_answer(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        answer: &WebRtcSessionDescription,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let permit = self.avatar_permit()?;
+        port.submit_answer(&handle.provider_session, answer, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Submits one ICE candidate through the current turn authorization boundary.
+    ///
+    /// # Errors
+    /// Returns a denial for cross-session/provider/closed handles or a typed provider failure.
+    pub fn submit_realtime_avatar_ice(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        candidate: &WebRtcIceCandidate,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let permit = self.avatar_permit()?;
+        port.submit_ice_candidate(&handle.provider_session, candidate, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Sends text to an existing session-scoped avatar using this turn's current authorization.
+    ///
+    /// # Errors
+    /// Returns a denial for stale/cancelled authority or an adapter failure.
+    pub fn speak_realtime_avatar_text(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let permit = self.avatar_permit()?;
+        port.speak_text(&handle.provider_session, text, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Sends an HTTPS audio URL to an existing avatar using this turn's current authorization.
+    ///
+    /// # Errors
+    /// Returns a denial for stale/cancelled authority or an adapter failure.
+    pub fn speak_realtime_avatar_audio_url(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        audio_url: &str,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let permit = self.avatar_permit()?;
+        port.speak_audio_url(&handle.provider_session, audio_url, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Requests provider-side interruption using this turn's current authorization.
+    ///
+    /// # Errors
+    /// Returns a denial or the provider's typed unsupported/failure result.
+    pub fn interrupt_realtime_avatar(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let permit = self.avatar_permit()?;
+        port.interrupt(&handle.provider_session, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    fn avatar_permit(
+        &self,
+    ) -> Result<crate::provider::ProviderExecutionPermit, ProviderExecutionError> {
+        self.issue_provider_operation(ProviderOperation::Avatar)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    fn validate_avatar_handle(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+    ) -> Result<(), ProviderExecutionError> {
+        if handle.closed
+            || handle.session_id != self.session_id
+            || handle.provider != port.descriptor()
+        {
+            return Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::InvalidTurnState,
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ActiveSession {
+    /// Closes a runtime-issued avatar handle owned by this session.
+    ///
+    /// Cleanup intentionally remains available after session revoke so remote resources are not
+    /// stranded. A failed provider close leaves the handle open for retry.
+    ///
+    /// # Errors
+    /// Returns a runtime denial for cross-session/provider handles or a typed provider failure.
+    pub fn close_realtime_avatar(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &mut RealtimeAvatarHandle,
+    ) -> Result<(), ProviderExecutionError> {
+        if handle.session_id != *self.id() || handle.provider != port.descriptor() {
+            return Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::InvalidTurnState,
+            ));
+        }
+        if handle.closed {
+            return Ok(());
+        }
+        port.close_session(&handle.provider_session)
+            .map_err(ProviderExecutionError::from)?;
+        handle.closed = true;
+        Ok(())
+    }
+}

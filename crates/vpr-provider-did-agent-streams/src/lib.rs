@@ -276,12 +276,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::expect_success(response).map(|_| ())
     }
 
-    fn close_session(
-        &self,
-        session: &RealtimeAvatarSession,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(), ProviderError> {
-        Self::ensure_active(cancellation)?;
+    fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
         let response = self
             .authorized(
