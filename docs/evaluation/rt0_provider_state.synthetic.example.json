@@ -1,0 +1,23 @@
+{
+  "schema_version": "rt0-provider-state-0.1",
+  "providers": [
+    {
+      "role": "stt",
+      "provider": "synthetic-stt",
+      "model_or_representation": "example-only",
+      "configuration_fingerprint_sha256": "405dce537a2ea74c0340c9485e78cbd82e4ff0283e8ade3f184d160548cfb4a2"
+    },
+    {
+      "role": "llm",
+      "provider": "synthetic-llm",
+      "model_or_representation": "example-only",
+      "configuration_fingerprint_sha256": "72a59755e95880a8f8577233afe0db9a6bb2057011cbb170e95fdfb07b316e42"
+    },
+    {
+      "role": "avatar",
+      "provider": "synthetic-avatar",
+      "model_or_representation": "example-only",
+      "configuration_fingerprint_sha256": "c72d86fb8222050dcefa1a7610b75c9ce9d788415a1bd917b52efa6e9ad564bd"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+# RT0 Golden evaluation harness
+
+`vpr-evaluation` is a deterministic evidence checker. It is not a Persona runtime, provider orchestrator, or release authority.
+
+The minimum synthetic manifest is `docs/evaluation/rt0_golden_minimum.json`. It covers Russian text handling plus the RT0 attribution, privacy, revocation, cancellation, and identity-stability minimum from the ReleaseSpec.
+
+## Bound evidence artifacts
+
+The evaluator binds five inputs to one report:
+
+1. Golden suite JSON;
+2. sensitive observation/evidence JSON;
+3. exact `RT0_RELEASE_SPEC.md`;
+4. sanitized provider-state JSON;
+5. exact Git candidate SHA supplied on the command line.
+
+The evidence JSON has `binding` and `observations`. Binding schema `rt0-evidence-binding-0.1` contains the candidate SHA plus SHA-256 digests of the suite, ReleaseSpec, and provider-state file. The evaluator recomputes all three artifact digests itself and rejects stale or mismatched evidence.
+
+Golden suite schema is fixed at `rt0-golden-0.1`; unknown schema versions or unknown fields fail closed. Provider-state schema `rt0-provider-state-0.1` requires exactly one STT, LLM, and Avatar descriptor. Each descriptor names its provider and model/representation and includes a lowercase SHA-256 fingerprint of its deterministic sanitized configuration. `rt0_provider_state.synthetic.example.json` demonstrates the shape only; it is not release evidence.
+
+Provider fingerprints must never be calculated from or expose API keys, authorization headers, private documents, raw audio/video, prompts, or other secrets. Archive the sanitized configuration artifact used to produce each fingerprint with the private release evidence so the fingerprint is reproducible.
+
+`observations` may contain raw test responses while evaluation is running. Treat the evidence input as sensitive. The generated report includes SHA-256 of the exact sensitive evidence input and intentionally emits only binding/provider metadata, case IDs, pass/fail state, and stable failure codes; it does not echo prompts, response text, or private sentinels.
+
+## Run
+
+```bash
+cargo run -p vpr-evaluation -- \
+  docs/evaluation/rt0_golden_minimum.json \
+  /secure/path/rt0-evidence.json \
+  docs/releases/RT0_RELEASE_SPEC.md \
+  /secure/path/rt0-provider-state.json \
+  "$(git rev-parse HEAD)"
+```
+
+Exit codes are stable: `0` means the bound Golden bundle passed, `1` means the binding is valid but one or more Golden cases failed, and `2` means input or binding is invalid/stale.
+
+A successful synthetic or mock run is **not** RT0 exit evidence. Release evidence still requires the same exact candidate/provider state to have real owner and non-owner conversations, measured latency/cost, permission/privacy results, and human evaluation as required by the Canon and ReleaseSpec.

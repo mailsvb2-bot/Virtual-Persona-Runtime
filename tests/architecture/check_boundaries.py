@@ -20,6 +20,7 @@ allowed_internal_dependencies = {
     "vpr-provider-openai-speech": {"vpr-integration"},
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
     "vpr-provider-did-agent-streams": {"vpr-integration"},
+    "vpr-evaluation": {"vpr-domain"},
     "vpr-owner-lab": {
         "vpr-domain",
         "vpr-integration",
@@ -224,6 +225,74 @@ for method in ("deliver_audio", "deliver_video_frame", "interrupt_and_flush_medi
         raise SystemExit(f"runtime media contract missing {method}")
 if "frame.timestamp_micros" not in media_delivery_source or "next_video_media_stamp" not in media_delivery_source:
     raise SystemExit("provider video timestamps must pass through runtime timeline normalization")
+
+# Evaluation may inspect canonical domain evidence, but it must not become a runtime/provider brain.
+evaluation_src = CRATES / "vpr-evaluation" / "src"
+for path in evaluation_src.rglob("*.rs"):
+    text = path.read_text(encoding="utf-8")
+    for forbidden in (
+        "vpr_runtime",
+        "vpr_policy",
+        "vpr_integration",
+        "vpr_provider_",
+    ):
+        if forbidden in text:
+            raise SystemExit(
+                f"evaluation harness has forbidden runtime/provider dependency {forbidden!r} in {path.relative_to(ROOT)}"
+            )
+
+golden_source = (evaluation_src / "golden.rs").read_text(encoding="utf-8")
+for required in (
+    "FalseOwnerAttribution",
+    "PrivateContextLeak",
+    "CancelledOutputMarkedSpoken",
+    "PersonaIdentityDrift",
+    "VerifiedOwnerOpinion::try_from",
+    "RT0_GOLDEN_SCHEMA",
+):
+    if required not in golden_source:
+        raise SystemExit(f"RT0 Golden evaluator missing mandatory invariant {required}")
+if '<evaluation-redacted>' not in golden_source:
+    raise SystemExit("RT0 Golden evaluator must not copy owner claim text into attribution checks")
+observation_derive = re.search(
+    r"#\[derive\(([^)]*)\)\](?:\s*#\[[^\]]+\])*\s*pub struct GoldenObservation\b",
+    golden_source,
+    re.MULTILINE,
+)
+if observation_derive is None:
+    raise SystemExit("RT0 Golden observation boundary is missing")
+if any(item.strip() == "Serialize" for item in observation_derive.group(1).split(",")):
+    raise SystemExit("raw Golden observations must not become serializable report material")
+
+binding_source = (evaluation_src / "binding.rs").read_text(encoding="utf-8")
+for required in (
+    "RT0_EVIDENCE_BINDING_SCHEMA",
+    "RT0_PROVIDER_STATE_SCHEMA",
+    "CandidateShaMismatch",
+    "SuiteDigestMismatch",
+    "ReleaseSpecDigestMismatch",
+    "ProviderStateDigestMismatch",
+    "ProviderRole::Stt",
+    "ProviderRole::Llm",
+    "ProviderRole::Avatar",
+    "configuration_fingerprint_sha256",
+    "evidence_input_sha256",
+    "deny_unknown_fields",
+    "sha256_hex",
+):
+    if required not in binding_source:
+        raise SystemExit(f"RT0 evidence binding missing fail-closed invariant {required}")
+
+evaluation_main = (evaluation_src / "main.rs").read_text(encoding="utf-8")
+for required in (
+    "evaluate_bound_golden_suite",
+    "release_spec_bytes",
+    "provider_state_bytes",
+    "candidate_sha",
+    "report.golden.failed",
+):
+    if required not in evaluation_main:
+        raise SystemExit(f"RT0 evaluation CLI missing bound-evidence contract {required}")
 
 # Realtime-avatar signaling must remain provider-neutral, secret-safe and outside runtime.
 avatar_source = (CRATES / "vpr-integration" / "src" / "avatar.rs").read_text(encoding="utf-8")

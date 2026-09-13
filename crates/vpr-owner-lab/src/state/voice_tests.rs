@@ -127,6 +127,7 @@ impl SttPort for ImmediateStt {
 struct VoiceLlm {
     stats: Arc<VoiceStats>,
     block_until_cancelled: bool,
+    started: Option<mpsc::Sender<()>>,
 }
 
 impl LlmPort for VoiceLlm {
@@ -141,6 +142,9 @@ impl LlmPort for VoiceLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.stats.llm.fetch_add(1, Ordering::SeqCst);
+        if let Some(started) = &self.started {
+            started.send(()).unwrap();
+        }
         assert!(request.context.contains("Как дела?"));
         if self.block_until_cancelled {
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -158,7 +162,9 @@ impl LlmPort for VoiceLlm {
     }
 }
 
-fn voice_engine(block_until_cancelled: bool) -> (OwnerLabEngine, Arc<VoiceStats>) {
+fn voice_engine(
+    block_until_cancelled: bool,
+) -> (OwnerLabEngine, Arc<VoiceStats>, Option<mpsc::Receiver<()>>) {
     let stats = Arc::new(VoiceStats::default());
     let avatar = VoiceAvatar {
         stats: Arc::clone(&stats),
@@ -166,9 +172,16 @@ fn voice_engine(block_until_cancelled: bool) -> (OwnerLabEngine, Arc<VoiceStats>
     let stt = ImmediateStt {
         stats: Arc::clone(&stats),
     };
+    let (started, started_rx) = if block_until_cancelled {
+        let (tx, rx) = mpsc::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
     let llm = VoiceLlm {
         stats: Arc::clone(&stats),
         block_until_cancelled,
+        started,
     };
     let mut engine = OwnerLabEngine::new(Box::new(avatar), true)
         .unwrap()
@@ -176,7 +189,7 @@ fn voice_engine(block_until_cancelled: bool) -> (OwnerLabEngine, Arc<VoiceStats>
     engine
         .start(OwnerLabStartRequest { consent: true })
         .unwrap();
-    (engine, stats)
+    (engine, stats, started_rx)
 }
 
 fn sample_pcm() -> Vec<u8> {
@@ -185,7 +198,7 @@ fn sample_pcm() -> Vec<u8> {
 
 #[test]
 fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
-    let (mut engine, stats) = voice_engine(false);
+    let (mut engine, stats, _) = voice_engine(false);
     let result = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     assert_eq!(result.transcript, "Как дела?");
     assert_eq!(result.reply, "Всё хорошо.");
@@ -196,7 +209,8 @@ fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
 
 #[test]
 fn interrupt_handle_cancels_in_flight_voice_before_avatar_output() {
-    let (mut engine, stats) = voice_engine(true);
+    let (mut engine, stats, llm_started) = voice_engine(true);
+    let llm_started = llm_started.expect("blocking LLM must expose a start signal");
     let (handle_tx, handle_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
         engine.voice_turn(sample_pcm(), |handle| {
@@ -205,6 +219,7 @@ fn interrupt_handle_cancels_in_flight_voice_before_avatar_output() {
     });
 
     let handle = handle_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    llm_started.recv_timeout(Duration::from_secs(1)).unwrap();
     handle.interrupt().unwrap();
     let result = worker.join().unwrap();
     assert_eq!(
