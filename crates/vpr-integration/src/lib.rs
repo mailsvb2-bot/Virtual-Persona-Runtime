@@ -1,5 +1,10 @@
+mod avatar;
 mod transport;
 
+pub use avatar::{
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+};
 pub use transport::{
     MediaTimelineStamp, RealtimeAudioOutputEvent, RealtimeMediaFlushEvent, RealtimeOutputPort,
     RealtimeTextOutputEvent, RealtimeVideoOutputEvent, TransportError, TransportErrorKind,

@@ -1103,6 +1103,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vpr-provider-did-agent-streams"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "vpr-integration",
+]
+
+[[package]]
 name = "vpr-provider-elevenlabs-tts"
 version = "0.1.0"
 dependencies = [
