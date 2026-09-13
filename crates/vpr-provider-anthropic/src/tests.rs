@@ -56,7 +56,9 @@ fn streams_text_and_usage_from_messages_sse() {
         .unwrap();
     assert_eq!(sink.as_str(), "Привет");
     assert_eq!(usage.input_units, Some(9));
+    assert_eq!(usage.input_unit, Some(UsageUnit::Token));
     assert_eq!(usage.output_units, Some(4));
+    assert_eq!(usage.output_unit, Some(UsageUnit::Token));
 }
 
 #[test]

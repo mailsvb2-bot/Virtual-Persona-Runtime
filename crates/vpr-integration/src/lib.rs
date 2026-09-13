@@ -21,10 +21,18 @@ pub struct ProviderError {
     pub retryable: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsageUnit {
+    Token,
+    AudioMillisecond,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UsageEvidence {
     pub input_units: Option<u64>,
+    pub input_unit: Option<UsageUnit>,
     pub output_units: Option<u64>,
+    pub output_unit: Option<UsageUnit>,
     pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
 }
@@ -92,10 +100,55 @@ pub trait LlmPort: Send + Sync {
     ) -> Result<UsageEvidence, ProviderError>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PcmSampleFormat {
+    S16Le,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioInput {
     pub pcm: Vec<u8>,
     pub sample_rate_hz: u32,
+    pub channels: u16,
+    pub sample_format: PcmSampleFormat,
+}
+
+impl AudioInput {
+    #[must_use]
+    pub const fn bytes_per_sample(&self) -> usize {
+        match self.sample_format {
+            PcmSampleFormat::S16Le => 2,
+        }
+    }
+
+    #[must_use]
+    pub fn is_well_formed(&self) -> bool {
+        let frame_bytes = usize::from(self.channels).checked_mul(self.bytes_per_sample());
+        self.sample_rate_hz > 0
+            && self.channels > 0
+            && !self.pcm.is_empty()
+            && frame_bytes.is_some_and(|size| size > 0 && self.pcm.len() % size == 0)
+    }
+
+    #[must_use]
+    pub fn duration_millis(&self) -> Option<u64> {
+        if !self.is_well_formed() {
+            return None;
+        }
+        let frame_bytes =
+            u64::try_from(usize::from(self.channels) * self.bytes_per_sample()).ok()?;
+        let pcm_len = u64::try_from(self.pcm.len()).ok()?;
+        let frames = pcm_len / frame_bytes;
+        frames
+            .checked_mul(1_000)?
+            .checked_div(u64::from(self.sample_rate_hz))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SttRequest {
+    pub audio: AudioInput,
+    pub locale_hint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,7 +165,7 @@ pub trait SttPort: Send + Sync {
     /// Returns a typed provider failure, including cancellation or invalid output.
     fn transcribe(
         &self,
-        input: &AudioInput,
+        request: &SttRequest,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(Transcript, UsageEvidence), ProviderError>;
 }
@@ -254,6 +307,30 @@ fn invalid_generated_output() -> ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pcm_audio_reports_provider_neutral_duration() {
+        let audio = AudioInput {
+            pcm: vec![0; 640],
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+        };
+        assert!(audio.is_well_formed());
+        assert_eq!(audio.duration_millis(), Some(20));
+    }
+
+    #[test]
+    fn pcm_audio_rejects_partial_frames() {
+        let audio = AudioInput {
+            pcm: vec![0; 3],
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+        };
+        assert!(!audio.is_well_formed());
+        assert_eq!(audio.duration_millis(), None);
+    }
 
     #[test]
     fn generated_text_buffer_accumulates_without_transport_contract() {

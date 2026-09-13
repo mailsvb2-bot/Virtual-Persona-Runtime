@@ -6,7 +6,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence,
+    ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -142,7 +142,9 @@ impl OpenAiCompatibleLlm {
             }
             if let Some(event_usage) = event.usage {
                 usage.input_units = event_usage.prompt_tokens;
+                usage.input_unit = event_usage.prompt_tokens.map(|_| UsageUnit::Token);
                 usage.output_units = event_usage.completion_tokens;
+                usage.output_unit = event_usage.completion_tokens.map(|_| UsageUnit::Token);
             }
         }
         if !saw_done {
@@ -340,7 +342,9 @@ mod tests {
             .unwrap();
         assert_eq!(sink.as_str(), "Привет!");
         assert_eq!(usage.input_units, Some(7));
+        assert_eq!(usage.input_unit, Some(UsageUnit::Token));
         assert_eq!(usage.output_units, Some(2));
+        assert_eq!(usage.output_unit, Some(UsageUnit::Token));
     }
 
     #[test]

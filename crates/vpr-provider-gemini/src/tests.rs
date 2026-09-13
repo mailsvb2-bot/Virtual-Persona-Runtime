@@ -54,7 +54,9 @@ fn streams_text_and_usage_from_interactions_sse() {
         .unwrap();
     assert_eq!(sink.as_str(), "Привет");
     assert_eq!(usage.input_units, Some(8));
+    assert_eq!(usage.input_unit, Some(UsageUnit::Token));
     assert_eq!(usage.output_units, Some(3));
+    assert_eq!(usage.output_unit, Some(UsageUnit::Token));
 }
 #[test]
 fn rejects_incomplete_stream_without_completed_and_done() {

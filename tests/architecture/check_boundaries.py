@@ -13,6 +13,8 @@ allowed_internal_dependencies = {
     "vpr-capture": {"vpr-domain"},
     "vpr-runtime": {"vpr-domain", "vpr-policy", "vpr-integration"},
     "vpr-provider-openai-compatible": {"vpr-integration"},
+    "vpr-provider-openai-transcription": {"vpr-integration"},
+    "vpr-provider-deepgram-stt": {"vpr-integration"},
     "vpr-provider-anthropic": {"vpr-integration"},
     "vpr-provider-gemini": {"vpr-integration"},
     "vpr-rt0-smoke": {
@@ -22,6 +24,8 @@ allowed_internal_dependencies = {
         "vpr-provider-anthropic",
         "vpr-provider-gemini",
         "vpr-provider-openai-compatible",
+        "vpr-provider-openai-transcription",
+        "vpr-provider-deepgram-stt",
         "vpr-runtime",
     },
 }

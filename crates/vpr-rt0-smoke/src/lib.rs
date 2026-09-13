@@ -7,7 +7,9 @@ use vpr_domain::{
     CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion, Rt0ReasonCode,
     SessionId, TurnId,
 };
-use vpr_integration::{GeneratedTextBuffer, LlmPort, LlmRequest, ProviderError, UsageEvidence};
+use vpr_integration::{
+    GeneratedTextBuffer, LlmPort, LlmRequest, ProviderError, UsageEvidence, UsageUnit,
+};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
@@ -83,7 +85,9 @@ pub struct SmokeEvidence {
     pub model: String,
     pub latency_millis: u64,
     pub input_units: Option<u64>,
+    pub input_unit: Option<String>,
     pub output_units: Option<u64>,
+    pub output_unit: Option<String>,
     pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
     pub output_chars: u64,
@@ -228,6 +232,13 @@ fn provider_authority() -> Result<EffectiveAuthority, SmokeError> {
     )]))
 }
 
+const fn usage_unit_name(unit: UsageUnit) -> &'static str {
+    match unit {
+        UsageUnit::Token => "token",
+        UsageUnit::AudioMillisecond => "audio_millisecond",
+    }
+}
+
 fn smoke_evidence(
     provider: String,
     model: String,
@@ -243,7 +254,9 @@ fn smoke_evidence(
         model,
         latency_millis,
         input_units: usage.input_units,
+        input_unit: usage.input_unit.map(usage_unit_name).map(str::to_owned),
         output_units: usage.output_units,
+        output_unit: usage.output_unit.map(usage_unit_name).map(str::to_owned),
         estimated_cost_microunits: usage.estimated_cost_microunits,
         provider_charge_microunits: usage.provider_charge_microunits,
         output_chars,
@@ -295,7 +308,9 @@ mod tests {
 
         assert_eq!(result.response_text, "Привет!");
         assert_eq!(result.evidence.input_units, Some(5));
+        assert_eq!(result.evidence.input_unit.as_deref(), Some("token"));
         assert_eq!(result.evidence.output_units, Some(2));
+        assert_eq!(result.evidence.output_unit.as_deref(), Some("token"));
         assert_eq!(result.evidence.output_chars, 7);
         assert!(!result.evidence.output_delivery_proven);
     }
