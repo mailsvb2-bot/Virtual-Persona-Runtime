@@ -1,7 +1,8 @@
 mod transport;
 
 pub use transport::{
-    RealtimeOutputPort, RealtimeTextOutputEvent, TransportError, TransportErrorKind,
+    MediaTimelineStamp, RealtimeAudioOutputEvent, RealtimeMediaFlushEvent, RealtimeOutputPort,
+    RealtimeTextOutputEvent, RealtimeVideoOutputEvent, TransportError, TransportErrorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,12 +113,24 @@ pub enum PcmSampleFormat {
     S16Le,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AudioInput {
     pub pcm: Vec<u8>,
     pub sample_rate_hz: u32,
     pub channels: u16,
     pub sample_format: PcmSampleFormat,
+}
+
+impl std::fmt::Debug for AudioInput {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AudioInput")
+            .field("pcm_bytes", &self.pcm.len())
+            .field("sample_rate_hz", &self.sample_rate_hz)
+            .field("channels", &self.channels)
+            .field("sample_format", &self.sample_format)
+            .finish()
+    }
 }
 
 impl AudioInput {
@@ -183,12 +196,24 @@ pub struct TtsRequest {
     pub locale_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct GeneratedAudioBuffer {
     pcm: Vec<u8>,
     sample_rate_hz: Option<u32>,
     channels: Option<u16>,
     sample_format: Option<PcmSampleFormat>,
+}
+
+impl std::fmt::Debug for GeneratedAudioBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GeneratedAudioBuffer")
+            .field("pcm_bytes", &self.pcm.len())
+            .field("sample_rate_hz", &self.sample_rate_hz)
+            .field("channels", &self.channels)
+            .field("sample_format", &self.sample_format)
+            .finish()
+    }
 }
 
 impl GeneratedAudioBuffer {
@@ -299,15 +324,34 @@ pub trait TtsPort: Send + Sync {
     ) -> Result<UsageEvidence, ProviderError>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GeneratedVideoFrame {
     pub encoded_frame: Vec<u8>,
     pub timestamp_micros: u64,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl std::fmt::Debug for GeneratedVideoFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GeneratedVideoFrame")
+            .field("encoded_bytes", &self.encoded_frame.len())
+            .field("timestamp_micros", &self.timestamp_micros)
+            .finish()
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct GeneratedVideoBuffer {
     frames: Vec<GeneratedVideoFrame>,
+}
+
+impl std::fmt::Debug for GeneratedVideoBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GeneratedVideoBuffer")
+            .field("frame_count", &self.frames.len())
+            .finish()
+    }
 }
 
 impl GeneratedVideoBuffer {
@@ -325,6 +369,14 @@ impl GeneratedVideoSink for GeneratedVideoBuffer {
         encoded_frame: &[u8],
         timestamp_micros: u64,
     ) -> Result<(), ProviderError> {
+        if encoded_frame.is_empty()
+            || self
+                .frames
+                .last()
+                .is_some_and(|frame| timestamp_micros < frame.timestamp_micros)
+        {
+            return Err(invalid_generated_output());
+        }
         self.frames.push(GeneratedVideoFrame {
             encoded_frame: encoded_frame.to_vec(),
             timestamp_micros,
@@ -426,5 +478,50 @@ mod tests {
         assert_eq!(buffer.frames().len(), 1);
         assert_eq!(buffer.frames()[0].encoded_frame, vec![7, 8]);
         assert_eq!(buffer.frames()[0].timestamp_micros, 42);
+    }
+
+    #[test]
+    fn media_debug_output_redacts_raw_payload_bytes() {
+        let audio = AudioInput {
+            pcm: vec![222, 173, 190, 239],
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+        };
+        let mut generated_audio = GeneratedAudioBuffer::default();
+        generated_audio
+            .push_generated_audio(&[222, 173, 190, 239], 16_000, 1, PcmSampleFormat::S16Le)
+            .unwrap();
+        let mut generated_video = GeneratedVideoBuffer::default();
+        generated_video
+            .push_generated_frame(&[222, 173, 190, 239], 42)
+            .unwrap();
+
+        for debug in [
+            format!("{audio:?}"),
+            format!("{generated_audio:?}"),
+            format!("{:?}", generated_video.frames()[0]),
+            format!("{generated_video:?}"),
+        ] {
+            assert!(!debug.contains("222"));
+            assert!(!debug.contains("173"));
+            assert!(!debug.contains("190"));
+            assert!(!debug.contains("239"));
+        }
+    }
+
+    #[test]
+    fn generated_video_buffer_rejects_empty_or_decreasing_frames() {
+        let mut buffer = GeneratedVideoBuffer::default();
+        assert_eq!(
+            buffer.push_generated_frame(&[], 1).unwrap_err().kind,
+            ProviderErrorKind::InvalidResponse
+        );
+        buffer.push_generated_frame(&[1], 20).unwrap();
+        assert_eq!(
+            buffer.push_generated_frame(&[2], 19).unwrap_err().kind,
+            ProviderErrorKind::InvalidResponse
+        );
+        assert_eq!(buffer.frames().len(), 1);
     }
 }
