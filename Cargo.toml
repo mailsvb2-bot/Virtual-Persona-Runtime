@@ -16,6 +16,7 @@ members = [
   "crates/vpr-provider-did-agent-streams",
   "crates/vpr-owner-lab",
   "crates/vpr-rt0-smoke",
+  "crates/vpr-evaluation",
 ]
 
 [workspace.package]
