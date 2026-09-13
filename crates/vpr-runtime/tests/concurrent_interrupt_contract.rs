@@ -96,6 +96,7 @@ fn active_turn() -> ActiveTurn {
 fn interrupt_cancels_in_flight_provider_without_split_turn_state() {
     let turn = Arc::new(active_turn());
     let worker_turn = Arc::clone(&turn);
+    let interrupt = turn.interrupt_handle();
     let (started_tx, started_rx) = mpsc::channel();
 
     let worker = thread::spawn(move || {
@@ -113,7 +114,7 @@ fn interrupt_cancels_in_flight_provider_without_split_turn_state() {
     });
 
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    turn.interrupt().unwrap();
+    interrupt.interrupt().unwrap();
 
     let result = worker.join().unwrap();
     assert!(matches!(

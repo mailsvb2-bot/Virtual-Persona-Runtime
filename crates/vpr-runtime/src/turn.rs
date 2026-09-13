@@ -24,9 +24,36 @@ use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
 use crate::turn_state::TurnMutableState;
 
+#[derive(Debug, Clone)]
+pub struct TurnInterruptHandle {
+    state: Arc<Mutex<TurnMutableState>>,
+    gate: SessionExecutionGate,
+    cancellation: TurnCancellation,
+}
+
+impl TurnInterruptHandle {
+    /// Interrupts exactly the turn that issued this handle.
+    ///
+    /// # Errors
+    /// Returns `INVALID_STATE_TRANSITION` if the turn is already terminal.
+    pub fn interrupt(&self) -> Result<(), Rt0ReasonCode> {
+        let gate = self.gate.clone();
+        let _execution = gate
+            .read()
+            .map_err(|()| RuntimeDenyReason::InternalError)
+            .map_err(RuntimeDenyReason::reason_code)?;
+        {
+            let mut state = self.state.lock();
+            state.interrupt()?;
+            self.cancellation.cancel();
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct ActiveTurn {
-    pub(crate) state: Mutex<TurnMutableState>,
+    pub(crate) state: Arc<Mutex<TurnMutableState>>,
     pub(crate) snapshot: TurnExecutionSnapshot,
     pub(crate) authorization: AuthorizationController,
     pub(crate) authorization_snapshot: AuthorizationSnapshot,
@@ -79,7 +106,7 @@ impl ActiveTurn {
             egress_policy_snapshot.revision,
         );
         Ok(Self {
-            state: Mutex::new(TurnMutableState::new(turn, media_epoch)),
+            state: Arc::new(Mutex::new(TurnMutableState::new(turn, media_epoch))),
             snapshot,
             authorization: session.authorization.clone(),
             authorization_snapshot,
@@ -363,22 +390,22 @@ impl ActiveTurn {
         self.state.lock().mark_output_played(id)
     }
 
+    /// Returns a narrow cloneable capability that can only interrupt this turn.
+    #[must_use]
+    pub fn interrupt_handle(&self) -> TurnInterruptHandle {
+        TurnInterruptHandle {
+            state: Arc::clone(&self.state),
+            gate: self.gate.clone(),
+            cancellation: self.cancellation.clone(),
+        }
+    }
+
     /// Interrupts the active turn and freezes every streamed segment at its reached checkpoint.
     ///
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` if the turn is already terminal.
     pub fn interrupt(&self) -> Result<(), Rt0ReasonCode> {
-        let gate = self.gate.clone();
-        let _execution = gate
-            .read()
-            .map_err(|()| RuntimeDenyReason::InternalError)
-            .map_err(RuntimeDenyReason::reason_code)?;
-        {
-            let mut state = self.state.lock();
-            state.interrupt()?;
-            self.cancellation.cancel();
-        }
-        Ok(())
+        self.interrupt_handle().interrupt()
     }
 
     fn require_execution_active(&self) -> Result<(), Rt0ReasonCode> {

@@ -4,8 +4,8 @@ use vpr_domain::{
     Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
-    RealtimeAvatarCapability, RealtimeAvatarPort, WebRtcIceCandidate, WebRtcIceServer,
-    WebRtcSessionDescription,
+    LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, SttPort, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -54,6 +54,7 @@ pub struct LabStatus {
     pub session_state: String,
     pub avatar_open: bool,
     pub egress_enabled: bool,
+    pub voice_ready: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +85,8 @@ impl LabError {
 pub struct OwnerLabEngine {
     persona: PersonaIdentity,
     provider: Box<dyn RealtimeAvatarPort>,
+    stt: Option<Box<dyn SttPort>>,
+    llm: Option<Box<dyn LlmPort>>,
     session: Option<ActiveSession>,
     avatar: Option<RealtimeAvatarHandle>,
     session_counter: u64,
@@ -105,6 +108,8 @@ impl OwnerLabEngine {
         Ok(Self {
             persona: PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin),
             provider,
+            stt: None,
+            llm: None,
             session: None,
             avatar: None,
             session_counter: 0,
@@ -125,6 +130,7 @@ impl OwnerLabEngine {
                 .as_ref()
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
+            voice_ready: self.stt.is_some() && self.llm.is_some(),
         }
     }
 
@@ -335,5 +341,10 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
     }
 }
 
+mod voice;
+pub use voice::{LabVoiceResult, LabVoiceUsage};
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod voice_tests;

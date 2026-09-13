@@ -1129,13 +1129,19 @@ name = "vpr-owner-lab"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
+ "parking_lot",
  "serde",
  "serde_json",
  "tiny_http",
  "vpr-domain",
  "vpr-integration",
  "vpr-policy",
+ "vpr-provider-anthropic",
+ "vpr-provider-deepgram-stt",
  "vpr-provider-did-agent-streams",
+ "vpr-provider-gemini",
+ "vpr-provider-openai-compatible",
+ "vpr-provider-openai-transcription",
  "vpr-runtime",
 ]
 
