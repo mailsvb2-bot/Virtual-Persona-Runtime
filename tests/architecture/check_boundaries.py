@@ -20,6 +20,13 @@ allowed_internal_dependencies = {
     "vpr-provider-openai-speech": {"vpr-integration"},
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
     "vpr-provider-did-agent-streams": {"vpr-integration"},
+    "vpr-owner-lab": {
+        "vpr-domain",
+        "vpr-integration",
+        "vpr-policy",
+        "vpr-provider-did-agent-streams",
+        "vpr-runtime",
+    },
     "vpr-rt0-smoke": {
         "vpr-domain",
         "vpr-integration",
@@ -195,11 +202,14 @@ if "media_timeline: MediaTimeline" not in session_source or "media_timeline: Med
     raise SystemExit("canonical MediaTimeline must remain session-owned and shared with turns")
 if "bound_epoch: u64" not in media_timeline_source:
     raise SystemExit("turn media mapping must remain bound to its creation epoch")
-if "pub(crate) struct TurnMediaState" not in media_timeline_source or "Clone" in re.search(
+turn_media_match = re.search(
     r"#\[derive\(([^)]*)\)\]\s*pub\(crate\) struct TurnMediaState",
     media_timeline_source,
     re.MULTILINE,
-).group(1):
+)
+if turn_media_match is None:
+    raise SystemExit("TurnMediaState must remain runtime-internal with an explicit derive boundary")
+if any(item.strip() == "Clone" for item in turn_media_match.group(1).split(",")):
     raise SystemExit("TurnMediaState must remain runtime-internal and non-cloneable")
 for method in ("send_audio", "send_video", "flush_media"):
     if f"fn {method}" not in transport_source:
@@ -240,6 +250,40 @@ if did_config_derive is not None and any(
     raise SystemExit("D-ID config must not expose or clone API credentials through derived traits")
 if "impl RealtimeAvatarPort for DidAgentStreamsAvatar" not in did_source:
     raise SystemExit("D-ID adapter must remain behind RealtimeAvatarPort")
+
+owner_lab_src = CRATES / "vpr-owner-lab" / "src"
+owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
+owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
+owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
+owner_lab_ui_files = [
+    path
+    for path in owner_lab_ui_root.rglob("*")
+    if path.is_file()
+    and "node_modules" not in path.parts
+    and path.suffix in {".ts", ".js", ".html", ".css", ".json"}
+]
+owner_lab_ui = "\n".join(path.read_text(encoding="utf-8") for path in owner_lab_ui_files)
+if 'format!("127.0.0.1:{port}")' not in owner_lab_main:
+    raise SystemExit("Owner Lab HTTP listener must remain loopback-only")
+for required in (
+    "X-VPR-CSRF",
+    "VPR_OWNER_LAB_ALLOW_EGRESS",
+    "VPR_DID_API_KEY",
+    "valid_host",
+    "valid_origin",
+    "Content-Security-Policy",
+):
+    if required not in owner_lab_main:
+        raise SystemExit(f"Owner Lab backend missing security boundary {required}")
+if "open_realtime_avatar" not in owner_lab_state or ".create_session(" in owner_lab_state:
+    raise SystemExit("Owner Lab must use canonical runtime avatar binding, not provider session creation")
+if "if !self.egress_enabled" not in owner_lab_state or "if !request.consent" not in owner_lab_state:
+    raise SystemExit("Owner Lab production start path must retain process egress and explicit-consent gates")
+for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secret-key"):
+    if forbidden in owner_lab_ui:
+        raise SystemExit(f"Owner Lab UI must not contain provider secrets/endpoints: {forbidden}")
+if 'fetch("http' in owner_lab_ui or "fetch('http" in owner_lab_ui:
+    raise SystemExit("Owner Lab UI must use same-origin backend APIs only")
 
 avatar_runtime_source = (runtime_src / "avatar_runtime.rs").read_text(encoding="utf-8")
 handle_match = re.search(r"pub struct RealtimeAvatarHandle\s*\{([^}]*)\}", avatar_runtime_source, re.DOTALL)

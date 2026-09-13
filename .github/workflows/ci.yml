@@ -12,7 +12,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain
         run: |
           rustup component add rustfmt clippy
@@ -27,4 +27,25 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace
+        run: cargo test --workspace --all-targets
+
+  owner-lab-ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/vpr-owner-lab/ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/vpr-owner-lab/ui/package-lock.json
+      - name: Install
+        run: npm ci --ignore-scripts
+      - name: Typecheck
+        run: npm run check
+      - name: Build
+        run: npm run build
+      - name: Generated bundle is current
+        run: git diff --exit-code -- dist/app.js
