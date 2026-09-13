@@ -19,6 +19,7 @@ allowed_internal_dependencies = {
     "vpr-provider-gemini": {"vpr-integration"},
     "vpr-provider-openai-speech": {"vpr-integration"},
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
+    "vpr-provider-did-agent-streams": {"vpr-integration"},
     "vpr-rt0-smoke": {
         "vpr-domain",
         "vpr-integration",
@@ -208,6 +209,37 @@ for method in ("deliver_audio", "deliver_video_frame", "interrupt_and_flush_medi
         raise SystemExit(f"runtime media contract missing {method}")
 if "frame.timestamp_micros" not in media_delivery_source or "next_video_media_stamp" not in media_delivery_source:
     raise SystemExit("provider video timestamps must pass through runtime timeline normalization")
+
+# Realtime-avatar signaling must remain provider-neutral, secret-safe and outside runtime.
+avatar_source = (CRATES / "vpr-integration" / "src" / "avatar.rs").read_text(encoding="utf-8")
+if "pub trait RealtimeAvatarPort" not in avatar_source:
+    raise SystemExit("provider-neutral RealtimeAvatarPort must remain in vpr-integration")
+for method in ("create_session", "submit_answer", "submit_ice_candidate", "speak_text", "speak_audio_url", "close_session"):
+    if f"fn {method}" not in avatar_source:
+        raise SystemExit(f"RealtimeAvatarPort missing lifecycle operation {method}")
+for secret_type in ("WebRtcSessionDescription", "WebRtcIceServer", "WebRtcIceCandidate", "RealtimeAvatarSession"):
+    derive = re.search(
+        rf"#\[derive\(([^)]*)\)\]\s*pub struct {secret_type}\b",
+        avatar_source,
+        re.MULTILINE,
+    )
+    if derive is not None and any(item.strip() == "Debug" for item in derive.group(1).split(",")):
+        raise SystemExit(f"{secret_type} must not derive raw Debug over WebRTC secrets")
+    if f"impl Debug for {secret_type}" not in avatar_source:
+        raise SystemExit(f"{secret_type} must retain redacted Debug implementation")
+
+did_source = (CRATES / "vpr-provider-did-agent-streams" / "src" / "lib.rs").read_text(encoding="utf-8")
+did_config_derive = re.search(
+    r"#\[derive\(([^)]*)\)\]\s*pub struct DidAgentStreamsConfig\b",
+    did_source,
+    re.MULTILINE,
+)
+if did_config_derive is not None and any(
+    item.strip() in {"Debug", "Clone"} for item in did_config_derive.group(1).split(",")
+):
+    raise SystemExit("D-ID config must not expose or clone API credentials through derived traits")
+if "impl RealtimeAvatarPort for DidAgentStreamsAvatar" not in did_source:
+    raise SystemExit("D-ID adapter must remain behind RealtimeAvatarPort")
 
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")

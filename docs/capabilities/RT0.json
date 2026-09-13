@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.9.0",
+  "catalogue_version": "0.10.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -186,6 +186,21 @@
     {
       "id": "provider.real_tts",
       "maturity": "NOT_IMPLEMENTED",
+      "user_reachable": false
+    },
+    {
+      "id": "integration.realtime_avatar_session_port",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "provider.did_agents_streams_control_plane",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_did_agents_streams_contract",
+      "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },
     {

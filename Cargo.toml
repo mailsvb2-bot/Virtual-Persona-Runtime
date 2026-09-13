@@ -13,6 +13,7 @@ members = [
   "crates/vpr-provider-gemini",
   "crates/vpr-provider-openai-speech",
   "crates/vpr-provider-elevenlabs-tts",
+  "crates/vpr-provider-did-agent-streams",
   "crates/vpr-rt0-smoke",
 ]
 
