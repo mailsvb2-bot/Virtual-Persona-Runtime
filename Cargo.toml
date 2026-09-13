@@ -7,6 +7,8 @@ members = [
   "crates/vpr-capture",
   "crates/vpr-runtime",
   "crates/vpr-provider-openai-compatible",
+  "crates/vpr-provider-anthropic",
+  "crates/vpr-provider-gemini",
   "crates/vpr-rt0-smoke",
 ]
 

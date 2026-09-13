@@ -9,6 +9,8 @@ use vpr_domain::{
 };
 use vpr_integration::{GeneratedTextBuffer, LlmPort, LlmRequest, ProviderError, UsageEvidence};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
+use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
+use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_runtime::{ActiveSession, ActiveTurn, ProviderExecutionError, SessionSecurityConfig};
 
@@ -18,7 +20,15 @@ const SESSION_ID: &str = "rt0-smoke-session";
 const TURN_ID: &str = "rt0-smoke-turn";
 const CORRELATION_ID: &str = "rt0-smoke-correlation";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmokeProviderKind {
+    OpenAiCompatible,
+    Anthropic,
+    Gemini,
+}
+
 pub struct SmokeConfig {
+    provider_kind: SmokeProviderKind,
     endpoint: String,
     api_key: String,
     model: String,
@@ -37,6 +47,7 @@ impl SmokeConfig {
         prompt: impl Into<String>,
     ) -> Self {
         Self {
+            provider_kind: SmokeProviderKind::OpenAiCompatible,
             endpoint: endpoint.into(),
             api_key: api_key.into(),
             model: model.into(),
@@ -45,6 +56,12 @@ impl SmokeConfig {
             provider_policy_allows: false,
             consent: ConsentState::Missing,
         }
+    }
+
+    #[must_use]
+    pub const fn with_provider_kind(mut self, provider_kind: SmokeProviderKind) -> Self {
+        self.provider_kind = provider_kind;
+        self
     }
 
     #[must_use]
@@ -113,8 +130,16 @@ impl Error for SmokeError {}
 /// # Errors
 /// Returns a typed runtime/provider error when any fail-closed gate or provider operation fails.
 pub fn run(config: SmokeConfig) -> Result<SmokeRun, SmokeError> {
-    let provider_policy_allows = config.provider_policy_allows;
-    let consent = config.consent;
+    let SmokeConfig {
+        provider_kind,
+        endpoint,
+        api_key,
+        model,
+        locale,
+        prompt,
+        provider_policy_allows,
+        consent,
+    } = config;
     let persona = smoke_persona()?;
     let authority = provider_authority()?;
     let mut session = ActiveSession::new(
@@ -136,21 +161,16 @@ pub fn run(config: SmokeConfig) -> Result<SmokeRun, SmokeError> {
     turn.authorize().map_err(SmokeError::Runtime)?;
     turn.begin_processing().map_err(SmokeError::Runtime)?;
 
-    let provider = OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
-        config.endpoint,
-        config.api_key,
-        config.model,
-    ))
-    .map_err(SmokeError::ProviderConfiguration)?;
+    let provider = build_provider(provider_kind, endpoint, api_key, model)?;
     let descriptor = provider.descriptor();
     let request = LlmRequest {
-        locale: config.locale,
-        context: config.prompt,
+        locale,
+        context: prompt,
     };
     let mut generated = GeneratedTextBuffer::default();
     let started = Instant::now();
     let usage = turn
-        .execute_llm(&provider, &request, &mut generated)
+        .execute_llm(provider.as_ref(), &request, &mut generated)
         .map_err(SmokeError::ProviderExecution)?;
     let latency_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let output_chars = u64::try_from(generated.as_str().chars().count()).unwrap_or(u64::MAX);
@@ -168,6 +188,29 @@ pub fn run(config: SmokeConfig) -> Result<SmokeRun, SmokeError> {
         ),
     })
 }
+fn build_provider(
+    provider_kind: SmokeProviderKind,
+    endpoint: String,
+    api_key: String,
+    model: String,
+) -> Result<Box<dyn LlmPort>, SmokeError> {
+    let provider: Box<dyn LlmPort> = match provider_kind {
+        SmokeProviderKind::OpenAiCompatible => Box::new(
+            OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(endpoint, api_key, model))
+                .map_err(SmokeError::ProviderConfiguration)?,
+        ),
+        SmokeProviderKind::Anthropic => Box::new(
+            AnthropicLlm::new(AnthropicConfig::new(endpoint, api_key, model))
+                .map_err(SmokeError::ProviderConfiguration)?,
+        ),
+        SmokeProviderKind::Gemini => Box::new(
+            GeminiLlm::new(GeminiConfig::new(endpoint, api_key, model))
+                .map_err(SmokeError::ProviderConfiguration)?,
+        ),
+    };
+    Ok(provider)
+}
+
 fn smoke_persona() -> Result<PersonaIdentity, SmokeError> {
     let id = PersonaId::new(PERSONA_ID)
         .map_err(|_| SmokeError::Runtime(Rt0ReasonCode::InternalError))?;
