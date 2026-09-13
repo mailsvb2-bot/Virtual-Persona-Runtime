@@ -11,3 +11,6 @@ dist/
 .idea/
 coverage/
 *.log
+
+!crates/vpr-owner-lab/ui/dist/
+!crates/vpr-owner-lab/ui/dist/app.js

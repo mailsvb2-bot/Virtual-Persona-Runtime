@@ -255,6 +255,9 @@ owner_lab_src = CRATES / "vpr-owner-lab" / "src"
 owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
 owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
+owner_lab_bundle = owner_lab_ui_root / "dist" / "app.js"
+if not owner_lab_bundle.is_file():
+    raise SystemExit("Owner Lab browser bundle must remain versioned for Rust include_str embedding")
 owner_lab_ui_files = [
     path
     for path in owner_lab_ui_root.rglob("*")
