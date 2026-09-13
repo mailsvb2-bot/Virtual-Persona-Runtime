@@ -116,7 +116,7 @@ fn provider_call_before_turn_authorization_is_rejected() {
 fn session_revoke_cancels_existing_permit_and_denies_new_work() {
     let (scope, _authority) = allowed_provider_authority();
     let mut session = active_session();
-    let mut turn = turn(&session, "session-revoke");
+    let turn = turn(&session, "session-revoke");
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     let permit = turn
@@ -138,7 +138,7 @@ fn local_only_current_policy_blocks_external_provider() {
     let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     session.set_local_only_required(true).unwrap();
-    let mut turn = turn(&session, "local-only");
+    let turn = turn(&session, "local-only");
     turn.authorize().unwrap();
     assert!(matches!(
         turn.issue_provider_permit(&scope, DataClass::Public),
@@ -150,7 +150,7 @@ fn local_only_current_policy_blocks_external_provider() {
 fn policy_change_cancels_existing_permit_and_stales_bound_turn() {
     let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
-    let mut turn = turn(&session, "policy-change");
+    let turn = turn(&session, "policy-change");
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     let permit = turn
@@ -171,7 +171,7 @@ fn current_missing_biometric_consent_uses_stable_reason_code() {
     let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
     session.set_consent(ConsentState::Missing).unwrap();
-    let mut turn = turn(&session, "consent");
+    let turn = turn(&session, "consent");
     turn.authorize().unwrap();
     let denied = turn.issue_provider_permit(&scope, DataClass::Biometric);
     assert!(matches!(denied, Err(RuntimeDenyReason::ConsentRequired)));
@@ -185,7 +185,7 @@ fn current_missing_biometric_consent_uses_stable_reason_code() {
 fn authorization_replacement_cancels_permit_and_stales_turn() {
     let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
-    let mut turn = turn(&session, "auth-replace");
+    let turn = turn(&session, "auth-replace");
     turn.authorize().unwrap();
     let permit = turn
         .issue_provider_permit(&scope, DataClass::Public)
@@ -202,7 +202,7 @@ fn authorization_replacement_cancels_permit_and_stales_turn() {
 fn execution_snapshot_revisions_gate_provider_execution() {
     let (scope, _authority) = allowed_provider_authority();
     let session = active_session();
-    let mut turn = turn(&session, "snapshot");
+    let turn = turn(&session, "snapshot");
     turn.authorize().unwrap();
     assert!(
         turn.issue_provider_permit(&scope, DataClass::Public)
@@ -220,7 +220,7 @@ fn execution_snapshot_revisions_gate_provider_execution() {
 #[test]
 fn interruption_preserves_played_prefix_and_unplayed_tail_per_segment() {
     let session = active_session();
-    let mut turn = turn(&session, "stream");
+    let turn = turn(&session, "stream");
     let provider_view = turn.cancellation.clone();
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
@@ -254,14 +254,14 @@ fn interruption_preserves_played_prefix_and_unplayed_tail_per_segment() {
 #[test]
 fn deny_and_fail_are_real_terminal_paths() {
     let session = active_session();
-    let mut denied = turn(&session, "denied");
+    let denied = turn(&session, "denied");
     denied.authorize().unwrap();
     denied.begin_processing().unwrap();
     denied.deny().unwrap();
     assert_eq!(denied.state(), TurnState::Denied);
     assert!(denied.begin_processing().is_err());
 
-    let mut failed = turn(&session, "failed");
+    let failed = turn(&session, "failed");
     failed.authorize().unwrap();
     failed.begin_processing().unwrap();
     failed.begin_output().unwrap();
@@ -280,7 +280,7 @@ fn deny_and_fail_are_real_terminal_paths() {
 #[test]
 fn denied_turn_cannot_emit_output_evidence() {
     let session = active_session();
-    let mut turn = turn(&session, "denied-output");
+    let turn = turn(&session, "denied-output");
     turn.deny().unwrap();
     assert_eq!(
         turn.begin_output_segment(),
@@ -292,7 +292,7 @@ fn denied_turn_cannot_emit_output_evidence() {
 #[test]
 fn invalid_interrupt_does_not_partially_mutate_output_evidence() {
     let session = active_session();
-    let mut turn = turn(&session, "terminal");
+    let turn = turn(&session, "terminal");
     turn.deny().unwrap();
     assert_eq!(turn.interrupt(), Err(Rt0ReasonCode::InvalidStateTransition));
     assert!(turn.output_segments().is_empty());
@@ -303,7 +303,7 @@ fn invalid_interrupt_does_not_partially_mutate_output_evidence() {
 fn authority_narrowing_invalidates_old_turn_and_denies_new_scope() {
     let (scope, _) = allowed_provider_authority();
     let session = active_session();
-    let mut old_turn = turn(&session, "authority-narrow-old");
+    let old_turn = turn(&session, "authority-narrow-old");
     old_turn.authorize().unwrap();
     old_turn.begin_processing().unwrap();
     let permit = old_turn
@@ -319,7 +319,7 @@ fn authority_narrowing_invalidates_old_turn_and_denies_new_scope() {
         Err(RuntimeDenyReason::AuthorizationStale)
     ));
 
-    let mut fresh_turn = turn(&session, "authority-narrow-new");
+    let fresh_turn = turn(&session, "authority-narrow-new");
     fresh_turn.authorize().unwrap();
     assert!(matches!(
         fresh_turn.issue_provider_permit(&scope, DataClass::Public),
@@ -339,7 +339,7 @@ fn provider_operation_classification_is_runtime_owned() {
 fn revocation_blocks_late_output_mutations_and_completion() {
     let (scope, _) = allowed_provider_authority();
     let mut session = active_session();
-    let mut turn = turn(&session, "late-output");
+    let turn = turn(&session, "late-output");
     turn.authorize().unwrap();
     turn.begin_processing().unwrap();
     turn.begin_output().unwrap();
@@ -377,7 +377,7 @@ fn retained_operation_cannot_bypass_expired_lease() {
         clock.clone(),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-clock").unwrap(),
         CorrelationId::new("corr-clock").unwrap(),
         &identity,
@@ -432,7 +432,7 @@ fn active_provider_permit_observes_lease_expiry() {
         clock.clone(),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-stream-expiry").unwrap(),
         CorrelationId::new("corr-stream-expiry").unwrap(),
         &identity,
@@ -462,7 +462,7 @@ fn lease_expiry_blocks_late_output_evidence_and_completion() {
         clock.clone(),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("turn-output-expiry").unwrap(),
         CorrelationId::new("corr-output-expiry").unwrap(),
         &identity,

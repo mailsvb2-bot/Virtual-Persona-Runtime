@@ -55,7 +55,7 @@ fn run_provider(port: &dyn SttPort) -> (Transcript, UsageEvidence) {
         SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
     );
     session.activate().unwrap();
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new("stt-contract-turn").unwrap(),
         CorrelationId::new("stt-contract-correlation").unwrap(),
         &persona,

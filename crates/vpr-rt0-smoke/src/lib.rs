@@ -154,7 +154,7 @@ pub fn run(config: SmokeConfig) -> Result<SmokeRun, SmokeError> {
     );
     session.activate().map_err(SmokeError::Runtime)?;
 
-    let mut turn = ActiveTurn::new(
+    let turn = ActiveTurn::new(
         TurnId::new(TURN_ID).map_err(|_| SmokeError::Runtime(Rt0ReasonCode::InternalError))?,
         CorrelationId::new(CORRELATION_ID)
             .map_err(|_| SmokeError::Runtime(Rt0ReasonCode::InternalError))?,
