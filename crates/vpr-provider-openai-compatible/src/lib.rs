@@ -12,6 +12,7 @@ use vpr_integration::{
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct OpenAiCompatibleConfig {
+    provider_name: String,
     endpoint: String,
     api_key: String,
     model: String,
@@ -26,11 +27,21 @@ impl OpenAiCompatibleConfig {
         model: impl Into<String>,
     ) -> Self {
         Self {
+            provider_name: "openai-compatible".to_owned(),
             endpoint: endpoint.into(),
             api_key: api_key.into(),
             model: model.into(),
             timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    #[must_use]
+    pub fn with_provider_name(mut self, provider_name: impl Into<String>) -> Self {
+        let provider_name = provider_name.into();
+        if !provider_name.trim().is_empty() {
+            self.provider_name = provider_name;
+        }
+        self
     }
 
     #[must_use]
@@ -42,7 +53,7 @@ impl OpenAiCompatibleConfig {
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
-            provider: "openai-compatible".to_owned(),
+            provider: self.provider_name.clone(),
             model: self.model.clone(),
             representation: None,
         }

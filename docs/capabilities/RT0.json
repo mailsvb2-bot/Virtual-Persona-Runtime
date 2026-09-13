@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.3.0",
+  "catalogue_version": "0.4.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -75,6 +75,21 @@
     },
     {
       "id": "provider.openai_compatible_adapter",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "provider.anthropic_adapter",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "provider.gemini_adapter",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_multi_provider_llm_contract",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

@@ -1011,6 +1011,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "vpr-provider-anthropic"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "vpr-integration",
+]
+
+[[package]]
+name = "vpr-provider-gemini"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "vpr-integration",
+]
+
+[[package]]
 name = "vpr-provider-openai-compatible"
 version = "0.1.0"
 dependencies = [
@@ -1029,6 +1049,8 @@ dependencies = [
  "vpr-domain",
  "vpr-integration",
  "vpr-policy",
+ "vpr-provider-anthropic",
+ "vpr-provider-gemini",
  "vpr-provider-openai-compatible",
  "vpr-runtime",
 ]

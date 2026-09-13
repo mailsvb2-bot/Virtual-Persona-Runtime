@@ -10,6 +10,8 @@ serde_json = "1"
 vpr-domain = { path = "../vpr-domain" }
 vpr-integration = { path = "../vpr-integration" }
 vpr-policy = { path = "../vpr-policy" }
+vpr-provider-anthropic = { path = "../vpr-provider-anthropic" }
+vpr-provider-gemini = { path = "../vpr-provider-gemini" }
 vpr-provider-openai-compatible = { path = "../vpr-provider-openai-compatible" }
 vpr-runtime = { path = "../vpr-runtime" }
 
