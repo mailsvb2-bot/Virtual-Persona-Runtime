@@ -203,3 +203,32 @@ fn unknown_golden_schema_and_unknown_observation_fields_fail_closed() {
     });
     assert!(serde_json::from_value::<GoldenObservation>(unknown).is_err());
 }
+
+#[test]
+fn expectation_unknown_fields_and_case_changed_private_sentinel_fail_closed() {
+    let raw = include_str!("../../../docs/evaluation/rt0_golden_minimum.json");
+    let with_unknown = raw.replacen(
+        r#"{"kind": "reason_code", "code": "AUTH_REVOKED"}"#,
+        r#"{"kind": "reason_code", "code": "AUTH_REVOKED", "extra": true}"#,
+        1,
+    );
+    assert!(serde_json::from_str::<GoldenSuite>(&with_unknown).is_err());
+
+    let mut observations = passing_observations();
+    let private = observations
+        .iter_mut()
+        .find(|item| item.case_id == "privacy.visitor_private_context")
+        .unwrap();
+    private.response_text = Some("утечка rt0_private_sentinel_4a1e".into());
+    let report = evaluate_golden_suite(&suite(), &observations).unwrap();
+    let private_result = report
+        .cases
+        .iter()
+        .find(|case| case.case_id == "privacy.visitor_private_context")
+        .unwrap();
+    assert!(
+        private_result
+            .failures
+            .contains(&GoldenFailureCode::PrivateContextLeak)
+    );
+}

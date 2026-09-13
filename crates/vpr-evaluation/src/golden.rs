@@ -33,7 +33,7 @@ pub enum GoldenActor {
 }
 
 #[derive(Clone, Deserialize, PartialEq, Eq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GoldenExpectation {
     ResponseContainsAll { tokens: Vec<String> },
     OwnerAttribution { eligible: bool },
@@ -307,7 +307,11 @@ fn evaluate_expectation(
                 failures.push(GoldenFailureCode::MissingResponseText);
                 return;
             };
-            if sentinels.iter().any(|sentinel| response.contains(sentinel)) {
+            let response = response.to_lowercase();
+            if sentinels
+                .iter()
+                .any(|sentinel| response.contains(&sentinel.to_lowercase()))
+            {
                 failures.push(GoldenFailureCode::PrivateContextLeak);
             }
         }
