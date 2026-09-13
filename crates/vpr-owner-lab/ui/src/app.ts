@@ -1,5 +1,6 @@
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean };
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; voice_ready: boolean };
+type VoiceResult = { transcript: string; reply: string; locale: string; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type StartResponse = { offer: SessionDescription; ice_servers: IceServer[]; capabilities: string[] };
@@ -21,16 +22,25 @@ const speakButton = byId<HTMLButtonElement>("speak");
 const interruptButton = byId<HTMLButtonElement>("interrupt");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
+const voiceButton = byId<HTMLButtonElement>("voice");
 const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false };
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false };
 let peer: RTCPeerConnection | null = null;
 let answerSubmitted = false;
 let pendingIce: IceCandidatePayload[] = [];
 let capabilities = new Set<string>();
+let micStream: MediaStream | null = null;
+let audioContext: AudioContext | null = null;
+let micSource: MediaStreamAudioSourceNode | null = null;
+let micWorklet: AudioWorkletNode | null = null;
+let micChunks: Float32Array[] = [];
+let recording = false;
+let recordingTimer: number | null = null;
+let voiceRequestInFlight = false;
 
 const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): void => {
   statusNode.textContent = text;
@@ -55,6 +65,22 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
         cache: "no-store",
       };
   const response = await fetch(path, init);
+  const payload = await response.json() as T | ErrorPayload;
+  if (!response.ok) {
+    const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
+    throw new Error(code);
+  }
+  return payload as T;
+};
+
+const apiBinary = async <T>(path: string, body: ArrayBuffer): Promise<T> => {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken },
+    body,
+    credentials: "same-origin",
+    cache: "no-store",
+  });
   const payload = await response.json() as T | ErrorPayload;
   if (!response.ok) {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
@@ -89,7 +115,9 @@ const backendSessionPresent = (): boolean => !["none", "closed"].includes(backen
 const updateControls = (): void => {
   const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
   speakButton.disabled = !transportReady || !capabilities.has("text");
-  interruptButton.disabled = !transportReady || !capabilities.has("interrupt");
+  interruptButton.disabled = !voiceRequestInFlight && (!transportReady || !capabilities.has("interrupt"));
+  voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || voiceRequestInFlight;
+  voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
   closeButton.disabled = !backendSessionPresent();
@@ -97,6 +125,7 @@ const updateControls = (): void => {
 };
 
 const closePeerTransport = (): void => {
+  stopMicrophoneCapture();
   peer?.close();
   peer = null;
   video.srcObject = null;
@@ -116,7 +145,7 @@ const connectAvatar = async (): Promise<void> => {
   setStatus("Создаю защищённую сессию…");
   try {
     const start = await api<StartResponse>("/api/avatar/start", { consent: true });
-    backendStatus = { session_state: "active", avatar_open: true, egress_enabled: egressEnabled };
+    backendStatus = { ...backendStatus, session_state: "active", avatar_open: true, egress_enabled: egressEnabled };
     capabilities = new Set(start.capabilities);
     updateControls();
     peer = new RTCPeerConnection({
@@ -177,6 +206,114 @@ const connectAvatar = async (): Promise<void> => {
   }
 };
 
+const stopMicrophoneCapture = (): void => {
+  if (recordingTimer !== null) window.clearTimeout(recordingTimer);
+  recordingTimer = null;
+  micSource?.disconnect();
+  micWorklet?.disconnect();
+  micStream?.getTracks().forEach((track) => track.stop());
+  void audioContext?.close();
+  micSource = null;
+  micWorklet = null;
+  micStream = null;
+  audioContext = null;
+  recording = false;
+  updateControls();
+};
+
+const flattenChunks = (chunks: Float32Array[]): Float32Array => {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const output = new Float32Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return output;
+};
+
+const resampleMono = (input: Float32Array, inputRate: number, outputRate = 16000): Float32Array => {
+  if (inputRate === outputRate) return input;
+  const outputLength = Math.max(1, Math.floor(input.length * outputRate / inputRate));
+  const output = new Float32Array(outputLength);
+  const ratio = inputRate / outputRate;
+  for (let i = 0; i < outputLength; i += 1) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(input.length, Math.max(start + 1, Math.floor((i + 1) * ratio)));
+    let sum = 0;
+    for (let j = start; j < end; j += 1) sum += input[j] ?? 0;
+    output[i] = sum / Math.max(1, end - start);
+  }
+  return output;
+};
+
+const encodeS16Le = (input: Float32Array): ArrayBuffer => {
+  const buffer = new ArrayBuffer(input.length * 2);
+  const view = new DataView(buffer);
+  input.forEach((sample, index) => {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    const value = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+    view.setInt16(index * 2, Math.round(value), true);
+  });
+  return buffer;
+};
+
+const startMicrophone = async (): Promise<void> => {
+  micChunks = [];
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+  audioContext = new AudioContext();
+  await audioContext.audioWorklet.addModule("/mic-worklet.js");
+  micSource = audioContext.createMediaStreamSource(micStream);
+  micWorklet = new AudioWorkletNode(audioContext, "vpr-mic-capture");
+  micWorklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+    micChunks.push(new Float32Array(event.data));
+  };
+  micSource.connect(micWorklet);
+  micWorklet.connect(audioContext.destination);
+  recording = true;
+  recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), 30_000);
+  setStatus("Слушаю… нажмите ещё раз, чтобы отправить", "ready");
+  updateControls();
+};
+
+const finishMicrophoneTurn = async (): Promise<void> => {
+  if (!recording || !audioContext) return;
+  const inputRate = audioContext.sampleRate;
+  const samples = flattenChunks(micChunks);
+  stopMicrophoneCapture();
+  micChunks = [];
+  if (samples.length === 0) {
+    setStatus("Микрофон не записал звук", "error");
+    return;
+  }
+  voiceRequestInFlight = true;
+  updateControls();
+  setStatus("Распознаю и формирую ответ…");
+  try {
+    const pcm = encodeS16Le(resampleMono(samples, inputRate));
+    const result = await apiBinary<VoiceResult>("/api/voice/turn", pcm);
+    showEvidence(result);
+    setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+  } finally {
+    voiceRequestInFlight = false;
+    updateControls();
+  }
+};
+
+const toggleVoice = async (): Promise<void> => {
+  try {
+    if (recording) await finishMicrophoneTurn();
+    else await startMicrophone();
+  } catch (error) {
+    stopMicrophoneCapture();
+    setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+  }
+};
+
 const speak = async (): Promise<void> => {
   const text = message.value.trim();
   if (!text) return;
@@ -226,6 +363,7 @@ speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void api("/api/avatar/interrupt", {}).catch((error: unknown) => setStatus(String(error), "error")));
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
+voiceButton.addEventListener("click", () => void toggleVoice());
 window.addEventListener("pagehide", closeBackendOnUnload);
 
 void api<Bootstrap>("/api/bootstrap")

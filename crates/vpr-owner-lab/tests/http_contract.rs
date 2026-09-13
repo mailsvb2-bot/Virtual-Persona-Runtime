@@ -57,7 +57,7 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             break;
         }
     }
-    String::from_utf8(request).unwrap()
+    String::from_utf8_lossy(&request).into_owned()
 }
 
 fn mock_did() -> (String, mpsc::Receiver<String>) {
@@ -89,28 +89,33 @@ fn mock_did() -> (String, mpsc::Receiver<String>) {
     (format!("http://{address}"), rx)
 }
 
-fn http(
+fn http_bytes(
     port: u16,
     method: &str,
     path: &str,
     host: &str,
     headers: &[(&str, &str)],
-    body: &str,
+    body: &[u8],
 ) -> HttpResult {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    let mut request = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
+    let mut head = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n");
     for (name, value) in headers {
-        let _ = write!(request, "{name}: {value}\r\n");
+        let _ = write!(head, "{name}: {value}\r\n");
     }
     if !body.is_empty() {
-        let _ = write!(request, "Content-Length: {}\r\n", body.len());
+        let _ = write!(head, "Content-Length: {}\r\n", body.len());
     }
-    request.push_str("\r\n");
-    request.push_str(body);
-    stream.write_all(request.as_bytes()).unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).unwrap();
-    let (head, body) = response.split_once("\r\n\r\n").unwrap();
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes()).unwrap();
+    stream.write_all(body).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let marker = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .unwrap();
+    let head = String::from_utf8(response[..marker].to_vec()).unwrap();
+    let body = String::from_utf8(response[marker + 4..].to_vec()).unwrap();
     let status = head
         .lines()
         .next()
@@ -123,8 +128,19 @@ fn http(
     HttpResult {
         status,
         headers: head.to_ascii_lowercase(),
-        body: body.to_owned(),
+        body,
     }
+}
+
+fn http(
+    port: u16,
+    method: &str,
+    path: &str,
+    host: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> HttpResult {
+    http_bytes(port, method, path, host, headers, body.as_bytes())
 }
 
 fn wait_for_server(port: u16) {
@@ -146,6 +162,22 @@ fn post(port: u16, host: &str, csrf: &str, path: &str, body: &str) -> HttpResult
         host,
         &[
             ("Content-Type", "application/json"),
+            ("Origin", &origin),
+            ("X-VPR-CSRF", csrf),
+        ],
+        body,
+    )
+}
+
+fn post_binary(port: u16, host: &str, csrf: &str, path: &str, body: &[u8]) -> HttpResult {
+    let origin = format!("http://{host}");
+    http_bytes(
+        port,
+        "POST",
+        path,
+        host,
+        &[
+            ("Content-Type", "application/octet-stream"),
             ("Origin", &origin),
             ("X-VPR-CSRF", csrf),
         ],
@@ -290,4 +322,168 @@ fn loopback_owner_lab_drives_runtime_and_did_control_plane_fail_closed() {
     assert_bad_origin_is_blocked(port, &host, &csrf);
     exercise_browser_flow(port, &host, &csrf);
     assert_provider_sequence(&captured);
+}
+
+fn mock_once(content_type: &'static str, body: &'static str) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_http_request(&mut stream);
+        let _ = tx.send(request);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    (format!("http://{address}"), rx)
+}
+
+fn mock_did_voice() -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let responses = [
+            (
+                "201 Created",
+                r#"{"id":"stream-voice","session_id":"session-voice","offer":{"type":"offer","sdp":"v=0 voice-offer"},"ice_servers":[{"urls":["stun:127.0.0.1"]}]}"#,
+            ),
+            ("200 OK", "{}"),
+            ("200 OK", "{}"),
+            ("200 OK", "{}"),
+        ];
+        for (status, body) in responses {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_http_request(&mut stream);
+            let _ = tx.send(request);
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        }
+    });
+    (format!("http://{address}"), rx)
+}
+
+fn launch_owner_lab_voice(
+    port: u16,
+    did_endpoint: &str,
+    stt_endpoint: &str,
+    llm_endpoint: &str,
+) -> ChildGuard {
+    let child = Command::new(env!("CARGO_BIN_EXE_vpr-owner-lab"))
+        .env("VPR_DID_ENDPOINT", did_endpoint)
+        .env("VPR_DID_API_KEY", "did-integration-secret")
+        .env("VPR_DID_AGENT_ID", "agent-voice")
+        .env("VPR_OWNER_LAB_ALLOW_EGRESS", "true")
+        .env("VPR_OWNER_LAB_PORT", port.to_string())
+        .env("VPR_OWNER_LAB_STT_PROVIDER", "openai-transcription")
+        .env("VPR_OWNER_LAB_STT_ENDPOINT", stt_endpoint)
+        .env("VPR_OWNER_LAB_STT_API_KEY", "stt-integration-secret")
+        .env("VPR_OWNER_LAB_STT_MODEL", "stt-contract")
+        .env("VPR_OWNER_LAB_LLM_PROVIDER", "openai-compatible")
+        .env("VPR_OWNER_LAB_LLM_ENDPOINT", llm_endpoint)
+        .env("VPR_OWNER_LAB_LLM_API_KEY", "llm-integration-secret")
+        .env("VPR_OWNER_LAB_LLM_MODEL", "llm-contract")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    wait_for_server(port);
+    ChildGuard(child)
+}
+
+#[test]
+fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
+    let (did_endpoint, did_captured) = mock_did_voice();
+    let (stt_base, stt_captured) = mock_once(
+        "application/json",
+        r#"{"text":"Привет","language":"ru-RU"}"#,
+    );
+    let llm_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Здравствуйте\"}}],\"usage\":null}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (llm_base, llm_captured) = mock_once("text/event-stream", llm_body);
+    let stt_endpoint = format!("{stt_base}/v1/audio/transcriptions");
+    let llm_endpoint = format!("{llm_base}/v1/chat/completions");
+    let port = free_port();
+    let host = format!("127.0.0.1:{port}");
+    let _guard = launch_owner_lab_voice(port, &did_endpoint, &stt_endpoint, &llm_endpoint);
+    let csrf = bootstrap(port, &host);
+
+    let status = http(port, "GET", "/api/status", &host, &[], "");
+    let status_json: Value = serde_json::from_str(&status.body).unwrap();
+    assert_eq!(status_json["voice_ready"], true);
+
+    let start = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/start",
+        r#"{"consent":true}"#,
+    );
+    assert_eq!(start.status, 200);
+    assert_eq!(
+        post(
+            port,
+            &host,
+            &csrf,
+            "/api/avatar/answer",
+            r#"{"kind":"answer","sdp":"v=0 browser-answer"}"#,
+        )
+        .status,
+        200
+    );
+
+    let pcm = vec![0_u8; 3_200];
+    let voice = post_binary(port, &host, &csrf, "/api/voice/turn", &pcm);
+    assert_eq!(voice.status, 200, "{}", voice.body);
+    let voice_json: Value = serde_json::from_str(&voice.body).unwrap();
+    assert_eq!(voice_json["transcript"], "Привет");
+    assert_eq!(voice_json["reply"], "Здравствуйте");
+    assert_eq!(voice_json["locale"], "ru-RU");
+    assert_eq!(voice_json["stt_usage"]["input_units"], 100);
+    assert_eq!(voice_json["llm_usage"]["input_units"], 7);
+    assert_eq!(voice_json["llm_usage"]["output_units"], 1);
+    for secret in [
+        "did-integration-secret",
+        "stt-integration-secret",
+        "llm-integration-secret",
+        "stream-voice",
+        "session-voice",
+    ] {
+        assert!(!voice.body.contains(secret));
+    }
+
+    assert_eq!(
+        post(port, &host, &csrf, "/api/session/close", "{}").status,
+        200
+    );
+
+    let stt_request = stt_captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(stt_request.starts_with("POST /v1/audio/transcriptions "));
+    assert!(stt_request.contains("authorization: Bearer stt-integration-secret"));
+    assert!(stt_request.contains("filename=\"audio.wav\""));
+    assert!(stt_request.contains("RIFF"));
+
+    let llm_request = llm_captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(llm_request.starts_with("POST /v1/chat/completions "));
+    assert!(llm_request.contains("authorization: Bearer llm-integration-secret"));
+    assert!(llm_request.contains("Привет"));
+    assert!(llm_request.contains("verified owner data is not available"));
+
+    let did_requests: Vec<String> = (0..4)
+        .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
+        .collect();
+    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[1].starts_with("POST /agents/agent-voice/streams/stream-voice/sdp "));
+    assert!(did_requests[2].starts_with("POST /agents/agent-voice/streams/stream-voice "));
+    assert!(did_requests[2].contains("Здравствуйте"));
+    assert!(did_requests[3].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
 }

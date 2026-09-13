@@ -25,7 +25,7 @@
     <section class="panel">
       <label class="consent">
         <input id="consent" type="checkbox">
-        <span>Я разрешаю отправку данных выбранному внешнему avatar-провайдеру для этой тестовой сессии.</span>
+        <span>Я разрешаю отправку данных выбранным внешним провайдерам (аватар, распознавание речи и языковая модель) для этой тестовой сессии.</span>
       </label>
       <div class="row">
         <button id="connect" class="primary">Подключить аватар</button>
@@ -40,6 +40,14 @@
       <div class="row">
         <button id="speak" class="primary" disabled>Сказать</button>
         <button id="interrupt" disabled>Прервать</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <label>Голосовой разговор</label>
+      <p class="hint">Push-to-talk: микрофон обрабатывается в браузере и отправляется как PCM только после остановки записи.</p>
+      <div class="row">
+        <button id="voice" class="primary" disabled>Начать говорить</button>
       </div>
     </section>
 

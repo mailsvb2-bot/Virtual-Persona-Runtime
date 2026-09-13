@@ -24,7 +24,12 @@ allowed_internal_dependencies = {
         "vpr-domain",
         "vpr-integration",
         "vpr-policy",
+        "vpr-provider-anthropic",
+        "vpr-provider-deepgram-stt",
         "vpr-provider-did-agent-streams",
+        "vpr-provider-gemini",
+        "vpr-provider-openai-compatible",
+        "vpr-provider-openai-transcription",
         "vpr-runtime",
     },
     "vpr-rt0-smoke": {
@@ -167,8 +172,8 @@ if turn_state_derive is not None and any(
     item.strip() == "Clone" for item in turn_state_derive.group(1).split(",")
 ):
     raise SystemExit("TurnMutableState must remain non-cloneable canonical mutable state")
-if "state: Mutex<TurnMutableState>" not in turn_source:
-    raise SystemExit("ActiveTurn canonical mutable state must remain internally synchronized")
+if "state: Arc<Mutex<TurnMutableState>>" not in turn_source:
+    raise SystemExit("ActiveTurn canonical mutable state must remain one shared synchronized cell")
 if "pub(crate) turn: Turn" in turn_source or "pub(crate) output_segments:" in turn_source:
     raise SystemExit("ActiveTurn must not split canonical mutable state across independent fields")
 if "pub struct ProviderExecutionContext" in provider_source:
@@ -296,6 +301,58 @@ for required_ui_recovery in (
 ):
     if required_ui_recovery not in owner_lab_ui:
         raise SystemExit(f"Owner Lab UI missing cleanup/recovery contract: {required_ui_recovery}")
+
+owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_providers = (owner_lab_src / "voice_providers.rs").read_text(encoding="utf-8")
+owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
+if not owner_lab_mic_worklet.is_file():
+    raise SystemExit("Owner Lab push-to-talk must retain a versioned AudioWorklet processor")
+for required_voice_runtime in (
+    "execute_stt",
+    "execute_llm",
+    "speak_realtime_avatar_text",
+    "interrupt_handle",
+):
+    if required_voice_runtime not in owner_lab_voice:
+        raise SystemExit(f"Owner Lab voice path must remain canonical: {required_voice_runtime}")
+for required_voice_http in (
+    "/api/voice/turn",
+    "application/octet-stream",
+    "active_voice_interrupt",
+    "voice_busy",
+    "compare_exchange",
+):
+    if required_voice_http not in owner_lab_main:
+        raise SystemExit(f"Owner Lab voice HTTP boundary missing {required_voice_http}")
+for provider_name in (
+    "openai-transcription",
+    "deepgram",
+    "openai-compatible",
+    "anthropic",
+    "gemini",
+):
+    if provider_name not in owner_lab_voice_providers:
+        raise SystemExit(f"Owner Lab voice provider selection missing {provider_name}")
+for forbidden_browser_secret in (
+    "VPR_OWNER_LAB_STT_API_KEY",
+    "VPR_OWNER_LAB_LLM_API_KEY",
+    "VPR_OWNER_LAB_STT_ENDPOINT",
+    "VPR_OWNER_LAB_LLM_ENDPOINT",
+):
+    if forbidden_browser_secret in owner_lab_ui:
+        raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
+if "AudioWorkletNode" not in owner_lab_ui or "apiBinary" not in owner_lab_ui:
+    raise SystemExit("Owner Lab voice UI must use AudioWorklet plus binary same-origin upload")
+if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
+    raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
+
+turn_interrupt_match = re.search(
+    r"pub struct TurnInterruptHandle\s*\{([^}]*)\}", turn_source, re.DOTALL
+)
+if turn_interrupt_match is None or re.search(r"\bpub\s+\w+\s*:", turn_interrupt_match.group(1)):
+    raise SystemExit("TurnInterruptHandle must remain opaque and runtime-issued")
+if "pub fn interrupt_handle" not in turn_source or "pub fn interrupt(&self)" not in turn_source:
+    raise SystemExit("runtime must retain narrow concurrent turn interruption capability")
 
 avatar_runtime_source = (runtime_src / "avatar_runtime.rs").read_text(encoding="utf-8")
 handle_match = re.search(r"pub struct RealtimeAvatarHandle\s*\{([^}]*)\}", avatar_runtime_source, re.DOTALL)
