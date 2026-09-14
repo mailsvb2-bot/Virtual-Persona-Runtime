@@ -1,7 +1,7 @@
 use serde_json::json;
 use vpr_evaluation::{
-    LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    bind_owner_lab_session_evidence, sha256_hex,
+    LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, bind_owner_lab_session_evidence,
+    sha256_hex,
 };
 
 fn provider_state() -> Vec<u8> {
@@ -76,7 +76,10 @@ fn binding_covers_exact_candidate_provider_state_and_raw_snapshot_bytes() {
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     );
     assert_eq!(bound.provider_state_sha256, sha256_hex(&provider_state));
-    assert_eq!(bound.snapshot_sha256, vec![sha256_hex(&one), sha256_hex(&two)]);
+    assert_eq!(
+        bound.snapshot_sha256,
+        vec![sha256_hex(&one), sha256_hex(&two)]
+    );
     assert_eq!(bound.aggregate.sessions, 2);
     assert_eq!(bound.aggregate.first_meaningful_audio.unwrap().p95, 600);
     assert!(!bound.aggregate.canonical_playback_proven);
