@@ -7,6 +7,10 @@ BACKEND_E2E = UI / "e2e" / "backend-owner-journey.spec.ts"
 BACKEND_CONFIG = UI / "playwright.backend.config.ts"
 BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
+VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
+VOICE_CONFIG = UI / "playwright.voice.config.ts"
+VOICE_PROVIDER = UI / "e2e" / "voice-provider-fixture.mjs"
+VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 
 browser_e2e = E2E.read_text(encoding="utf-8")
@@ -14,6 +18,10 @@ backend_e2e = BACKEND_E2E.read_text(encoding="utf-8")
 backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
 backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
+voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
+voice_config = VOICE_CONFIG.read_text(encoding="utf-8")
+voice_provider = VOICE_PROVIDER.read_text(encoding="utf-8")
+voice_launcher = VOICE_LAUNCHER.read_text(encoding="utf-8")
 default_config = (UI / "playwright.config.ts").read_text(encoding="utf-8")
 ci = CI.read_text(encoding="utf-8")
 
@@ -46,12 +54,51 @@ for required in (
     if required not in backend_config:
         raise SystemExit(f"Owner Lab backend browser config missing: {required}")
 
-if 'testIgnore: "backend-owner-journey.spec.ts"' not in default_config:
-    raise SystemExit("Default browser contract must exclude backend-integrated spec")
+for required in ("backend-owner-journey.spec.ts", "backend-voice-journey.spec.ts"):
+    if required not in default_config:
+        raise SystemExit(f"Default browser contract must exclude {required}")
 
 for required in ("VPR_DID_ENDPOINT", "VPR_DID_API_KEY", "cargo", "vpr-owner-lab"):
     if required not in backend_launcher:
         raise SystemExit(f"Owner Lab backend launcher missing: {required}")
+
+
+for required in (
+    "voice_attempts",
+    "Привет из браузера",
+    "Что думает владелец?",
+    "Visitor permissions do not expose owner-reviewed personal context",
+    "Bearer voice-stt-e2e-secret",
+    "Bearer voice-llm-e2e-secret",
+    "Basic voice-avatar-e2e-secret",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
+
+for required in (
+    "run_owner_lab_voice_backend.py",
+    "voice-provider-fixture.mjs",
+):
+    if required not in voice_config:
+        raise SystemExit(f"Owner Lab voice browser config missing: {required}")
+
+for required in (
+    "VPR_OWNER_LAB_STT_PROVIDER",
+    "VPR_OWNER_LAB_LLM_PROVIDER",
+    "VPR_DID_ENDPOINT",
+    "cargo",
+):
+    if required not in voice_launcher:
+        raise SystemExit(f"Owner Lab voice launcher missing: {required}")
+
+for required in (
+    "/v1/audio/transcriptions",
+    "/v1/chat/completions",
+    "text/event-stream",
+    "/agents/",
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
@@ -61,6 +108,7 @@ for required in (
     "npx playwright install --with-deps chromium",
     "npm run test:e2e",
     "npm run test:e2e:backend",
+    "npm run test:e2e:voice",
     "dist/owner-capture.js",
 ):
     if required not in ci:

@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: "backend-owner-journey.spec.ts",
+  testIgnore: ["backend-owner-journey.spec.ts", "backend-voice-journey.spec.ts"],
   timeout: 30_000,
   fullyParallel: false,
   retries: 0,
