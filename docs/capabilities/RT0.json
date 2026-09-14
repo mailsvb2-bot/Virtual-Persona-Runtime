@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.21.0",
+  "catalogue_version": "0.22.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -110,6 +110,11 @@
     },
     {
       "id": "capture.guided_owner_interview",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "api.rt0_owner_capture_review",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },
