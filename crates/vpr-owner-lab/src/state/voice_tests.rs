@@ -1,8 +1,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use vpr_domain::{
+    ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, OwnerClaim, OwnerClaimRecord,
+    PersonaId, PersonaIdentity, PersonaMode, PersonaProfile, PersonaVersion, SourceKind,
+    VerificationState,
+};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
     ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
@@ -10,13 +15,14 @@ use vpr_integration::{
     WebRtcSessionDescription,
 };
 
-use super::{LabError, OwnerLabEngine, OwnerLabStartRequest};
+use super::{LabError, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest};
 
 #[derive(Default)]
 struct VoiceStats {
     stt: AtomicUsize,
     llm: AtomicUsize,
     avatar_text: AtomicUsize,
+    contexts: Mutex<Vec<String>>,
 }
 
 struct VoiceAvatar {
@@ -142,6 +148,11 @@ impl LlmPort for VoiceLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.stats.llm.fetch_add(1, Ordering::SeqCst);
+        self.stats
+            .contexts
+            .lock()
+            .unwrap()
+            .push(request.context.clone());
         if let Some(started) = &self.started {
             started.send(()).unwrap();
         }
@@ -192,6 +203,61 @@ fn voice_engine(
     (engine, stats, started_rx)
 }
 
+fn reviewed_profile() -> PersonaProfile {
+    let mut profile = PersonaProfile::new(
+        PersonaIdentity::new(
+            PersonaId::new("reviewed-owner-context-persona").unwrap(),
+            PersonaVersion::new(1).unwrap(),
+            PersonaMode::DigitalTwin,
+        ),
+        ConstitutionBoundary::strict_digital_twin(),
+    );
+    let id = ClaimId::new("opinion-working-style").unwrap();
+    profile
+        .add_captured_claim(
+            OwnerClaimRecord::capture(
+                id.clone(),
+                OwnerClaim {
+                    statement: "Люблю быстрые итерации".into(),
+                    kind: ClaimKind::Opinion,
+                    source: SourceKind::Owner,
+                    verification: VerificationState::Unverified,
+                    derivation: DerivationKind::Direct,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    profile.mark_capture_complete().unwrap();
+    profile.approve_claim(&id).unwrap();
+    profile.approve_initial_review().unwrap();
+    profile
+}
+
+fn reviewed_voice_engine() -> (OwnerLabEngine, Arc<VoiceStats>) {
+    let stats = Arc::new(VoiceStats::default());
+    let avatar = VoiceAvatar {
+        stats: Arc::clone(&stats),
+    };
+    let stt = ImmediateStt {
+        stats: Arc::clone(&stats),
+    };
+    let llm = VoiceLlm {
+        stats: Arc::clone(&stats),
+        block_until_cancelled: false,
+        started: None,
+    };
+    let mut engine = OwnerLabEngine::new(Box::new(avatar), true)
+        .unwrap()
+        .with_reviewed_profile(reviewed_profile())
+        .unwrap()
+        .with_voice(Box::new(stt), Box::new(llm));
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    (engine, stats)
+}
+
 fn sample_pcm() -> Vec<u8> {
     vec![0_u8; 3_200]
 }
@@ -205,6 +271,35 @@ fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
     assert_eq!(stats.stt.load(Ordering::SeqCst), 1);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn corrected_reviewed_claim_is_used_by_the_next_canonical_voice_turn() {
+    let (mut engine, stats) = reviewed_voice_engine();
+    assert_eq!(
+        engine.status().owner_context_state,
+        OwnerContextState::Reviewed
+    );
+    assert_eq!(engine.status().persona_version, 2);
+    assert_eq!(engine.status().reviewed_owner_claims, 1);
+
+    engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    let id = ClaimId::new("opinion-working-style").unwrap();
+    engine
+        .correct_owner_claim(
+            &id,
+            "Предпочитаю короткие циклы проверки",
+            ClaimKind::Opinion,
+        )
+        .unwrap();
+    assert_eq!(engine.status().persona_version, 3);
+    engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+
+    let contexts = stats.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 2);
+    assert!(contexts[0].contains("[verified_owner_opinion] Люблю быстрые итерации"));
+    assert!(contexts[1].contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки"));
+    assert!(!contexts[1].contains("Люблю быстрые итерации"));
 }
 
 #[test]
