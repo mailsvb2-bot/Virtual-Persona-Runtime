@@ -14,7 +14,7 @@ use vpr_integration::{
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
 use super::{
-    LiveConversationAttemptError, RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA,
+    LiveConversationAttemptError, ProofStatus, RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA,
     run_live_conversation_attempt,
 };
 use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
@@ -272,9 +272,9 @@ fn owner_and_visitor_share_persona_but_not_private_owner_context() {
     assert_eq!(receipt.reviewed_claims, 1);
     assert!(receipt.conversation_attempted);
     assert!(receipt.provider_output_submitted);
-    assert!(!receipt.browser_media_playback_proven);
-    assert!(!receipt.video_render_proven);
-    assert!(!receipt.human_review_proven);
+    assert_eq!(receipt.browser_media_playback, ProofStatus::NotProven);
+    assert_eq!(receipt.video_render, ProofStatus::NotProven);
+    assert_eq!(receipt.human_review, ProofStatus::NotProven);
     assert_eq!(receipt.owner.estimated_cost_microunits, Some(10));
     assert_eq!(receipt.visitor.estimated_cost_microunits, Some(10));
     assert_eq!(receipt.owner.provider_charge_microunits, Some(15));

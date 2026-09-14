@@ -10,7 +10,7 @@ use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
 pub use conversation::{
     LiveConversationAttemptError, LiveConversationAttemptReceipt, LiveConversationClaimInput,
-    LiveConversationProfileInput, LiveConversationTurnReceipt,
+    LiveConversationProfileInput, LiveConversationTurnReceipt, ProofStatus,
     RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA, RT0_LIVE_CONVERSATION_PROFILE_SCHEMA,
     run_live_conversation_attempt,
 };

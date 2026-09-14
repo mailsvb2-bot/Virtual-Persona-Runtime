@@ -73,7 +73,7 @@ The profile and both raw PCM S16LE/mono/16 kHz inputs must be absolute files out
 
 The sanitized receipt schema is `rt0-live-conversation-attempt-0.1`. It binds the exact candidate and sanitized provider-state digest, hashes the private profile, Persona id, both audio inputs, transcripts and replies, and records character counts, locale, server-stage latency and complete-known cost totals. It never serializes owner claims, transcript/reply text, raw audio, WebRTC signaling, provider session identifiers or credentials.
 
-A successful attempt proves only that real credentialed provider calls traversed the canonical owner and visitor policy paths and that generated output was submitted to the realtime-avatar provider. It deliberately records `browser_media_playback_proven=false`, `video_render_proven=false`, and `human_review_proven=false`. It therefore cannot by itself satisfy the RT0 real-conversation, media-plane, A/V-sync, privacy acceptance or human-evaluation exit conditions.
+A successful attempt proves only that real credentialed provider calls traversed the canonical owner and visitor policy paths and that generated output was submitted to the realtime-avatar provider. It deliberately records `browser_media_playback="not_proven"`, `video_render="not_proven"`, and `human_review="not_proven"`. It therefore cannot by itself satisfy the RT0 real-conversation, media-plane, A/V-sync, privacy acceptance or human-evaluation exit conditions.
 
 ## Owner Lab live-session evidence
 

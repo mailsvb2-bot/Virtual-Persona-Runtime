@@ -45,6 +45,13 @@ pub struct LiveConversationTurnReceipt {
     pub provider_charge_microunits: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofStatus {
+    Proven,
+    NotProven,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LiveConversationAttemptReceipt {
     pub schema_version: String,
@@ -58,9 +65,9 @@ pub struct LiveConversationAttemptReceipt {
     pub visitor: LiveConversationTurnReceipt,
     pub conversation_attempted: bool,
     pub provider_output_submitted: bool,
-    pub browser_media_playback_proven: bool,
-    pub video_render_proven: bool,
-    pub human_review_proven: bool,
+    pub browser_media_playback: ProofStatus,
+    pub video_render: ProofStatus,
+    pub human_review: ProofStatus,
 }
 pub const RT0_LIVE_CONVERSATION_PROFILE_SCHEMA: &str = "rt0-live-conversation-profile-0.1";
 
@@ -113,6 +120,12 @@ impl LiveConversationAttemptError {
     }
 }
 
+/// Runs one credentialed owner turn followed by one visitor-scoped turn through the canonical
+/// Owner Lab engine and returns only sanitized attempt evidence.
+///
+/// # Errors
+/// Fails closed for invalid or unreviewed profile input, malformed audio, unavailable voice
+/// providers, owner/visitor session or turn failures, or unconfirmed avatar cleanup.
 pub fn run_live_conversation_attempt(
     prepared: PreparedLiveProof,
     profile_input_bytes: &[u8],
@@ -148,13 +161,10 @@ pub fn run_live_conversation_attempt(
     engine
         .start(OwnerLabStartRequest { consent: true })
         .map_err(|_| LiveConversationAttemptError::OwnerSessionFailed)?;
-    let owner_result = match engine.voice_turn(owner_audio, |_| {}) {
-        Ok(result) => result,
-        Err(_) => {
-            let _ = engine.revoke();
-            let _ = engine.close();
-            return Err(LiveConversationAttemptError::OwnerTurnFailed);
-        }
+    let Ok(owner_result) = engine.voice_turn(owner_audio, |_| {}) else {
+        let _ = engine.revoke();
+        let _ = engine.close();
+        return Err(LiveConversationAttemptError::OwnerTurnFailed);
     };
     close_or_cleanup(
         &mut engine,
@@ -163,13 +173,10 @@ pub fn run_live_conversation_attempt(
     engine
         .start_visitor(OwnerLabStartRequest { consent: true })
         .map_err(|_| LiveConversationAttemptError::VisitorSessionFailed)?;
-    let visitor_result = match engine.voice_turn(visitor_audio, |_| {}) {
-        Ok(result) => result,
-        Err(_) => {
-            let _ = engine.revoke();
-            let _ = engine.close();
-            return Err(LiveConversationAttemptError::VisitorTurnFailed);
-        }
+    let Ok(visitor_result) = engine.voice_turn(visitor_audio, |_| {}) else {
+        let _ = engine.revoke();
+        let _ = engine.close();
+        return Err(LiveConversationAttemptError::VisitorTurnFailed);
     };
     close_or_cleanup(
         &mut engine,
@@ -192,9 +199,9 @@ pub fn run_live_conversation_attempt(
         ),
         conversation_attempted: true,
         provider_output_submitted: true,
-        browser_media_playback_proven: false,
-        video_render_proven: false,
-        human_review_proven: false,
+        browser_media_playback: ProofStatus::NotProven,
+        video_render: ProofStatus::NotProven,
+        human_review: ProofStatus::NotProven,
     })
 }
 
