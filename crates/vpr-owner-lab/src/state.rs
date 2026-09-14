@@ -132,9 +132,8 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed if capture/review is incomplete or the profile is not a DIGITAL_TWIN.
     pub fn with_reviewed_profile(mut self, profile: PersonaProfile) -> Result<Self, LabError> {
-        self.reviewed_owner_context = Some(
-            ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?,
-        );
+        self.reviewed_owner_context =
+            Some(ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?);
         Ok(self)
     }
 
