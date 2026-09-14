@@ -543,6 +543,45 @@ if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" 
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
 
+owner_lab_evidence = (owner_lab_src / "evidence.rs").read_text(encoding="utf-8")
+for required_evidence_boundary in (
+    "rt0-owner-lab-session-evidence-0.1",
+    "LabSessionEvidenceRecorder",
+    "LabMediaEvidenceInput",
+    "stt_millis",
+    "llm_millis",
+    "server_total_millis",
+):
+    if required_evidence_boundary not in owner_lab_evidence:
+        raise SystemExit(f"Owner Lab session evidence missing boundary {required_evidence_boundary}")
+for forbidden_evidence_payload in (
+    "transcript: String",
+    "reply: String",
+    "pcm:",
+    "sdp:",
+):
+    if forbidden_evidence_payload in owner_lab_evidence:
+        raise SystemExit(f"Owner Lab session evidence must not persist raw payload: {forbidden_evidence_payload}")
+owner_lab_http_evidence = (owner_lab_src / "http_evidence.rs").read_text(encoding="utf-8")
+for required_media_endpoint in ("/api/evidence/media", "/api/evidence/session"):
+    if required_media_endpoint not in owner_lab_main:
+        raise SystemExit(f"Owner Lab HTTP evidence endpoint missing {required_media_endpoint}")
+if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
+    raise SystemExit("Owner Lab HTTP evidence correlation header must remain isolated in http_evidence.rs")
+for required_browser_media_evidence in (
+    "requestVideoFrameCallback",
+    "AnalyserNode",
+    "/api/evidence/media",
+    "X-VPR-Evidence-Request",
+):
+    if required_browser_media_evidence not in owner_lab_ui:
+        raise SystemExit(f"Owner Lab browser media evidence missing {required_browser_media_evidence}")
+for forbidden_owner_lab_delivery_claim in ("mark_output_played", "acknowledge_output_played"):
+    if forbidden_owner_lab_delivery_claim in owner_lab_main or forbidden_owner_lab_delivery_claim in owner_lab_evidence:
+        raise SystemExit(
+            f"Owner Lab browser evidence must not self-promote to canonical played state: {forbidden_owner_lab_delivery_claim}"
+        )
+
 turn_interrupt_match = re.search(
     r"pub struct TurnInterruptHandle\s*\{([^}]*)\}", turn_source, re.DOTALL
 )

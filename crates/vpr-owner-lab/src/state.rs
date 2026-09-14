@@ -31,6 +31,7 @@ pub enum OwnerLabTurnInput {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabSignalBundle {
+    pub evidence_session_sequence: u64,
     pub offer: LabSessionDescription,
     pub ice_servers: Vec<LabIceServer>,
     pub capabilities: Vec<String>,
@@ -170,7 +171,7 @@ impl OwnerLabEngine {
         let handle = turn
             .open_realtime_avatar(self.provider.as_ref())
             .map_err(map_provider_execution)?;
-        let bundle = signal_bundle(self.provider.as_ref(), &handle);
+        let bundle = signal_bundle(self.provider.as_ref(), &handle, self.session_counter);
         self.session = Some(session);
         self.avatar = Some(handle);
         Ok(bundle)
@@ -285,7 +286,11 @@ impl OwnerLabEngine {
     }
 }
 
-fn signal_bundle(port: &dyn RealtimeAvatarPort, handle: &RealtimeAvatarHandle) -> LabSignalBundle {
+fn signal_bundle(
+    port: &dyn RealtimeAvatarPort,
+    handle: &RealtimeAvatarHandle,
+    evidence_session_sequence: u64,
+) -> LabSignalBundle {
     let provider_capabilities = port.capabilities();
     let capabilities = [
         (RealtimeAvatarCapability::TextInput, "text"),
@@ -297,6 +302,7 @@ fn signal_bundle(port: &dyn RealtimeAvatarPort, handle: &RealtimeAvatarHandle) -
     .map(|(_, name)| name.to_owned())
     .collect();
     LabSignalBundle {
+        evidence_session_sequence,
         offer: LabSessionDescription {
             kind: handle.offer().kind.clone(),
             sdp: handle.offer().sdp.clone(),

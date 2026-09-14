@@ -28,6 +28,7 @@ pub struct LabVoiceResult {
     pub transcript: String,
     pub reply: String,
     pub locale: String,
+    pub evidence_turn_sequence: u64,
     pub stt_millis: u64,
     pub llm_millis: u64,
     pub avatar_millis: u64,
@@ -69,6 +70,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
         let turn = self.new_turn()?;
+        let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
@@ -116,6 +118,7 @@ impl OwnerLabEngine {
             transcript: transcript.text,
             reply,
             locale: transcript.locale,
+            evidence_turn_sequence,
             stt_millis,
             llm_millis,
             avatar_millis,

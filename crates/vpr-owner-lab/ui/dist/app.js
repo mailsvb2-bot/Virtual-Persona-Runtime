@@ -32,6 +32,20 @@ let micChunks = [];
 let recording = false;
 let recordingTimer = null;
 let voiceRequestInFlight = false;
+let evidenceSessionSequence = 0;
+let nextVoiceRequestSequence = 0;
+let connectEvidenceStartedAt = 0;
+let videoEvidencePosted = false;
+let reconnectStartedAt = null;
+let remoteMediaStream = null;
+let remoteEvidenceAudioContext = null;
+let remoteAudioSource = null;
+let remoteAudioAnalyser = null;
+let remoteSilentGain = null;
+let remoteEvidenceFrame = null;
+let baselineRms = 0.002;
+let activeVoiceEvidence = null;
+let interruptEvidenceWatch = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const AUTO_STOP_MILLIS = 29_500;
 const setStatus = (text, state = "idle") => {
@@ -62,10 +76,10 @@ const api = async (path, body) => {
     }
     return payload;
 };
-const apiBinary = async (path, body) => {
+const apiBinary = async (path, body, requestSequence) => {
     const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken },
+        headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken, "X-VPR-Evidence-Request": String(requestSequence) },
         body,
         credentials: "same-origin",
         cache: "no-store",
@@ -76,6 +90,118 @@ const apiBinary = async (path, body) => {
         throw new Error(code);
     }
     return payload;
+};
+const refreshSessionEvidence = async () => {
+    if (evidenceSessionSequence === 0)
+        return;
+    try {
+        showEvidence(await api("/api/evidence/session"));
+    }
+    catch {
+    }
+};
+const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) => {
+    if (evidenceSessionSequence === 0)
+        return;
+    await api("/api/evidence/media", {
+        session_sequence: evidenceSessionSequence,
+        request_sequence: requestSequence,
+        kind,
+        elapsed_millis: Math.max(0, Math.round(elapsedMillis)),
+    });
+    await refreshSessionEvidence();
+};
+const rms = (samples) => {
+    let sum = 0;
+    for (const sample of samples)
+        sum += sample * sample;
+    return Math.sqrt(sum / Math.max(1, samples.length));
+};
+const stopRemoteEvidence = () => {
+    if (remoteEvidenceFrame !== null)
+        cancelAnimationFrame(remoteEvidenceFrame);
+    remoteEvidenceFrame = null;
+    remoteAudioSource?.disconnect();
+    remoteAudioAnalyser?.disconnect();
+    remoteSilentGain?.disconnect();
+    void remoteEvidenceAudioContext?.close();
+    remoteAudioSource = null;
+    remoteAudioAnalyser = null;
+    remoteSilentGain = null;
+    remoteEvidenceAudioContext = null;
+    remoteMediaStream = null;
+    activeVoiceEvidence = null;
+    interruptEvidenceWatch = null;
+    baselineRms = 0.002;
+};
+const monitorRemoteAudio = () => {
+    const analyser = remoteAudioAnalyser;
+    if (!analyser)
+        return;
+    const samples = new Float32Array(analyser.fftSize);
+    const tick = () => {
+        const current = remoteAudioAnalyser;
+        if (!current)
+            return;
+        current.getFloatTimeDomainData(samples);
+        const level = rms(samples);
+        if (!activeVoiceEvidence)
+            baselineRms = baselineRms * 0.95 + level * 0.05;
+        const voice = activeVoiceEvidence;
+        const speechThreshold = Math.max(0.015, baselineRms * 3 + 0.003);
+        if (voice && level > speechThreshold) {
+            voice.speaking = true;
+            voice.silentFrames = 0;
+            if (!voice.audioStarted) {
+                voice.audioStarted = true;
+                void postMediaEvidence("audio_started", performance.now() - voice.startedAt, voice.requestSequence)
+                    .catch(() => undefined);
+            }
+        }
+        else if (voice?.speaking) {
+            voice.silentFrames += 1;
+            if (voice.silentFrames >= 6)
+                voice.speaking = false;
+        }
+        if (interruptEvidenceWatch) {
+            const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
+            interruptEvidenceWatch.silentFrames = level < silenceThreshold
+                ? interruptEvidenceWatch.silentFrames + 1
+                : 0;
+            if (interruptEvidenceWatch.silentFrames >= 4) {
+                const watch = interruptEvidenceWatch;
+                interruptEvidenceWatch = null;
+                void postMediaEvidence("interruption_stopped", performance.now() - watch.startedAt, watch.requestSequence).catch(() => undefined);
+            }
+        }
+        remoteEvidenceFrame = requestAnimationFrame(tick);
+    };
+    remoteEvidenceFrame = requestAnimationFrame(tick);
+};
+const attachRemoteAudioEvidence = async (track) => {
+    if (!remoteEvidenceAudioContext)
+        remoteEvidenceAudioContext = new AudioContext();
+    await remoteEvidenceAudioContext.resume();
+    remoteAudioSource?.disconnect();
+    remoteAudioAnalyser?.disconnect();
+    remoteSilentGain?.disconnect();
+    remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new MediaStream([track]));
+    remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
+    remoteAudioAnalyser.fftSize = 256;
+    remoteSilentGain = remoteEvidenceAudioContext.createGain();
+    remoteSilentGain.gain.value = 0;
+    remoteAudioSource.connect(remoteAudioAnalyser);
+    remoteAudioAnalyser.connect(remoteSilentGain);
+    remoteSilentGain.connect(remoteEvidenceAudioContext.destination);
+    if (remoteEvidenceFrame === null)
+        monitorRemoteAudio();
+};
+const recordFirstVideoFrame = () => {
+    if (videoEvidencePosted || connectEvidenceStartedAt === 0)
+        return;
+    videoEvidencePosted = true;
+    void postMediaEvidence("video_ready", performance.now() - connectEvidenceStartedAt)
+        .catch(() => undefined);
 };
 const syncStatus = async () => {
     backendStatus = await api("/api/status");
@@ -110,6 +236,7 @@ const updateControls = () => {
 };
 const closePeerTransport = () => {
     stopMicrophoneCapture();
+    stopRemoteEvidence();
     peer?.close();
     peer = null;
     video.srcObject = null;
@@ -125,9 +252,17 @@ const connectAvatar = async () => {
         return;
     }
     connectButton.disabled = true;
+    connectEvidenceStartedAt = performance.now();
+    videoEvidencePosted = false;
+    reconnectStartedAt = null;
+    evidenceSessionSequence = 0;
+    nextVoiceRequestSequence = 0;
+    remoteEvidenceAudioContext = new AudioContext();
+    void remoteEvidenceAudioContext.resume();
     setStatus("Создаю защищённую сессию…");
     try {
         const start = await api("/api/avatar/start", { consent: true });
+        evidenceSessionSequence = start.evidence_session_sequence;
         backendStatus = { ...backendStatus, session_state: "active", avatar_open: true, egress_enabled: egressEnabled };
         capabilities = new Set(start.capabilities);
         updateControls();
@@ -139,16 +274,42 @@ const connectAvatar = async () => {
             })),
         });
         peer.ontrack = (event) => {
-            video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-            stage?.classList.add("has-video");
-            setStatus("Видео подключено", "ready");
+            remoteMediaStream ??= new MediaStream();
+            if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
+                remoteMediaStream.addTrack(event.track);
+            }
+            video.srcObject = remoteMediaStream;
+            if (event.track.kind === "video") {
+                stage?.classList.add("has-video");
+                const requestFrame = video.requestVideoFrameCallback;
+                if (typeof requestFrame === "function") {
+                    requestFrame.call(video, () => recordFirstVideoFrame());
+                }
+                else {
+                    video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+                }
+                setStatus("Видео подключено", "ready");
+            }
+            else if (event.track.kind === "audio") {
+                void attachRemoteAudioEvidence(event.track).catch(() => undefined);
+            }
         };
         peer.onconnectionstatechange = () => {
             if (!peer)
                 return;
-            showEvidence({ connectionState: peer.connectionState, capabilities: [...capabilities] });
-            if (peer.connectionState === "failed")
+            const state = peer.connectionState;
+            if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
+                reconnectStartedAt = performance.now();
+            }
+            else if (state === "connected" && reconnectStartedAt !== null) {
+                const startedAt = reconnectStartedAt;
+                reconnectStartedAt = null;
+                void postMediaEvidence("reconnect_restored", performance.now() - startedAt)
+                    .catch(() => undefined);
+            }
+            if (state === "failed")
                 setStatus("WebRTC connection failed", "error");
+            void refreshSessionEvidence();
         };
         peer.onicecandidate = (event) => {
             const json = event.candidate?.toJSON();
@@ -274,6 +435,7 @@ const finishMicrophoneTurn = async () => {
         return;
     }
     voiceRequestInFlight = true;
+    let attemptedRequestSequence = null;
     updateControls();
     setStatus("Распознаю и формирую ответ…");
     try {
@@ -282,11 +444,18 @@ const finishMicrophoneTurn = async () => {
             ? resampled.subarray(0, MAX_VOICE_SAMPLES)
             : resampled;
         const pcm = encodeS16Le(bounded);
-        const result = await apiBinary("/api/voice/turn", pcm);
-        showEvidence(result);
+        nextVoiceRequestSequence += 1;
+        const requestSequence = nextVoiceRequestSequence;
+        attemptedRequestSequence = requestSequence;
+        activeVoiceEvidence = { requestSequence, startedAt: performance.now(), audioStarted: false, speaking: false, silentFrames: 0 };
+        const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
+        await refreshSessionEvidence();
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
     }
     catch (error) {
+        if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence)
+            activeVoiceEvidence = null;
+        await refreshSessionEvidence();
         setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
     }
     finally {
@@ -327,6 +496,7 @@ const endSession = async (kind) => {
     try {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
+        await refreshSessionEvidence();
         setStatus(kind === "revoke" ? "Доступ отозван. Сессию можно закрыть." : "Сессия закрыта", "idle");
     }
     catch (error) {
@@ -352,7 +522,18 @@ const closeBackendOnUnload = () => {
 };
 connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
-interruptButton.addEventListener("click", () => void api("/api/avatar/interrupt", {}).catch((error) => setStatus(String(error), "error")));
+interruptButton.addEventListener("click", () => {
+    const voice = activeVoiceEvidence;
+    if (voice?.audioStarted) {
+        interruptEvidenceWatch = { requestSequence: voice.requestSequence, startedAt: performance.now(), silentFrames: 0 };
+    }
+    void api("/api/avatar/interrupt", {})
+        .then(() => refreshSessionEvidence())
+        .catch((error) => {
+        interruptEvidenceWatch = null;
+        setStatus(String(error), "error");
+    });
+});
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
