@@ -1,6 +1,8 @@
 mod binding;
 mod exit;
+mod exit_context;
 mod golden;
+mod live_provider;
 
 pub use binding::{
     BoundGoldenReport, EvidenceBinding, EvidenceBindingError, EvidenceVerificationContext,
@@ -16,11 +18,17 @@ pub use golden::{
     evaluate_golden_suite,
 };
 
+pub use live_provider::{
+    AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
+};
+
 pub use exit::{
     AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, CheckStatus,
     ConversationEvidence, ConversationPairEvidence, CostEvidence, EvidenceOrigin, HumanDimensions,
     HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis, ParticipantRole,
     PrivacyPermissionEvidence, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_EXIT_REPORT_SCHEMA,
     RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitReport,
-    Rt0ExitVerificationContext, evaluate_rt0_exit_evidence,
+    evaluate_rt0_exit_evidence,
 };
+pub use exit_context::Rt0ExitVerificationContext;

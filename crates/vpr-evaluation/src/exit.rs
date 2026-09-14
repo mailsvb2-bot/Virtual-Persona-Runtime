@@ -3,16 +3,18 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::binding::{
-    EvidenceVerificationContext, GoldenEvidenceBundle, evaluate_bound_golden_suite, valid_git_sha,
-    valid_sha256, validate_provider_state,
+    EvidenceVerificationContext, evaluate_bound_golden_suite, valid_git_sha, valid_sha256,
+    validate_provider_state,
 };
+use crate::exit_context::Rt0ExitVerificationContext;
+use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
-    BoundGoldenReport, GoldenSuite, ProviderStateManifest, RT0_EVIDENCE_BINDING_SCHEMA,
-    RT0_GOLDEN_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    BoundGoldenReport, GoldenSuite, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
+    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.1";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.1";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.2";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.2";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -170,6 +172,7 @@ pub struct Rt0ExitEvidence {
     pub release_spec_sha256: String,
     pub golden_report_sha256: String,
     pub provider_state_sha256: String,
+    pub live_provider_probe_sha256: String,
     pub automated: AutomatedEvidence,
     pub conversations: ConversationPairEvidence,
     pub acceptance: AcceptanceEvidence,
@@ -178,18 +181,6 @@ pub struct Rt0ExitEvidence {
     pub privacy_permissions: PrivacyPermissionEvidence,
     pub human_evaluation: HumanEvaluationEvidence,
     pub known_limitations: KnownLimitationsEvidence,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Rt0ExitVerificationContext<'a> {
-    pub exit_evidence_bytes: &'a [u8],
-    pub golden_report_bytes: &'a [u8],
-    pub golden_evidence_bundle: &'a GoldenEvidenceBundle,
-    pub golden_evidence_bytes: &'a [u8],
-    pub provider_state: &'a ProviderStateManifest,
-    pub provider_state_bytes: &'a [u8],
-    pub release_spec_bytes: &'a [u8],
-    pub exact_candidate_sha: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -234,6 +225,7 @@ pub struct Rt0ExitReport {
     pub release_spec_sha256: String,
     pub provider_state_sha256: String,
     pub golden_report_sha256: String,
+    pub live_provider_probe_sha256: String,
     pub exit_evidence_input_sha256: String,
     pub ready: bool,
     pub failures: Vec<Rt0ExitFailureCode>,
@@ -251,6 +243,10 @@ pub enum Rt0ExitEvidenceError {
     GoldenReportDigestMismatch,
     ProviderStateDigestMismatch,
     ProviderStateMismatch,
+    LiveProviderProbeDigestMismatch,
+    LiveProviderProbeInvalid,
+    LiveProviderProbeCandidateMismatch,
+    LiveProviderProbeProviderStateMismatch,
     GoldenEvidenceInvalid,
     GoldenReportRecomputeMismatch,
     GoldenReportInvalid,
@@ -303,6 +299,7 @@ pub fn evaluate_rt0_exit_evidence(
         release_spec_sha256: evidence.release_spec_sha256.clone(),
         provider_state_sha256: evidence.provider_state_sha256.clone(),
         golden_report_sha256: evidence.golden_report_sha256.clone(),
+        live_provider_probe_sha256: evidence.live_provider_probe_sha256.clone(),
         exit_evidence_input_sha256: sha256_hex(context.exit_evidence_bytes),
         ready: failures.is_empty(),
         failures,
@@ -325,6 +322,7 @@ fn validate_structure(
         &evidence.release_spec_sha256,
         &evidence.golden_report_sha256,
         &evidence.provider_state_sha256,
+        &evidence.live_provider_probe_sha256,
     ] {
         if !valid_sha256(digest) {
             return Err(Rt0ExitEvidenceError::InvalidDigest);
@@ -344,6 +342,9 @@ fn validate_structure(
     if evidence.golden_report_sha256 != sha256_hex(context.golden_report_bytes) {
         return Err(Rt0ExitEvidenceError::GoldenReportDigestMismatch);
     }
+    if evidence.live_provider_probe_sha256 != sha256_hex(context.live_provider_probe_bytes) {
+        return Err(Rt0ExitEvidenceError::LiveProviderProbeDigestMismatch);
+    }
     let provider_state_digest = sha256_hex(context.provider_state_bytes);
     if evidence.provider_state_sha256 != provider_state_digest
         || golden_report.binding.provider_state_sha256 != provider_state_digest
@@ -356,6 +357,20 @@ fn validate_structure(
     {
         return Err(Rt0ExitEvidenceError::ProviderStateMismatch);
     }
+    validate_live_provider_probe(
+        context.live_provider_probe,
+        context.exact_candidate_sha,
+        &provider_state_digest,
+    )
+    .map_err(|error| match error {
+        LiveProviderProbeValidationError::Invalid => Rt0ExitEvidenceError::LiveProviderProbeInvalid,
+        LiveProviderProbeValidationError::CandidateMismatch => {
+            Rt0ExitEvidenceError::LiveProviderProbeCandidateMismatch
+        }
+        LiveProviderProbeValidationError::ProviderStateMismatch => {
+            Rt0ExitEvidenceError::LiveProviderProbeProviderStateMismatch
+        }
+    })?;
     validate_golden_report(golden_report)?;
     let required_suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES)
         .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;

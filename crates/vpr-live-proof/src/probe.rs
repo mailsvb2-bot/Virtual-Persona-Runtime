@@ -1,11 +1,13 @@
 use std::time::Instant;
 
-use serde::Serialize;
 use vpr_domain::{
     CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion, Rt0ReasonCode,
     SessionId, TurnId,
 };
-use vpr_evaluation::sha256_hex;
+use vpr_evaluation::{
+    AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, sha256_hex,
+};
 use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmRequest, PcmSampleFormat, RealtimeAvatarPort, SttRequest,
     UsageEvidence, UsageUnit,
@@ -16,57 +18,11 @@ use vpr_runtime::{ActiveSession, ActiveTurn, SessionSecurityConfig};
 
 use crate::PreparedLiveProof;
 
-pub const RT0_LIVE_PROVIDER_PROBE_SCHEMA: &str = "rt0-live-provider-probe-0.1";
 const MAX_AUDIO_MILLIS: u64 = 30_000;
 const SAMPLE_RATE_HZ: u32 = 16_000;
 const CHANNELS: u16 = 1;
 const PROVIDER_SCOPE: &str = "provider.egress";
 const LLM_PROBE_PROMPT: &str = "Ответь одним коротким словом на русском языке: готов.";
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ProbeUsage {
-    pub input_units: Option<u64>,
-    pub input_unit: Option<String>,
-    pub output_units: Option<u64>,
-    pub output_unit: Option<String>,
-    pub estimated_cost_microunits: Option<u64>,
-    pub provider_charge_microunits: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct SttProbeEvidence {
-    pub latency_millis: u64,
-    pub transcript_chars: u64,
-    pub usage: ProbeUsage,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LlmProbeEvidence {
-    pub latency_millis: u64,
-    pub output_chars: u64,
-    pub usage: ProbeUsage,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct AvatarProbeEvidence {
-    pub open_millis: u64,
-    pub close_millis: u64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LiveProviderProbeReceipt {
-    pub schema_version: String,
-    pub candidate_sha: String,
-    pub provider_state_sha256: String,
-    pub input_audio_sha256: String,
-    pub input_audio_millis: u64,
-    pub scope: String,
-    pub conversation_evidence: bool,
-    pub output_delivery_proven: bool,
-    pub stt: SttProbeEvidence,
-    pub llm: LlmProbeEvidence,
-    pub avatar: AvatarProbeEvidence,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveProviderProbeError {

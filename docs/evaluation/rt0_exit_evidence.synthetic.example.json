@@ -1,30 +1,117 @@
 {
-  "schema_version": "rt0-exit-evidence-0.1",
+  "schema_version": "rt0-exit-evidence-0.2",
   "candidate_sha": "0000000000000000000000000000000000000000",
   "release_spec_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "golden_report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "provider_state_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "live_provider_probe_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "automated": {
-    "ci": {"status": "passed", "artifact_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
-    "e2e": {"status": "passed", "artifact_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+    "ci": {
+      "status": "passed",
+      "artifact_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "e2e": {
+      "status": "passed",
+      "artifact_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
   },
   "conversations": {
-    "owner": {"origin": "synthetic", "role": "owner", "russian": "passed", "voice": "passed", "video": "passed", "completed_turns": 1, "interruption_exercised": "passed", "artifact_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"},
-    "visitor": {"origin": "synthetic", "role": "visitor", "russian": "passed", "voice": "passed", "video": "passed", "completed_turns": 1, "interruption_exercised": "failed", "artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111"}
+    "owner": {
+      "origin": "synthetic",
+      "role": "owner",
+      "russian": "passed",
+      "voice": "passed",
+      "video": "passed",
+      "completed_turns": 1,
+      "interruption_exercised": "passed",
+      "artifact_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "visitor": {
+      "origin": "synthetic",
+      "role": "visitor",
+      "russian": "passed",
+      "voice": "passed",
+      "video": "passed",
+      "completed_turns": 1,
+      "interruption_exercised": "failed",
+      "artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
   },
-  "acceptance": {"origin": "synthetic", "owner_happy_path": "passed", "visitor_happy_path": "passed", "correction_path": "passed", "failure_recovery_path": "passed", "revoke_deny_path": "passed", "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222"},
+  "acceptance": {
+    "origin": "synthetic",
+    "owner_happy_path": "passed",
+    "visitor_happy_path": "passed",
+    "correction_path": "passed",
+    "failure_recovery_path": "passed",
+    "revoke_deny_path": "passed",
+    "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
   "quality": {
     "origin": "synthetic",
-    "text_first_meaningful_response": {"samples": 1, "p50": 1000, "p95": 2500},
-    "first_meaningful_audio": {"samples": 1, "p50": 1500, "p95": 3000},
-    "interruption_stop": {"samples": 1, "p50": 500, "p95": 500},
-    "first_useful_video": {"samples": 1, "p50": 2500, "p95": 2500},
-    "av_sync_absolute_offset": {"samples": 1, "p50": 120, "p95": 120},
-    "recoverable_reconnect": {"samples": 1, "p50": 5000, "p95": 5000},
+    "text_first_meaningful_response": {
+      "samples": 1,
+      "p50": 1000,
+      "p95": 2500
+    },
+    "first_meaningful_audio": {
+      "samples": 1,
+      "p50": 1500,
+      "p95": 3000
+    },
+    "interruption_stop": {
+      "samples": 1,
+      "p50": 500,
+      "p95": 500
+    },
+    "first_useful_video": {
+      "samples": 1,
+      "p50": 2500,
+      "p95": 2500
+    },
+    "av_sync_absolute_offset": {
+      "samples": 1,
+      "p50": 120,
+      "p95": 120
+    },
+    "recoverable_reconnect": {
+      "samples": 1,
+      "p50": 5000,
+      "p95": 5000
+    },
     "artifact_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
   },
-  "cost": {"origin": "synthetic", "measured_duration_millis": 60000, "measured_cost_microunits": 0, "provider_charge_microunits": null, "artifact_sha256": "4444444444444444444444444444444444444444444444444444444444444444"},
-  "privacy_permissions": {"origin": "synthetic", "permission_suite": "passed", "accepted_private_context_leakage": 0, "accepted_false_owner_attribution": 0, "revocation": "passed", "egress_denial": "passed", "artifact_sha256": "5555555555555555555555555555555555555555555555555555555555555555"},
-  "human_evaluation": {"origin": "synthetic", "rubric_version": "example-only", "reviewer_count": 1, "dimensions": {"voice_similarity": "recorded", "voice_naturalness": "recorded", "appearance_plausibility": "recorded", "persona_similarity": "recorded", "conversation_naturalness": "recorded"}, "usable_for_continuation": "passed", "artifact_sha256": "6666666666666666666666666666666666666666666666666666666666666666"},
-  "known_limitations": {"review_status": "passed", "document_sha256": "7777777777777777777777777777777777777777777777777777777777777777"}
+  "cost": {
+    "origin": "synthetic",
+    "measured_duration_millis": 60000,
+    "measured_cost_microunits": 0,
+    "provider_charge_microunits": null,
+    "artifact_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "privacy_permissions": {
+    "origin": "synthetic",
+    "permission_suite": "passed",
+    "accepted_private_context_leakage": 0,
+    "accepted_false_owner_attribution": 0,
+    "revocation": "passed",
+    "egress_denial": "passed",
+    "artifact_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "human_evaluation": {
+    "origin": "synthetic",
+    "rubric_version": "example-only",
+    "reviewer_count": 1,
+    "dimensions": {
+      "voice_similarity": "recorded",
+      "voice_naturalness": "recorded",
+      "appearance_plausibility": "recorded",
+      "persona_similarity": "recorded",
+      "conversation_naturalness": "recorded"
+    },
+    "usable_for_continuation": "passed",
+    "artifact_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "known_limitations": {
+    "review_status": "passed",
+    "document_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+  }
 }

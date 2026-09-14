@@ -1,13 +1,15 @@
 mod support;
 
 use vpr_evaluation::{
-    AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, BoundGoldenReport, CheckStatus,
-    ConversationEvidence, ConversationPairEvidence, CostEvidence, EvidenceOrigin,
-    EvidenceVerificationContext, GoldenEvidenceBundle, GoldenSuite, HumanDimensions,
-    HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis, ParticipantRole,
-    PrivacyPermissionEvidence, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RecordStatus,
-    Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext,
-    evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
+    AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, AvatarProbeEvidence,
+    BoundGoldenReport, CheckStatus, ConversationEvidence, ConversationPairEvidence, CostEvidence,
+    EvidenceOrigin, EvidenceVerificationContext, GoldenEvidenceBundle, GoldenSuite,
+    HumanDimensions, HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis,
+    LiveProviderProbeReceipt, LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence,
+    ProbeUsage, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
+    RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode,
+    Rt0ExitVerificationContext, SttProbeEvidence, evaluate_bound_golden_suite,
+    evaluate_rt0_exit_evidence, sha256_hex,
 };
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
@@ -83,6 +85,48 @@ fn distribution(p50: u64, p95: u64) -> LatencyDistributionMillis {
     }
 }
 
+fn probe_usage() -> ProbeUsage {
+    ProbeUsage {
+        input_units: Some(1),
+        input_unit: Some("token".into()),
+        output_units: Some(1),
+        output_unit: Some("token".into()),
+        estimated_cost_microunits: Some(1),
+        provider_charge_microunits: None,
+    }
+}
+
+fn live_provider_probe(provider_state_bytes: &[u8]) -> LiveProviderProbeReceipt {
+    LiveProviderProbeReceipt {
+        schema_version: RT0_LIVE_PROVIDER_PROBE_SCHEMA.into(),
+        candidate_sha: CANDIDATE.into(),
+        provider_state_sha256: sha256_hex(provider_state_bytes),
+        input_audio_sha256: digest('7'),
+        input_audio_millis: 1_000,
+        scope: "credentialed_provider_reachability_only".into(),
+        conversation_evidence: false,
+        output_delivery_proven: false,
+        stt: SttProbeEvidence {
+            latency_millis: 100,
+            transcript_chars: 6,
+            usage: probe_usage(),
+        },
+        llm: LlmProbeEvidence {
+            latency_millis: 120,
+            output_chars: 5,
+            usage: probe_usage(),
+        },
+        avatar: AvatarProbeEvidence {
+            open_millis: 150,
+            close_millis: 50,
+        },
+    }
+}
+
+fn live_provider_probe_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
+    serde_json::to_vec(&live_provider_probe(provider_state_bytes)).unwrap()
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
@@ -90,6 +134,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
         release_spec_sha256: sha256_hex(RELEASE_SPEC),
         golden_report_sha256: sha256_hex(golden_bytes),
         provider_state_sha256: sha256_hex(provider_state_bytes),
+        live_provider_probe_sha256: sha256_hex(&live_provider_probe_bytes(provider_state_bytes)),
         automated: AutomatedEvidence {
             ci: check(),
             e2e: check(),
@@ -162,6 +207,28 @@ fn evaluate(
     release_spec: &[u8],
     candidate: &str,
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
+    let live_provider_probe = live_provider_probe(&fixture.provider_state_bytes);
+    let live_provider_probe_bytes = serde_json::to_vec(&live_provider_probe).unwrap();
+    evaluate_with_probe(
+        evidence,
+        golden,
+        golden_bytes,
+        fixture,
+        release_spec,
+        candidate,
+        (&live_provider_probe, &live_provider_probe_bytes),
+    )
+}
+
+fn evaluate_with_probe(
+    evidence: &Rt0ExitEvidence,
+    golden: &BoundGoldenReport,
+    golden_bytes: &[u8],
+    fixture: &support::GoldenFixture,
+    release_spec: &[u8],
+    candidate: &str,
+    live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
+) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -173,6 +240,8 @@ fn evaluate(
             golden_evidence_bytes: &fixture.bundle_bytes,
             provider_state: &fixture.provider_state,
             provider_state_bytes: &fixture.provider_state_bytes,
+            live_provider_probe: live_provider_probe.0,
+            live_provider_probe_bytes: live_provider_probe.1,
             release_spec_bytes: release_spec,
             exact_candidate_sha: candidate,
         },
@@ -339,6 +408,96 @@ fn stale_cross_candidate_or_tampered_artifacts_fail_structurally() {
 }
 
 #[test]
+fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    let probe = live_provider_probe(&fixture.provider_state_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&probe, b"tampered probe bytes"),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeDigestMismatch)
+    );
+
+    let mut wrong_candidate = probe.clone();
+    wrong_candidate.candidate_sha = "2".repeat(40);
+    let wrong_candidate_bytes = serde_json::to_vec(&wrong_candidate).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&wrong_candidate_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&wrong_candidate, &wrong_candidate_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeCandidateMismatch)
+    );
+
+    let mut wrong_provider = probe.clone();
+    wrong_provider.provider_state_sha256 = digest('9');
+    let wrong_provider_bytes = serde_json::to_vec(&wrong_provider).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&wrong_provider_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&wrong_provider, &wrong_provider_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeProviderStateMismatch)
+    );
+
+    let mut empty_output = probe.clone();
+    empty_output.stt.transcript_chars = 0;
+    empty_output.llm.output_chars = 0;
+    let empty_output_bytes = serde_json::to_vec(&empty_output).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&empty_output_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&empty_output, &empty_output_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
+    );
+
+    let mut forged_conversation = probe;
+    forged_conversation.conversation_evidence = true;
+    let forged_bytes = serde_json::to_vec(&forged_conversation).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&forged_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&forged_conversation, &forged_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
+    );
+}
+
+#[test]
 fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() {
     let fixture = golden_fixture();
     let mut golden = fixture.report.clone();
@@ -348,6 +507,8 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let exit_bytes = serde_json::to_vec(&evidence).unwrap();
     let provider_state = fixture.provider_state.clone();
     let provider_state_bytes = fixture.provider_state_bytes.clone();
+    let live_provider_probe = live_provider_probe(&provider_state_bytes);
+    let live_provider_probe_bytes = serde_json::to_vec(&live_provider_probe).unwrap();
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -359,6 +520,8 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 golden_evidence_bytes: &fixture.bundle_bytes,
                 provider_state: &provider_state,
                 provider_state_bytes: &provider_state_bytes,
+                live_provider_probe: &live_provider_probe,
+                live_provider_probe_bytes: &live_provider_probe_bytes,
                 release_spec_bytes: RELEASE_SPEC,
                 exact_candidate_sha: CANDIDATE,
             },
