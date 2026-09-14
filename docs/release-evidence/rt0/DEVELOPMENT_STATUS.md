@@ -12,6 +12,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - guided owner interview and modality-readiness foundations;
 - canonical media timeline, output-delivery evidence and interruption/reconnect contracts;
 - loopback Owner Lab WebRTC avatar path and push-to-talk STT -> LLM -> avatar conversation path;
+- owner-reviewed DIGITAL_TWIN context binding for Owner Lab voice turns, including correction-driven PersonaVersion changes and next-turn use of the corrected current claim revision;
 - deterministic Golden harness and exact-candidate RT0 exit-evidence checker;
 - credentialed live-proof preflight and sanitized live-provider reachability probe;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
@@ -20,7 +21,9 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 
 ## Still open for RT0 exit
 
-RT0 is not complete. Real credentialed owner and non-owner conversations still need to be captured and reviewed for one exact candidate. The remaining exit evidence includes real provider proof for the supported STT/LLM/avatar path, complete text/audio/video/A-V-sync latency evidence, measured duration/cost, owner interruption, Golden observations from the real candidate, permission/privacy acceptance, human voice/appearance/persona/conversation evaluation, known-limitations review, and the full owner/visitor happy/correction/failure/recovery/revoke-deny acceptance matrix.
+RT0 is not complete. Real credentialed owner and non-owner conversations still need to be captured and reviewed for one exact candidate. The remaining exit evidence includes user-facing guided capture/review/correction controls, real provider proof for the supported STT/LLM/avatar path, complete text/audio/video/A-V-sync latency evidence, measured duration/cost, owner interruption, Golden observations from the real candidate, permission/privacy acceptance, human voice/appearance/persona/conversation evaluation, known-limitations review, and the full owner/visitor happy/correction/failure/recovery/revoke-deny acceptance matrix.
+
+The reviewed-owner-context path is currently a backend Owner Lab capability only and remains `user_reachable=false`; it must not be treated as completion of the owner control surface until the UI/API path and E2E evidence exist.
 
 The bound session aggregate is evidence preparation only. It preserves `canonical_playback_proven=false` and `av_sync_proven=false` and MUST NOT by itself promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state.
 
