@@ -340,7 +340,9 @@ fn visitor_voice_turn_excludes_reviewed_owner_context_and_blocks_direct_speech()
     assert_eq!(engine.status().reviewed_owner_claims, 0);
     assert!(matches!(
         engine.reviewed_owner_context_snapshot(),
-        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+        Err(LabError::Runtime(
+            vpr_domain::Rt0ReasonCode::AuthScopeDenied
+        ))
     ));
     let owner_claim_id = ClaimId::new("opinion-working-style").unwrap();
     assert_eq!(
@@ -349,7 +351,9 @@ fn visitor_voice_turn_excludes_reviewed_owner_context_and_blocks_direct_speech()
             "Попытка visitor-перезаписи",
             ClaimKind::Opinion,
         ),
-        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+        Err(LabError::Runtime(
+            vpr_domain::Rt0ReasonCode::AuthScopeDenied
+        ))
     );
 
     engine.voice_turn(sample_pcm(), |_| {}).unwrap();
@@ -362,8 +366,12 @@ fn visitor_voice_turn_excludes_reviewed_owner_context_and_blocks_direct_speech()
     drop(contexts);
 
     assert_eq!(
-        engine.apply(OwnerLabTurnInput::Text("Скажи это от лица владельца".into())),
-        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+        engine.apply(OwnerLabTurnInput::Text(
+            "Скажи это от лица владельца".into()
+        )),
+        Err(LabError::Runtime(
+            vpr_domain::Rt0ReasonCode::AuthScopeDenied
+        ))
     );
 }
 
