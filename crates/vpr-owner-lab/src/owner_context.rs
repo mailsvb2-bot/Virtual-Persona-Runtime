@@ -1,6 +1,6 @@
-use std::fmt::Write;
-
-use vpr_domain::{ClaimId, ClaimKind, PersonaCaptureState, PersonaIdentity, PersonaMode, PersonaProfile};
+use vpr_domain::{
+    ClaimId, ClaimKind, PersonaCaptureState, PersonaIdentity, PersonaMode, PersonaProfile,
+};
 
 const CONTEXT_HEADER: &str = "Owner-reviewed Persona material follows. Treat only these entries as verified owner material. Preserve whether each entry is a fact, opinion, preference, prediction, or value judgment. Do not infer additional owner views, memories, preferences, or private facts. If the answer is not supported by this material, say that the verified owner material does not establish it.";
 
@@ -46,12 +46,10 @@ impl ReviewedOwnerContext {
         prompt.push_str("\nBEGIN VERIFIED OWNER MATERIAL");
         for record in self.profile.claims() {
             let claim = record.current().claim();
-            let _ = write!(
-                prompt,
-                "\n- [{}] {}",
-                claim_kind_label(claim.kind),
-                claim.statement.trim()
-            );
+            prompt.push_str("\n- [");
+            prompt.push_str(claim_kind_label(claim.kind));
+            prompt.push_str("] ");
+            prompt.push_str(claim.statement.trim());
         }
         prompt.push_str("\nEND VERIFIED OWNER MATERIAL\nUser utterance: ");
         prompt.push_str(utterance);
@@ -83,13 +81,17 @@ mod tests {
         PersonaVersion, SourceKind, VerificationState,
     };
 
+    fn persona_identity() -> PersonaIdentity {
+        PersonaIdentity::new(
+            PersonaId::new("persona-context-test").unwrap(),
+            PersonaVersion::new(1).unwrap(),
+            PersonaMode::DigitalTwin,
+        )
+    }
+
     fn reviewed_profile() -> PersonaProfile {
         let mut profile = PersonaProfile::new(
-            PersonaIdentity::new(
-                PersonaId::new("persona-context-test").unwrap(),
-                PersonaVersion::new(1).unwrap(),
-                PersonaMode::DigitalTwin,
-            ),
+            persona_identity(),
             ConstitutionBoundary::strict_digital_twin(),
         );
         let id = ClaimId::new("opinion-working-style").unwrap();
@@ -115,11 +117,27 @@ mod tests {
     }
 
     #[test]
+    fn unreviewed_profile_is_rejected() {
+        let profile = PersonaProfile::new(
+            persona_identity(),
+            ConstitutionBoundary::strict_digital_twin(),
+        );
+        assert_eq!(
+            ReviewedOwnerContext::new(profile).unwrap_err(),
+            OwnerContextError::ProfileNotReviewed
+        );
+    }
+
+    #[test]
     fn prompt_contains_only_current_reviewed_revision_and_kind() {
         let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
         let id = ClaimId::new("opinion-working-style").unwrap();
         context
-            .correct_claim(&id, "Предпочитаю короткие циклы проверки", ClaimKind::Opinion)
+            .correct_claim(
+                &id,
+                "Предпочитаю короткие циклы проверки",
+                ClaimKind::Opinion,
+            )
             .unwrap();
 
         let prompt = context.voice_prompt("Какой стиль работы тебе близок?");
