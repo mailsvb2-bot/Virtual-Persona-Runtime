@@ -5,7 +5,8 @@ use std::process::Command;
 
 use serde::Serialize;
 use vpr_live_proof::{
-    LiveProofPreflightError, LiveProviderProbeError, preflight, prepare, run_provider_probe,
+    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, preflight,
+    prepare, run_live_conversation_attempt, run_provider_probe,
 };
 
 #[derive(Serialize)]
@@ -61,9 +62,17 @@ fn run() -> Result<(), i32> {
             Path::new(provider_state_output),
             Path::new(probe_output),
         ),
+        [mode, profile_input, owner_audio, visitor_audio, provider_state_output, receipt_output]
+            if mode == "conversation" => run_conversation(
+                Path::new(profile_input),
+                Path::new(owner_audio),
+                Path::new(visitor_audio),
+                Path::new(provider_state_output),
+                Path::new(receipt_output),
+            ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }
@@ -118,6 +127,65 @@ fn run_probe(audio_path: &Path, provider_path: &Path, probe_path: &Path) -> Resu
         return Err(emit_preflight(error));
     }
     println!("{}", serde_json::to_string_pretty(&probe).map_err(|_| 2)?);
+    Ok(())
+}
+
+
+fn run_conversation(
+    profile_path: &Path,
+    owner_audio_path: &Path,
+    visitor_audio_path: &Path,
+    provider_path: &Path,
+    receipt_path: &Path,
+) -> Result<(), i32> {
+    let snapshot = repo_snapshot()?;
+    let profile_path = validated_input_path(profile_path, &snapshot.root).map_err(emit_boundary)?;
+    let owner_audio_path =
+        validated_input_path(owner_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let visitor_audio_path =
+        validated_input_path(visitor_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let provider_path =
+        validated_output_path(provider_path, &snapshot.root).map_err(emit_boundary)?;
+    let receipt_path =
+        validated_output_path(receipt_path, &snapshot.root).map_err(emit_boundary)?;
+    ensure_unique_paths(&[
+        profile_path.as_path(),
+        owner_audio_path.as_path(),
+        visitor_audio_path.as_path(),
+        provider_path.as_path(),
+        receipt_path.as_path(),
+    ])
+    .map_err(emit_boundary)?;
+
+    let clean = worktree_clean()?;
+    let prepared =
+        prepare(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
+    let provider_state =
+        serde_json::to_vec_pretty(&prepared.receipt().provider_state).map_err(|_| 2)?;
+    let profile = fs::read(profile_path)
+        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let owner_audio = fs::read(owner_audio_path)
+        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let visitor_audio = fs::read(visitor_audio_path)
+        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let receipt = run_live_conversation_attempt(prepared, &profile, owner_audio, visitor_audio)
+        .map_err(|error| emit_conversation(&error))?;
+    let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| 2)?;
+
+    verify_snapshot(&snapshot).map_err(emit_preflight)?;
+    if let Err(error) = atomic_write(&provider_path, &provider_state) {
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = atomic_write(&receipt_path, &receipt_bytes) {
+        let _ = fs::remove_file(&provider_path);
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = verify_snapshot(&snapshot) {
+        let _ = fs::remove_file(&provider_path);
+        let _ = fs::remove_file(&receipt_path);
+        return Err(emit_preflight(error));
+    }
+    println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
     Ok(())
 }
 
@@ -182,6 +250,16 @@ fn validated_output_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, B
     Ok(resolved)
 }
 
+
+fn ensure_unique_paths(paths: &[&Path]) -> Result<(), BoundaryError> {
+    for (index, left) in paths.iter().enumerate() {
+        if paths[index + 1..].iter().any(|right| left == right) {
+            return Err(BoundaryError::OutputPathsConflict);
+        }
+    }
+    Ok(())
+}
+
 fn git_output(args: &[&str]) -> Result<String, i32> {
     let output = Command::new("git").args(args).output().map_err(|_| 2)?;
     if !output.status.success() {
@@ -214,6 +292,12 @@ fn emit_preflight(error: LiveProofPreflightError) -> i32 {
 }
 
 fn emit_probe(error: &LiveProviderProbeError) -> i32 {
+    emit_error(error.code(), Some(error.stage()));
+    2
+}
+
+
+fn emit_conversation(error: &LiveConversationAttemptError) -> i32 {
     emit_error(error.code(), Some(error.stage()));
     2
 }

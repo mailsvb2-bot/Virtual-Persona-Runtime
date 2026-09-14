@@ -56,6 +56,25 @@ The input must be raw PCM S16LE, mono, 16 kHz and must live outside the Git work
 The serialized probe receipt contains only stage latency, usage/cost counters, transcript/output character counts, exact candidate/provider-state binding, SHA-256 + duration binding for the private PCM input, and explicit `conversation_evidence=false` / `output_delivery_proven=false`. It never stores raw audio, transcript text, generated reply, WebRTC signaling, provider session identifiers, or credentials.
 
 A probe PASS proves credentialed provider reachability only. It does not prove a real owner/non-owner conversation, rendered media delivery, human quality, Golden Set completion, or RT0 release readiness. `provider.real_*` and `release.rt0_exit_gate` therefore remain `NOT_IMPLEMENTED` until the required external evidence exists and is reviewed.
+## Credentialed owner/visitor conversation attempt
+
+`vpr-live-proof conversation` reuses the canonical Owner Lab engine for one owner turn followed by one visitor-scoped turn over the same reviewed `DIGITAL_TWIN` Persona and the same credentialed STT/LLM/avatar provider composition:
+
+```text
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- conversation \
+  /secure/input/reviewed-profile.json \
+  /secure/input/owner-utterance.raw \
+  /secure/input/visitor-utterance.raw \
+  /secure/evidence/provider-state.json \
+  /secure/evidence/conversation-attempt.json
+```
+
+The profile and both raw PCM S16LE/mono/16 kHz inputs must be absolute files outside the Git worktree. The profile schema is `rt0-live-conversation-profile-0.1`; it contains a private Persona id plus direct owner claims, requires explicit `owner_review_confirmed=true` and per-claim `owner_approved=true`, and is reconstructed through the canonical capture/review lifecycle before any session starts. All input and output paths must be distinct.
+
+The sanitized receipt schema is `rt0-live-conversation-attempt-0.1`. It binds the exact candidate and sanitized provider-state digest, hashes the private profile, Persona id, both audio inputs, transcripts and replies, and records character counts, locale, server-stage latency and complete-known cost totals. It never serializes owner claims, transcript/reply text, raw audio, WebRTC signaling, provider session identifiers or credentials.
+
+A successful attempt proves only that real credentialed provider calls traversed the canonical owner and visitor policy paths and that generated output was submitted to the realtime-avatar provider. It deliberately records `browser_media_playback_proven=false`, `video_render_proven=false`, and `human_review_proven=false`. It therefore cannot by itself satisfy the RT0 real-conversation, media-plane, A/V-sync, privacy acceptance or human-evaluation exit conditions.
+
 ## Owner Lab live-session evidence
 
 Owner Lab can collect one in-memory sanitized session-evidence snapshot for the current canonical session. Browser voice requests carry a local evidence request sequence; the backend correlates it with the canonical turn sequence and records only stage latency, usage/cost counters, stable failure codes, and browser-observed media-plane latency events. Raw microphone PCM, transcript/reply text, SDP/ICE, provider stream/session identifiers, and credentials are not part of this artifact.

@@ -20,6 +20,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - visitor-scoped Owner Lab sessions over the same reviewed Persona identity/version, with owner-reviewed claim text and claim-count metadata withheld from visitor scope, direct speech injection denied, and visitor LLM context assembled without owner-private material;
 - deterministic Golden harness and exact-candidate RT0 exit-evidence checker;
 - credentialed live-proof preflight and sanitized live-provider reachability probe;
+- credentialed owner/visitor conversation-attempt runner that reuses the canonical Owner Lab engine and emits only sanitized exact-candidate/provider-state-bound receipts;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
 - stable RT0 reason-code vocabulary and capability maturity guards;
@@ -27,7 +28,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 
 ## Still open for RT0 exit
 
-RT0 is not complete. Real credentialed owner and non-owner conversations still need to be captured and reviewed for one exact candidate. The guided capture/review/correction browser flow and owner/visitor voice path now have deterministic development E2E through the real Owner Lab HTTP/runtime and adapter implementations. The remaining exit evidence is credentialed real-provider owner and non-owner conversation proof on one exact candidate, complete text/audio/video/A-V-sync latency evidence, measured duration/cost, owner interruption, Golden observations from that real candidate, permission/privacy acceptance, human voice/appearance/persona/conversation evaluation, known-limitations review, and the full real owner/visitor happy/correction/failure/recovery/revoke-deny acceptance matrix.
+RT0 is not complete. The repository now has a fail-closed credentialed owner/visitor conversation-attempt path, but a real attempt still needs to be executed on one exact candidate and paired with browser media-plane and human review evidence. The guided capture/review/correction browser flow and owner/visitor voice path now have deterministic development E2E through the real Owner Lab HTTP/runtime and adapter implementations. The remaining exit evidence is credentialed real-provider owner and non-owner conversation proof on one exact candidate, complete text/audio/video/A-V-sync latency evidence, measured duration/cost, owner interruption, Golden observations from that real candidate, permission/privacy acceptance, human voice/appearance/persona/conversation evaluation, known-limitations review, and the full real owner/visitor happy/correction/failure/recovery/revoke-deny acceptance matrix.
 
 The owner-capture API, browser controls, post-review correction path, reviewed-owner-context path, and visitor-scoped test-session path remain `EXPERIMENTAL` and `user_reachable=false` under the RT0 maturity ceiling. The loopback implementation plus deterministic browser E2E are development evidence only; credentialed live-provider and human evidence are still required before promotion.
 
