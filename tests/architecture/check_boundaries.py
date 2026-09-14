@@ -496,6 +496,24 @@ for required_ui_recovery in (
     if required_ui_recovery not in owner_lab_ui:
         raise SystemExit(f"Owner Lab UI missing cleanup/recovery contract: {required_ui_recovery}")
 
+owner_capture_ui = (owner_lab_ui_root / "src" / "owner-capture.ts").read_text(encoding="utf-8")
+for required_owner_capture_ui in (
+    "/api/persona/create",
+    "/api/persona/capture/answer",
+    "/api/persona/capture/finish",
+    "/api/persona/claims/approve",
+    "/api/persona/claims/correct",
+    "/api/persona/review/complete",
+):
+    if required_owner_capture_ui not in owner_capture_ui:
+        raise SystemExit(
+            f"Owner Lab owner-capture UI missing canonical API path: {required_owner_capture_ui}"
+        )
+if "owner_context_state" not in owner_lab_ui or "!ownerCaptureReviewed" not in owner_lab_ui:
+    raise SystemExit("Owner Lab must gate realtime connect on reviewed canonical owner context")
+if "OWNER_CAPTURE_JS" not in owner_lab_main or '"/owner-capture.js"' not in owner_lab_main:
+    raise SystemExit("Owner Lab backend must serve the versioned owner-capture browser module")
+
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
 owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"

@@ -1,5 +1,7 @@
+import { mountOwnerCapture } from "./owner-capture.js";
+
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; voice_ready: boolean };
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; voice_ready: boolean; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
@@ -31,7 +33,8 @@ const evidenceNode = byId<HTMLElement>("evidence");
 
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false };
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
 let answerSubmitted = false;
 let pendingIce: IceCandidatePayload[] = [];
@@ -255,8 +258,16 @@ const updateControls = (): void => {
   revokeButton.disabled = !backendSessionPresent()
     || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
   closeButton.disabled = !backendSessionPresent();
-  connectButton.disabled = !egressEnabled || backendSessionPresent();
+  connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
 };
+
+const ownerCapture = mountOwnerCapture({
+  api,
+  onStateChange: (state) => {
+    ownerCaptureReviewed = state.reviewed;
+    updateControls();
+  },
+});
 
 const closePeerTransport = (): void => {
   stopMicrophoneCapture();
@@ -562,12 +573,16 @@ void api<Bootstrap>("/api/bootstrap")
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
+    ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
+    await ownerCapture.refresh();
     if (!egressEnabled) {
       setStatus("Egress выключен на backend", "error");
     } else if (backendSessionPresent()) {
       setStatus("Найдена незакрытая сессия — доступно безопасное завершение", "error");
+    } else if (!ownerCaptureReviewed) {
+      setStatus("Сначала создайте и подтвердите Persona");
     } else {
-      setStatus("Готов к подключению");
+      setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
   })

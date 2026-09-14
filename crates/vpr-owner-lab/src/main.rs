@@ -28,6 +28,7 @@ const DEFAULT_PORT: u16 = 8787;
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
+const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 
@@ -151,6 +152,9 @@ fn handle_request(mut request: Request, state: &AppState) {
     let response = match (&method, path.as_str()) {
         (&Method::Get, "/") => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         (&Method::Get, "/app.js") => static_response(APP_JS, "text/javascript; charset=utf-8"),
+        (&Method::Get, "/owner-capture.js") => {
+            static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8")
+        }
         (&Method::Get, "/styles.css") => static_response(STYLES_CSS, "text/css; charset=utf-8"),
         (&Method::Get, "/mic-worklet.js") => {
             static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8")

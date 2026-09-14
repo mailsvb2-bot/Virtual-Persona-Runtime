@@ -1,4 +1,4 @@
-"use strict";
+import { mountOwnerCapture } from "./owner-capture.js";
 const byId = (id) => {
     const element = document.getElementById(id);
     if (!element)
@@ -19,7 +19,8 @@ const statusNode = byId("status");
 const evidenceNode = byId("evidence");
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false };
+let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let ownerCaptureReviewed = false;
 let peer = null;
 let answerSubmitted = false;
 let pendingIce = [];
@@ -232,8 +233,15 @@ const updateControls = () => {
     revokeButton.disabled = !backendSessionPresent()
         || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
     closeButton.disabled = !backendSessionPresent();
-    connectButton.disabled = !egressEnabled || backendSessionPresent();
+    connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
 };
+const ownerCapture = mountOwnerCapture({
+    api,
+    onStateChange: (state) => {
+        ownerCaptureReviewed = state.reviewed;
+        updateControls();
+    },
+});
 const closePeerTransport = () => {
     stopMicrophoneCapture();
     stopRemoteEvidence();
@@ -543,14 +551,19 @@ void api("/api/bootstrap")
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
+    ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
+    await ownerCapture.refresh();
     if (!egressEnabled) {
         setStatus("Egress выключен на backend", "error");
     }
     else if (backendSessionPresent()) {
         setStatus("Найдена незакрытая сессия — доступно безопасное завершение", "error");
     }
+    else if (!ownerCaptureReviewed) {
+        setStatus("Сначала создайте и подтвердите Persona");
+    }
     else {
-        setStatus("Готов к подключению");
+        setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
 })
