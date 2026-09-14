@@ -295,9 +295,7 @@ fn corrected_reviewed_claim_is_used_by_the_next_canonical_voice_turn() {
     let contexts = stats.contexts.lock().unwrap();
     assert_eq!(contexts.len(), 2);
     assert!(contexts[0].contains("[verified_owner_opinion] Люблю быстрые итерации"));
-    assert!(
-        contexts[1].contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки")
-    );
+    assert!(contexts[1].contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки"));
     assert!(!contexts[1].contains("Люблю быстрые итерации"));
 }
 
