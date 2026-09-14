@@ -74,6 +74,7 @@ pub(crate) fn route_post(
         "/api/persona/claims/approve" => approve_claim(request, state),
         "/api/persona/claims/correct" => correct_claim(request, state),
         "/api/persona/review/complete" => complete_review(state),
+        "/api/persona/reviewed" => reviewed_snapshot(state),
         _ => return None,
     };
     Some(result)
@@ -153,6 +154,17 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
         .correct_owner_claim(&id, body.statement, kind)
         .map_err(|error| lab_error_response(&error))?;
     Ok(json_response(200, &engine.status()))
+}
+
+fn reviewed_snapshot(state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    let engine = state
+        .engine
+        .lock()
+        .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+    let snapshot = engine
+        .reviewed_owner_context_snapshot()
+        .map_err(|error| lab_error_response(&error))?;
+    Ok(json_response(200, &snapshot))
 }
 
 fn complete_review(state: &AppState) -> Result<HttpResponse, HttpResponse> {

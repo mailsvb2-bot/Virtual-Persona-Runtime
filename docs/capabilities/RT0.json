@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.23.0",
+  "catalogue_version": "0.24.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -245,6 +245,11 @@
     },
     {
       "id": "ui.rt0_owner_capture_review",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "ui.rt0_post_review_correction",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },

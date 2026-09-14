@@ -125,7 +125,7 @@ export const mountOwnerCapture = (options) => {
         emit(snapshot.capture_state === "reviewed", snapshot.persona_version, snapshot.claims.filter((claim) => claim.owner_reviewed).length);
         setBusy(busy);
     };
-    const renderReviewed = (state) => {
+    const renderReviewed = (state, profile) => {
         current = null;
         createRow.hidden = true;
         workspace.hidden = false;
@@ -133,11 +133,71 @@ export const mountOwnerCapture = (options) => {
         answerButton.hidden = true;
         finishButton.hidden = true;
         completeButton.hidden = true;
+        progress.textContent = `Persona ${profile.persona_id} подтверждена · версия ${profile.persona_version} · утверждений ${profile.claims.length}`;
+        question.textContent = "Профиль владельца готов. Исправление ниже создаёт новую ревизию claim и новую PersonaVersion; следующий канонический turn использует её.";
         claimsNode.replaceChildren();
-        progress.textContent = `Persona подтверждена · версия ${state.persona_version} · утверждений ${state.reviewed_owner_claims}`;
-        question.textContent = "Профиль владельца готов для канонических тестовых turn. Исправления после review создают новую PersonaVersion.";
+        const heading = document.createElement("h3");
+        heading.textContent = "Текущие подтверждённые утверждения";
+        claimsNode.append(heading);
+        for (const claim of profile.claims) {
+            const card = document.createElement("article");
+            card.className = "claim-card";
+            const meta = document.createElement("div");
+            meta.className = "claim-meta";
+            meta.textContent = `${kindLabel(claim.kind)} · текущая ревизия ${claim.revision} · подтверждено владельцем`;
+            const statement = document.createElement("textarea");
+            statement.rows = 3;
+            statement.value = claim.statement;
+            statement.setAttribute("aria-label", `Текущее утверждение ${claim.claim_id}`);
+            const kind = document.createElement("select");
+            kind.setAttribute("aria-label", `Тип текущего утверждения ${claim.claim_id}`);
+            for (const value of ["factual", "opinion", "preference", "prediction", "value_judgment"]) {
+                const option = document.createElement("option");
+                option.value = value;
+                option.textContent = kindLabel(value);
+                option.selected = value === claim.kind;
+                kind.append(option);
+            }
+            const actions = document.createElement("div");
+            actions.className = "row compact";
+            const correct = document.createElement("button");
+            correct.textContent = "Сохранить новую редакцию";
+            correct.addEventListener("click", () => {
+                if (busy)
+                    return;
+                const text = statement.value.trim();
+                if (!text) {
+                    setMessage("Введите текст утверждения", "error");
+                    return;
+                }
+                setBusy(true);
+                void options.api("/api/persona/claims/correct", {
+                    claim_id: claim.claim_id,
+                    statement: text,
+                    kind: kind.value,
+                })
+                    .then(async (statusState) => {
+                    const next = await options.api("/api/persona/reviewed", {});
+                    renderReviewed({
+                        capture: null,
+                        owner_context_state: statusState.owner_context_state,
+                        persona_version: statusState.persona_version,
+                        reviewed_owner_claims: statusState.reviewed_owner_claims,
+                    }, next);
+                    setMessage("Новая ревизия подтверждена владельцем и станет контекстом следующего turn", "ready");
+                })
+                    .catch((error) => {
+                    setMessage(error instanceof Error ? error.message : "Исправление не сохранено", "error");
+                })
+                    .finally(() => setBusy(false));
+            });
+            actions.append(correct);
+            card.append(meta, statement, kind, actions);
+            claimsNode.append(card);
+        }
         setMessage("Persona подтверждена владельцем", "ready");
-        emit(state.owner_context_state === "reviewed", state.persona_version, state.reviewed_owner_claims);
+        emit(state.owner_context_state === "reviewed", profile.persona_version, profile.claims.length);
+        setBusy(busy);
     };
     const renderMissing = () => {
         current = null;
@@ -188,12 +248,15 @@ export const mountOwnerCapture = (options) => {
             return;
         setBusy(true);
         void options.api("/api/persona/review/complete", {})
-            .then((state) => renderReviewed({
-            capture: null,
-            owner_context_state: state.owner_context_state,
-            persona_version: state.persona_version,
-            reviewed_owner_claims: state.reviewed_owner_claims,
-        }))
+            .then(async (state) => {
+            const profile = await options.api("/api/persona/reviewed", {});
+            renderReviewed({
+                capture: null,
+                owner_context_state: state.owner_context_state,
+                persona_version: state.persona_version,
+                reviewed_owner_claims: state.reviewed_owner_claims,
+            }, profile);
+        })
             .catch((error) => {
             setMessage(error instanceof Error ? error.message : "Review не завершён", "error");
         })
@@ -202,10 +265,13 @@ export const mountOwnerCapture = (options) => {
     const refresh = async () => {
         const state = await options.api("/api/persona/capture");
         if ("capture" in state) {
-            if (state.owner_context_state === "reviewed")
-                renderReviewed(state);
-            else
+            if (state.owner_context_state === "reviewed") {
+                const profile = await options.api("/api/persona/reviewed", {});
+                renderReviewed(state, profile);
+            }
+            else {
                 renderMissing();
+            }
             return;
         }
         renderCapture(state);
