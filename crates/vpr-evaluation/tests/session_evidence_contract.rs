@@ -1,0 +1,169 @@
+use vpr_evaluation::{
+    LabMediaEvidence, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
+    aggregate_owner_lab_session_evidence,
+};
+
+fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
+    SessionUsageEvidence {
+        input_units: Some(10),
+        output_units: Some(4),
+        estimated_cost_microunits: cost,
+        provider_charge_microunits: charge,
+    }
+}
+
+fn completed(request: u64, base: u64) -> LabVoiceAttemptEvidence {
+    LabVoiceAttemptEvidence {
+        request_sequence: request,
+        canonical_turn_sequence: Some(request + 100),
+        status: LabVoiceAttemptStatus::Completed,
+        failure_code: None,
+        stt_millis: Some(base),
+        llm_millis: Some(base + 100),
+        avatar_millis: Some(base + 20),
+        server_total_millis: Some(base + 250),
+        stt_usage: Some(usage(Some(2), Some(3))),
+        llm_usage: Some(usage(Some(5), Some(7))),
+    }
+}
+
+fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot {
+    LabSessionEvidenceSnapshot {
+        schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
+        scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
+        session_sequence: session,
+        canonical_playback_proven: false,
+        av_sync_proven: false,
+        voice_attempts: vec![completed(request, base)],
+        media_events: vec![
+            LabMediaEvidence {
+                request_sequence: Some(request),
+                kind: LabMediaEvidenceKind::AudioStarted,
+                elapsed_millis: base + 300,
+            },
+            LabMediaEvidence {
+                request_sequence: Some(request),
+                kind: LabMediaEvidenceKind::InterruptionStopped,
+                elapsed_millis: base / 10,
+            },
+            LabMediaEvidence {
+                request_sequence: None,
+                kind: LabMediaEvidenceKind::VideoReady,
+                elapsed_millis: base + 400,
+            },
+            LabMediaEvidence {
+                request_sequence: None,
+                kind: LabMediaEvidenceKind::ReconnectRestored,
+                elapsed_millis: base + 500,
+            },
+        ],
+    }
+}
+
+#[test]
+fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
+    let aggregate =
+        aggregate_owner_lab_session_evidence(&[snapshot(1, 1, 100), snapshot(2, 1, 300)]).unwrap();
+    assert_eq!(aggregate.sessions, 2);
+    assert_eq!(aggregate.completed_voice_attempts, 2);
+    assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
+    assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
+    assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
+    assert_eq!(aggregate.first_useful_video.unwrap().p95, 700);
+    assert_eq!(aggregate.recoverable_reconnect.unwrap().p95, 800);
+    assert_eq!(aggregate.estimated_cost_microunits, Some(14));
+    assert_eq!(aggregate.provider_charge_microunits, Some(20));
+    assert!(!aggregate.canonical_playback_proven);
+    assert!(!aggregate.av_sync_proven);
+}
+
+#[test]
+fn partial_cost_never_becomes_a_fake_complete_total() {
+    let mut input = snapshot(1, 1, 100);
+    input.voice_attempts[0]
+        .llm_usage
+        .as_mut()
+        .unwrap()
+        .estimated_cost_microunits = None;
+    let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
+    assert_eq!(aggregate.estimated_cost_microunits, None);
+    assert_eq!(aggregate.provider_charge_microunits, Some(10));
+}
+
+#[test]
+fn duplicate_pending_and_forged_snapshots_fail_closed() {
+    let original = snapshot(1, 1, 100);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[original.clone(), original]),
+        Err(LabSessionAggregateError::DuplicateSnapshot)
+    );
+
+    let mut pending = snapshot(1, 1, 100);
+    pending.voice_attempts[0].status = LabVoiceAttemptStatus::Pending;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[pending]),
+        Err(LabSessionAggregateError::IncompleteAttempt)
+    );
+
+    let mut forged = snapshot(1, 1, 100);
+    forged.canonical_playback_proven = true;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[forged]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+}
+
+#[test]
+fn failed_attempts_must_be_clean_and_media_cannot_claim_failed_output() {
+    let mut dirty = snapshot(1, 1, 100);
+    let attempt = &mut dirty.voice_attempts[0];
+    attempt.status = LabVoiceAttemptStatus::Failed;
+    attempt.failure_code = Some("TURN_CANCELLED".into());
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[dirty]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+
+    let mut failed = snapshot(1, 1, 100);
+    failed.voice_attempts[0] = LabVoiceAttemptEvidence {
+        request_sequence: 1,
+        canonical_turn_sequence: None,
+        status: LabVoiceAttemptStatus::Failed,
+        failure_code: Some("TURN_CANCELLED".into()),
+        stt_millis: None,
+        llm_millis: None,
+        avatar_millis: None,
+        server_total_millis: None,
+        stt_usage: None,
+        llm_usage: None,
+    };
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[failed]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
+fn same_session_sequence_with_different_content_is_still_duplicate() {
+    let first = snapshot(21, 1, 100);
+    let mut second = snapshot(21, 2, 110);
+    second.media_events.clear();
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[first, second]),
+        Err(LabSessionAggregateError::DuplicateSnapshot)
+    );
+}
+
+#[test]
+fn interruption_requires_observed_audio_for_the_same_request() {
+    let mut snapshot = snapshot(22, 1, 100);
+    snapshot
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::AudioStarted);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[snapshot]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}

@@ -52,6 +52,11 @@ if maturity_ceiling not in MATURITY_RANK:
     raise SystemExit(f"unsupported RT0 maturity ceiling: {maturity_ceiling}")
 if catalogue.get("release_train") != "RT0":
     raise SystemExit("RT0 capability catalogue has the wrong release_train")
+if "version" in catalogue:
+    raise SystemExit("RT0 capability catalogue must use catalogue_version only; duplicate top-level version is forbidden")
+catalogue_version = catalogue.get("catalogue_version")
+if not isinstance(catalogue_version, str) or re.fullmatch(r"\d+\.\d+\.\d+", catalogue_version) is None:
+    raise SystemExit("RT0 capability catalogue must have a semver catalogue_version")
 
 capabilities = catalogue.get("capabilities")
 if not isinstance(capabilities, list) or not capabilities:
@@ -87,6 +92,8 @@ required_capability_states = {
     "evaluation.rt0_exit_evidence_gate": ("EXPERIMENTAL", False),
     "evaluation.rt0_live_proof_preflight": ("EXPERIMENTAL", False),
     "evaluation.rt0_live_provider_probe": ("EXPERIMENTAL", False),
+    "evaluation.rt0_owner_lab_session_evidence": ("EXPERIMENTAL", False),
+    "evaluation.rt0_session_evidence_aggregate": ("EXPERIMENTAL", False),
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),

@@ -16,3 +16,7 @@ workspace = true
 [[bin]]
 name = "vpr-rt0-exit-evidence"
 path = "src/bin/rt0_exit_gate.rs"
+
+[[bin]]
+name = "vpr-rt0-session-aggregate"
+path = "src/bin/rt0_session_aggregate.rs"

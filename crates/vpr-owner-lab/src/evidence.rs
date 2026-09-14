@@ -1,70 +1,16 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+pub use vpr_evaluation::{
+    LabMediaEvidence, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+};
 
-use crate::{LabVoiceResult, LabVoiceUsage};
+use crate::LabVoiceResult;
+#[cfg(test)]
+use crate::LabVoiceUsage;
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.1";
-const OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LabMediaEvidenceKind {
-    VideoReady,
-    AudioStarted,
-    InterruptionStopped,
-    ReconnectRestored,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LabMediaEvidenceInput {
-    pub session_sequence: u64,
-    pub request_sequence: Option<u64>,
-    pub kind: LabMediaEvidenceKind,
-    pub elapsed_millis: u64,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LabVoiceAttemptStatus {
-    Pending,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LabVoiceAttemptEvidence {
-    pub request_sequence: u64,
-    pub canonical_turn_sequence: Option<u64>,
-    pub status: LabVoiceAttemptStatus,
-    pub failure_code: Option<String>,
-    pub stt_millis: Option<u64>,
-    pub llm_millis: Option<u64>,
-    pub avatar_millis: Option<u64>,
-    pub server_total_millis: Option<u64>,
-    pub stt_usage: Option<LabVoiceUsage>,
-    pub llm_usage: Option<LabVoiceUsage>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LabMediaEvidence {
-    pub request_sequence: Option<u64>,
-    pub kind: LabMediaEvidenceKind,
-    pub elapsed_millis: u64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LabSessionEvidenceSnapshot {
-    pub schema_version: String,
-    pub scope: String,
-    pub session_sequence: u64,
-    pub canonical_playback_proven: bool,
-    pub av_sync_proven: bool,
-    pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
-    pub media_events: Vec<LabMediaEvidence>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabEvidenceError {
@@ -245,7 +191,7 @@ impl LabSessionEvidenceRecorder {
             .ok_or(LabEvidenceError::InvalidState)?;
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
-            scope: OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
+            scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
             canonical_playback_proven: false,
             av_sync_proven: false,
@@ -301,7 +247,7 @@ mod tests {
         let snapshot = recorder.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
-        assert_eq!(snapshot.scope, OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
+        assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
         assert!(!snapshot.canonical_playback_proven);
         assert!(!snapshot.av_sync_proven);
         assert!(!json.contains("приватный транскрипт"));

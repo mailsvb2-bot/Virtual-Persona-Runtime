@@ -12,6 +12,7 @@ serde_json = "1"
 sha2 = "0.10"
 tiny_http = "0.12"
 vpr-domain = { path = "../vpr-domain" }
+vpr-evaluation = { path = "../vpr-evaluation" }
 vpr-integration = { path = "../vpr-integration" }
 vpr-policy = { path = "../vpr-policy" }
 vpr-provider-did-agent-streams = { path = "../vpr-provider-did-agent-streams" }
