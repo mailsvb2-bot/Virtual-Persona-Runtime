@@ -12,9 +12,7 @@ use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
-use crate::owner_context::{
-    OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot,
-};
+use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";

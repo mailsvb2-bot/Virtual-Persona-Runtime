@@ -206,6 +206,10 @@ mod tests {
             snapshot.claims[0].statement,
             "Предпочитаю короткие циклы проверки"
         );
-        assert!(!snapshot.claims[0].statement.contains("Люблю быстрые итерации"));
+        assert!(
+            !snapshot.claims[0]
+                .statement
+                .contains("Люблю быстрые итерации")
+        );
     }
 }
