@@ -17,6 +17,39 @@
       <div id="status" class="status" data-state="idle">Загрузка…</div>
     </section>
 
+    <section class="panel persona-panel" aria-labelledby="persona-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Шаг 1 · канонический профиль</p>
+          <h2 id="persona-heading">Создайте и подтвердите Persona</h2>
+          <p class="hint">Ответы сначала сохраняются как непроверенные. Перед разговором подтвердите или исправьте каждое утверждение.</p>
+        </div>
+        <div id="persona-status" class="inline-status" data-state="idle">Загрузка Persona…</div>
+      </div>
+
+      <div id="persona-create-row" class="persona-create-row">
+        <label for="persona-id">Идентификатор Persona</label>
+        <div class="row no-top-margin">
+          <input id="persona-id" type="text" autocomplete="off" placeholder="например, owner-sergey">
+          <button id="persona-create" class="primary">Создать Persona</button>
+        </div>
+      </div>
+
+      <div id="persona-workspace" hidden>
+        <p id="persona-progress" class="persona-progress"></p>
+        <h3 id="persona-question" class="persona-question"></h3>
+        <textarea id="persona-answer" rows="4" placeholder="Ответьте своими словами"></textarea>
+        <div class="row">
+          <button id="persona-answer-submit" class="primary">Сохранить ответ</button>
+          <button id="persona-capture-finish" hidden>Перейти к проверке</button>
+        </div>
+        <div id="persona-claims" class="persona-claims"></div>
+        <div class="row">
+          <button id="persona-review-complete" class="primary" hidden>Подтвердить Persona</button>
+        </div>
+      </div>
+    </section>
+
     <section class="stage">
       <video id="avatar" autoplay playsinline></video>
       <div id="placeholder" class="placeholder">Видео появится после WebRTC-подключения</div>
