@@ -35,8 +35,8 @@ pub use exit::{
 };
 pub use exit_context::Rt0ExitVerificationContext;
 pub use session_binding::{
-    BoundLabSessionEvidenceAggregate, LabSessionBindingError,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, bind_owner_lab_session_evidence,
+    BoundLabSessionEvidenceAggregate, LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    bind_owner_lab_session_evidence,
 };
 pub use session_evidence::{
     LabMediaEvidence, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionAggregateError,
