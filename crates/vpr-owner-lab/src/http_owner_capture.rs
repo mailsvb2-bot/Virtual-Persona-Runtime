@@ -3,10 +3,10 @@ use serde::Deserialize;
 use tiny_http::Request;
 use vpr_capture::CaptureError;
 use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
+use vpr_owner_lab::{OwnerCaptureError, OwnerContextState, Rt0OwnerCapture};
 
 use crate::{
-    AppState, HttpResponse, OwnerCaptureError, OwnerContextState, Rt0OwnerCapture, error_response,
-    json_response, lab_error_response, parse_json,
+    AppState, HttpResponse, error_response, json_response, lab_error_response, parse_json,
 };
 
 #[derive(Default)]
@@ -37,24 +37,29 @@ struct CorrectClaimBody {
 }
 
 pub(crate) fn snapshot(state: &AppState) -> HttpResponse {
-    let capture = state.owner_capture.capture.lock();
-    capture.as_ref().map_or_else(
-        || {
-            let engine = match state.engine.lock() {
-                Ok(engine) => engine,
-                Err(_) => return error_response(500, "INTERNAL_ERROR"),
-            };
-            json_response(
-                200,
-                &serde_json::json!({
-                    "capture": null,
-                    "owner_context_state": engine.status().owner_context_state,
-                    "persona_version": engine.status().persona_version,
-                    "reviewed_owner_claims": engine.status().reviewed_owner_claims,
-                }),
-            )
-        },
-        |capture| json_response(200, &capture.snapshot()),
+    let capture_snapshot = state
+        .owner_capture
+        .capture
+        .lock()
+        .as_ref()
+        .map(Rt0OwnerCapture::snapshot);
+    if let Some(snapshot) = capture_snapshot {
+        return json_response(200, &snapshot);
+    }
+
+    let engine = match state.engine.lock() {
+        Ok(engine) => engine,
+        Err(_) => return error_response(500, "INTERNAL_ERROR"),
+    };
+    let status = engine.status();
+    json_response(
+        200,
+        &serde_json::json!({
+            "capture": null,
+            "owner_context_state": status.owner_context_state,
+            "persona_version": status.persona_version,
+            "reviewed_owner_claims": status.reviewed_owner_claims,
+        }),
     )
 }
 
@@ -77,14 +82,15 @@ pub(crate) fn route_post(
 
 fn create_persona(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
     let body = parse_json::<CreatePersonaBody>(request)?;
-    let persona_id = PersonaId::new(body.persona_id)
-        .map_err(|_| error_response(400, "INVALID_INPUT"))?;
+    let persona_id =
+        PersonaId::new(body.persona_id).map_err(|_| error_response(400, "INVALID_INPUT"))?;
     let engine = state
         .engine
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    if engine.status().owner_context_state != OwnerContextState::Missing
-        || !matches!(engine.status().session_state.as_str(), "none" | "closed")
+    let status = engine.status();
+    if status.owner_context_state != OwnerContextState::Missing
+        || !matches!(status.session_state.as_str(), "none" | "closed")
     {
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
@@ -155,8 +161,9 @@ fn complete_review(state: &AppState) -> Result<HttpResponse, HttpResponse> {
         .engine
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    if engine.status().owner_context_state != OwnerContextState::Missing
-        || !matches!(engine.status().session_state.as_str(), "none" | "closed")
+    let status = engine.status();
+    if status.owner_context_state != OwnerContextState::Missing
+        || !matches!(status.session_state.as_str(), "none" | "closed")
     {
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
@@ -190,7 +197,9 @@ fn with_capture<T>(
 
 fn capture_error_response(error: OwnerCaptureError) -> HttpResponse {
     match error {
-        OwnerCaptureError::Capture(CaptureError::BlankAnswer) => error_response(400, "INVALID_INPUT"),
+        OwnerCaptureError::Capture(CaptureError::BlankAnswer) => {
+            error_response(400, "INVALID_INPUT")
+        }
         OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::BlankClaimStatement)) => {
             error_response(400, "INVALID_INPUT")
         }
@@ -198,9 +207,9 @@ fn capture_error_response(error: OwnerCaptureError) -> HttpResponse {
             error_response(404, "CLAIM_NOT_FOUND")
         }
         OwnerCaptureError::Capture(_) => error_response(409, "INVALID_STATE_TRANSITION"),
-        OwnerCaptureError::Plan(_) | OwnerCaptureError::VersionUnavailable => {
-            error_response(500, "INTERNAL_ERROR")
-        }
+        OwnerCaptureError::Plan(_)
+        | OwnerCaptureError::InvalidStaticPlan
+        | OwnerCaptureError::VersionUnavailable => error_response(500, "INTERNAL_ERROR"),
     }
 }
 
