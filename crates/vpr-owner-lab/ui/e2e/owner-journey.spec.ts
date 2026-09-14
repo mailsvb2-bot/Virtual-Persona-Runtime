@@ -257,13 +257,18 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByLabel("Идентификатор Persona").fill("owner-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
 
-  for (const answer of ["Люблю быстрые итерации", "Мне важна точность", "Предпочитаю спокойный тон"]) {
+  const answers = ["Люблю быстрые итерации", "Мне важна точность", "Предпочитаю спокойный тон"];
+  for (const [index, answer] of answers.entries()) {
     await page.getByPlaceholder("Ответьте своими словами").fill(answer);
     await page.getByRole("button", { name: "Сохранить ответ" }).click();
+    await expect(page.locator("#persona-progress")).toContainText(`${index + 1}/${questions.length}`);
   }
+  const approveButtons = page.getByRole("button", { name: "Подтвердить без изменений" });
   await page.getByRole("button", { name: "Перейти к проверке" }).click();
+  await expect(approveButtons).toHaveCount(questions.length);
   for (let index = 0; index < questions.length; index += 1) {
-    await page.getByRole("button", { name: "Подтвердить без изменений" }).first().click();
+    await approveButtons.first().click();
+    await expect(approveButtons).toHaveCount(questions.length - index - 1);
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
@@ -276,6 +281,7 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByRole("button", { name: "Сказать", exact: true }).click();
   await expect.poll(() => state.directSpeech).toEqual(["Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
+  await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
   const ownerClaim = page.getByLabel("Текущее утверждение opinion-working-style");
   await ownerClaim.fill("Предпочитаю короткие циклы проверки");
@@ -292,6 +298,7 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByRole("button", { name: "Отозвать доступ" }).click();
   await expect(page.locator("#status")).toContainText("Доступ отозван");
   await page.getByRole("button", { name: "Закрыть" }).click();
+  await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
   expect(state.startAudiences).toEqual(["owner", "visitor"]);
   expect(state.personaVersion).toBe(3);
