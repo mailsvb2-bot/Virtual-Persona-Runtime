@@ -60,9 +60,15 @@ fn main() {
 
 fn run() -> Result<(), i32> {
     let mut args = env::args().skip(1);
-    let Some(evidence_dir) = args.next() else { return usage(); };
-    let Some(candidate_sha) = args.next() else { return usage(); };
-    if args.next().is_some() { return usage(); }
+    let Some(evidence_dir) = args.next() else {
+        return usage();
+    };
+    let Some(candidate_sha) = args.next() else {
+        return usage();
+    };
+    if args.next().is_some() {
+        return usage();
+    }
     let root = Path::new(&evidence_dir);
     let mut items = Vec::with_capacity(REQUIRED.len());
     let mut missing = Vec::new();
@@ -82,7 +88,12 @@ fn run() -> Result<(), i32> {
             }
             Err(_) => {
                 missing.push(name);
-                items.push(InventoryItem { name, present: false, syntax_valid: false, sha256: None });
+                items.push(InventoryItem {
+                    name,
+                    present: false,
+                    syntax_valid: false,
+                    sha256: None,
+                });
             }
         }
     }
@@ -98,25 +109,30 @@ fn run() -> Result<(), i32> {
         golden_candidate_matches: golden
             .as_ref()
             .map(|report| report.binding.candidate_sha == candidate_sha),
-        golden_provider_state_matches: golden.as_ref().zip(provider_digest.as_ref()).map(
-            |(report, digest)| report.binding.provider_state_sha256 == digest.as_str(),
-        ),
+        golden_provider_state_matches: golden
+            .as_ref()
+            .zip(provider_digest.as_ref())
+            .map(|(report, digest)| report.binding.provider_state_sha256 == digest.as_str()),
         probe_candidate_matches: probe
             .as_ref()
             .map(|receipt| receipt.candidate_sha == candidate_sha),
-        probe_provider_state_matches: probe.as_ref().zip(provider_digest.as_ref()).map(
-            |(receipt, digest)| receipt.provider_state_sha256 == digest.as_str(),
-        ),
+        probe_provider_state_matches: probe
+            .as_ref()
+            .zip(provider_digest.as_ref())
+            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
     };
 
-    let binding_ok = provider.as_ref().is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
-        && probe.as_ref().is_some_and(|receipt| receipt.schema_version == RT0_LIVE_PROVIDER_PROBE_SCHEMA)
+    let binding_ok = provider
+        .as_ref()
+        .is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
+        && probe
+            .as_ref()
+            .is_some_and(|receipt| receipt.schema_version == RT0_LIVE_PROVIDER_PROBE_SCHEMA)
         && bindings.candidate_sha_valid
         && bindings.golden_candidate_matches.unwrap_or(false)
         && bindings.golden_provider_state_matches.unwrap_or(false)
         && bindings.probe_candidate_matches.unwrap_or(false)
-        && bindings.probe_provider_state_matches.unwrap_or(false)
-;
+        && bindings.probe_provider_state_matches.unwrap_or(false);
     let report = InventoryReport {
         schema_version: SCHEMA,
         candidate_sha,
@@ -127,7 +143,11 @@ fn run() -> Result<(), i32> {
         bindings,
     };
     println!("{}", serde_json::to_string_pretty(&report).map_err(|_| 2)?);
-    if report.inventory_complete { Ok(()) } else { Err(1) }
+    if report.inventory_complete {
+        Ok(())
+    } else {
+        Err(1)
+    }
 }
 
 fn artifact_syntax_valid(name: &str, bytes: &[u8]) -> bool {

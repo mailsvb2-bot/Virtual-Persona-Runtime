@@ -58,18 +58,32 @@ fn empty_directory_reports_missing_evidence_without_claiming_readiness() {
     assert_eq!(report["bindings"]["candidate_sha_valid"], json!(true));
     assert!(report["missing"].as_array().unwrap().len() >= 10);
     assert!(report.get("ready").is_none());
-    assert!(report["items"].as_array().unwrap().iter().all(|item| !item["present"].as_bool().unwrap()));
+    assert!(
+        report["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| !item["present"].as_bool().unwrap())
+    );
 }
 fn seed_complete_inventory(dir: &Path) {
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
     let provider_digest = sha256_hex(&fixture.provider_state_bytes);
-    fs::write(dir.join("provider-state.json"), &fixture.provider_state_bytes).unwrap();
+    fs::write(
+        dir.join("provider-state.json"),
+        &fixture.provider_state_bytes,
+    )
+    .unwrap();
     fs::write(
         dir.join("bound-golden-report.json"),
         serde_json::to_vec_pretty(&fixture.report).unwrap(),
     )
     .unwrap();
-    fs::write(dir.join("private-golden-evidence.json"), fixture.bundle_bytes).unwrap();
+    fs::write(
+        dir.join("private-golden-evidence.json"),
+        fixture.bundle_bytes,
+    )
+    .unwrap();
 
     let usage = json!({
         "input_units":1,"input_unit":"token","output_units":1,"output_unit":"token",
@@ -88,7 +102,11 @@ fn seed_complete_inventory(dir: &Path) {
         "llm":{"latency_millis":120,"output_chars":5,"usage":usage},
         "avatar":{"open_millis":150,"close_millis":50}
     });
-    fs::write(dir.join("provider-probe.json"), serde_json::to_vec_pretty(&probe).unwrap()).unwrap();
+    fs::write(
+        dir.join("provider-probe.json"),
+        serde_json::to_vec_pretty(&probe).unwrap(),
+    )
+    .unwrap();
     for name in [
         "exit-evidence.json",
         "ci-evidence.json",
@@ -121,8 +139,14 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     assert_eq!(report["missing"], json!([]));
     assert_eq!(report["bindings"]["golden_candidate_matches"], json!(true));
     assert_eq!(report["bindings"]["probe_candidate_matches"], json!(true));
-    assert_eq!(report["bindings"]["golden_provider_state_matches"], json!(true));
-    assert_eq!(report["bindings"]["probe_provider_state_matches"], json!(true));
+    assert_eq!(
+        report["bindings"]["golden_provider_state_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["probe_provider_state_matches"],
+        json!(true)
+    );
 }
 #[test]
 fn cross_candidate_inventory_fails_closed() {
