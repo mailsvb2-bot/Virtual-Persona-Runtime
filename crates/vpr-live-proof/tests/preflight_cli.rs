@@ -249,3 +249,61 @@ fn output_path_must_be_absolute_and_outside_worktree() {
     );
     assert!(!inside.exists());
 }
+
+fn probe_command(repo: &TempRepo, audio: &Path, provider: &Path, probe: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
+    command
+        .current_dir(repo.path())
+        .args(["probe"])
+        .arg(audio)
+        .arg(provider)
+        .arg(probe)
+        .env_clear();
+    for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+#[test]
+fn probe_mode_fails_closed_without_egress_or_credentials_and_writes_nothing() {
+    let repo = TempRepo::new();
+    let audio = external_output(&repo, "probe-input.raw");
+    let provider = external_output(&repo, "probe-provider.json");
+    let probe = external_output(&repo, "probe-result.json");
+    fs::write(&audio, vec![0_u8; 3_200]).unwrap();
+    let output = probe_command(&repo, &audio, &provider, &probe)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("EGRESS_NOT_AUTHORIZED")
+    );
+    assert!(!provider.exists());
+    assert!(!probe.exists());
+    let _ = fs::remove_file(audio);
+}
+
+#[test]
+fn probe_mode_rejects_private_audio_inside_candidate_checkout() {
+    let repo = TempRepo::new();
+    let audio = repo.path().join("private.raw");
+    fs::write(&audio, vec![0_u8; 3_200]).unwrap();
+    let provider = external_output(&repo, "probe-provider.json");
+    let probe = external_output(&repo, "probe-result.json");
+    let output = probe_command(&repo, &audio, &provider, &probe)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INPUT_PATH_INSIDE_WORKTREE")
+    );
+    assert!(!provider.exists());
+    assert!(!probe.exists());
+}

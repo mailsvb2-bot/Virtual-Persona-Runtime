@@ -1211,8 +1211,12 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "vpr-domain",
  "vpr-evaluation",
+ "vpr-integration",
  "vpr-owner-lab",
+ "vpr-policy",
+ "vpr-runtime",
 ]
 
 [[package]]

@@ -1,9 +1,16 @@
+mod probe;
+
 use serde::Serialize;
 use vpr_evaluation::{
     ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
     sha256_hex,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
+
+pub use probe::{
+    AvatarProbeEvidence, LiveProviderProbeError, LiveProviderProbeReceipt, LlmProbeEvidence,
+    ProbeUsage, RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, run_provider_probe,
+};
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";
 
@@ -29,16 +36,32 @@ pub enum LiveProofPreflightError {
     OutputPathInsideWorktree,
 }
 
-/// Creates a sanitized provider-state receipt after fail-closed live-proof preflight checks.
+/// Shared provider composition and sanitized binding prepared for one exact live-proof candidate.
+pub struct PreparedLiveProof {
+    receipt: LiveProofPreflightReceipt,
+    providers: ProviderBundle,
+}
+
+impl PreparedLiveProof {
+    #[must_use]
+    pub const fn receipt(&self) -> &LiveProofPreflightReceipt {
+        &self.receipt
+    }
+
+    pub(crate) fn into_parts(self) -> (LiveProofPreflightReceipt, ProviderBundle) {
+        (self.receipt, self.providers)
+    }
+}
+
+/// Builds the shared credentialed provider bundle and its sanitized exact-candidate receipt.
 ///
 /// # Errors
-/// Returns a stable error when egress is not explicitly authorized, the exact candidate is invalid,
-/// the worktree is dirty, provider configuration is incomplete, or the sanitized state cannot be encoded.
-pub fn preflight(
+/// Returns the same fail-closed preflight errors as [`preflight`].
+pub fn prepare(
     candidate_sha: &str,
     worktree_clean: bool,
     egress_authorized: bool,
-) -> Result<LiveProofPreflightReceipt, LiveProofPreflightError> {
+) -> Result<PreparedLiveProof, LiveProofPreflightError> {
     if !egress_authorized {
         return Err(LiveProofPreflightError::EgressNotAuthorized);
     }
@@ -53,12 +76,28 @@ pub fn preflight(
     let provider_state = provider_state(&providers)?;
     let provider_state_bytes = serde_json::to_vec_pretty(&provider_state)
         .map_err(|_| LiveProofPreflightError::ProviderStateSerializationFailed)?;
-    Ok(LiveProofPreflightReceipt {
-        schema_version: RT0_LIVE_PROOF_PREFLIGHT_SCHEMA.into(),
-        candidate_sha: candidate_sha.into(),
-        provider_state_sha256: sha256_hex(&provider_state_bytes),
-        provider_state,
+    Ok(PreparedLiveProof {
+        receipt: LiveProofPreflightReceipt {
+            schema_version: RT0_LIVE_PROOF_PREFLIGHT_SCHEMA.into(),
+            candidate_sha: candidate_sha.into(),
+            provider_state_sha256: sha256_hex(&provider_state_bytes),
+            provider_state,
+        },
+        providers,
     })
+}
+
+/// Creates a sanitized provider-state receipt after fail-closed live-proof preflight checks.
+///
+/// # Errors
+/// Returns a stable error when egress is not explicitly authorized, the exact candidate is invalid,
+/// the worktree is dirty, provider configuration is incomplete, or the sanitized state cannot be encoded.
+pub fn preflight(
+    candidate_sha: &str,
+    worktree_clean: bool,
+    egress_authorized: bool,
+) -> Result<LiveProofPreflightReceipt, LiveProofPreflightError> {
+    prepare(candidate_sha, worktree_clean, egress_authorized).map(|prepared| prepared.receipt)
 }
 
 fn provider_state(
