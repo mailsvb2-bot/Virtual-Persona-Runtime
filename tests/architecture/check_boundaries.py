@@ -23,6 +23,7 @@ allowed_internal_dependencies = {
     "vpr-evaluation": {"vpr-domain"},
     "vpr-live-proof": {"vpr-domain", "vpr-evaluation", "vpr-integration", "vpr-owner-lab", "vpr-policy", "vpr-runtime"},
     "vpr-owner-lab": {
+        "vpr-capture",
         "vpr-domain",
         "vpr-evaluation",
         "vpr-integration",
