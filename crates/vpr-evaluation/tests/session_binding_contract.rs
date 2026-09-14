@@ -93,10 +93,11 @@ fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
     );
 
     let invalid_provider = br#"{"schema_version":"rt0-provider-state-0.1","providers":[]}"#;
+    let invalid_provider = invalid_provider.replace(b"\\\"", b"\"");
     assert_eq!(
         bind_owner_lab_session_evidence(
             &[one.as_slice()],
-            invalid_provider,
+            &invalid_provider,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
         Err(LabSessionBindingError::InvalidProviderState)
@@ -104,7 +105,7 @@ fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
 
     assert_eq!(
         bind_owner_lab_session_evidence(
-            &[b"not-json".as_slice()],
+            &[&b"not-json"[..]],
             &provider_state,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
