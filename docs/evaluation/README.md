@@ -61,3 +61,14 @@ The exit checker recomputes the sanitized provider-state digest from the separat
 Exit codes are stable: `0` means the supplied exact-candidate evidence satisfies the deterministic gate, `1` means evidence is structurally valid but one or more mandatory RT0 conditions fail, and `2` means evidence is malformed, stale, tampered, or cross-candidate. `docs/evaluation/rt0_exit_evidence.synthetic.example.json` is schema documentation only; every substantive origin in it is `synthetic`, so it is intentionally ineligible for RT0 exit.
 
 Even a `0` from this experimental checker does not by itself promote `release.rt0_exit_gate`: the archived evidence artifacts must actually exist and correspond to the real provider/model/representation state named by the bound Golden report.
+
+## Owner Lab session-evidence aggregation
+
+`vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-0.1` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, and reconnect restoration. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
+
+The aggregate explicitly keeps `canonical_playback_proven=false` and `av_sync_proven=false`. It does not invent text-first-response or A/V-sync evidence, does not assign owner/visitor roles, and is not exact-candidate/provider-state bound yet. It is therefore an experimental evidence-preparation artifact, not RT0 exit proof.
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
+  /secure/evidence/session-1.json /secure/evidence/session-2.json
+```

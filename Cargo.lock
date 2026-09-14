@@ -1230,6 +1230,7 @@ dependencies = [
  "sha2",
  "tiny_http",
  "vpr-domain",
+ "vpr-evaluation",
  "vpr-integration",
  "vpr-policy",
  "vpr-provider-anthropic",

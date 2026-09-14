@@ -24,6 +24,7 @@ allowed_internal_dependencies = {
     "vpr-live-proof": {"vpr-domain", "vpr-evaluation", "vpr-integration", "vpr-owner-lab", "vpr-policy", "vpr-runtime"},
     "vpr-owner-lab": {
         "vpr-domain",
+        "vpr-evaluation",
         "vpr-integration",
         "vpr-policy",
         "vpr-provider-anthropic",
@@ -544,8 +545,8 @@ if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
 
 owner_lab_evidence = (owner_lab_src / "evidence.rs").read_text(encoding="utf-8")
+evaluation_session_evidence = (CRATES / "vpr-evaluation" / "src" / "session_evidence.rs").read_text(encoding="utf-8")
 for required_evidence_boundary in (
-    "rt0-owner-lab-session-evidence-0.1",
     "LabSessionEvidenceRecorder",
     "LabMediaEvidenceInput",
     "stt_millis",
@@ -553,7 +554,16 @@ for required_evidence_boundary in (
     "server_total_millis",
 ):
     if required_evidence_boundary not in owner_lab_evidence:
-        raise SystemExit(f"Owner Lab session evidence missing boundary {required_evidence_boundary}")
+        raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
+for required_shared_evidence in (
+    "rt0-owner-lab-session-evidence-0.1",
+    "rt0-owner-lab-session-aggregate-0.1",
+    "aggregate_owner_lab_session_evidence",
+    "canonical_playback_proven",
+    "av_sync_proven",
+):
+    if required_shared_evidence not in evaluation_session_evidence:
+        raise SystemExit(f"shared session evidence contract missing {required_shared_evidence}")
 for forbidden_evidence_payload in (
     "transcript: String",
     "reply: String",

@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use vpr_domain::{Rt0ReasonCode, TurnState};
+pub use vpr_evaluation::SessionUsageEvidence as LabVoiceUsage;
 use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
     UsageEvidence,
@@ -14,14 +15,6 @@ const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
 const OWNER_LAB_PROMPT_PREFIX: &str = "RT0 Owner Lab voice conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct LabVoiceUsage {
-    pub input_units: Option<u64>,
-    pub output_units: Option<u64>,
-    pub estimated_cost_microunits: Option<u64>,
-    pub provider_charge_microunits: Option<u64>,
-}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabVoiceResult {
