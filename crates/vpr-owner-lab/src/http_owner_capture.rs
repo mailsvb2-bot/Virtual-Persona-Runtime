@@ -47,9 +47,8 @@ pub(crate) fn snapshot(state: &AppState) -> HttpResponse {
         return json_response(200, &snapshot);
     }
 
-    let engine = match state.engine.lock() {
-        Ok(engine) => engine,
-        Err(_) => return error_response(500, "INTERNAL_ERROR"),
+    let Ok(engine) = state.engine.lock() else {
+        return error_response(500, "INTERNAL_ERROR");
     };
     let status = engine.status();
     json_response(
@@ -197,10 +196,8 @@ fn with_capture<T>(
 
 fn capture_error_response(error: OwnerCaptureError) -> HttpResponse {
     match error {
-        OwnerCaptureError::Capture(CaptureError::BlankAnswer) => {
-            error_response(400, "INVALID_INPUT")
-        }
-        OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::BlankClaimStatement)) => {
+        OwnerCaptureError::Capture(CaptureError::BlankAnswer)
+        | OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::BlankClaimStatement)) => {
             error_response(400, "INVALID_INPUT")
         }
         OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::ClaimNotFound)) => {
