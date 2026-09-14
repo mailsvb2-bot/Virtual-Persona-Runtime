@@ -99,6 +99,7 @@ required_capability_states = {
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "runtime.owner_lab_reviewed_owner_context": ("EXPERIMENTAL", False),
     "ui.rt0_owner_capture_review": ("EXPERIMENTAL", False),
+    "ui.rt0_post_review_correction": ("EXPERIMENTAL", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),
     "provider.real_avatar": ("NOT_IMPLEMENTED", False),
@@ -113,6 +114,38 @@ for capability_id, expected in required_capability_states.items():
         raise SystemExit(
             f"{capability_id} must remain {expected} until real exact-candidate evidence exists; got {actual}"
         )
+
+
+OWNER_LAB_SRC = ROOT / "crates" / "vpr-owner-lab" / "src"
+OWNER_LAB_UI = ROOT / "crates" / "vpr-owner-lab" / "ui" / "src" / "owner-capture.ts"
+owner_capture_http = (OWNER_LAB_SRC / "http_owner_capture.rs").read_text(encoding="utf-8")
+owner_lab_state = (OWNER_LAB_SRC / "state.rs").read_text(encoding="utf-8")
+owner_context_source = (OWNER_LAB_SRC / "owner_context.rs").read_text(encoding="utf-8")
+owner_capture_ui = OWNER_LAB_UI.read_text(encoding="utf-8")
+for required_post_review_boundary in (
+    "/api/persona/reviewed",
+    "reviewed_owner_context_snapshot",
+    "ReviewedOwnerContextSnapshot",
+    "ReviewedOwnerClaimSnapshot",
+):
+    if required_post_review_boundary not in owner_capture_http + owner_lab_state + owner_context_source:
+        raise SystemExit(
+            f"Owner Lab post-review correction boundary missing {required_post_review_boundary}"
+        )
+owner_lab_main = (OWNER_LAB_SRC / "main.rs").read_text(encoding="utf-8")
+if '(&Method::Get, "/api/persona/reviewed")' in owner_lab_main:
+    raise SystemExit("reviewed owner claims must not be exposed through an unauthenticated GET route")
+if '"/api/persona/reviewed"' not in owner_capture_ui:
+    raise SystemExit("Owner Lab reviewed-claim UI must reload canonical current revisions after correction")
+reviewed_snapshot_match = re.search(
+    r"pub struct ReviewedOwnerContextSnapshot\s*\{.*?\n\}",
+    owner_context_source,
+    re.DOTALL,
+)
+if reviewed_snapshot_match is None:
+    raise SystemExit("browser-facing reviewed snapshot type is missing")
+if "previous_revisions" in reviewed_snapshot_match.group(0):
+    raise SystemExit("browser-facing reviewed snapshot must not expose prior claim revisions")
 
 reason_source = REASON_SOURCE.read_text(encoding="utf-8")
 for code in sorted(REQUIRED_REASON_CODES):

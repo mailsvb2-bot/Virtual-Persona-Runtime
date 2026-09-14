@@ -12,7 +12,9 @@ use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
-use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
+use crate::owner_context::{
+    OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot,
+};
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
@@ -177,6 +179,20 @@ impl OwnerLabEngine {
             .ok_or(LabError::InvalidState)?
             .correct_claim(id, statement, kind)
             .map_err(map_owner_context_error)
+    }
+
+    /// Returns an owner-only snapshot of the current reviewed claim revisions.
+    /// Previous revisions are intentionally not copied into this browser-facing view.
+    ///
+    /// # Errors
+    /// Returns `InvalidState` until explicit owner review has completed.
+    pub fn reviewed_owner_context_snapshot(
+        &self,
+    ) -> Result<ReviewedOwnerContextSnapshot, LabError> {
+        self.reviewed_owner_context
+            .as_ref()
+            .map(ReviewedOwnerContext::snapshot)
+            .ok_or(LabError::InvalidState)
     }
 
     #[must_use]
