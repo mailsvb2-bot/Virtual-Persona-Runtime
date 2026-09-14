@@ -21,6 +21,7 @@ allowed_internal_dependencies = {
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
     "vpr-provider-did-agent-streams": {"vpr-integration"},
     "vpr-evaluation": {"vpr-domain"},
+    "vpr-live-proof": {"vpr-evaluation", "vpr-owner-lab"},
     "vpr-owner-lab": {
         "vpr-domain",
         "vpr-integration",
@@ -226,6 +227,23 @@ for method in ("deliver_audio", "deliver_video_frame", "interrupt_and_flush_medi
 if "frame.timestamp_micros" not in media_delivery_source or "next_video_media_stamp" not in media_delivery_source:
     raise SystemExit("provider video timestamps must pass through runtime timeline normalization")
 
+# Live-proof preflight must reuse Owner Lab provider composition and remain evidence-only.
+live_proof_src = CRATES / "vpr-live-proof" / "src"
+live_proof_text = "\n".join(path.read_text(encoding="utf-8") for path in live_proof_src.rglob("*.rs"))
+for required in (
+    "ProviderBundle::from_env(true)",
+    "VPR_LIVE_PROOF_ALLOW_EGRESS",
+    '"rev-parse", "HEAD"',
+    '"status", "--porcelain", "--untracked-files=all"',
+    "ProviderStateManifest",
+    "configuration_fingerprint_sha256",
+):
+    if required not in live_proof_text:
+        raise SystemExit(f"RT0 live-proof preflight missing mandatory invariant {required}")
+for forbidden in ("VPR_DID_API_KEY", "VPR_OWNER_LAB_STT_API_KEY", "VPR_OWNER_LAB_LLM_API_KEY"):
+    if forbidden in live_proof_text:
+        raise SystemExit(f"live-proof layer must not read provider secrets directly: {forbidden}")
+
 # Evaluation may inspect canonical domain evidence, but it must not become a runtime/provider brain.
 evaluation_src = CRATES / "vpr-evaluation" / "src"
 for path in evaluation_src.rglob("*.rs"):
@@ -379,6 +397,7 @@ if "impl RealtimeAvatarPort for DidAgentStreamsAvatar" not in did_source:
 owner_lab_src = CRATES / "vpr-owner-lab" / "src"
 owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
 owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
+owner_lab_providers = (owner_lab_src / "providers.rs").read_text(encoding="utf-8")
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
 owner_lab_bundle = owner_lab_ui_root / "dist" / "app.js"
 if not owner_lab_bundle.is_file():
@@ -396,13 +415,23 @@ if 'format!("127.0.0.1:{port}")' not in owner_lab_main:
 for required in (
     "X-VPR-CSRF",
     "VPR_OWNER_LAB_ALLOW_EGRESS",
-    "VPR_DID_API_KEY",
     "valid_host",
     "valid_origin",
     "Content-Security-Policy",
 ):
     if required not in owner_lab_main:
         raise SystemExit(f"Owner Lab backend missing security boundary {required}")
+for required_provider_boundary in (
+    "VPR_DID_API_KEY",
+    "VPR_OWNER_LAB_STT_API_KEY",
+    "VPR_OWNER_LAB_LLM_API_KEY",
+    "ProviderBundle",
+    "configuration_fingerprint_sha256",
+):
+    if required_provider_boundary not in owner_lab_providers:
+        raise SystemExit(
+            f"Owner Lab shared provider composition missing boundary {required_provider_boundary}"
+        )
 if "open_realtime_avatar" not in owner_lab_state or ".create_session(" in owner_lab_state:
     raise SystemExit("Owner Lab must use canonical runtime avatar binding, not provider session creation")
 if "if !self.egress_enabled" not in owner_lab_state or "if !request.consent" not in owner_lab_state:
@@ -423,7 +452,7 @@ for required_ui_recovery in (
         raise SystemExit(f"Owner Lab UI missing cleanup/recovery contract: {required_ui_recovery}")
 
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
-owner_lab_voice_providers = (owner_lab_src / "voice_providers.rs").read_text(encoding="utf-8")
+owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
 if not owner_lab_mic_worklet.is_file():
     raise SystemExit("Owner Lab push-to-talk must retain a versioned AudioWorklet processor")

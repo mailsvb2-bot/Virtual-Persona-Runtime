@@ -17,6 +17,7 @@ members = [
   "crates/vpr-owner-lab",
   "crates/vpr-rt0-smoke",
   "crates/vpr-evaluation",
+  "crates/vpr-live-proof",
 ]
 
 [workspace.package]

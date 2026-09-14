@@ -1,5 +1,3 @@
-mod voice_providers;
-
 use std::env;
 use std::error::Error;
 use std::io::{Cursor, Read};
@@ -12,11 +10,10 @@ use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
-use vpr_owner_lab::{LabError, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput};
-use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
+use vpr_owner_lab::{
+    LabError, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
+};
 use vpr_runtime::TurnInterruptHandle;
-
-use crate::voice_providers::from_env as voice_providers_from_env;
 
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
@@ -93,9 +90,6 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let endpoint = env::var("VPR_DID_ENDPOINT").unwrap_or_else(|_| "https://api.d-id.com".into());
-    let api_key = required_env("VPR_DID_API_KEY")?;
-    let agent_id = required_env("VPR_DID_AGENT_ID")?;
     let egress_enabled = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").is_ok_and(|value| value == "true");
     let port = env::var("VPR_OWNER_LAB_PORT")
         .ok()
@@ -103,13 +97,11 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
 
-    let provider =
-        DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(endpoint, api_key, agent_id))
-            .map_err(|_| "D-ID provider configuration rejected")?;
-    let mut engine = OwnerLabEngine::new(Box::new(provider), egress_enabled)
+    let mut providers = ProviderBundle::from_env(false)?;
+    let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
         .map_err(|_| "owner-lab runtime initialization failed")?;
-    if let Some(voice) = voice_providers_from_env()? {
-        engine = engine.with_voice(voice.stt, voice.llm);
+    if let (Some(stt), Some(llm)) = (providers.stt.take(), providers.llm.take()) {
+        engine = engine.with_voice(stt, llm);
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
@@ -502,10 +494,6 @@ fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
         }
     }
     response
-}
-
-fn required_env(name: &'static str) -> Result<String, Box<dyn Error + Send + Sync>> {
-    env::var(name).map_err(|_| format!("required environment variable {name} is not set").into())
 }
 
 fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {

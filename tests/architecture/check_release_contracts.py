@@ -85,6 +85,7 @@ if len(ids) != len(set(ids)):
 capability_by_id = {capability["id"]: capability for capability in capabilities}
 required_capability_states = {
     "evaluation.rt0_exit_evidence_gate": ("EXPERIMENTAL", False),
+    "evaluation.rt0_live_proof_preflight": ("EXPERIMENTAL", False),
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),
