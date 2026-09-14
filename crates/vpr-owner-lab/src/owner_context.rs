@@ -14,7 +14,10 @@ impl ReviewedOwnerContext {
         if profile.identity().mode() != PersonaMode::DigitalTwin
             || profile.capture_state() != PersonaCaptureState::Reviewed
             || profile.claims().is_empty()
-            || !profile.claims().iter().all(|record| record.is_owner_reviewed())
+            || !profile
+                .claims()
+                .iter()
+                .all(|record| record.is_owner_reviewed())
         {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
