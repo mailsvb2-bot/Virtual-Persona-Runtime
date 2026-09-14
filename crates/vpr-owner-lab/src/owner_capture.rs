@@ -31,11 +31,14 @@ impl Rt0OwnerCapture {
     #[must_use]
     pub fn snapshot(&self) -> OwnerCaptureSnapshot {
         let profile = self.interview.profile();
-        let current_question = self.interview.current_question().map(|question| OwnerCaptureQuestion {
-            claim_id: question.claim_id().as_str().to_owned(),
-            prompt: question.prompt().to_owned(),
-            kind: claim_kind_name(question.kind()).to_owned(),
-        });
+        let current_question = self
+            .interview
+            .current_question()
+            .map(|question| OwnerCaptureQuestion {
+                claim_id: question.claim_id().as_str().to_owned(),
+                prompt: question.prompt().to_owned(),
+                kind: claim_kind_name(question.kind()).to_owned(),
+            });
         let claims = profile
             .claims()
             .iter()
@@ -151,6 +154,7 @@ pub struct OwnerCaptureClaim {
 pub enum OwnerCaptureError {
     Plan(PlanError),
     Capture(CaptureError),
+    InvalidStaticPlan,
     VersionUnavailable,
 }
 
@@ -159,6 +163,7 @@ impl Display for OwnerCaptureError {
         match self {
             Self::Plan(error) => Display::fmt(error, formatter),
             Self::Capture(error) => Display::fmt(error, formatter),
+            Self::InvalidStaticPlan => formatter.write_str("RT0 owner capture plan is invalid"),
             Self::VersionUnavailable => formatter.write_str("initial PersonaVersion is unavailable"),
         }
     }
@@ -178,24 +183,29 @@ impl From<CaptureError> for OwnerCaptureError {
     }
 }
 
-fn rt0_interview_plan() -> Result<InterviewPlan, PlanError> {
+fn rt0_interview_plan() -> Result<InterviewPlan, OwnerCaptureError> {
     InterviewPlan::new(vec![
         InterviewQuestion::new(
-            ClaimId::new("identity-self-description").map_err(|_| PlanError::BlankPrompt)?,
+            static_claim_id("identity-self-description")?,
             "Как вы обычно представляете себя в двух-трёх предложениях?",
             ClaimKind::Factual,
         )?,
         InterviewQuestion::new(
-            ClaimId::new("preference-communication-style").map_err(|_| PlanError::BlankPrompt)?,
+            static_claim_id("preference-communication-style")?,
             "Как вам лучше отвечать людям: кратко или подробно, формально или неформально?",
             ClaimKind::Preference,
         )?,
         InterviewQuestion::new(
-            ClaimId::new("opinion-core-principle").map_err(|_| PlanError::BlankPrompt)?,
+            static_claim_id("opinion-core-principle")?,
             "Какой принцип или взгляд особенно важно корректно передавать от вашего имени?",
             ClaimKind::Opinion,
         )?,
     ])
+    .map_err(OwnerCaptureError::from)
+}
+
+fn static_claim_id(value: &'static str) -> Result<ClaimId, OwnerCaptureError> {
+    ClaimId::new(value).map_err(|_| OwnerCaptureError::InvalidStaticPlan)
 }
 
 const fn claim_kind_name(kind: ClaimKind) -> &'static str {
