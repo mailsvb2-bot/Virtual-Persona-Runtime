@@ -1,7 +1,7 @@
 use serde::Serialize;
 use vpr_domain::{
-    CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion, RealtimeSessionState,
-    Rt0ReasonCode, SessionId, TurnId,
+    ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
+    PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, SttPort, WebRtcIceCandidate,
@@ -11,6 +11,8 @@ use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthorit
 use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
+
+use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
@@ -56,6 +58,9 @@ pub struct LabStatus {
     pub avatar_open: bool,
     pub egress_enabled: bool,
     pub voice_ready: bool,
+    pub owner_context_ready: bool,
+    pub persona_version: u64,
+    pub reviewed_owner_claims: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +90,7 @@ impl LabError {
 
 pub struct OwnerLabEngine {
     persona: PersonaIdentity,
+    reviewed_owner_context: Option<ReviewedOwnerContext>,
     provider: Box<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
@@ -108,6 +114,7 @@ impl OwnerLabEngine {
         let version = PersonaVersion::new(1).ok_or(LabError::Internal)?;
         Ok(Self {
             persona: PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin),
+            reviewed_owner_context: None,
             provider,
             stt: None,
             llm: None,
@@ -117,6 +124,36 @@ impl OwnerLabEngine {
             turn_counter: 0,
             egress_enabled,
         })
+    }
+
+    /// Binds an explicitly reviewed DIGITAL_TWIN profile as the canonical owner context for
+    /// subsequent turns. The profile's Persona identity/version becomes the turn snapshot source.
+    ///
+    /// # Errors
+    /// Fails closed if capture/review is incomplete or the profile is not a DIGITAL_TWIN.
+    pub fn with_reviewed_profile(mut self, profile: PersonaProfile) -> Result<Self, LabError> {
+        self.reviewed_owner_context = Some(
+            ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?,
+        );
+        Ok(self)
+    }
+
+    /// Corrects one owner-reviewed claim. The domain profile preserves the previous revision and
+    /// advances PersonaVersion; the next turn snapshots the corrected version.
+    ///
+    /// # Errors
+    /// Fails closed when no reviewed owner context is bound or the correction is rejected.
+    pub fn correct_owner_claim(
+        &mut self,
+        id: &ClaimId,
+        statement: impl Into<String>,
+        kind: ClaimKind,
+    ) -> Result<(), LabError> {
+        self.reviewed_owner_context
+            .as_mut()
+            .ok_or(LabError::InvalidState)?
+            .correct_claim(id, statement, kind)
+            .map_err(map_owner_context_error)
     }
 
     #[must_use]
@@ -132,6 +169,12 @@ impl OwnerLabEngine {
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
             voice_ready: self.stt.is_some() && self.llm.is_some(),
+            owner_context_ready: self.reviewed_owner_context.is_some(),
+            persona_version: self.persona_identity().version().get(),
+            reviewed_owner_claims: self
+                .reviewed_owner_context
+                .as_ref()
+                .map_or(0, ReviewedOwnerContext::claim_count),
         }
     }
 
@@ -163,7 +206,7 @@ impl OwnerLabEngine {
         let authority = provider_authority()?;
         let mut session = ActiveSession::new(
             session_id,
-            self.persona.id().clone(),
+            self.persona_identity().id().clone(),
             SessionSecurityConfig::new(authority, None, true, ConsentState::Granted, false),
         );
         session.activate().map_err(LabError::Runtime)?;
@@ -262,6 +305,12 @@ impl OwnerLabEngine {
         Ok(())
     }
 
+    fn persona_identity(&self) -> &PersonaIdentity {
+        self.reviewed_owner_context
+            .as_ref()
+            .map_or(&self.persona, ReviewedOwnerContext::identity)
+    }
+
     fn new_turn(&mut self) -> Result<ActiveTurn, LabError> {
         let session = self.session.take().ok_or(LabError::InvalidState)?;
         let result = self.new_turn_for(&session);
@@ -276,7 +325,7 @@ impl OwnerLabEngine {
                 .map_err(|_| LabError::Internal)?,
             CorrelationId::new(format!("owner-lab-correlation-{}", self.turn_counter))
                 .map_err(|_| LabError::Internal)?,
-            &self.persona,
+            self.persona_identity(),
             session,
         )
         .map_err(|reason| LabError::Runtime(reason.reason_code()))?;
@@ -334,6 +383,13 @@ fn map_provider_execution(error: ProviderExecutionError) -> LabError {
         ProviderExecutionError::Provider(provider) => {
             LabError::Provider(vpr_runtime::provider_reason_code(provider.kind))
         }
+    }
+}
+
+const fn map_owner_context_error(error: OwnerContextError) -> LabError {
+    match error {
+        OwnerContextError::ProfileNotReviewed => LabError::InvalidState,
+        OwnerContextError::CorrectionRejected => LabError::InvalidInput,
     }
 }
 
