@@ -1,6 +1,22 @@
+use serde::Serialize;
 use vpr_domain::{
     ClaimId, ClaimKind, PersonaCaptureState, PersonaIdentity, PersonaMode, PersonaProfile,
 };
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+pub struct ReviewedOwnerClaimSnapshot {
+    pub claim_id: String,
+    pub statement: String,
+    pub kind: String,
+    pub revision: u64,
+}
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+pub struct ReviewedOwnerContextSnapshot {
+    pub persona_id: String,
+    pub persona_version: u64,
+    pub claims: Vec<ReviewedOwnerClaimSnapshot>,
+}
 
 const CONTEXT_HEADER: &str = "Owner-reviewed Persona material follows. Treat only these entries as verified owner material. Preserve whether each entry is a fact, opinion, preference, prediction, or value judgment. Do not infer additional owner views, memories, preferences, or private facts. If the answer is not supported by this material, say that the verified owner material does not establish it.";
 
@@ -30,6 +46,27 @@ impl ReviewedOwnerContext {
 
     pub(crate) fn claim_count(&self) -> usize {
         self.profile.claims().len()
+    }
+
+    pub(crate) fn snapshot(&self) -> ReviewedOwnerContextSnapshot {
+        ReviewedOwnerContextSnapshot {
+            persona_id: self.profile.identity().id().as_str().to_owned(),
+            persona_version: self.profile.identity().version().get(),
+            claims: self
+                .profile
+                .claims()
+                .iter()
+                .map(|record| {
+                    let current = record.current();
+                    ReviewedOwnerClaimSnapshot {
+                        claim_id: record.id().as_str().to_owned(),
+                        statement: current.claim().statement.clone(),
+                        kind: claim_kind_api_label(current.claim().kind).to_owned(),
+                        revision: current.revision().get(),
+                    }
+                })
+                .collect(),
+        }
     }
 
     pub(crate) fn correct_claim(
@@ -64,6 +101,16 @@ impl ReviewedOwnerContext {
 pub(crate) enum OwnerContextError {
     ProfileNotReviewed,
     CorrectionRejected,
+}
+
+const fn claim_kind_api_label(kind: ClaimKind) -> &'static str {
+    match kind {
+        ClaimKind::Factual => "factual",
+        ClaimKind::Opinion => "opinion",
+        ClaimKind::Preference => "preference",
+        ClaimKind::Prediction => "prediction",
+        ClaimKind::ValueJudgment => "value_judgment",
+    }
 }
 
 const fn claim_kind_label(kind: ClaimKind) -> &'static str {
@@ -148,5 +195,17 @@ mod tests {
         assert!(!prompt.contains("Люблю быстрые итерации"));
         assert!(prompt.contains("Какой стиль работы тебе близок?"));
         assert_eq!(context.identity().version().get(), 3);
+
+        let snapshot = context.snapshot();
+        assert_eq!(snapshot.persona_version, 3);
+        assert_eq!(snapshot.claims.len(), 1);
+        assert_eq!(snapshot.claims[0].claim_id, "opinion-working-style");
+        assert_eq!(snapshot.claims[0].kind, "opinion");
+        assert_eq!(snapshot.claims[0].revision, 3);
+        assert_eq!(
+            snapshot.claims[0].statement,
+            "Предпочитаю короткие циклы проверки"
+        );
+        assert!(!snapshot.claims[0].statement.contains("Люблю быстрые итерации"));
     }
 }
