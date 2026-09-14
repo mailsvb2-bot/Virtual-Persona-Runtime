@@ -17,7 +17,7 @@ impl ReviewedOwnerContext {
             || !profile
                 .claims()
                 .iter()
-                .all(|record| record.is_owner_reviewed())
+                .all(vpr_domain::OwnerClaimRecord::is_owner_reviewed)
         {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
