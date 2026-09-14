@@ -2,7 +2,9 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use serde::Serialize;
-use vpr_capture::{CaptureError, GuidedOwnerInterview, InterviewPlan, InterviewQuestion, PlanError};
+use vpr_capture::{
+    CaptureError, GuidedOwnerInterview, InterviewPlan, InterviewQuestion, PlanError,
+};
 use vpr_domain::{
     ClaimId, ClaimKind, ConstitutionBoundary, PersonaCaptureState, PersonaId, PersonaIdentity,
     PersonaMode, PersonaProfile, PersonaVersion, VerificationState,
@@ -31,14 +33,14 @@ impl Rt0OwnerCapture {
     #[must_use]
     pub fn snapshot(&self) -> OwnerCaptureSnapshot {
         let profile = self.interview.profile();
-        let current_question = self
-            .interview
-            .current_question()
-            .map(|question| OwnerCaptureQuestion {
-                claim_id: question.claim_id().as_str().to_owned(),
-                prompt: question.prompt().to_owned(),
-                kind: claim_kind_name(question.kind()).to_owned(),
-            });
+        let current_question =
+            self.interview
+                .current_question()
+                .map(|question| OwnerCaptureQuestion {
+                    claim_id: question.claim_id().as_str().to_owned(),
+                    prompt: question.prompt().to_owned(),
+                    kind: claim_kind_name(question.kind()).to_owned(),
+                });
         let claims = profile
             .claims()
             .iter()
@@ -164,7 +166,9 @@ impl Display for OwnerCaptureError {
             Self::Plan(error) => Display::fmt(error, formatter),
             Self::Capture(error) => Display::fmt(error, formatter),
             Self::InvalidStaticPlan => formatter.write_str("RT0 owner capture plan is invalid"),
-            Self::VersionUnavailable => formatter.write_str("initial PersonaVersion is unavailable"),
+            Self::VersionUnavailable => {
+                formatter.write_str("initial PersonaVersion is unavailable")
+            }
         }
     }
 }
@@ -268,7 +272,9 @@ mod tests {
         let mut capture = capture();
         capture.submit_answer("Сергей, предприниматель").unwrap();
         capture.submit_answer("Кратко и по существу").unwrap();
-        capture.submit_answer("Проверять результат маленькими шагами").unwrap();
+        capture
+            .submit_answer("Проверять результат маленькими шагами")
+            .unwrap();
         capture.finish_capture().unwrap();
 
         let identity = ClaimId::new("identity-self-description").unwrap();
