@@ -81,6 +81,26 @@ for capability in capabilities:
 if len(ids) != len(set(ids)):
     raise SystemExit("RT0 capability catalogue contains duplicate capability ids")
 
+
+capability_by_id = {capability["id"]: capability for capability in capabilities}
+required_capability_states = {
+    "evaluation.rt0_exit_evidence_gate": ("EXPERIMENTAL", False),
+    "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
+    "provider.real_llm": ("NOT_IMPLEMENTED", False),
+    "provider.real_stt": ("NOT_IMPLEMENTED", False),
+    "provider.real_avatar": ("NOT_IMPLEMENTED", False),
+    "release.rt0_exit_gate": ("NOT_IMPLEMENTED", False),
+}
+for capability_id, expected in required_capability_states.items():
+    capability = capability_by_id.get(capability_id)
+    if capability is None:
+        raise SystemExit(f"RT0 capability catalogue is missing {capability_id}")
+    actual = (capability.get("maturity"), capability.get("user_reachable"))
+    if actual != expected:
+        raise SystemExit(
+            f"{capability_id} must remain {expected} until real exact-candidate evidence exists; got {actual}"
+        )
+
 reason_source = REASON_SOURCE.read_text(encoding="utf-8")
 for code in sorted(REQUIRED_REASON_CODES):
     if f"`{code}`" not in spec_text:

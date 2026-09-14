@@ -36,3 +36,27 @@ cargo run -p vpr-evaluation -- \
 Exit codes are stable: `0` means the bound Golden bundle passed, `1` means the binding is valid but one or more Golden cases failed, and `2` means input or binding is invalid/stale.
 
 A successful synthetic or mock run is **not** RT0 exit evidence. Release evidence still requires the same exact candidate/provider state to have real owner and non-owner conversations, measured latency/cost, permission/privacy results, and human evaluation as required by the Canon and ReleaseSpec.
+
+## RT0 exit-evidence gate
+
+`vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as a successful bound Golden report. The exit checker also re-evaluates the archived private Golden evidence against the compiled mandatory RT0 minimum suite before trusting that report. It does not create evidence and cannot turn mock/synthetic results into real evidence.
+
+The gate requires real owner and visitor Russian voice/video conversations, owner interruption, the ReleaseSpec acceptance matrix, measured QualityContract latency distributions, measured cost, zero accepted private-context leakage and false owner attribution, revocation/egress-denial proof, all five mandatory human-review dimensions, an explicit usability decision, and reviewed known limitations. Thresholds are taken unchanged from `RT0_RELEASE_SPEC.md`.
+
+Run it with:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
+  /secure/path/rt0-exit-evidence.json \
+  /secure/path/bound-golden-report.json \
+  /secure/path/private-golden-evidence.json \
+  /secure/path/rt0-provider-state.json \
+  docs/releases/RT0_RELEASE_SPEC.md \
+  "$(git rev-parse HEAD)"
+```
+
+The exit checker recomputes the sanitized provider-state digest from the separate provider-state file and requires its parsed contents to exactly match the provider state embedded in the Golden report. It also re-runs the bound Golden evaluator over the private Golden evidence bundle using the compiled mandatory `rt0_golden_minimum.json` suite, the exact ReleaseSpec bytes, provider state, and candidate SHA; the recomputed report must exactly match the archived sanitized Golden report. This prevents shortened/forged Golden reports and cross-provider/model/representation reuse.
+
+Exit codes are stable: `0` means the supplied exact-candidate evidence satisfies the deterministic gate, `1` means evidence is structurally valid but one or more mandatory RT0 conditions fail, and `2` means evidence is malformed, stale, tampered, or cross-candidate. `docs/evaluation/rt0_exit_evidence.synthetic.example.json` is schema documentation only; every substantive origin in it is `synthetic`, so it is intentionally ineligible for RT0 exit.
+
+Even a `0` from this experimental checker does not by itself promote `release.rt0_exit_gate`: the archived evidence artifacts must actually exist and correspond to the real provider/model/representation state named by the bound Golden report.

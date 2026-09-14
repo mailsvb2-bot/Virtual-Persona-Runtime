@@ -12,3 +12,7 @@ vpr-domain = { path = "../vpr-domain" }
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "vpr-rt0-exit-evidence"
+path = "src/bin/rt0_exit_gate.rs"

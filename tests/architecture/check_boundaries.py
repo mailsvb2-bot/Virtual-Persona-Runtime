@@ -294,6 +294,57 @@ for required in (
     if required not in evaluation_main:
         raise SystemExit(f"RT0 evaluation CLI missing bound-evidence contract {required}")
 
+
+exit_source = (evaluation_src / "exit.rs").read_text(encoding="utf-8")
+for required in (
+    "RT0_EXIT_EVIDENCE_SCHEMA",
+    "EvidenceOrigin::Real",
+    "GoldenSetNotPassed",
+    "OwnerConversationNotReal",
+    "VisitorConversationNotReal",
+    "AcceptanceMatrixIncomplete",
+    "TextLatencyExceeded",
+    "AudioLatencyExceeded",
+    "InterruptionLatencyExceeded",
+    "VideoLatencyExceeded",
+    "AvSyncExceeded",
+    "ReconnectLatencyExceeded",
+    "CostNotMeasured",
+    "PrivateContextLeakageAccepted",
+    "FalseOwnerAttributionAccepted",
+    "HumanEvaluationNotUsable",
+    "KnownLimitationsNotReviewed",
+    "ProviderStateMismatch",
+    "provider_state_bytes",
+    "1_000",
+    "2_500",
+    "1_500",
+    "3_000",
+    "500",
+    "120",
+    "5_000",
+    "deny_unknown_fields",
+):
+    if required not in exit_source:
+        raise SystemExit(f"RT0 exit evidence evaluator missing mandatory invariant {required}")
+if len(exit_source.splitlines()) > 600:
+    raise SystemExit("RT0 exit evidence evaluator became a God File (>600 lines)")
+
+exit_cli = (evaluation_src / "bin" / "rt0_exit_gate.rs").read_text(encoding="utf-8")
+for required in (
+    "evaluate_rt0_exit_evidence",
+    "golden_report_bytes",
+    "provider_state_bytes",
+    "ProviderStateManifest",
+    "GoldenEvidenceBundle",
+    "golden_evidence_bytes",
+    "release_spec_bytes",
+    "exact_candidate_sha",
+    "report.ready",
+):
+    if required not in exit_cli:
+        raise SystemExit(f"RT0 exit evidence CLI missing exact-candidate contract {required}")
+
 # Realtime-avatar signaling must remain provider-neutral, secret-safe and outside runtime.
 avatar_source = (CRATES / "vpr-integration" / "src" / "avatar.rs").read_text(encoding="utf-8")
 if "pub trait RealtimeAvatarPort" not in avatar_source:

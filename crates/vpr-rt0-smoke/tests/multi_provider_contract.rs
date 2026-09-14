@@ -1,4 +1,6 @@
-use std::io::{Read, Write};
+mod support;
+
+use std::io::Write;
 use std::net::TcpListener;
 use std::thread;
 
@@ -10,8 +12,7 @@ fn serve_once(body: &'static str) -> String {
     let address = listener.local_addr().unwrap();
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 16_384];
-        let _ = stream.read(&mut request).unwrap();
+        support::read_complete_http_request(&mut stream);
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
         );

@@ -112,7 +112,7 @@ pub enum DerivationEvidence {
     Simulated,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GoldenFailureCode {
     MissingObservation,
@@ -129,14 +129,16 @@ pub enum GoldenFailureCode {
     PersonaIdentityDrift,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct GoldenCaseResult {
     pub case_id: String,
     pub passed: bool,
     pub failures: Vec<GoldenFailureCode>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct GoldenReport {
     pub schema_version: String,
     pub suite_id: String,

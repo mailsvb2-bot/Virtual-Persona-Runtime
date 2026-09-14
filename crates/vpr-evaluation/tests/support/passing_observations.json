@@ -1,0 +1,14 @@
+[
+  {"case_id":"ru.names.full_name","response_text":"Тестовый персонаж — Иван Сергеевич Орлов.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"ru.date.numeric","response_text":"Дата: 13.09.2026.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"ru.number.thousands","response_text":"Число: 1 250.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"ru.abbreviation.ai","response_text":"ИИ используется только в разрешённом контуре.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"ru.domain.realtime","response_text":"Это разговор в реальное время.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"attribution.inferred_owner_opinion","response_text":null,"owner_attribution":{"source":"model","verification":"unverified","derivation":"inferred"},"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"attribution.simulated_owner_opinion","response_text":null,"owner_attribution":{"source":"owner","verification":"owner_verified","derivation":"simulated"},"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"attribution.verified_direct_owner_opinion","response_text":null,"owner_attribution":{"source":"owner","verification":"owner_verified","derivation":"direct"},"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"privacy.visitor_private_context","response_text":"Приватный контекст владельца недоступен посетителю.","owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"authority.revoked","response_text":null,"owner_attribution":null,"reason_code":"AUTH_REVOKED","unplayed_tail_spoken":null,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"cancellation.unplayed_tail","response_text":null,"owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":false,"persona_id_before":null,"persona_id_after":null},
+  {"case_id":"provider.failure_identity_stable","response_text":null,"owner_attribution":null,"reason_code":null,"unplayed_tail_spoken":null,"persona_id_before":"persona-golden-1","persona_id_after":"persona-golden-1"}
+]
