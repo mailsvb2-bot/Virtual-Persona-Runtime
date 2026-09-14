@@ -52,13 +52,20 @@ pub struct LabIceServer {
     pub credential: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerContextState {
+    Missing,
+    Reviewed,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabStatus {
     pub session_state: String,
     pub avatar_open: bool,
     pub egress_enabled: bool,
     pub voice_ready: bool,
-    pub owner_context_ready: bool,
+    pub owner_context_state: OwnerContextState,
     pub persona_version: u64,
     pub reviewed_owner_claims: usize,
 }
@@ -126,11 +133,11 @@ impl OwnerLabEngine {
         })
     }
 
-    /// Binds an explicitly reviewed DIGITAL_TWIN profile as the canonical owner context for
+    /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
     /// subsequent turns. The profile's Persona identity/version becomes the turn snapshot source.
     ///
     /// # Errors
-    /// Fails closed if capture/review is incomplete or the profile is not a DIGITAL_TWIN.
+    /// Fails closed if capture/review is incomplete or the profile is not a `DIGITAL_TWIN`.
     pub fn with_reviewed_profile(mut self, profile: PersonaProfile) -> Result<Self, LabError> {
         self.reviewed_owner_context =
             Some(ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?);
@@ -138,7 +145,7 @@ impl OwnerLabEngine {
     }
 
     /// Corrects one owner-reviewed claim. The domain profile preserves the previous revision and
-    /// advances PersonaVersion; the next turn snapshots the corrected version.
+    /// advances `PersonaVersion`; the next turn snapshots the corrected version.
     ///
     /// # Errors
     /// Fails closed when no reviewed owner context is bound or the correction is rejected.
@@ -168,7 +175,11 @@ impl OwnerLabEngine {
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
             voice_ready: self.stt.is_some() && self.llm.is_some(),
-            owner_context_ready: self.reviewed_owner_context.is_some(),
+            owner_context_state: if self.reviewed_owner_context.is_some() {
+                OwnerContextState::Reviewed
+            } else {
+                OwnerContextState::Missing
+            },
             persona_version: self.persona_identity().version().get(),
             reviewed_owner_claims: self
                 .reviewed_owner_context
