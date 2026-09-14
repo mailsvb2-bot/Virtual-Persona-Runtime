@@ -13,10 +13,8 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> Self {
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "vpr-session-binding-{}-{seq}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("vpr-session-binding-{}-{seq}", std::process::id()));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
