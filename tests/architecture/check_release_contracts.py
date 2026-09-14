@@ -94,6 +94,7 @@ required_capability_states = {
     "evaluation.rt0_live_provider_probe": ("EXPERIMENTAL", False),
     "evaluation.rt0_owner_lab_session_evidence": ("EXPERIMENTAL", False),
     "evaluation.rt0_session_evidence_aggregate": ("EXPERIMENTAL", False),
+    "evaluation.rt0_session_evidence_binding": ("EXPERIMENTAL", False),
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),
