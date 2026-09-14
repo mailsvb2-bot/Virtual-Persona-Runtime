@@ -311,7 +311,10 @@ impl OwnerLabEngine {
     /// Returns a stable fail-closed reason if session/authority/provider state is not current.
     pub fn apply(&mut self, input: OwnerLabTurnInput) -> Result<(), LabError> {
         if self.session_audience == Some(LabSessionAudience::Visitor)
-            && matches!(input, OwnerLabTurnInput::Text(_) | OwnerLabTurnInput::AudioUrl(_))
+            && matches!(
+                input,
+                OwnerLabTurnInput::Text(_) | OwnerLabTurnInput::AudioUrl(_)
+            )
         {
             return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
         }

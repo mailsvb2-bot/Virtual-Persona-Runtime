@@ -19,8 +19,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 
 pub use state::{
     LabError, LabSessionAudience, LabSignalBundle, LabStatus, LabVoiceResult, LabVoiceUsage,
-    OwnerContextState,
-    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
+    OwnerContextState, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};
