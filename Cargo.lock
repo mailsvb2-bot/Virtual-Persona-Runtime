@@ -1206,6 +1206,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vpr-live-proof"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vpr-evaluation",
+ "vpr-owner-lab",
+]
+
+[[package]]
 name = "vpr-owner-lab"
 version = "0.1.0"
 dependencies = [
@@ -1213,6 +1223,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
  "tiny_http",
  "vpr-domain",
  "vpr-integration",

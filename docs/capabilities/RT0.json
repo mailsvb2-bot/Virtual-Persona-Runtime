@@ -1,6 +1,6 @@
 {
   "release_train": "RT0",
-  "catalogue_version": "0.15.0",
+  "catalogue_version": "0.16.0",
   "status_semantics": "Canon section 40",
   "capabilities": [
     {
@@ -265,6 +265,11 @@
     },
     {
       "id": "evaluation.rt0_exit_evidence_gate",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_live_proof_preflight",
       "maturity": "EXPERIMENTAL",
       "user_reachable": false
     },
