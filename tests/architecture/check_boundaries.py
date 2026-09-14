@@ -21,7 +21,7 @@ allowed_internal_dependencies = {
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
     "vpr-provider-did-agent-streams": {"vpr-integration"},
     "vpr-evaluation": {"vpr-domain"},
-    "vpr-live-proof": {"vpr-evaluation", "vpr-owner-lab"},
+    "vpr-live-proof": {"vpr-domain", "vpr-evaluation", "vpr-integration", "vpr-owner-lab", "vpr-policy", "vpr-runtime"},
     "vpr-owner-lab": {
         "vpr-domain",
         "vpr-integration",
@@ -243,6 +243,43 @@ for required in (
 for forbidden in ("VPR_DID_API_KEY", "VPR_OWNER_LAB_STT_API_KEY", "VPR_OWNER_LAB_LLM_API_KEY"):
     if forbidden in live_proof_text:
         raise SystemExit(f"live-proof layer must not read provider secrets directly: {forbidden}")
+
+
+probe_source = (live_proof_src / "probe.rs").read_text(encoding="utf-8")
+for required_probe_boundary in (
+    "execute_stt(",
+    "execute_llm(",
+    "OwnerLabEngine::new",
+    ".start(OwnerLabStartRequest { consent: true })",
+    ".close()",
+    "conversation_evidence: false",
+    "output_delivery_proven: false",
+    "input_audio_sha256",
+    "input_audio_millis",
+    "turn.begin_output()",
+    "turn.complete()",
+    "turn.fail()",
+):
+    if required_probe_boundary not in probe_source:
+        raise SystemExit(
+            f"RT0 live-provider probe missing canonical/evidence boundary {required_probe_boundary}"
+        )
+for forbidden_probe_call in (".transcribe(", ".stream(", ".create_session("):
+    if forbidden_probe_call in probe_source:
+        raise SystemExit(
+            f"RT0 live-provider probe must not bypass canonical runtime with {forbidden_probe_call}"
+        )
+for forbidden_probe_payload in (
+    "pub transcript:",
+    "pub reply:",
+    "pub sdp:",
+    "provider_stream_id",
+    "provider_session_id",
+):
+    if forbidden_probe_payload in probe_source:
+        raise SystemExit(
+            f"RT0 live-provider probe must not serialize sensitive/raw payload field {forbidden_probe_payload}"
+        )
 
 # Evaluation may inspect canonical domain evidence, but it must not become a runtime/provider brain.
 evaluation_src = CRATES / "vpr-evaluation" / "src"

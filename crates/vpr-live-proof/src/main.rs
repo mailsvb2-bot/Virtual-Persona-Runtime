@@ -4,12 +4,46 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
-use vpr_live_proof::{LiveProofPreflightError, preflight};
+use vpr_live_proof::{
+    LiveProofPreflightError, LiveProviderProbeError, preflight, prepare, run_provider_probe,
+};
 
 #[derive(Serialize)]
-struct CliError {
+struct CliError<'a> {
     ok: bool,
-    code: LiveProofPreflightError,
+    code: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum BoundaryError {
+    InputPathInvalid,
+    InputPathInsideWorktree,
+    OutputPathInvalid,
+    OutputPathInsideWorktree,
+    OutputPathsConflict,
+    InputReadFailed,
+    ArtifactWriteFailed,
+}
+
+impl BoundaryError {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::InputPathInvalid => "INPUT_PATH_INVALID",
+            Self::InputPathInsideWorktree => "INPUT_PATH_INSIDE_WORKTREE",
+            Self::OutputPathInvalid => "OUTPUT_PATH_INVALID",
+            Self::OutputPathInsideWorktree => "OUTPUT_PATH_INSIDE_WORKTREE",
+            Self::OutputPathsConflict => "OUTPUT_PATHS_CONFLICT",
+            Self::InputReadFailed => "INPUT_READ_FAILED",
+            Self::ArtifactWriteFailed => "ARTIFACT_WRITE_FAILED",
+        }
+    }
+}
+
+struct RepoSnapshot {
+    candidate: String,
+    root: PathBuf,
 }
 
 fn main() {
@@ -19,79 +53,136 @@ fn main() {
 }
 
 fn run() -> Result<(), i32> {
-    let mut args = env::args().skip(1);
-    let Some(output_path) = args.next() else {
-        eprintln!("usage: vpr-live-proof <provider-state-output.json>");
-        return Err(2);
-    };
-    if args.next().is_some() {
-        eprintln!("usage: vpr-live-proof <provider-state-output.json>");
-        return Err(2);
-    }
-    let candidate = git_output(["rev-parse", "HEAD"])?;
-    let worktree_root = PathBuf::from(git_output(["rev-parse", "--show-toplevel"])?.trim());
-    let output_path = PathBuf::from(&output_path);
-    if let Err(code) = validate_output_path(&output_path, &worktree_root) {
-        emit_error(code);
-        return Err(2);
-    }
-    let status = git_output(["status", "--porcelain", "--untracked-files=all"])?;
-    let egress_authorized =
-        env::var("VPR_LIVE_PROOF_ALLOW_EGRESS").is_ok_and(|value| value == "true");
-    let receipt = match preflight(
-        candidate.trim(),
-        status.trim().is_empty(),
-        egress_authorized,
-    ) {
-        Ok(receipt) => receipt,
-        Err(code) => {
-            emit_error(code);
-            return Err(2);
+    let args: Vec<String> = env::args().skip(1).collect();
+    match args.as_slice() {
+        [provider_state_output] => run_preflight(Path::new(provider_state_output)),
+        [mode, audio_input, provider_state_output, probe_output] if mode == "probe" => run_probe(
+            Path::new(audio_input),
+            Path::new(provider_state_output),
+            Path::new(probe_output),
+        ),
+        _ => {
+            eprintln!(
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>"
+            );
+            Err(2)
         }
-    };
-    let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
-    atomic_write(&output_path, &provider_state)?;
-    let final_candidate = git_output(["rev-parse", "HEAD"])?;
-    let final_status = git_output(["status", "--porcelain", "--untracked-files=all"])?;
-    if final_candidate.trim() != candidate.trim() {
-        let _ = fs::remove_file(&output_path);
-        emit_error(LiveProofPreflightError::CandidateChanged);
-        return Err(2);
     }
-    if !final_status.trim().is_empty() {
+}
+
+fn run_preflight(output_path: &Path) -> Result<(), i32> {
+    let snapshot = repo_snapshot()?;
+    let output_path = validated_output_path(output_path, &snapshot.root).map_err(emit_boundary)?;
+    let clean = worktree_clean()?;
+    let receipt =
+        preflight(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
+    let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
+    atomic_write(&output_path, &provider_state).map_err(emit_boundary)?;
+    if let Err(error) = verify_snapshot(&snapshot) {
         let _ = fs::remove_file(&output_path);
-        emit_error(LiveProofPreflightError::WorktreeDirty);
-        return Err(2);
+        return Err(emit_preflight(error));
     }
     println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
     Ok(())
 }
 
-fn validate_output_path(
-    output_path: &Path,
-    worktree_root: &Path,
-) -> Result<(), LiveProofPreflightError> {
-    if !output_path.is_absolute() {
-        return Err(LiveProofPreflightError::OutputPathInvalid);
+fn run_probe(audio_path: &Path, provider_path: &Path, probe_path: &Path) -> Result<(), i32> {
+    let snapshot = repo_snapshot()?;
+    let audio_path = validated_input_path(audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let provider_path =
+        validated_output_path(provider_path, &snapshot.root).map_err(emit_boundary)?;
+    let probe_path = validated_output_path(probe_path, &snapshot.root).map_err(emit_boundary)?;
+    if provider_path == probe_path {
+        return Err(emit_boundary(BoundaryError::OutputPathsConflict));
     }
-    let root =
-        fs::canonicalize(worktree_root).map_err(|_| LiveProofPreflightError::OutputPathInvalid)?;
-    let parent = output_path
-        .parent()
-        .ok_or(LiveProofPreflightError::OutputPathInvalid)?;
-    let parent =
-        fs::canonicalize(parent).map_err(|_| LiveProofPreflightError::OutputPathInvalid)?;
-    let file_name = output_path
-        .file_name()
-        .ok_or(LiveProofPreflightError::OutputPathInvalid)?;
-    let resolved = parent.join(file_name);
-    if resolved.starts_with(root) {
-        return Err(LiveProofPreflightError::OutputPathInsideWorktree);
+    let clean = worktree_clean()?;
+    let prepared =
+        prepare(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
+    let provider_state =
+        serde_json::to_vec_pretty(&prepared.receipt().provider_state).map_err(|_| 2)?;
+    let audio = fs::read(audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let probe = run_provider_probe(prepared, audio).map_err(|error| emit_probe(&error))?;
+    let probe_bytes = serde_json::to_vec_pretty(&probe).map_err(|_| 2)?;
+
+    verify_snapshot(&snapshot).map_err(emit_preflight)?;
+    if let Err(error) = atomic_write(&provider_path, &provider_state) {
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = atomic_write(&probe_path, &probe_bytes) {
+        let _ = fs::remove_file(&provider_path);
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = verify_snapshot(&snapshot) {
+        let _ = fs::remove_file(&provider_path);
+        let _ = fs::remove_file(&probe_path);
+        return Err(emit_preflight(error));
+    }
+    println!("{}", serde_json::to_string_pretty(&probe).map_err(|_| 2)?);
+    Ok(())
+}
+
+fn repo_snapshot() -> Result<RepoSnapshot, i32> {
+    Ok(RepoSnapshot {
+        candidate: git_output(&["rev-parse", "HEAD"])?.trim().to_owned(),
+        root: PathBuf::from(git_output(&["rev-parse", "--show-toplevel"])?.trim()),
+    })
+}
+
+fn verify_snapshot(snapshot: &RepoSnapshot) -> Result<(), LiveProofPreflightError> {
+    let current = git_output(&["rev-parse", "HEAD"])
+        .map_err(|_| LiveProofPreflightError::CandidateChanged)?;
+    if current.trim() != snapshot.candidate {
+        return Err(LiveProofPreflightError::CandidateChanged);
+    }
+    if !worktree_clean().map_err(|_| LiveProofPreflightError::WorktreeDirty)? {
+        return Err(LiveProofPreflightError::WorktreeDirty);
     }
     Ok(())
 }
 
-fn git_output<const N: usize>(args: [&str; N]) -> Result<String, i32> {
+fn worktree_clean() -> Result<bool, i32> {
+    Ok(
+        git_output(&["status", "--porcelain", "--untracked-files=all"])?
+            .trim()
+            .is_empty(),
+    )
+}
+
+fn egress_authorized() -> bool {
+    env::var("VPR_LIVE_PROOF_ALLOW_EGRESS").is_ok_and(|value| value == "true")
+}
+
+fn validated_input_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, BoundaryError> {
+    if !path.is_absolute() {
+        return Err(BoundaryError::InputPathInvalid);
+    }
+    let root = fs::canonicalize(worktree_root).map_err(|_| BoundaryError::InputPathInvalid)?;
+    let resolved = fs::canonicalize(path).map_err(|_| BoundaryError::InputPathInvalid)?;
+    if !resolved.is_file() {
+        return Err(BoundaryError::InputPathInvalid);
+    }
+    if resolved.starts_with(root) {
+        return Err(BoundaryError::InputPathInsideWorktree);
+    }
+    Ok(resolved)
+}
+
+fn validated_output_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, BoundaryError> {
+    if !path.is_absolute() {
+        return Err(BoundaryError::OutputPathInvalid);
+    }
+    let root = fs::canonicalize(worktree_root).map_err(|_| BoundaryError::OutputPathInvalid)?;
+    let parent = path.parent().ok_or(BoundaryError::OutputPathInvalid)?;
+    let parent = fs::canonicalize(parent).map_err(|_| BoundaryError::OutputPathInvalid)?;
+    let file_name = path.file_name().ok_or(BoundaryError::OutputPathInvalid)?;
+    let resolved = parent.join(file_name);
+    if resolved.starts_with(root) {
+        return Err(BoundaryError::OutputPathInsideWorktree);
+    }
+    Ok(resolved)
+}
+
+fn git_output(args: &[&str]) -> Result<String, i32> {
     let output = Command::new("git").args(args).output().map_err(|_| 2)?;
     if !output.status.success() {
         return Err(2);
@@ -99,24 +190,47 @@ fn git_output<const N: usize>(args: [&str; N]) -> Result<String, i32> {
     String::from_utf8(output.stdout).map_err(|_| 2)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), i32> {
-    let parent = path
-        .parent()
-        .filter(|value| !value.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let file_name = path.file_name().and_then(|value| value.to_str()).ok_or(2)?;
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BoundaryError> {
+    let parent = path.parent().ok_or(BoundaryError::ArtifactWriteFailed)?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or(BoundaryError::ArtifactWriteFailed)?;
     let temp = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
-    fs::write(&temp, bytes).map_err(|_| 2)?;
+    fs::write(&temp, bytes).map_err(|_| BoundaryError::ArtifactWriteFailed)?;
     fs::rename(&temp, path).map_err(|_| {
         let _ = fs::remove_file(&temp);
-        2
+        BoundaryError::ArtifactWriteFailed
     })
 }
 
-fn emit_error(code: LiveProofPreflightError) {
+fn emit_preflight(error: LiveProofPreflightError) -> i32 {
+    let code = serde_json::to_value(error)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "INTERNAL_ERROR".into());
+    emit_error(&code, None);
+    2
+}
+
+fn emit_probe(error: &LiveProviderProbeError) -> i32 {
+    emit_error(error.code(), Some(error.stage()));
+    2
+}
+
+fn emit_boundary(error: BoundaryError) -> i32 {
+    emit_error(error.code(), None);
+    2
+}
+
+fn emit_error(code: &str, stage: Option<&str>) {
     eprintln!(
         "{}",
-        serde_json::to_string(&CliError { ok: false, code })
-            .unwrap_or_else(|_| "{\"ok\":false}".into())
+        serde_json::to_string(&CliError {
+            ok: false,
+            code,
+            stage,
+        })
+        .unwrap_or_else(|_| "{\"ok\":false}".into())
     );
 }

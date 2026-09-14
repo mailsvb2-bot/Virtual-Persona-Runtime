@@ -42,3 +42,17 @@ The preflight reuses the same `ProviderBundle` composition path as Owner Lab, re
 A preflight PASS proves only that an exact clean candidate has a complete local provider configuration and explicit egress authorization. It does **not** prove external provider reachability, conversation quality, or RT0 completion. `provider.real_*` and `release.rt0_exit_gate` remain `NOT_IMPLEMENTED` until credentialed live runs and the rest of the exit evidence exist.
 
 Live-proof preflight output must use an absolute path outside the canonical Git worktree; evidence generation must not dirty the candidate it claims to describe.
+
+## Credentialed live-provider probe
+
+After preflight, `vpr-live-proof probe` can test real provider reachability for the exact clean candidate:
+
+```text
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- probe /secure/input/utterance.pcm /secure/evidence/provider-state.json /secure/evidence/provider-probe.json
+```
+
+The input must be raw PCM S16LE, mono, 16 kHz and must live outside the Git worktree. STT and LLM execute only through canonical `ActiveTurn::execute_stt` / `execute_llm`; realtime avatar open/close executes through `OwnerLabEngine`. The transcript is not forwarded to the LLM: the LLM reachability probe uses a fixed safe Russian prompt.
+
+The serialized probe receipt contains only stage latency, usage/cost counters, transcript/output character counts, exact candidate/provider-state binding, SHA-256 + duration binding for the private PCM input, and explicit `conversation_evidence=false` / `output_delivery_proven=false`. It never stores raw audio, transcript text, generated reply, WebRTC signaling, provider session identifiers, or credentials.
+
+A probe PASS proves credentialed provider reachability only. It does not prove a real owner/non-owner conversation, rendered media delivery, human quality, Golden Set completion, or RT0 release readiness. `provider.real_*` and `release.rt0_exit_gate` therefore remain `NOT_IMPLEMENTED` until the required external evidence exists and is reviewed.
