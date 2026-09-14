@@ -15,7 +15,7 @@ use vpr_integration::{
     WebRtcSessionDescription,
 };
 
-use super::{LabError, OwnerLabEngine, OwnerLabStartRequest};
+use super::{LabError, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest};
 
 #[derive(Default)]
 struct VoiceStats {
@@ -276,7 +276,10 @@ fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
 #[test]
 fn corrected_reviewed_claim_is_used_by_the_next_canonical_voice_turn() {
     let (mut engine, stats) = reviewed_voice_engine();
-    assert!(engine.status().owner_context_ready);
+    assert_eq!(
+        engine.status().owner_context_state,
+        OwnerContextState::Reviewed
+    );
     assert_eq!(engine.status().persona_version, 2);
     assert_eq!(engine.status().reviewed_owner_claims, 1);
 
