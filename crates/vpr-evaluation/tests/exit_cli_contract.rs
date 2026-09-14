@@ -1,3 +1,5 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -41,39 +43,6 @@ impl Drop for TempDir {
 
 fn digest(byte: char) -> String {
     byte.to_string().repeat(64)
-}
-
-fn provider_state() -> Value {
-    json!({
-        "schema_version": "rt0-provider-state-0.1",
-        "providers": [
-            {"role":"stt","provider":"stt","model_or_representation":"v1","configuration_fingerprint_sha256":digest('a')},
-            {"role":"llm","provider":"llm","model_or_representation":"v1","configuration_fingerprint_sha256":digest('b')},
-            {"role":"avatar","provider":"avatar","model_or_representation":"v1","configuration_fingerprint_sha256":digest('c')}
-        ]
-    })
-}
-
-fn golden_report(provider_state_sha256: &str) -> Value {
-    json!({
-        "evidence_input_sha256": digest('f'),
-        "binding": {
-            "schema_version": "rt0-evidence-binding-0.1",
-            "candidate_sha": CANDIDATE,
-            "release_spec_sha256": sha256_hex(RELEASE_SPEC),
-            "suite_sha256": digest('e'),
-            "provider_state_sha256": provider_state_sha256
-        },
-        "provider_state": provider_state(),
-        "golden": {
-            "schema_version": "rt0-golden-0.1",
-            "suite_id": "rt0.cli.contract",
-            "total": 1,
-            "passed": 1,
-            "failed": 0,
-            "cases": [{"case_id":"golden.pass","passed":true,"failures":[]}]
-        }
-    })
 }
 
 fn exit_evidence(golden_bytes: &[u8], provider_state_sha256: &str) -> Value {
@@ -135,20 +104,23 @@ fn exit_evidence(golden_bytes: &[u8], provider_state_sha256: &str) -> Value {
 
 fn prepare(
     evidence_mutator: impl FnOnce(&mut Value),
-) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
+) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
     let dir = TempDir::new();
     let golden_path = dir.path().join("golden-report.json");
+    let golden_evidence_path = dir.path().join("golden-evidence.json");
     let provider_state_path = dir.path().join("provider-state.json");
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
-    let provider_state = provider_state();
-    let provider_state_bytes = serde_json::to_vec_pretty(&provider_state).unwrap();
+    let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
+    let _ = (&fixture.provider_state, &fixture.bundle);
+    let provider_state_bytes = fixture.provider_state_bytes;
     let provider_state_sha256 = sha256_hex(&provider_state_bytes);
-    let golden = golden_report(&provider_state_sha256);
-    let golden_bytes = serde_json::to_vec_pretty(&golden).unwrap();
+    let golden_bytes = serde_json::to_vec_pretty(&fixture.report).unwrap();
+    let golden_evidence_bytes = fixture.bundle_bytes;
     let mut evidence = exit_evidence(&golden_bytes, &provider_state_sha256);
     evidence_mutator(&mut evidence);
     fs::write(&golden_path, golden_bytes).unwrap();
+    fs::write(&golden_evidence_path, golden_evidence_bytes).unwrap();
     fs::write(&provider_state_path, provider_state_bytes).unwrap();
     fs::write(
         &evidence_path,
@@ -160,14 +132,31 @@ fn prepare(
         dir,
         evidence_path,
         golden_path,
+        golden_evidence_path,
         provider_state_path,
         spec_path,
     )
 }
 
+fn replace_golden_report_and_rebind_exit_evidence(
+    golden: &Path,
+    evidence: &Path,
+    mutate: impl FnOnce(&mut Value),
+) {
+    let mut report: Value = serde_json::from_slice(&fs::read(golden).unwrap()).unwrap();
+    mutate(&mut report);
+    let golden_bytes = serde_json::to_vec_pretty(&report).unwrap();
+    fs::write(golden, &golden_bytes).unwrap();
+
+    let mut exit: Value = serde_json::from_slice(&fs::read(evidence).unwrap()).unwrap();
+    exit["golden_report_sha256"] = json!(sha256_hex(&golden_bytes));
+    fs::write(evidence, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+}
+
 fn run(
     evidence: &Path,
     golden: &Path,
+    golden_evidence: &Path,
     provider_state: &Path,
     spec: &Path,
     candidate: &str,
@@ -175,6 +164,7 @@ fn run(
     Command::new(env!("CARGO_BIN_EXE_vpr-rt0-exit-evidence"))
         .arg(evidence)
         .arg(golden)
+        .arg(golden_evidence)
         .arg(provider_state)
         .arg(spec)
         .arg(candidate)
@@ -184,8 +174,15 @@ fn run(
 
 #[test]
 fn cli_returns_zero_only_for_complete_exact_bound_evidence() {
-    let (_dir, evidence, golden, provider_state, spec) = prepare(|_| {});
-    let output = run(&evidence, &golden, &provider_state, &spec, CANDIDATE);
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"ready\": true"));
@@ -195,10 +192,17 @@ fn cli_returns_zero_only_for_complete_exact_bound_evidence() {
 
 #[test]
 fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
-    let (_dir, evidence, golden, provider_state, spec) = prepare(|value| {
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|value| {
         value["privacy_permissions"]["accepted_private_context_leakage"] = json!(1);
     });
-    let output = run(&evidence, &golden, &provider_state, &spec, CANDIDATE);
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("PRIVATE_CONTEXT_LEAKAGE_ACCEPTED"));
@@ -207,11 +211,18 @@ fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
 
 #[test]
 fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
-    let (_dir, evidence, golden, provider_state, spec) = prepare(|_| {});
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
     let mut state: Value = serde_json::from_slice(&fs::read(&provider_state).unwrap()).unwrap();
     state["providers"][0]["provider"] = json!("tampered-stt");
     fs::write(&provider_state, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
-    let output = run(&evidence, &golden, &provider_state, &spec, CANDIDATE);
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
     assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8(output.stderr)
@@ -222,8 +233,15 @@ fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
 
 #[test]
 fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
-    let (_dir, evidence, golden, provider_state, spec) = prepare(|_| {});
-    let output = run(&evidence, &golden, &provider_state, &spec, &"2".repeat(40));
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        &"2".repeat(40),
+    );
     assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8(output.stderr)
@@ -231,14 +249,69 @@ fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
             .contains("CANDIDATE_SHA_MISMATCH")
     );
 
-    let (_dir, evidence, golden, provider_state, spec) = prepare(|value| {
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|value| {
         value["api_key"] = json!("must-not-be-accepted");
     });
-    let output = run(&evidence, &golden, &provider_state, &spec, CANDIDATE);
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
     assert_eq!(output.status.code(), Some(2));
     assert!(
         String::from_utf8(output.stderr)
             .unwrap()
             .contains("INPUT_INVALID")
+    );
+}
+
+#[test]
+fn cli_rejects_forged_shortened_golden_report_after_rebinding_hash() {
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    replace_golden_report_and_rebind_exit_evidence(&golden, &evidence, |report| {
+        report["golden"]["total"] = json!(1);
+        report["golden"]["passed"] = json!(1);
+        report["golden"]["failed"] = json!(0);
+        report["golden"]["cases"] = json!([report["golden"]["cases"][0].clone()]);
+    });
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("GOLDEN_REPORT_RECOMPUTE_MISMATCH")
+    );
+}
+
+#[test]
+fn cli_rejects_overflowing_golden_counts_without_panicking() {
+    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    replace_golden_report_and_rebind_exit_evidence(&golden, &evidence, |report| {
+        report["golden"]["passed"] = json!(usize::MAX);
+        report["golden"]["failed"] = json!(1);
+    });
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &spec,
+        CANDIDATE,
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("GOLDEN_REPORT_INVALID")
     );
 }

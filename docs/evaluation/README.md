@@ -49,12 +49,13 @@ Run it with:
 cargo run -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
   /secure/path/rt0-exit-evidence.json \
   /secure/path/bound-golden-report.json \
+  /secure/path/private-golden-evidence.json \
   /secure/path/rt0-provider-state.json \
   docs/releases/RT0_RELEASE_SPEC.md \
   "$(git rev-parse HEAD)"
 ```
 
-The exit checker recomputes the sanitized provider-state digest from the separate provider-state file and requires its parsed contents to exactly match the provider state embedded in the Golden report. This prevents reusing otherwise-valid Golden evidence across a different STT/LLM/avatar configuration.
+The exit checker recomputes the sanitized provider-state digest from the separate provider-state file and requires its parsed contents to exactly match the provider state embedded in the Golden report. It also re-runs the bound Golden evaluator over the private Golden evidence bundle using the compiled mandatory `rt0_golden_minimum.json` suite, the exact ReleaseSpec bytes, provider state, and candidate SHA; the recomputed report must exactly match the archived sanitized Golden report. This prevents shortened/forged Golden reports and cross-provider/model/representation reuse.
 
 Exit codes are stable: `0` means the supplied exact-candidate evidence satisfies the deterministic gate, `1` means evidence is structurally valid but one or more mandatory RT0 conditions fail, and `2` means evidence is malformed, stale, tampered, or cross-candidate. `docs/evaluation/rt0_exit_evidence.synthetic.example.json` is schema documentation only; every substantive origin in it is `synthetic`, so it is intentionally ineligible for RT0 exit.
 

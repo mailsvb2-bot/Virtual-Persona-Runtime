@@ -336,6 +336,8 @@ for required in (
     "golden_report_bytes",
     "provider_state_bytes",
     "ProviderStateManifest",
+    "GoldenEvidenceBundle",
+    "golden_evidence_bytes",
     "release_spec_bytes",
     "exact_candidate_sha",
     "report.ready",

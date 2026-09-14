@@ -2,14 +2,19 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::binding::{valid_git_sha, valid_sha256, validate_provider_state};
+use crate::binding::{
+    EvidenceVerificationContext, GoldenEvidenceBundle, evaluate_bound_golden_suite, valid_git_sha,
+    valid_sha256, validate_provider_state,
+};
 use crate::{
-    BoundGoldenReport, ProviderStateManifest, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    BoundGoldenReport, GoldenSuite, ProviderStateManifest, RT0_EVIDENCE_BINDING_SCHEMA,
+    RT0_GOLDEN_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
 pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.1";
 pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.1";
+const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
+    include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -179,6 +184,8 @@ pub struct Rt0ExitEvidence {
 pub struct Rt0ExitVerificationContext<'a> {
     pub exit_evidence_bytes: &'a [u8],
     pub golden_report_bytes: &'a [u8],
+    pub golden_evidence_bundle: &'a GoldenEvidenceBundle,
+    pub golden_evidence_bytes: &'a [u8],
     pub provider_state: &'a ProviderStateManifest,
     pub provider_state_bytes: &'a [u8],
     pub release_spec_bytes: &'a [u8],
@@ -244,6 +251,8 @@ pub enum Rt0ExitEvidenceError {
     GoldenReportDigestMismatch,
     ProviderStateDigestMismatch,
     ProviderStateMismatch,
+    GoldenEvidenceInvalid,
+    GoldenReportRecomputeMismatch,
     GoldenReportInvalid,
     ParticipantRoleMismatch,
     InvalidLatencyDistribution,
@@ -348,6 +357,24 @@ fn validate_structure(
         return Err(Rt0ExitEvidenceError::ProviderStateMismatch);
     }
     validate_golden_report(golden_report)?;
+    let required_suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES)
+        .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
+    let recomputed = evaluate_bound_golden_suite(
+        &required_suite,
+        context.golden_evidence_bundle,
+        EvidenceVerificationContext {
+            suite_bytes: RT0_REQUIRED_GOLDEN_SUITE_BYTES,
+            release_spec_bytes: context.release_spec_bytes,
+            provider_state: context.provider_state,
+            provider_state_bytes: context.provider_state_bytes,
+            evidence_bytes: context.golden_evidence_bytes,
+            exact_candidate_sha: context.exact_candidate_sha,
+        },
+    )
+    .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
+    if recomputed != *golden_report {
+        return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
+    }
     validate_artifact_digests(evidence)?;
     validate_latency_distributions(&evidence.quality)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
@@ -371,7 +398,7 @@ fn validate_golden_report(report: &BoundGoldenReport) -> Result<(), Rt0ExitEvide
         || !valid_sha256(&report.binding.provider_state_sha256)
         || report.golden.total == 0
         || report.golden.total != report.golden.cases.len()
-        || report.golden.passed + report.golden.failed != report.golden.total
+        || report.golden.passed.checked_add(report.golden.failed) != Some(report.golden.total)
         || validate_provider_state(&report.provider_state.providers).is_err()
     {
         return Err(Rt0ExitEvidenceError::GoldenReportInvalid);

@@ -2,8 +2,8 @@ use std::{env, fs};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundGoldenReport, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitVerificationContext,
-    evaluate_rt0_exit_evidence,
+    BoundGoldenReport, GoldenEvidenceBundle, ProviderStateManifest, Rt0ExitEvidence,
+    Rt0ExitVerificationContext, evaluate_rt0_exit_evidence,
 };
 
 #[derive(Serialize)]
@@ -26,6 +26,9 @@ fn run() -> Result<(), i32> {
     let Some(golden_report_path) = args.next() else {
         return usage();
     };
+    let Some(golden_evidence_path) = args.next() else {
+        return usage();
+    };
     let Some(provider_state_path) = args.next() else {
         return usage();
     };
@@ -41,10 +44,12 @@ fn run() -> Result<(), i32> {
 
     let exit_evidence_bytes = read(&exit_evidence_path)?;
     let golden_report_bytes = read(&golden_report_path)?;
+    let golden_evidence_bytes = read(&golden_evidence_path)?;
     let provider_state_bytes = read(&provider_state_path)?;
     let release_spec_bytes = read(&release_spec_path)?;
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
     let golden_report: BoundGoldenReport = parse(&golden_report_bytes)?;
+    let golden_evidence_bundle: GoldenEvidenceBundle = parse(&golden_evidence_bytes)?;
     let provider_state: ProviderStateManifest = parse(&provider_state_bytes)?;
 
     let report = match evaluate_rt0_exit_evidence(
@@ -53,6 +58,8 @@ fn run() -> Result<(), i32> {
         Rt0ExitVerificationContext {
             exit_evidence_bytes: &exit_evidence_bytes,
             golden_report_bytes: &golden_report_bytes,
+            golden_evidence_bundle: &golden_evidence_bundle,
+            golden_evidence_bytes: &golden_evidence_bytes,
             provider_state: &provider_state,
             provider_state_bytes: &provider_state_bytes,
             release_spec_bytes: &release_spec_bytes,
@@ -94,7 +101,7 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
 
 fn usage() -> Result<(), i32> {
     eprintln!(
-        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <provider-state.json> <release-spec.md> <exact-candidate-sha>"
+        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <release-spec.md> <exact-candidate-sha>"
     );
     Err(2)
 }
