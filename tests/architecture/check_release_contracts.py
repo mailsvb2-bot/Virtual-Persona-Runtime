@@ -98,6 +98,7 @@ required_capability_states = {
     "evaluation.rt0_session_evidence_binding": ("EXPERIMENTAL", False),
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "runtime.owner_lab_reviewed_owner_context": ("EXPERIMENTAL", False),
+    "ui.rt0_owner_capture_review": ("EXPERIMENTAL", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),
     "provider.real_avatar": ("NOT_IMPLEMENTED", False),
