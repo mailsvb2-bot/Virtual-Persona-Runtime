@@ -68,6 +68,8 @@ fn empty_directory_reports_missing_evidence_without_claiming_readiness() {
 }
 fn seed_complete_inventory(dir: &Path) {
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
+    assert_eq!(fixture.provider_state.providers.len(), 3);
+    assert_eq!(fixture.bundle.binding.candidate_sha, CANDIDATE);
     let provider_digest = sha256_hex(&fixture.provider_state_bytes);
     fs::write(
         dir.join("provider-state.json"),
@@ -120,7 +122,10 @@ fn seed_complete_inventory(dir: &Path) {
         "human-evaluation.json",
         "known-limitations.md",
     ] {
-        if name.ends_with(".json") {
+        if Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        {
             fs::write(dir.join(name), b"{}\n").unwrap();
         } else {
             fs::write(dir.join(name), format!("inventory fixture: {name}\n")).unwrap();
