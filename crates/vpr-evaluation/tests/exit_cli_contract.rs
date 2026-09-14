@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -8,6 +9,7 @@ use vpr_evaluation::sha256_hex;
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
 const RELEASE_SPEC: &[u8] = b"rt0 release spec cli contract";
+static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir(PathBuf);
 
@@ -17,8 +19,11 @@ impl TempDir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("vpr-exit-cli-{}-{nanos}", std::process::id()));
+        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "vpr-exit-cli-{}-{nanos}-{sequence}",
+            std::process::id()
+        ));
         fs::create_dir(&path).unwrap();
         Self(path)
     }
