@@ -21,6 +21,7 @@ pub struct LiveProofPreflightReceipt {
 pub enum LiveProofPreflightError {
     EgressNotAuthorized,
     CandidateInvalid,
+    CandidateChanged,
     WorktreeDirty,
     ProviderConfigurationInvalid,
     ProviderStateSerializationFailed,

@@ -35,7 +35,7 @@ fn run() -> Result<(), i32> {
         emit_error(code);
         return Err(2);
     }
-    let status = git_output(["status", "--porcelain"])?;
+    let status = git_output(["status", "--porcelain", "--untracked-files=all"])?;
     let egress_authorized =
         env::var("VPR_LIVE_PROOF_ALLOW_EGRESS").is_ok_and(|value| value == "true");
     let receipt = match preflight(
@@ -51,6 +51,18 @@ fn run() -> Result<(), i32> {
     };
     let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
     atomic_write(&output_path, &provider_state)?;
+    let final_candidate = git_output(["rev-parse", "HEAD"])?;
+    let final_status = git_output(["status", "--porcelain", "--untracked-files=all"])?;
+    if final_candidate.trim() != candidate.trim() {
+        let _ = fs::remove_file(&output_path);
+        emit_error(LiveProofPreflightError::CandidateChanged);
+        return Err(2);
+    }
+    if !final_status.trim().is_empty() {
+        let _ = fs::remove_file(&output_path);
+        emit_error(LiveProofPreflightError::WorktreeDirty);
+        return Err(2);
+    }
     println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
     Ok(())
 }

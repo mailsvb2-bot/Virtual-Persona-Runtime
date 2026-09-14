@@ -125,6 +125,29 @@ fn dirty_worktree_fails_before_provider_construction() {
 }
 
 #[test]
+fn untracked_files_cannot_be_hidden_by_git_config() {
+    let repo = TempRepo::new();
+    git(repo.path(), &["config", "status.showUntrackedFiles", "no"]);
+    fs::write(
+        repo.path().join("hidden-untracked.txt"),
+        b"must still be dirty\n",
+    )
+    .unwrap();
+    let output_path = external_output(&repo, "providers.json");
+    let output = command(&repo, &output_path)
+        .env("VPR_LIVE_PROOF_ALLOW_EGRESS", "true")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("WORKTREE_DIRTY")
+    );
+    assert!(!output_path.exists());
+}
+
+#[test]
 fn incomplete_credentials_fail_closed_without_secret_echo() {
     let repo = TempRepo::new();
     let output_path = external_output(&repo, "providers.json");

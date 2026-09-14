@@ -234,7 +234,7 @@ for required in (
     "ProviderBundle::from_env(true)",
     "VPR_LIVE_PROOF_ALLOW_EGRESS",
     '"rev-parse", "HEAD"',
-    '"status", "--porcelain"',
+    '"status", "--porcelain", "--untracked-files=all"',
     "ProviderStateManifest",
     "configuration_fingerprint_sha256",
 ):
