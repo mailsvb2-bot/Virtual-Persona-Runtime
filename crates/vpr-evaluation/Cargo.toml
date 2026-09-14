@@ -20,3 +20,7 @@ path = "src/bin/rt0_exit_gate.rs"
 [[bin]]
 name = "vpr-rt0-session-aggregate"
 path = "src/bin/rt0_session_aggregate.rs"
+
+[[bin]]
+name = "vpr-rt0-evidence-inventory"
+path = "src/bin/rt0_evidence_inventory.rs"

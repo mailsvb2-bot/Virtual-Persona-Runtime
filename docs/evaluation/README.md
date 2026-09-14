@@ -37,6 +37,20 @@ Exit codes are stable: `0` means the bound Golden bundle passed, `1` means the b
 
 A successful synthetic or mock run is **not** RT0 exit evidence. Release evidence still requires the same exact candidate/provider state to have real owner and non-owner conversations, measured latency/cost, permission/privacy results, and human evaluation as required by the Canon and ReleaseSpec.
 
+## RT0 evidence inventory preflight
+
+`vpr-rt0-evidence-inventory` is a non-promoting filesystem preflight for an external RT0 evidence directory. It hashes the expected evidence artifacts and checks the exact candidate/provider-state bindings exposed by the bound Golden report and live-provider probe. It does not evaluate conversation quality, human review, latency thresholds, privacy outcomes, or release readiness.
+
+Use canonical filenames in the private evidence directory and run:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
+  /secure/evidence/rt0-candidate \
+  "$(git rev-parse HEAD)"
+```
+
+Exit `0` means only that every expected inventory slot is present and the candidate/provider-state bindings checked by this preflight match. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
+
 ## RT0 exit-evidence gate
 
 `vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as a successful bound Golden report. The exit checker also re-evaluates the archived private Golden evidence against the compiled mandatory RT0 minimum suite before trusting that report. It does not create evidence and cannot turn mock/synthetic results into real evidence.
