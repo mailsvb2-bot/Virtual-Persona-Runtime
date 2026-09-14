@@ -169,20 +169,25 @@ fn post(port: u16, host: &str, csrf: &str, path: &str, body: &str) -> HttpResult
     )
 }
 
-fn post_binary(port: u16, host: &str, csrf: &str, path: &str, body: &[u8]) -> HttpResult {
+fn post_binary(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    path: &str,
+    request_sequence: Option<u64>,
+    body: &[u8],
+) -> HttpResult {
     let origin = format!("http://{host}");
-    http_bytes(
-        port,
-        "POST",
-        path,
-        host,
-        &[
-            ("Content-Type", "application/octet-stream"),
-            ("Origin", &origin),
-            ("X-VPR-CSRF", csrf),
-        ],
-        body,
-    )
+    let request_sequence = request_sequence.map(|value| value.to_string());
+    let mut headers = vec![
+        ("Content-Type", "application/octet-stream"),
+        ("Origin", origin.as_str()),
+        ("X-VPR-CSRF", csrf),
+    ];
+    if let Some(value) = request_sequence.as_deref() {
+        headers.push(("X-VPR-Evidence-Request", value));
+    }
+    http_bytes(port, "POST", path, host, &headers, body)
 }
 
 fn launch_owner_lab(port: u16, did_endpoint: &str) -> ChildGuard {
@@ -429,6 +434,9 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
         r#"{"consent":true}"#,
     );
     assert_eq!(start.status, 200);
+    let start_json: Value = serde_json::from_str(&start.body).unwrap();
+    let evidence_session = start_json["evidence_session_sequence"].as_u64().unwrap();
+    assert_eq!(evidence_session, 1);
     assert_eq!(
         post(
             port,
@@ -442,12 +450,17 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     );
 
     let pcm = vec![0_u8; 3_200];
-    let voice = post_binary(port, &host, &csrf, "/api/voice/turn", &pcm);
+    let missing_correlation = post_binary(port, &host, &csrf, "/api/voice/turn", None, &pcm);
+    assert_eq!(missing_correlation.status, 400);
+    assert!(missing_correlation.body.contains("INVALID_INPUT"));
+
+    let voice = post_binary(port, &host, &csrf, "/api/voice/turn", Some(1), &pcm);
     assert_eq!(voice.status, 200, "{}", voice.body);
     let voice_json: Value = serde_json::from_str(&voice.body).unwrap();
     assert_eq!(voice_json["transcript"], "Привет");
     assert_eq!(voice_json["reply"], "Здравствуйте");
     assert_eq!(voice_json["locale"], "ru-RU");
+    assert!(voice_json["evidence_turn_sequence"].as_u64().unwrap() > 0);
     assert_eq!(voice_json["stt_usage"]["input_units"], 100);
     assert_eq!(voice_json["llm_usage"]["input_units"], 7);
     assert_eq!(voice_json["llm_usage"]["output_units"], 1);
@@ -461,9 +474,18 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
         assert!(!voice.body.contains(secret));
     }
 
+    assert_session_evidence_contract(port, &host, &csrf, evidence_session);
+
     assert_eq!(
         post(port, &host, &csrf, "/api/session/close", "{}").status,
         200
+    );
+    let late_media = format!(
+        r#"{{"session_sequence":{evidence_session},"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":1}}"#
+    );
+    assert_eq!(
+        post(port, &host, &csrf, "/api/evidence/media", &late_media).status,
+        409
     );
 
     let stt_request = stt_captured.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -486,6 +508,47 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert!(did_requests[2].starts_with("POST /agents/agent-voice/streams/stream-voice "));
     assert!(did_requests[2].contains("Здравствуйте"));
     assert!(did_requests[3].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
+}
+
+fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_session: u64) {
+    let media_body = format!(
+        r#"{{"session_sequence":{evidence_session},"request_sequence":1,"kind":"audio_started","elapsed_millis":420}}"#
+    );
+    assert_eq!(
+        post(port, host, csrf, "/api/evidence/media", &media_body).status,
+        200
+    );
+    assert_eq!(
+        post(port, host, csrf, "/api/evidence/media", &media_body).status,
+        409
+    );
+    let stale_media = format!(
+        r#"{{"session_sequence":{},"request_sequence":null,"kind":"video_ready","elapsed_millis":10}}"#,
+        evidence_session + 1
+    );
+    assert_eq!(
+        post(port, host, csrf, "/api/evidence/media", &stale_media).status,
+        409
+    );
+
+    let evidence = http(port, "GET", "/api/evidence/session", host, &[], "");
+    assert_eq!(evidence.status, 200, "{}", evidence.body);
+    let evidence_json: Value = serde_json::from_str(&evidence.body).unwrap();
+    assert_eq!(evidence_json["session_sequence"], evidence_session);
+    assert_eq!(evidence_json["scope"], "browser_observed_media_plane_only");
+    assert_eq!(evidence_json["canonical_playback_proven"], false);
+    assert_eq!(evidence_json["av_sync_proven"], false);
+    assert_eq!(evidence_json["voice_attempts"][0]["request_sequence"], 1);
+    assert_eq!(evidence_json["voice_attempts"][0]["status"], "completed");
+    assert_eq!(evidence_json["media_events"][0]["kind"], "audio_started");
+    for private in [
+        "Привет",
+        "Здравствуйте",
+        "did-integration-secret",
+        "stream-voice",
+    ] {
+        assert!(!evidence.body.contains(private));
+    }
 }
 
 fn mock_did_revoke_during_voice() -> (String, mpsc::Receiver<String>) {
@@ -581,6 +644,7 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
             &voice_host,
             &voice_csrf,
             "/api/voice/turn",
+            Some(1),
             &vec![0_u8; 3_200],
         )
     });
@@ -649,6 +713,7 @@ fn close_preempts_active_voice_before_any_avatar_output() {
             &voice_host,
             &voice_csrf,
             "/api/voice/turn",
+            Some(1),
             &vec![0_u8; 3_200],
         )
     });

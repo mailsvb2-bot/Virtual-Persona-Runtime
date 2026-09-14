@@ -1,3 +1,5 @@
+mod http_evidence;
+
 use std::env;
 use std::error::Error;
 use std::io::{Cursor, Read};
@@ -11,7 +13,8 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
-    LabError, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
+    LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -33,6 +36,7 @@ struct AppState {
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
     session_end_requested: AtomicBool,
+    evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     csrf_token: String,
     port: u16,
 }
@@ -41,11 +45,6 @@ struct AppState {
 struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
-}
-
-#[derive(Serialize)]
-struct OkResponse {
-    ok: bool,
 }
 
 #[derive(Serialize)]
@@ -109,6 +108,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
         session_end_requested: AtomicBool::new(false),
+        evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
         csrf_token: generate_csrf_token()?,
         port,
     });
@@ -154,6 +154,10 @@ fn handle_request(mut request: Request, state: &AppState) {
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
+        (&Method::Get, "/api/evidence/session") => match http_evidence::snapshot(&state.evidence) {
+            Ok(snapshot) => json_response(200, &snapshot),
+            Err(error) => error_response(http_evidence::error_status(error), error.code()),
+        },
         (&Method::Post, "/api/voice/turn") => {
             if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
                 voice_turn_response(&mut request, state)
@@ -178,11 +182,15 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/start" => reject_if_session_ending(state).and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
                 with_engine_result(state, |engine| {
-                    engine
-                        .start(OwnerLabStartRequest {
-                            consent: body.consent,
-                        })
-                        .map(|bundle| json_response(200, &bundle))
+                    let bundle = engine.start(OwnerLabStartRequest {
+                        consent: body.consent,
+                    })?;
+                    state
+                        .evidence
+                        .lock()
+                        .begin_session(bundle.evidence_session_sequence)
+                        .map_err(|_| LabError::Internal)?;
+                    Ok(json_response(200, &bundle))
                 })
             })
         }),
@@ -209,6 +217,11 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             .and_then(|body| apply_input(state, OwnerLabTurnInput::Text(body.text))),
         "/api/avatar/audio" => parse_json::<AudioBody>(request)
             .and_then(|body| apply_input(state, OwnerLabTurnInput::AudioUrl(body.audio_url))),
+        "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
+            http_evidence::record_media(&state.evidence, &body)
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
+        }),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),
         "/api/session/close" => end_session(state, true),
@@ -237,6 +250,7 @@ fn request_voice_cancel(state: &AppState) {
 
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
     state.session_end_requested.store(true, Ordering::Release);
+    state.evidence.lock().seal_session();
     request_voice_cancel(state);
     let mut engine = state
         .engine
@@ -252,7 +266,7 @@ fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpRespon
             if close {
                 state.session_end_requested.store(false, Ordering::Release);
             }
-            Ok(json_response(200, &OkResponse { ok: true }))
+            Ok(json_response(200, &serde_json::json!({"ok": true})))
         }
         Err(error) => {
             if matches!(engine.status().session_state.as_str(), "none" | "closed") {
@@ -274,18 +288,27 @@ fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse 
     {
         return error_response(409, "INVALID_STATE_TRANSITION");
     }
-    let _busy = VoiceBusyGuard {
-        busy: &state.voice_busy,
-        cancel_requested: &state.voice_cancel_requested,
-    };
+    let _busy =
+        http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
     if let Err(response) = reject_if_session_ending(state) {
         return response;
     }
+    let request_sequence = match http_evidence::request_sequence(request) {
+        Ok(sequence) => sequence,
+        Err(error) => return error_response(http_evidence::error_status(error), error.code()),
+    };
     let audio = match read_body(request, MAX_VOICE_BODY_BYTES) {
         Ok(audio) => audio,
         Err(response) => return response,
     };
+    if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
+        return error_response(http_evidence::error_status(error), error.code());
+    }
     let Ok(mut engine) = state.engine.lock() else {
+        let _ = state
+            .evidence
+            .lock()
+            .fail_voice_request(request_sequence, "INTERNAL_ERROR");
         return error_response(500, "INTERNAL_ERROR");
     };
     let result = engine.voice_turn(audio, |handle| {
@@ -296,20 +319,28 @@ fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse 
     });
     *state.active_voice_interrupt.lock() = None;
     match result {
-        Ok(value) => json_response(200, &value),
-        Err(error) => lab_error_response(&error),
-    }
-}
-
-struct VoiceBusyGuard<'a> {
-    busy: &'a AtomicBool,
-    cancel_requested: &'a AtomicBool,
-}
-
-impl Drop for VoiceBusyGuard<'_> {
-    fn drop(&mut self) {
-        self.cancel_requested.store(false, Ordering::Release);
-        self.busy.store(false, Ordering::Release);
+        Ok(value) => match state
+            .evidence
+            .lock()
+            .complete_voice_request(request_sequence, &value)
+        {
+            Ok(()) => json_response(200, &value),
+            Err(error) => error_response(http_evidence::error_status(error), error.code()),
+        },
+        Err(error) => {
+            if let Err(evidence_error) = state
+                .evidence
+                .lock()
+                .fail_voice_request(request_sequence, error.code())
+            {
+                error_response(
+                    http_evidence::error_status(evidence_error),
+                    evidence_error.code(),
+                )
+            } else {
+                lab_error_response(&error)
+            }
+        }
     }
 }
 
@@ -319,10 +350,10 @@ fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse>
         if let Some(handle) = state.active_voice_interrupt.lock().clone() {
             return handle
                 .interrupt()
-                .map(|()| json_response(200, &OkResponse { ok: true }))
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|reason| lab_error_response(&LabError::Runtime(reason)));
         }
-        return Ok(json_response(200, &OkResponse { ok: true }));
+        return Ok(json_response(200, &serde_json::json!({"ok": true})));
     }
     apply_input(state, OwnerLabTurnInput::Interrupt)
 }
@@ -332,7 +363,7 @@ fn apply_input(state: &AppState, input: OwnerLabTurnInput) -> Result<HttpRespons
     with_engine_result(state, |engine| {
         engine
             .apply(input)
-            .map(|()| json_response(200, &OkResponse { ok: true }))
+            .map(|()| json_response(200, &serde_json::json!({"ok": true})))
     })
 }
 

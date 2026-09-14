@@ -282,6 +282,12 @@
       "id": "release.rt0_exit_gate",
       "maturity": "NOT_IMPLEMENTED",
       "user_reachable": false
+    },
+    {
+      "id": "evaluation.rt0_owner_lab_session_evidence",
+      "maturity": "EXPERIMENTAL",
+      "user_reachable": false
     }
-  ]
+  ],
+  "version": "0.18.0"
 }
