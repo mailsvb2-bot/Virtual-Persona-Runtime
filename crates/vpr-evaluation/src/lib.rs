@@ -3,6 +3,7 @@ mod exit;
 mod exit_context;
 mod golden;
 mod live_provider;
+mod session_binding;
 mod session_evidence;
 
 pub use binding::{
@@ -33,6 +34,10 @@ pub use exit::{
     evaluate_rt0_exit_evidence,
 };
 pub use exit_context::Rt0ExitVerificationContext;
+pub use session_binding::{
+    BoundLabSessionEvidenceAggregate, LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    bind_owner_lab_session_evidence,
+};
 pub use session_evidence::{
     LabMediaEvidence, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionAggregateError,
     LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,

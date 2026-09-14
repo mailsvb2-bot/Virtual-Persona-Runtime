@@ -62,13 +62,27 @@ Exit codes are stable: `0` means the supplied exact-candidate evidence satisfies
 
 Even a `0` from this experimental checker does not by itself promote `release.rt0_exit_gate`: the archived evidence artifacts must actually exist and correspond to the real provider/model/representation state named by the bound Golden report.
 
-## Owner Lab session-evidence aggregation
+## Owner Lab session-evidence aggregation and binding
 
 `vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-0.1` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, and reconnect restoration. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
 
-The aggregate explicitly keeps `canonical_playback_proven=false` and `av_sync_proven=false`. It does not invent text-first-response or A/V-sync evidence, does not assign owner/visitor roles, and is not exact-candidate/provider-state bound yet. It is therefore an experimental evidence-preparation artifact, not RT0 exit proof.
+The legacy aggregation mode remains available:
 
 ```bash
 cargo run -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
   /secure/evidence/session-1.json /secure/evidence/session-2.json
 ```
+
+For release-evidence preparation, use `bind` mode with the exact sanitized provider-state artifact and exact candidate SHA:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
+  bind \
+  /secure/evidence/rt0-provider-state.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/session-1.json /secure/evidence/session-2.json
+```
+
+The bound receipt schema is `rt0-owner-lab-session-aggregate-binding-0.1`. It includes the exact candidate SHA, SHA-256 of the exact provider-state bytes, SHA-256 of every raw snapshot artifact in input order, and the deterministic aggregate. Provider-state structure is revalidated and duplicate/malformed snapshot artifacts fail closed.
+
+Binding does not upgrade the semantic strength of the browser observations. The aggregate and bound receipt keep `canonical_playback_proven=false` and `av_sync_proven=false`; they do not invent text-first-response evidence, A/V sync, participant roles, human quality, or canonical played-state proof. The artifact is therefore usable as exact-candidate evidence preparation but cannot by itself satisfy the RT0 exit gate or promote `provider.real_*` / `release.rt0_exit_gate`.
