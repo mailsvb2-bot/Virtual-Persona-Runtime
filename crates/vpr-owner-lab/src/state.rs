@@ -22,6 +22,13 @@ pub struct OwnerLabStartRequest {
     pub consent: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LabSessionAudience {
+    Owner,
+    Visitor,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OwnerLabTurnInput {
     Answer(WebRtcSessionDescription),
@@ -65,6 +72,7 @@ pub struct LabStatus {
     pub avatar_open: bool,
     pub egress_enabled: bool,
     pub voice_ready: bool,
+    pub session_audience: Option<LabSessionAudience>,
     pub owner_context_state: OwnerContextState,
     pub persona_version: u64,
     pub reviewed_owner_claims: usize,
@@ -103,6 +111,7 @@ pub struct OwnerLabEngine {
     llm: Option<Box<dyn LlmPort>>,
     session: Option<ActiveSession>,
     avatar: Option<RealtimeAvatarHandle>,
+    session_audience: Option<LabSessionAudience>,
     session_counter: u64,
     turn_counter: u64,
     egress_enabled: bool,
@@ -127,6 +136,7 @@ impl OwnerLabEngine {
             llm: None,
             session: None,
             avatar: None,
+            session_audience: None,
             session_counter: 0,
             turn_counter: 0,
             egress_enabled,
@@ -172,6 +182,9 @@ impl OwnerLabEngine {
         statement: impl Into<String>,
         kind: ClaimKind,
     ) -> Result<(), LabError> {
+        if self.session_audience == Some(LabSessionAudience::Visitor) {
+            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
+        }
         self.reviewed_owner_context
             .as_mut()
             .ok_or(LabError::InvalidState)?
@@ -187,6 +200,9 @@ impl OwnerLabEngine {
     pub fn reviewed_owner_context_snapshot(
         &self,
     ) -> Result<ReviewedOwnerContextSnapshot, LabError> {
+        if self.session_audience == Some(LabSessionAudience::Visitor) {
+            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
+        }
         self.reviewed_owner_context
             .as_ref()
             .map(ReviewedOwnerContext::snapshot)
@@ -206,16 +222,20 @@ impl OwnerLabEngine {
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
             voice_ready: self.stt.is_some() && self.llm.is_some(),
+            session_audience: self.session_audience,
             owner_context_state: if self.reviewed_owner_context.is_some() {
                 OwnerContextState::Reviewed
             } else {
                 OwnerContextState::Missing
             },
             persona_version: self.persona_identity().version().get(),
-            reviewed_owner_claims: self
-                .reviewed_owner_context
-                .as_ref()
-                .map_or(0, ReviewedOwnerContext::claim_count),
+            reviewed_owner_claims: if self.session_audience == Some(LabSessionAudience::Visitor) {
+                0
+            } else {
+                self.reviewed_owner_context
+                    .as_ref()
+                    .map_or(0, ReviewedOwnerContext::claim_count)
+            },
         }
     }
 
@@ -224,6 +244,29 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed without both process-level egress enablement and explicit user consent.
     pub fn start(&mut self, request: OwnerLabStartRequest) -> Result<LabSignalBundle, LabError> {
+        self.start_scoped(request, LabSessionAudience::Owner)
+    }
+
+    /// Starts a visitor-scoped test session over the same reviewed Persona identity/version.
+    /// Owner-reviewed claim text is not made available to visitor context assembly.
+    ///
+    /// # Errors
+    /// Fails closed unless a reviewed Persona exists and normal session/egress/consent checks pass.
+    pub fn start_visitor(
+        &mut self,
+        request: OwnerLabStartRequest,
+    ) -> Result<LabSignalBundle, LabError> {
+        if self.reviewed_owner_context.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.start_scoped(request, LabSessionAudience::Visitor)
+    }
+
+    fn start_scoped(
+        &mut self,
+        request: OwnerLabStartRequest,
+        audience: LabSessionAudience,
+    ) -> Result<LabSignalBundle, LabError> {
         if !self.egress_enabled {
             return Err(LabError::EgressDisabled);
         }
@@ -258,6 +301,7 @@ impl OwnerLabEngine {
         let bundle = signal_bundle(self.provider.as_ref(), &handle, self.session_counter);
         self.session = Some(session);
         self.avatar = Some(handle);
+        self.session_audience = Some(audience);
         Ok(bundle)
     }
 
@@ -266,6 +310,14 @@ impl OwnerLabEngine {
     /// # Errors
     /// Returns a stable fail-closed reason if session/authority/provider state is not current.
     pub fn apply(&mut self, input: OwnerLabTurnInput) -> Result<(), LabError> {
+        if self.session_audience == Some(LabSessionAudience::Visitor)
+            && matches!(
+                input,
+                OwnerLabTurnInput::Text(_) | OwnerLabTurnInput::AudioUrl(_)
+            )
+        {
+            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
+        }
         let turn = self.new_turn()?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
         match input {
@@ -331,6 +383,7 @@ impl OwnerLabEngine {
             RealtimeSessionState::Closed => {}
             RealtimeSessionState::Created => return Err(LabError::InvalidState),
         }
+        self.session_audience = None;
         Ok(())
     }
 

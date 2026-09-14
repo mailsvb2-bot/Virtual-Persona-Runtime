@@ -98,7 +98,9 @@ required_capability_states = {
     "evaluation.rt0_session_evidence_binding": ("EXPERIMENTAL", False),
     "evaluation.rt0_golden_set": ("NOT_IMPLEMENTED", False),
     "runtime.owner_lab_reviewed_owner_context": ("EXPERIMENTAL", False),
+    "runtime.owner_lab_visitor_scope": ("EXPERIMENTAL", False),
     "ui.rt0_owner_capture_review": ("EXPERIMENTAL", False),
+    "ui.rt0_visitor_test_session": ("EXPERIMENTAL", False),
     "ui.rt0_post_review_correction": ("EXPERIMENTAL", False),
     "provider.real_llm": ("NOT_IMPLEMENTED", False),
     "provider.real_stt": ("NOT_IMPLEMENTED", False),
@@ -118,6 +120,7 @@ for capability_id, expected in required_capability_states.items():
 
 OWNER_LAB_SRC = ROOT / "crates" / "vpr-owner-lab" / "src"
 OWNER_LAB_UI = ROOT / "crates" / "vpr-owner-lab" / "ui" / "src" / "owner-capture.ts"
+OWNER_LAB_APP = ROOT / "crates" / "vpr-owner-lab" / "ui" / "src" / "app.ts"
 owner_capture_http = (OWNER_LAB_SRC / "http_owner_capture.rs").read_text(encoding="utf-8")
 owner_lab_state = (OWNER_LAB_SRC / "state.rs").read_text(encoding="utf-8")
 owner_context_source = (OWNER_LAB_SRC / "owner_context.rs").read_text(encoding="utf-8")
@@ -146,6 +149,22 @@ if reviewed_snapshot_match is None:
     raise SystemExit("browser-facing reviewed snapshot type is missing")
 if "previous_revisions" in reviewed_snapshot_match.group(0):
     raise SystemExit("browser-facing reviewed snapshot must not expose prior claim revisions")
+
+owner_lab_voice = (OWNER_LAB_SRC / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_app = OWNER_LAB_APP.read_text(encoding="utf-8")
+for required_visitor_boundary in (
+    "LabSessionAudience::Visitor",
+    "start_visitor",
+    "Rt0ReasonCode::AuthScopeDenied",
+):
+    if required_visitor_boundary not in owner_lab_state:
+        raise SystemExit(f"Owner Lab visitor scope missing runtime boundary {required_visitor_boundary}")
+if "VISITOR_PROMPT_PREFIX" not in owner_lab_voice:
+    raise SystemExit("Owner Lab visitor turns must use a visitor-specific LLM context boundary")
+if 'option[value="visitor"]' not in owner_lab_app or 'audience' not in owner_lab_app:
+    raise SystemExit("Owner Lab browser must expose the visitor test-session selector")
+if 'reviewed_owner_claims: if self.session_audience == Some(LabSessionAudience::Visitor)' not in owner_lab_state:
+    raise SystemExit("visitor status must withhold reviewed owner claim-count metadata")
 
 reason_source = REASON_SOURCE.read_text(encoding="utf-8")
 for code in sorted(REQUIRED_REASON_CODES):

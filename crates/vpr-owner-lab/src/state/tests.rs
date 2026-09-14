@@ -159,6 +159,16 @@ fn start_requires_process_egress_gate_and_explicit_consent() {
 }
 
 #[test]
+fn visitor_session_requires_a_reviewed_persona() {
+    let (mut engine, _) = engine(true);
+    assert_eq!(
+        engine.start_visitor(OwnerLabStartRequest { consent: true }),
+        Err(LabError::InvalidState)
+    );
+    assert_eq!(engine.status().session_audience, None);
+}
+
+#[test]
 fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
     let (mut engine, stats) = engine(true);
     let bundle = engine

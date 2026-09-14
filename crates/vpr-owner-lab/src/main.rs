@@ -61,6 +61,7 @@ struct ErrorResponse<'a> {
 #[derive(Deserialize)]
 struct StartBody {
     consent: bool,
+    audience: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -195,9 +196,14 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/start" => reject_if_session_ending(state).and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
                 with_engine_result(state, |engine| {
-                    let bundle = engine.start(OwnerLabStartRequest {
+                    let start_request = OwnerLabStartRequest {
                         consent: body.consent,
-                    })?;
+                    };
+                    let bundle = match body.audience.as_deref().unwrap_or("owner") {
+                        "owner" => engine.start(start_request),
+                        "visitor" => engine.start_visitor(start_request),
+                        _ => Err(LabError::InvalidInput),
+                    }?;
                     state
                         .evidence
                         .lock()
@@ -490,7 +496,11 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
     let status = match error {
         LabError::EgressDisabled
         | LabError::ConsentRequired
-        | LabError::Runtime(Rt0ReasonCode::AuthRevoked | Rt0ReasonCode::AuthExpired) => 403,
+        | LabError::Runtime(
+            Rt0ReasonCode::AuthRevoked
+            | Rt0ReasonCode::AuthExpired
+            | Rt0ReasonCode::AuthScopeDenied,
+        ) => 403,
         LabError::InvalidInput => 400,
         LabError::InvalidState | LabError::Runtime(_) => 409,
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
