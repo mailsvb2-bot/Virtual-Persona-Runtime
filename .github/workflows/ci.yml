@@ -55,3 +55,5 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Browser contract E2E
         run: npm run test:e2e
+      - name: Backend-integrated browser E2E
+        run: npm run test:e2e:backend
