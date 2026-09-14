@@ -73,10 +73,39 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await page.getByRole("button", { name: "Сказать", exact: true }).click();
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
-  const ownerClaim = page.getByLabel("Текущее утверждение opinion-working-style");
-  await ownerClaim.fill("Предпочитаю короткие циклы проверки");
-  await page.getByRole("button", { name: "Сохранить новую редакцию" }).first().click();
+  const reviewedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
+    headers: csrfHeaders(csrf),
+    data: {},
+  });
+  expect(reviewedProfile.ok()).toBeTruthy();
+  const reviewedJson = await reviewedProfile.json() as {
+    claims: Array<{ claim_id: string; statement: string }>;
+  };
+  expect(reviewedJson.claims.map((claim) => claim.claim_id)).toEqual([
+    "identity-self-description",
+    "preference-communication-style",
+    "opinion-core-principle",
+  ]);
+  const claimToCorrect = reviewedJson.claims.find((claim) => claim.statement === answers[2]);
+  expect(claimToCorrect).toBeTruthy();
+  const ownerClaim = page.getByLabel(`Текущее утверждение ${claimToCorrect?.claim_id ?? ""}`);
+  const ownerClaimCard = ownerClaim.locator("xpath=ancestor::article");
+  const correctedStatement = "Точность важнее уверенного выдумывания";
+  await ownerClaim.fill(correctedStatement);
+  await ownerClaimCard.getByRole("button", { name: "Сохранить новую редакцию" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 3");
+  const correctedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
+    headers: csrfHeaders(csrf),
+    data: {},
+  });
+  expect(correctedProfile.ok()).toBeTruthy();
+  const correctedJson = await correctedProfile.json() as {
+    persona_version: number;
+    claims: Array<{ claim_id: string; statement: string }>;
+  };
+  expect(correctedJson.persona_version).toBe(3);
+  expect(correctedJson.claims.find((claim) => claim.claim_id === claimToCorrect?.claim_id)?.statement)
+    .toBe(correctedStatement);
 
   await page.getByLabel("Режим тестовой сессии").selectOption("visitor");
   await expect(page.locator("#persona-panel")).toBeHidden();
