@@ -75,26 +75,23 @@ fn run() -> Result<(), i32> {
     let mut all_syntax_valid = true;
     for &name in REQUIRED {
         let path = root.join(name);
-        match fs::read(&path) {
-            Ok(bytes) => {
-                let syntax_valid = artifact_syntax_valid(name, &bytes);
-                all_syntax_valid &= syntax_valid;
-                items.push(InventoryItem {
-                    name,
-                    present: true,
-                    syntax_valid,
-                    sha256: Some(sha256_hex(&bytes)),
-                });
-            }
-            Err(_) => {
-                missing.push(name);
-                items.push(InventoryItem {
-                    name,
-                    present: false,
-                    syntax_valid: false,
-                    sha256: None,
-                });
-            }
+        if let Ok(bytes) = fs::read(&path) {
+            let syntax_valid = artifact_syntax_valid(name, &bytes);
+            all_syntax_valid &= syntax_valid;
+            items.push(InventoryItem {
+                name,
+                present: true,
+                syntax_valid,
+                sha256: Some(sha256_hex(&bytes)),
+            });
+        } else {
+            missing.push(name);
+            items.push(InventoryItem {
+                name,
+                present: false,
+                syntax_valid: false,
+                sha256: None,
+            });
         }
     }
 
@@ -151,7 +148,10 @@ fn run() -> Result<(), i32> {
 }
 
 fn artifact_syntax_valid(name: &str, bytes: &[u8]) -> bool {
-    if name.ends_with(".json") {
+    if Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
         serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
     } else {
         !bytes.iter().all(u8::is_ascii_whitespace)
