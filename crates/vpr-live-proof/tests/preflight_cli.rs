@@ -377,7 +377,11 @@ fn conversation_mode_rejects_private_profile_inside_candidate_checkout() {
     .output()
     .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8(output.stderr).unwrap().contains("INPUT_PATH_INSIDE_WORKTREE"));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INPUT_PATH_INSIDE_WORKTREE")
+    );
     assert!(!provider.exists());
     assert!(!receipt.exists());
     remove_inputs(&[owner_audio, visitor_audio]);
@@ -399,7 +403,11 @@ fn conversation_mode_rejects_output_path_conflicts_before_egress() {
     .output()
     .unwrap();
     assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8(output.stderr).unwrap().contains("OUTPUT_PATHS_CONFLICT"));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("OUTPUT_PATHS_CONFLICT")
+    );
     assert!(!output_path.exists());
     remove_inputs(&[profile, owner_audio, visitor_audio]);
 }

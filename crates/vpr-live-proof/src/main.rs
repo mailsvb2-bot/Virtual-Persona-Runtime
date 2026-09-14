@@ -62,14 +62,20 @@ fn run() -> Result<(), i32> {
             Path::new(provider_state_output),
             Path::new(probe_output),
         ),
-        [mode, profile_input, owner_audio, visitor_audio, provider_state_output, receipt_output]
-            if mode == "conversation" => run_conversation(
-                Path::new(profile_input),
-                Path::new(owner_audio),
-                Path::new(visitor_audio),
-                Path::new(provider_state_output),
-                Path::new(receipt_output),
-            ),
+        [
+            mode,
+            profile_input,
+            owner_audio,
+            visitor_audio,
+            provider_state_output,
+            receipt_output,
+        ] if mode == "conversation" => run_conversation(
+            Path::new(profile_input),
+            Path::new(owner_audio),
+            Path::new(visitor_audio),
+            Path::new(provider_state_output),
+            Path::new(receipt_output),
+        ),
         _ => {
             eprintln!(
                 "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>"
@@ -130,7 +136,6 @@ fn run_probe(audio_path: &Path, provider_path: &Path, probe_path: &Path) -> Resu
     Ok(())
 }
 
-
 fn run_conversation(
     profile_path: &Path,
     owner_audio_path: &Path,
@@ -162,12 +167,12 @@ fn run_conversation(
         prepare(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
     let provider_state =
         serde_json::to_vec_pretty(&prepared.receipt().provider_state).map_err(|_| 2)?;
-    let profile = fs::read(profile_path)
-        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-    let owner_audio = fs::read(owner_audio_path)
-        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-    let visitor_audio = fs::read(visitor_audio_path)
-        .map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let profile =
+        fs::read(profile_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let owner_audio =
+        fs::read(owner_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let visitor_audio =
+        fs::read(visitor_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
     let receipt = run_live_conversation_attempt(prepared, &profile, owner_audio, visitor_audio)
         .map_err(|error| emit_conversation(&error))?;
     let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| 2)?;
@@ -250,7 +255,6 @@ fn validated_output_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, B
     Ok(resolved)
 }
 
-
 fn ensure_unique_paths(paths: &[&Path]) -> Result<(), BoundaryError> {
     for (index, left) in paths.iter().enumerate() {
         if paths[index + 1..].iter().any(|right| left == right) {
@@ -295,7 +299,6 @@ fn emit_probe(error: &LiveProviderProbeError) -> i32 {
     emit_error(error.code(), Some(error.stage()));
     2
 }
-
 
 fn emit_conversation(error: &LiveConversationAttemptError) -> i32 {
     emit_error(error.code(), Some(error.stage()));

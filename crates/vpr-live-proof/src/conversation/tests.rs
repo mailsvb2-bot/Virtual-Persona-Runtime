@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use vpr_evaluation::{
-    ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
+    sha256_hex,
 };
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
@@ -304,7 +305,8 @@ fn owner_and_visitor_share_persona_but_not_private_owner_context() {
 #[test]
 fn invalid_profile_fails_before_any_provider_session() {
     let stats = Arc::new(Mutex::new(ConversationStats::default()));
-    let invalid = br#"{"schema_version":"wrong","persona_id":"p","owner_review_confirmed":true,"claims":[]}"#;
+    let invalid =
+        br#"{"schema_version":"wrong","persona_id":"p","owner_review_confirmed":true,"claims":[]}"#;
     assert_eq!(
         run_live_conversation_attempt(
             prepared(Arc::clone(&stats)),

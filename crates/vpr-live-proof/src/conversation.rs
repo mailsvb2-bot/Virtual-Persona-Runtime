@@ -5,9 +5,7 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_evaluation::sha256_hex;
-use vpr_owner_lab::{
-    LabSessionAudience, LabVoiceResult, OwnerLabEngine, OwnerLabStartRequest,
-};
+use vpr_owner_lab::{LabSessionAudience, LabVoiceResult, OwnerLabEngine, OwnerLabStartRequest};
 
 use crate::PreparedLiveProof;
 
@@ -186,11 +184,7 @@ pub fn run_live_conversation_attempt(
         persona_id_sha256,
         persona_version,
         reviewed_claims,
-        owner: turn_receipt(
-            LabSessionAudience::Owner,
-            owner_audio_sha256,
-            owner_result,
-        ),
+        owner: turn_receipt(LabSessionAudience::Owner, owner_audio_sha256, owner_result),
         visitor: turn_receipt(
             LabSessionAudience::Visitor,
             visitor_audio_sha256,
@@ -203,7 +197,6 @@ pub fn run_live_conversation_attempt(
         human_review_proven: false,
     })
 }
-
 
 fn close_or_cleanup(
     engine: &mut OwnerLabEngine,
@@ -286,8 +279,8 @@ fn validate_audio(bytes: &[u8]) -> Result<(), LiveConversationAttemptError> {
     if bytes.is_empty() || bytes.len() % 2 != 0 {
         return Err(LiveConversationAttemptError::InvalidAudio);
     }
-    let samples = u64::try_from(bytes.len() / 2)
-        .map_err(|_| LiveConversationAttemptError::InvalidAudio)?;
+    let samples =
+        u64::try_from(bytes.len() / 2).map_err(|_| LiveConversationAttemptError::InvalidAudio)?;
     let duration = samples
         .checked_mul(1_000)
         .and_then(|value| value.checked_div(SAMPLE_RATE_HZ))
@@ -297,7 +290,11 @@ fn validate_audio(bytes: &[u8]) -> Result<(), LiveConversationAttemptError> {
         .and_then(|value| value.checked_mul(MAX_MILLIS))
         .and_then(|value| value.checked_div(1_000))
         .ok_or(LiveConversationAttemptError::InvalidAudio)?;
-    if duration == 0 || u64::try_from(bytes.len()).ok().is_none_or(|len| len > max_bytes) {
+    if duration == 0
+        || u64::try_from(bytes.len())
+            .ok()
+            .is_none_or(|len| len > max_bytes)
+    {
         return Err(LiveConversationAttemptError::InvalidAudio);
     }
     Ok(())
@@ -332,7 +329,8 @@ fn turn_receipt(
 }
 
 fn known_sum(left: Option<u64>, right: Option<u64>) -> Option<u64> {
-    left.zip(right).and_then(|(left, right)| left.checked_add(right))
+    left.zip(right)
+        .and_then(|(left, right)| left.checked_add(right))
 }
 
 fn count_chars(value: &str) -> u64 {
