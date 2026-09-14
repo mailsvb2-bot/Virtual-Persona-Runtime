@@ -32,6 +32,12 @@ type ReviewedState = {
   reviewed_owner_claims: number;
 };
 
+type ReviewCompleteResponse = {
+  owner_context_state: "missing" | "reviewed";
+  persona_version: number;
+  reviewed_owner_claims: number;
+};
+
 export type OwnerCaptureUiState = {
   reviewed: boolean;
   personaVersion: number;
@@ -246,7 +252,7 @@ export const mountOwnerCapture = (options: OwnerCaptureOptions): { refresh: () =
   completeButton.addEventListener("click", () => {
     if (busy) return;
     setBusy(true);
-    void options.api<ReviewedState>("/api/persona/review/complete", {})
+    void options.api<ReviewCompleteResponse>("/api/persona/review/complete", {})
       .then((state) => renderReviewed({
         capture: null,
         owner_context_state: state.owner_context_state,
