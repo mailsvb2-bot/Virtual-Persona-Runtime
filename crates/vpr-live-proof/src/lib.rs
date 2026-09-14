@@ -7,9 +7,10 @@ use vpr_evaluation::{
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
-pub use probe::{
-    AvatarProbeEvidence, LiveProviderProbeError, LiveProviderProbeReceipt, LlmProbeEvidence,
-    ProbeUsage, RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, run_provider_probe,
+pub use probe::{LiveProviderProbeError, run_provider_probe};
+pub use vpr_evaluation::{
+    AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
 };
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";

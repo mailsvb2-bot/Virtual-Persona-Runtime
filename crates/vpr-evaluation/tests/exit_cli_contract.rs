@@ -45,7 +45,11 @@ fn digest(byte: char) -> String {
     byte.to_string().repeat(64)
 }
 
-fn exit_evidence(golden_bytes: &[u8], provider_state_sha256: &str) -> Value {
+fn exit_evidence(
+    golden_bytes: &[u8],
+    provider_state_sha256: &str,
+    live_provider_probe_sha256: &str,
+) -> Value {
     let distribution = |p50, p95| json!({"samples":10,"p50":p50,"p95":p95});
     let conversation = |role: &str, interruption: &str| {
         json!({
@@ -54,11 +58,12 @@ fn exit_evidence(golden_bytes: &[u8], provider_state_sha256: &str) -> Value {
         })
     };
     json!({
-        "schema_version":"rt0-exit-evidence-0.1",
+        "schema_version":"rt0-exit-evidence-0.2",
         "candidate_sha":CANDIDATE,
         "release_spec_sha256":sha256_hex(RELEASE_SPEC),
         "golden_report_sha256":sha256_hex(golden_bytes),
         "provider_state_sha256":provider_state_sha256,
+        "live_provider_probe_sha256":live_provider_probe_sha256,
         "automated":{
             "ci":{"status":"passed","artifact_sha256":digest('a')},
             "e2e":{"status":"passed","artifact_sha256":digest('a')}
@@ -102,13 +107,42 @@ fn exit_evidence(golden_bytes: &[u8], provider_state_sha256: &str) -> Value {
     })
 }
 
+fn live_provider_probe(provider_state_sha256: &str) -> Value {
+    let usage = json!({
+        "input_units":1,"input_unit":"token","output_units":1,"output_unit":"token",
+        "estimated_cost_microunits":1,"provider_charge_microunits":null
+    });
+    json!({
+        "schema_version":"rt0-live-provider-probe-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
+        "input_audio_sha256":digest('7'),
+        "input_audio_millis":1000,
+        "scope":"credentialed_provider_reachability_only",
+        "conversation_evidence":false,
+        "output_delivery_proven":false,
+        "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
+        "llm":{"latency_millis":120,"output_chars":5,"usage":usage},
+        "avatar":{"open_millis":150,"close_millis":50}
+    })
+}
+
 fn prepare(
     evidence_mutator: impl FnOnce(&mut Value),
-) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf, PathBuf) {
+) -> (
+    TempDir,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+) {
     let dir = TempDir::new();
     let golden_path = dir.path().join("golden-report.json");
     let golden_evidence_path = dir.path().join("golden-evidence.json");
     let provider_state_path = dir.path().join("provider-state.json");
+    let live_provider_probe_path = dir.path().join("live-provider-probe.json");
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
@@ -117,11 +151,18 @@ fn prepare(
     let provider_state_sha256 = sha256_hex(&provider_state_bytes);
     let golden_bytes = serde_json::to_vec_pretty(&fixture.report).unwrap();
     let golden_evidence_bytes = fixture.bundle_bytes;
-    let mut evidence = exit_evidence(&golden_bytes, &provider_state_sha256);
+    let live_provider_probe_bytes =
+        serde_json::to_vec_pretty(&live_provider_probe(&provider_state_sha256)).unwrap();
+    let mut evidence = exit_evidence(
+        &golden_bytes,
+        &provider_state_sha256,
+        &sha256_hex(&live_provider_probe_bytes),
+    );
     evidence_mutator(&mut evidence);
     fs::write(&golden_path, golden_bytes).unwrap();
     fs::write(&golden_evidence_path, golden_evidence_bytes).unwrap();
     fs::write(&provider_state_path, provider_state_bytes).unwrap();
+    fs::write(&live_provider_probe_path, live_provider_probe_bytes).unwrap();
     fs::write(
         &evidence_path,
         serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -134,6 +175,7 @@ fn prepare(
         golden_path,
         golden_evidence_path,
         provider_state_path,
+        live_provider_probe_path,
         spec_path,
     )
 }
@@ -158,6 +200,7 @@ fn run(
     golden: &Path,
     golden_evidence: &Path,
     provider_state: &Path,
+    live_provider_probe: &Path,
     spec: &Path,
     candidate: &str,
 ) -> std::process::Output {
@@ -166,6 +209,7 @@ fn run(
         .arg(golden)
         .arg(golden_evidence)
         .arg(provider_state)
+        .arg(live_provider_probe)
         .arg(spec)
         .arg(candidate)
         .output()
@@ -174,12 +218,14 @@ fn run(
 
 #[test]
 fn cli_returns_zero_only_for_complete_exact_bound_evidence() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
     let output = run(
         &evidence,
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
@@ -192,14 +238,16 @@ fn cli_returns_zero_only_for_complete_exact_bound_evidence() {
 
 #[test]
 fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|value| {
-        value["privacy_permissions"]["accepted_private_context_leakage"] = json!(1);
-    });
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|value| {
+            value["privacy_permissions"]["accepted_private_context_leakage"] = json!(1);
+        });
     let output = run(
         &evidence,
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
@@ -211,7 +259,8 @@ fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
 
 #[test]
 fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
     let mut state: Value = serde_json::from_slice(&fs::read(&provider_state).unwrap()).unwrap();
     state["providers"][0]["provider"] = json!("tampered-stt");
     fs::write(&provider_state, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
@@ -220,6 +269,7 @@ fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
@@ -232,13 +282,46 @@ fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
 }
 
 #[test]
-fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+fn cli_rejects_valid_rehashed_probe_from_another_candidate() {
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
+    let mut probe: Value =
+        serde_json::from_slice(&fs::read(&live_provider_probe).unwrap()).unwrap();
+    probe["candidate_sha"] = json!("2".repeat(40));
+    let probe_bytes = serde_json::to_vec_pretty(&probe).unwrap();
+    fs::write(&live_provider_probe, &probe_bytes).unwrap();
+
+    let mut exit: Value = serde_json::from_slice(&fs::read(&evidence).unwrap()).unwrap();
+    exit["live_provider_probe_sha256"] = json!(sha256_hex(&probe_bytes));
+    fs::write(&evidence, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
     let output = run(
         &evidence,
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
+        &spec,
+        CANDIDATE,
+    );
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("LIVE_PROVIDER_PROBE_CANDIDATE_MISMATCH")
+    );
+}
+
+#[test]
+fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
+    let output = run(
+        &evidence,
+        &golden,
+        &golden_evidence,
+        &provider_state,
+        &live_provider_probe,
         &spec,
         &"2".repeat(40),
     );
@@ -249,14 +332,16 @@ fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
             .contains("CANDIDATE_SHA_MISMATCH")
     );
 
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|value| {
-        value["api_key"] = json!("must-not-be-accepted");
-    });
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|value| {
+            value["api_key"] = json!("must-not-be-accepted");
+        });
     let output = run(
         &evidence,
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
@@ -270,7 +355,8 @@ fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
 
 #[test]
 fn cli_rejects_forged_shortened_golden_report_after_rebinding_hash() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
     replace_golden_report_and_rebind_exit_evidence(&golden, &evidence, |report| {
         report["golden"]["total"] = json!(1);
         report["golden"]["passed"] = json!(1);
@@ -282,6 +368,7 @@ fn cli_rejects_forged_shortened_golden_report_after_rebinding_hash() {
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
@@ -295,7 +382,8 @@ fn cli_rejects_forged_shortened_golden_report_after_rebinding_hash() {
 
 #[test]
 fn cli_rejects_overflowing_golden_counts_without_panicking() {
-    let (_dir, evidence, golden, golden_evidence, provider_state, spec) = prepare(|_| {});
+    let (_dir, evidence, golden, golden_evidence, provider_state, live_provider_probe, spec) =
+        prepare(|_| {});
     replace_golden_report_and_rebind_exit_evidence(&golden, &evidence, |report| {
         report["golden"]["passed"] = json!(usize::MAX);
         report["golden"]["failed"] = json!(1);
@@ -305,6 +393,7 @@ fn cli_rejects_overflowing_golden_counts_without_panicking() {
         &golden,
         &golden_evidence,
         &provider_state,
+        &live_provider_probe,
         &spec,
         CANDIDATE,
     );
