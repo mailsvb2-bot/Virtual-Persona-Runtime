@@ -139,9 +139,26 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed if capture/review is incomplete or the profile is not a `DIGITAL_TWIN`.
     pub fn with_reviewed_profile(mut self, profile: PersonaProfile) -> Result<Self, LabError> {
-        self.reviewed_owner_context =
-            Some(ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?);
+        self.bind_reviewed_profile(profile)?;
         Ok(self)
+    }
+
+    /// Replaces the canonical reviewed owner context between realtime sessions.
+    ///
+    /// # Errors
+    /// Fails closed while a realtime session is active, or when the supplied profile has not
+    /// completed explicit `DIGITAL_TWIN` review.
+    pub fn bind_reviewed_profile(&mut self, profile: PersonaProfile) -> Result<(), LabError> {
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.state() != RealtimeSessionState::Closed)
+        {
+            return Err(LabError::InvalidState);
+        }
+        let context = ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?;
+        self.reviewed_owner_context = Some(context);
+        Ok(())
     }
 
     /// Corrects one owner-reviewed claim. The domain profile preserves the previous revision and

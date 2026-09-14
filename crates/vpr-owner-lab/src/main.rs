@@ -1,4 +1,7 @@
 mod http_evidence;
+mod http_owner_capture;
+#[cfg(test)]
+mod http_security_tests;
 
 use std::env;
 use std::error::Error;
@@ -32,6 +35,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
+    owner_capture: http_owner_capture::OwnerCaptureHttpState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
@@ -104,6 +108,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
+        owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
@@ -154,6 +159,7 @@ fn handle_request(mut request: Request, state: &AppState) {
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
+        (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
         (&Method::Get, "/api/evidence/session") => match http_evidence::snapshot(&state.evidence) {
             Ok(snapshot) => json_response(200, &snapshot),
             Err(error) => error_response(http_evidence::error_status(error), error.code()),
@@ -178,6 +184,9 @@ fn handle_request(mut request: Request, state: &AppState) {
 }
 
 fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpResponse {
+    if let Some(result) = http_owner_capture::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     match path {
         "/api/avatar/start" => reject_if_session_ending(state).and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
@@ -536,63 +545,4 @@ fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {
         token.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     Ok(token)
-}
-
-#[cfg(test)]
-mod http_security_tests {
-    use super::{valid_host_value, valid_origin_value};
-
-    #[test]
-    fn host_validation_rejects_dns_rebinding_shapes() {
-        for accepted in ["127.0.0.1:8787", "localhost:8787"] {
-            assert!(
-                valid_host_value(accepted, 8787),
-                "expected accepted host: {accepted}"
-            );
-        }
-        for denied in [
-            "127.0.0.1",
-            "localhost",
-            "localhost:9999",
-            "localhost.evil.test",
-            "127.0.0.1.evil.test",
-            "evil.test",
-            "0.0.0.0:8787",
-            "[::1]:8787",
-        ] {
-            assert!(
-                !valid_host_value(denied, 8787),
-                "expected denied host: {denied}"
-            );
-        }
-    }
-
-    #[test]
-    fn post_origin_must_match_the_loopback_host_exactly() {
-        assert!(valid_origin_value(
-            "127.0.0.1:8787",
-            "http://127.0.0.1:8787",
-            8787
-        ));
-        assert!(valid_origin_value(
-            "localhost:8787",
-            "http://localhost:8787",
-            8787
-        ));
-        assert!(!valid_origin_value(
-            "127.0.0.1:8787",
-            "http://localhost:8787",
-            8787
-        ));
-        assert!(!valid_origin_value(
-            "localhost:8787",
-            "https://localhost:8787",
-            8787
-        ));
-        assert!(!valid_origin_value(
-            "localhost.evil.test",
-            "http://localhost.evil.test",
-            8787
-        ));
-    }
 }
