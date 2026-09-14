@@ -7,6 +7,9 @@ const byId = (id) => {
 };
 const video = byId("avatar");
 const stage = document.querySelector(".stage");
+const personaPanel = byId("persona-panel");
+const audienceSelect = byId("session-audience");
+const visitorOption = audienceSelect.querySelector('option[value="visitor"]');
 const consent = byId("consent");
 const message = byId("message");
 const connectButton = byId("connect");
@@ -19,7 +22,7 @@ const statusNode = byId("status");
 const evidenceNode = byId("evidence");
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer = null;
 let answerSubmitted = false;
@@ -224,9 +227,18 @@ const flushIce = async () => {
         await postIce(candidate);
 };
 const backendSessionPresent = () => !["none", "closed"].includes(backendStatus.session_state);
+const selectedAudience = () => backendStatus.session_audience ?? audienceSelect.value;
+const updateAudienceMode = () => {
+    const visitor = selectedAudience() === "visitor";
+    personaPanel.hidden = visitor;
+    message.disabled = visitor;
+    if (visitor)
+        message.value = "";
+};
 const updateControls = () => {
     const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
-    speakButton.disabled = !transportReady || !capabilities.has("text");
+    const visitor = selectedAudience() === "visitor";
+    speakButton.disabled = visitor || !transportReady || !capabilities.has("text");
     interruptButton.disabled = !voiceRequestInFlight && (!transportReady || !capabilities.has("interrupt"));
     voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || voiceRequestInFlight;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
@@ -234,6 +246,10 @@ const updateControls = () => {
         || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
     closeButton.disabled = !backendSessionPresent();
     connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
+    audienceSelect.disabled = backendSessionPresent();
+    if (visitorOption)
+        visitorOption.disabled = !ownerCaptureReviewed;
+    updateAudienceMode();
 };
 const ownerCapture = mountOwnerCapture({
     api,
@@ -269,9 +285,10 @@ const connectAvatar = async () => {
     void remoteEvidenceAudioContext.resume();
     setStatus("Создаю защищённую сессию…");
     try {
-        const start = await api("/api/avatar/start", { consent: true });
+        const audience = audienceSelect.value;
+        const start = await api("/api/avatar/start", { consent: true, audience });
         evidenceSessionSequence = start.evidence_session_sequence;
-        backendStatus = { ...backendStatus, session_state: "active", avatar_open: true, egress_enabled: egressEnabled };
+        backendStatus = { ...backendStatus, session_state: "active", avatar_open: true, egress_enabled: egressEnabled, session_audience: audience };
         capabilities = new Set(start.capabilities);
         updateControls();
         peer = new RTCPeerConnection({
@@ -338,7 +355,7 @@ const connectAvatar = async () => {
         answerSubmitted = true;
         await flushIce();
         updateControls();
-        setStatus("WebRTC согласован", "ready");
+        setStatus(selectedAudience() === "visitor" ? "Visitor-сессия WebRTC согласована" : "WebRTC согласован", "ready");
         showEvidence({ connectionState: peer.connectionState, capabilities: [...capabilities] });
     }
     catch (error) {
@@ -496,7 +513,7 @@ const speak = async () => {
         setStatus(error instanceof Error ? error.message : "Ошибка отправки", "error");
     }
     finally {
-        speakButton.disabled = !capabilities.has("text") || peer === null;
+        updateControls();
     }
 };
 const endSession = async (kind) => {
@@ -528,6 +545,18 @@ const closeBackendOnUnload = () => {
     }).catch(() => undefined);
     closePeerTransport();
 };
+audienceSelect.addEventListener("change", () => {
+    if (audienceSelect.value === "visitor" && !ownerCaptureReviewed) {
+        audienceSelect.value = "owner";
+        setStatus("Visitor-сессия доступна только после подтверждения Persona", "error");
+    }
+    else {
+        setStatus(audienceSelect.value === "visitor"
+            ? "Visitor preview: owner-reviewed личный контекст закрыт"
+            : "Owner preview: reviewed owner context доступен каноническому runtime", "ready");
+    }
+    updateControls();
+});
 connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => {
@@ -552,7 +581,14 @@ void api("/api/bootstrap")
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
-    await ownerCapture.refresh();
+    if (backendStatus.session_audience)
+        audienceSelect.value = backendStatus.session_audience;
+    if (backendStatus.session_audience !== "visitor") {
+        await ownerCapture.refresh();
+    }
+    else {
+        personaPanel.hidden = true;
+    }
     if (!egressEnabled) {
         setStatus("Egress выключен на backend", "error");
     }

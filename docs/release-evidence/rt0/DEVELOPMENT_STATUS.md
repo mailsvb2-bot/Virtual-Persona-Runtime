@@ -17,6 +17,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - owner-reviewed DIGITAL_TWIN context binding for Owner Lab voice turns, including correction-driven PersonaVersion changes and next-turn use of the corrected current claim revision;
 - loopback Owner Lab browser controls for minimal Persona creation, guided capture, explicit claim approval/correction and initial review, with realtime Connect blocked until reviewed owner context exists;
 - owner-only post-review browser correction over a CSRF-protected current-revision snapshot; corrections preserve history internally, advance PersonaVersion, and the next canonical turn reads the corrected current revision;
+- visitor-scoped Owner Lab sessions over the same reviewed Persona identity/version, with owner-reviewed claim text and claim-count metadata withheld from visitor scope, direct speech injection denied, and visitor LLM context assembled without owner-private material;
 - deterministic Golden harness and exact-candidate RT0 exit-evidence checker;
 - credentialed live-proof preflight and sanitized live-provider reachability probe;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
@@ -27,7 +28,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 
 RT0 is not complete. Real credentialed owner and non-owner conversations still need to be captured and reviewed for one exact candidate. The remaining exit evidence includes E2E proof for the guided capture/review/correction browser flow, real provider proof for the supported STT/LLM/avatar path, complete text/audio/video/A-V-sync latency evidence, measured duration/cost, owner interruption, Golden observations from the real candidate, permission/privacy acceptance, human voice/appearance/persona/conversation evaluation, known-limitations review, and the full owner/visitor happy/correction/failure/recovery/revoke-deny acceptance matrix.
 
-The owner-capture API, browser controls, post-review correction path, and reviewed-owner-context path remain `EXPERIMENTAL` and `user_reachable=false` under the RT0 maturity ceiling. The loopback implementation is not evidence that the owner-facing product journey is complete; browser E2E and live-provider evidence are still required before promotion.
+The owner-capture API, browser controls, post-review correction path, reviewed-owner-context path, and visitor-scoped test-session path remain `EXPERIMENTAL` and `user_reachable=false` under the RT0 maturity ceiling. The loopback implementation is not evidence that the owner-facing product journey is complete; browser E2E and live-provider evidence are still required before promotion.
 
 The bound session aggregate is evidence preparation only. It preserves `canonical_playback_proven=false` and `av_sync_proven=false` and MUST NOT by itself promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state.
 

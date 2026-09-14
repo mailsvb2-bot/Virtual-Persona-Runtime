@@ -17,7 +17,7 @@
       <div id="status" class="status" data-state="idle">Загрузка…</div>
     </section>
 
-    <section class="panel persona-panel" aria-labelledby="persona-heading">
+    <section id="persona-panel" class="panel persona-panel" aria-labelledby="persona-heading">
       <div class="panel-heading">
         <div>
           <p class="eyebrow">Шаг 1 · канонический профиль</p>
@@ -56,6 +56,12 @@
     </section>
 
     <section class="panel">
+      <label for="session-audience">Режим тестовой сессии</label>
+      <select id="session-audience">
+        <option value="owner">Владелец — reviewed owner context разрешён</option>
+        <option value="visitor">Посетитель — owner context закрыт</option>
+      </select>
+      <p class="hint">Visitor-сессия использует ту же Persona, но не получает owner-reviewed личный контекст и не может отправлять прямой текст в голос/аватар.</p>
       <label class="consent">
         <input id="consent" type="checkbox">
         <span>Я разрешаю отправку данных выбранным внешним провайдерам (аватар, распознавание речи и языковая модель) для этой тестовой сессии.</span>

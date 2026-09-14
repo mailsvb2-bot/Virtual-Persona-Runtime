@@ -9,12 +9,13 @@ use vpr_integration::{
 };
 use vpr_runtime::{ActiveTurn, ProviderExecutionError, TurnInterruptHandle};
 
-use super::{LabError, OwnerLabEngine, map_provider_execution};
+use super::{LabError, LabSessionAudience, OwnerLabEngine, map_provider_execution};
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
 const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab voice conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
+const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance briefly in Russian. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabVoiceResult {
@@ -62,6 +63,7 @@ impl OwnerLabEngine {
         if self.stt.is_none() || self.llm.is_none() || self.avatar.is_none() {
             return Err(LabError::InvalidState);
         }
+        let audience = self.session_audience.ok_or(LabError::InvalidState)?;
         let turn = self.new_turn()?;
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
@@ -82,10 +84,15 @@ impl OwnerLabEngine {
             .map_err(|error| terminalize_provider_error(&turn, error))?;
         let stt_millis = elapsed_millis(stt_started);
 
-        let llm_context = self.reviewed_owner_context.as_ref().map_or_else(
-            || format!("{OWNER_LAB_FALLBACK_PROMPT_PREFIX}{}", transcript.text),
-            |context| context.voice_prompt(&transcript.text),
-        );
+        let llm_context = match audience {
+            LabSessionAudience::Owner => self.reviewed_owner_context.as_ref().map_or_else(
+                || format!("{OWNER_LAB_FALLBACK_PROMPT_PREFIX}{}", transcript.text),
+                |context| context.voice_prompt(&transcript.text),
+            ),
+            LabSessionAudience::Visitor => {
+                format!("{VISITOR_PROMPT_PREFIX}{}", transcript.text)
+            }
+        };
         let llm_started = Instant::now();
         let mut generated = GeneratedTextBuffer::default();
         let llm_usage = turn

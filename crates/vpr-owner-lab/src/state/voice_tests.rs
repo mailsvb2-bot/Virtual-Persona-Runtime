@@ -15,7 +15,10 @@ use vpr_integration::{
     WebRtcSessionDescription,
 };
 
-use super::{LabError, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest};
+use super::{
+    LabError, LabSessionAudience, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
+};
 
 #[derive(Default)]
 struct VoiceStats {
@@ -258,6 +261,30 @@ fn reviewed_voice_engine() -> (OwnerLabEngine, Arc<VoiceStats>) {
     (engine, stats)
 }
 
+fn reviewed_visitor_voice_engine() -> (OwnerLabEngine, Arc<VoiceStats>) {
+    let stats = Arc::new(VoiceStats::default());
+    let avatar = VoiceAvatar {
+        stats: Arc::clone(&stats),
+    };
+    let stt = ImmediateStt {
+        stats: Arc::clone(&stats),
+    };
+    let llm = VoiceLlm {
+        stats: Arc::clone(&stats),
+        block_until_cancelled: false,
+        started: None,
+    };
+    let mut engine = OwnerLabEngine::new(Box::new(avatar), true)
+        .unwrap()
+        .with_reviewed_profile(reviewed_profile())
+        .unwrap()
+        .with_voice(Box::new(stt), Box::new(llm));
+    engine
+        .start_visitor(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    (engine, stats)
+}
+
 fn sample_pcm() -> Vec<u8> {
     vec![0_u8; 3_200]
 }
@@ -300,6 +327,44 @@ fn corrected_reviewed_claim_is_used_by_the_next_canonical_voice_turn() {
     assert!(contexts[0].contains("[verified_owner_opinion] Люблю быстрые итерации"));
     assert!(contexts[1].contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки"));
     assert!(!contexts[1].contains("Люблю быстрые итерации"));
+}
+
+#[test]
+fn visitor_voice_turn_excludes_reviewed_owner_context_and_blocks_direct_speech() {
+    let (mut engine, stats) = reviewed_visitor_voice_engine();
+    assert_eq!(
+        engine.status().session_audience,
+        Some(LabSessionAudience::Visitor)
+    );
+    assert_eq!(engine.status().persona_version, 2);
+    assert_eq!(engine.status().reviewed_owner_claims, 0);
+    assert!(matches!(
+        engine.reviewed_owner_context_snapshot(),
+        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+    ));
+    let owner_claim_id = ClaimId::new("opinion-working-style").unwrap();
+    assert_eq!(
+        engine.correct_owner_claim(
+            &owner_claim_id,
+            "Попытка visitor-перезаписи",
+            ClaimKind::Opinion,
+        ),
+        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+    );
+
+    engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+
+    let contexts = stats.contexts.lock().unwrap();
+    assert_eq!(contexts.len(), 1);
+    assert!(contexts[0].contains("RT0 visitor-scoped conversation"));
+    assert!(contexts[0].contains("visitor scope does not provide verified owner material"));
+    assert!(!contexts[0].contains("Люблю быстрые итерации"));
+    drop(contexts);
+
+    assert_eq!(
+        engine.apply(OwnerLabTurnInput::Text("Скажи это от лица владельца".into())),
+        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::AuthScopeDenied))
+    );
 }
 
 #[test]
