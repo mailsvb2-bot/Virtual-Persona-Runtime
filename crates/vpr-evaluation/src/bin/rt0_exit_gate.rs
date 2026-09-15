@@ -20,46 +20,38 @@ fn main() {
 }
 
 fn run() -> Result<(), i32> {
-    let mut args = env::args().skip(1);
-    let Some(exit_evidence_path) = args.next() else {
-        return usage();
-    };
-    let Some(golden_report_path) = args.next() else {
-        return usage();
-    };
-    let Some(golden_evidence_path) = args.next() else {
-        return usage();
-    };
-    let Some(provider_state_path) = args.next() else {
-        return usage();
-    };
-    let Some(live_provider_probe_path) = args.next() else {
-        return usage();
-    };
-    let Some(conversation_attempt_path) = args.next() else {
-        return usage();
-    };
-    let Some(bound_session_aggregate_path) = args.next() else {
-        return usage();
-    };
-    let Some(release_spec_path) = args.next() else {
-        return usage();
-    };
-    let Some(candidate_sha) = args.next() else {
-        return usage();
-    };
-    if args.next().is_some() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() < 10 {
         return usage();
     }
 
-    let exit_evidence_bytes = read(&exit_evidence_path)?;
-    let golden_report_bytes = read(&golden_report_path)?;
-    let golden_evidence_bytes = read(&golden_evidence_path)?;
-    let provider_state_bytes = read(&provider_state_path)?;
-    let live_provider_probe_bytes = read(&live_provider_probe_path)?;
-    let conversation_attempt_bytes = read(&conversation_attempt_path)?;
-    let bound_session_aggregate_bytes = read(&bound_session_aggregate_path)?;
-    let release_spec_bytes = read(&release_spec_path)?;
+    let exit_evidence_path = &args[0];
+    let golden_report_path = &args[1];
+    let golden_evidence_path = &args[2];
+    let provider_state_path = &args[3];
+    let live_provider_probe_path = &args[4];
+    let conversation_attempt_path = &args[5];
+    let bound_session_aggregate_path = &args[6];
+    let snapshot_paths = &args[7..args.len() - 2];
+    let release_spec_path = &args[args.len() - 2];
+    let candidate_sha = &args[args.len() - 1];
+
+    let exit_evidence_bytes = read(exit_evidence_path)?;
+    let golden_report_bytes = read(golden_report_path)?;
+    let golden_evidence_bytes = read(golden_evidence_path)?;
+    let provider_state_bytes = read(provider_state_path)?;
+    let live_provider_probe_bytes = read(live_provider_probe_path)?;
+    let conversation_attempt_bytes = read(conversation_attempt_path)?;
+    let bound_session_aggregate_bytes = read(bound_session_aggregate_path)?;
+    let session_snapshot_bytes = snapshot_paths
+        .iter()
+        .map(|path| read(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let session_snapshot_artifacts: Vec<&[u8]> = session_snapshot_bytes
+        .iter()
+        .map(|bytes| bytes.as_slice())
+        .collect();
+    let release_spec_bytes = read(release_spec_path)?;
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
     let golden_report: BoundGoldenReport = parse(&golden_report_bytes)?;
     let golden_evidence_bundle: GoldenEvidenceBundle = parse(&golden_evidence_bytes)?;
@@ -83,8 +75,9 @@ fn run() -> Result<(), i32> {
             conversation_attempt_bytes: &conversation_attempt_bytes,
             bound_session_aggregate: &bound_session_aggregate,
             bound_session_aggregate_bytes: &bound_session_aggregate_bytes,
+            session_snapshot_artifacts: &session_snapshot_artifacts,
             release_spec_bytes: &release_spec_bytes,
-            exact_candidate_sha: &candidate_sha,
+            exact_candidate_sha: candidate_sha,
         },
     ) {
         Ok(report) => report,
@@ -122,7 +115,7 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
 
 fn usage() -> Result<(), i32> {
     eprintln!(
-        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <release-spec.md> <exact-candidate-sha>"
+        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <session-snapshot.json>... <release-spec.md> <exact-candidate-sha>"
     );
     Err(2)
 }

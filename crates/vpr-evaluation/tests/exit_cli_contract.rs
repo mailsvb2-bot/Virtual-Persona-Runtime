@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
-use vpr_evaluation::sha256_hex;
+use vpr_evaluation::{bind_owner_lab_session_evidence, sha256_hex};
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
 const RELEASE_SPEC: &[u8] = b"rt0 release spec cli contract";
@@ -150,31 +150,28 @@ fn conversation_attempt(provider_state_sha256: &str) -> Value {
     })
 }
 
-fn bound_session_aggregate(provider_state_sha256: &str) -> Value {
+fn session_snapshot() -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.2",
-        "candidate_sha":CANDIDATE,
-        "provider_state_sha256":provider_state_sha256,
-        "snapshot_sha256":[digest('9')],
-        "aggregate":{
-            "schema_version":"rt0-owner-lab-session-aggregate-0.2",
-            "source_schema_version":"rt0-owner-lab-session-evidence-0.2",
-            "sessions":1,
-            "completed_voice_attempts":1,
-            "failed_voice_attempts":0,
-            "canonical_playback_proven":false,
-            "av_sync_proven":false,
-            "stt_latency":null,
-            "llm_latency":null,
-            "avatar_submit_latency":null,
-            "server_total_latency":null,
-            "first_meaningful_audio":null,
-            "interruption_stop":null,
-            "first_useful_video":null,
-            "recoverable_reconnect":null,
-            "estimated_cost_microunits":null,
-            "provider_charge_microunits":null
-        }
+        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "scope":"browser_observed_media_plane_only",
+        "session_sequence":1,
+        "canonical_playback_proven":true,
+        "av_sync_proven":false,
+        "voice_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":11,
+            "canonical_output_sequence":12,
+            "canonical_playback_confirmed":true,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":100,
+            "llm_millis":120,
+            "avatar_millis":150,
+            "server_total_millis":370,
+            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+        }],
+        "media_events":[{"request_sequence":1,"kind":"audio_started","elapsed_millis":500}]
     })
 }
 
@@ -187,6 +184,7 @@ struct PreparedPaths {
     live_provider_probe: PathBuf,
     conversation_attempt: PathBuf,
     bound_session_aggregate: PathBuf,
+    session_snapshot: PathBuf,
     spec: PathBuf,
 }
 
@@ -198,6 +196,7 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let live_provider_probe_path = dir.path().join("live-provider-probe.json");
     let conversation_attempt_path = dir.path().join("conversation-attempt.json");
     let bound_session_aggregate_path = dir.path().join("bound-session-aggregate.json");
+    let session_snapshot_path = dir.path().join("session-snapshot.json");
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
@@ -210,8 +209,15 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         serde_json::to_vec_pretty(&live_provider_probe(&provider_state_sha256)).unwrap();
     let conversation_attempt_bytes =
         serde_json::to_vec_pretty(&conversation_attempt(&provider_state_sha256)).unwrap();
+    let session_snapshot_bytes = serde_json::to_vec_pretty(&session_snapshot()).unwrap();
+    let bound_session_aggregate = bind_owner_lab_session_evidence(
+        &[session_snapshot_bytes.as_slice()],
+        &provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
     let bound_session_aggregate_bytes =
-        serde_json::to_vec_pretty(&bound_session_aggregate(&provider_state_sha256)).unwrap();
+        serde_json::to_vec_pretty(&bound_session_aggregate).unwrap();
     let mut evidence = exit_evidence(
         &golden_bytes,
         &provider_state_sha256,
@@ -226,6 +232,7 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     fs::write(&live_provider_probe_path, live_provider_probe_bytes).unwrap();
     fs::write(&conversation_attempt_path, conversation_attempt_bytes).unwrap();
     fs::write(&bound_session_aggregate_path, bound_session_aggregate_bytes).unwrap();
+    fs::write(&session_snapshot_path, session_snapshot_bytes).unwrap();
     fs::write(
         &evidence_path,
         serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -241,6 +248,7 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         live_provider_probe: live_provider_probe_path,
         conversation_attempt: conversation_attempt_path,
         bound_session_aggregate: bound_session_aggregate_path,
+        session_snapshot: session_snapshot_path,
         spec: spec_path,
     }
 }
@@ -269,6 +277,7 @@ fn run(paths: &PreparedPaths, candidate: &str) -> std::process::Output {
         .arg(&paths.live_provider_probe)
         .arg(&paths.conversation_attempt)
         .arg(&paths.bound_session_aggregate)
+        .arg(&paths.session_snapshot)
         .arg(&paths.spec)
         .arg(candidate)
         .output()
@@ -374,6 +383,27 @@ fn cli_rejects_rehashed_runtime_evidence_from_wrong_binding() {
         String::from_utf8(output.stderr)
             .unwrap()
             .contains("RUNTIME_EVIDENCE_PROVIDER_STATE_MISMATCH")
+    );
+}
+
+#[test]
+fn cli_rejects_raw_snapshot_that_does_not_recompute_bound_aggregate() {
+    let paths = prepare(|_| {});
+    let mut snapshot: Value =
+        serde_json::from_slice(&fs::read(&paths.session_snapshot).unwrap()).unwrap();
+    snapshot["media_events"][0]["elapsed_millis"] = json!(501);
+    fs::write(
+        &paths.session_snapshot,
+        serde_json::to_vec_pretty(&snapshot).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
     );
 }
 

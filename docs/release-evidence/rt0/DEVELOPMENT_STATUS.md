@@ -23,6 +23,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - credentialed owner/visitor conversation-attempt runner that reuses the canonical Owner Lab engine and emits only sanitized exact-candidate/provider-state-bound receipts;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
+- exit-gate recomputation of bound Owner Lab session aggregates from the exact raw sanitized snapshots, including fail-closed canonical playback proof;
 - runtime-issued avatar output segments with backend-only browser playback reconciliation and sanitized per-attempt canonical playback evidence;
 - stable RT0 reason-code vocabulary and capability maturity guards;
 - browser-contract E2E plus real Owner Lab HTTP/runtime/provider-adapter E2E for owner/visitor sessions and STT -> LLM -> avatar voice turns, using deterministic test-only provider endpoints.
@@ -33,6 +34,6 @@ RT0 is not complete. The repository now has a fail-closed credentialed owner/vis
 
 The owner-capture API, browser controls, post-review correction path, reviewed-owner-context path, and visitor-scoped test-session path remain `EXPERIMENTAL` and `user_reachable=false` under the RT0 maturity ceiling. The loopback implementation plus deterministic browser E2E are development evidence only; credentialed live-provider and human evidence are still required before promotion.
 
-The bound session aggregate is evidence preparation only. Schema `0.2` may preserve runtime-backed `canonical_playback_proven=true`, while `av_sync_proven` remains false. The current exit checker deliberately rejects playback-promoting aggregates until raw session snapshots are supplied and recomputed inside exit verification; therefore this evidence MUST NOT by itself promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state.
+The exit checker now requires raw sanitized Owner Lab session snapshots and recomputes their exact candidate/provider-state-bound aggregate before accepting runtime-backed `canonical_playback_proven=true`. A forged, rehashed, stale or cross-input aggregate fails structurally. `av_sync_proven` remains false, and playback evidence by itself MUST NOT promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state.
 
 The capability catalogue remains the machine-readable maturity source.

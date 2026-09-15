@@ -16,6 +16,7 @@ pub struct Rt0ExitVerificationContext<'a> {
     pub conversation_attempt_bytes: &'a [u8],
     pub bound_session_aggregate: &'a BoundLabSessionEvidenceAggregate,
     pub bound_session_aggregate_bytes: &'a [u8],
+    pub session_snapshot_artifacts: &'a [&'a [u8]],
     pub release_spec_bytes: &'a [u8],
     pub exact_candidate_sha: &'a str,
 }
