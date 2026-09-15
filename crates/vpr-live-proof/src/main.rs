@@ -174,7 +174,7 @@ fn run_conversation(
     let visitor_audio =
         fs::read(visitor_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
     let receipt = run_live_conversation_attempt(prepared, &profile, owner_audio, visitor_audio)
-        .map_err(|error| emit_conversation(&error))?;
+        .map_err(emit_conversation)?;
     let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| 2)?;
 
     verify_snapshot(&snapshot).map_err(emit_preflight)?;
@@ -300,7 +300,7 @@ fn emit_probe(error: &LiveProviderProbeError) -> i32 {
     2
 }
 
-fn emit_conversation(error: &LiveConversationAttemptError) -> i32 {
+fn emit_conversation(error: LiveConversationAttemptError) -> i32 {
     emit_error(error.code(), Some(error.stage()));
     2
 }
