@@ -187,7 +187,9 @@ impl LabSessionEvidenceRecorder {
         }
         self.validate_media(input)?;
         self.completed_playback_binding(
-            input.request_sequence.ok_or(LabEvidenceError::InvalidInput)?,
+            input
+                .request_sequence
+                .ok_or(LabEvidenceError::InvalidInput)?,
         )
     }
 
@@ -206,7 +208,9 @@ impl LabSessionEvidenceRecorder {
             return Err(LabEvidenceError::InvalidInput);
         }
         self.validate_media(input)?;
-        let request_sequence = input.request_sequence.ok_or(LabEvidenceError::InvalidInput)?;
+        let request_sequence = input
+            .request_sequence
+            .ok_or(LabEvidenceError::InvalidInput)?;
         if self.completed_playback_binding(request_sequence)?
             != (canonical_turn_sequence, canonical_output_sequence)
         {
@@ -349,7 +353,10 @@ mod tests {
             recorder.record_media(&audio_started),
             Err(LabEvidenceError::InvalidState)
         );
-        assert_eq!(recorder.prepare_canonical_playback(&audio_started), Ok((7, 1)));
+        assert_eq!(
+            recorder.prepare_canonical_playback(&audio_started),
+            Ok((7, 1))
+        );
         assert_eq!(
             recorder.record_canonical_playback(&audio_started, 7, 2),
             Err(LabEvidenceError::InvalidState)
@@ -360,7 +367,10 @@ mod tests {
         let snapshot = recorder.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
-        assert_eq!(snapshot.voice_attempts[0].canonical_output_sequence, Some(1));
+        assert_eq!(
+            snapshot.voice_attempts[0].canonical_output_sequence,
+            Some(1)
+        );
         assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
         assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
         assert!(snapshot.canonical_playback_proven);
@@ -402,9 +412,7 @@ mod tests {
             kind: LabMediaEvidenceKind::AudioStarted,
             elapsed_millis: 100,
         };
-        recorder
-            .record_canonical_playback(&first, 11, 1)
-            .unwrap();
+        recorder.record_canonical_playback(&first, 11, 1).unwrap();
         assert!(!recorder.snapshot().unwrap().canonical_playback_proven);
 
         let second = LabMediaEvidenceInput {
@@ -413,9 +421,7 @@ mod tests {
             kind: LabMediaEvidenceKind::AudioStarted,
             elapsed_millis: 120,
         };
-        recorder
-            .record_canonical_playback(&second, 12, 2)
-            .unwrap();
+        recorder.record_canonical_playback(&second, 12, 2).unwrap();
         assert!(recorder.snapshot().unwrap().canonical_playback_proven);
         assert_eq!(
             recorder.record_canonical_playback(&second, 12, 2),
