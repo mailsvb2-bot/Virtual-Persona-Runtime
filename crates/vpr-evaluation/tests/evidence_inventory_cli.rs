@@ -158,18 +158,19 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str) {
     )
     .unwrap();
     let bound_session = json!({
-        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.2",
+        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.3",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_digest,
         "snapshot_sha256":["9".repeat(64)],
         "aggregate":{
-            "schema_version":"rt0-owner-lab-session-aggregate-0.2",
-            "source_schema_version":"rt0-owner-lab-session-evidence-0.2",
+            "schema_version":"rt0-owner-lab-session-aggregate-0.3",
+            "source_schema_version":"rt0-owner-lab-session-evidence-0.3",
             "sessions":1,
             "completed_voice_attempts":1,
             "failed_voice_attempts":0,
             "canonical_playback_proven":false,
             "av_sync_proven":false,
+            "av_sync_absolute_offset":null,
             "stt_latency":null,
             "llm_latency":null,
             "avatar_submit_latency":null,

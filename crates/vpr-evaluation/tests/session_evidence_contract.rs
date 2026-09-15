@@ -1,6 +1,7 @@
 use vpr_evaluation::{
-    LabMediaEvidence, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabAvSyncEvidence, LabAvSyncReference, LabMediaEvidence, LabMediaEvidenceKind,
+    LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
+    LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
     aggregate_owner_lab_session_evidence,
 };
@@ -37,7 +38,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
         canonical_playback_proven: true,
-        av_sync_proven: false,
+        av_sync_proven: true,
         voice_attempts: vec![completed(request, base)],
         media_events: vec![
             LabMediaEvidence {
@@ -61,6 +62,26 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
                 elapsed_millis: base + 500,
             },
         ],
+        av_sync_samples: vec![
+            LabAvSyncEvidence {
+                request_sequence: request,
+                sample_sequence: 1,
+                reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+                absolute_offset_millis: base / 10 + 10,
+            },
+            LabAvSyncEvidence {
+                request_sequence: request,
+                sample_sequence: 2,
+                reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+                absolute_offset_millis: base / 10 + 20,
+            },
+            LabAvSyncEvidence {
+                request_sequence: request,
+                sample_sequence: 3,
+                reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+                absolute_offset_millis: base / 10 + 30,
+            },
+        ],
     }
 }
 
@@ -78,7 +99,9 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.estimated_cost_microunits, Some(14));
     assert_eq!(aggregate.provider_charge_microunits, Some(20));
     assert!(aggregate.canonical_playback_proven);
-    assert!(!aggregate.av_sync_proven);
+    assert!(aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p50, 40);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p95, 60);
 }
 
 #[test]
@@ -166,6 +189,8 @@ fn aggregate_requires_playback_proof_from_every_session() {
     let mut unproven = snapshot(32, 1, 200);
     unproven.canonical_playback_proven = false;
     unproven.voice_attempts[0].canonical_playback_confirmed = false;
+    unproven.av_sync_proven = false;
+    unproven.av_sync_samples.clear();
     unproven.media_events.retain(|event| {
         !matches!(
             event.kind,
@@ -184,6 +209,37 @@ fn interruption_requires_observed_audio_for_the_same_request() {
         .retain(|event| event.kind != LabMediaEvidenceKind::AudioStarted);
     assert_eq!(
         aggregate_owner_lab_session_evidence(&[snapshot]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
+fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
+    let mut missing = snapshot(41, 1, 100);
+    missing.av_sync_proven = false;
+    missing.av_sync_samples.clear();
+    let aggregate = aggregate_owner_lab_session_evidence(&[missing]).unwrap();
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset, None);
+
+    let mut partial = snapshot(42, 1, 100);
+    partial.av_sync_proven = false;
+    partial.av_sync_samples.pop();
+    let aggregate = aggregate_owner_lab_session_evidence(&[partial]).unwrap();
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 2);
+
+    let mut duplicate = snapshot(42, 1, 100);
+    duplicate.av_sync_samples.push(duplicate.av_sync_samples[0].clone());
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[duplicate]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+
+    let mut cross_request = snapshot(43, 1, 100);
+    cross_request.av_sync_samples[0].request_sequence = 99;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[cross_request]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)
     );
 }

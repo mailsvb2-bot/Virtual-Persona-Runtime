@@ -45,7 +45,7 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "canonical_playback_proven":true,
@@ -67,7 +67,8 @@ fn snapshot(session: u64) -> Value {
         "media_events":[
             {"request_sequence":1,"kind":"audio_started","elapsed_millis":400},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":500}
-        ]
+        ],
+        "av_sync_samples":[]
     })
 }
 
@@ -93,7 +94,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["schema_version"],
-        "rt0-owner-lab-session-aggregate-binding-0.2"
+        "rt0-owner-lab-session-aggregate-binding-0.3"
     );
     assert_eq!(
         value["candidate_sha"],

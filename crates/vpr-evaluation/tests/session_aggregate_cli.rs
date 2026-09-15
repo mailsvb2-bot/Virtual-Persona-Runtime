@@ -34,7 +34,7 @@ impl Drop for TempDir {
 
 fn snapshot(session: u64, elapsed: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "canonical_playback_proven":true,
@@ -56,7 +56,8 @@ fn snapshot(session: u64, elapsed: u64) -> Value {
         "media_events":[
             {"request_sequence":1,"kind":"audio_started","elapsed_millis":elapsed},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":elapsed + 100}
-        ]
+        ],
+        "av_sync_samples":[]
     })
 }
 

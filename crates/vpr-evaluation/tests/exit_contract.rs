@@ -148,13 +148,13 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
-fn session_snapshot_bytes() -> Vec<u8> {
+fn session_snapshot_bytes_with_av_sync(offsets: [u64; 3]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":1,
         "canonical_playback_proven":true,
-        "av_sync_proven":false,
+        "av_sync_proven":true,
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":11,
@@ -179,9 +179,18 @@ fn session_snapshot_bytes() -> Vec<u8> {
             "request_sequence":1,
             "kind":"audio_started",
             "elapsed_millis":500
-        }]
+        }],
+        "av_sync_samples":[
+            {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[0]},
+            {"request_sequence":1,"sample_sequence":2,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[1]},
+            {"request_sequence":1,"sample_sequence":3,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[2]}
+        ]
     }))
     .unwrap()
+}
+
+fn session_snapshot_bytes() -> Vec<u8> {
+    session_snapshot_bytes_with_av_sync([40, 60, 120])
 }
 
 fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
@@ -225,7 +234,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             first_meaningful_audio: distribution(1_500, 3_000),
             interruption_stop: distribution(250, 500),
             first_useful_video: distribution(1_250, 2_500),
-            av_sync_absolute_offset: distribution(60, 120),
+            av_sync_absolute_offset: LatencyDistributionMillis { samples: 3, p50: 60, p95: 120 },
             recoverable_reconnect: distribution(2_500, 5_000),
             artifact_sha256: digest('2'),
         },
@@ -324,7 +333,29 @@ fn evaluate_with_runtime(
     runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let session_snapshot_bytes = session_snapshot_bytes();
-    let session_snapshot_artifacts = [session_snapshot_bytes.as_slice()];
+    evaluate_with_runtime_snapshot(
+        evidence,
+        golden,
+        fixture,
+        release_spec,
+        candidate,
+        live_provider_probe,
+        runtime,
+        &session_snapshot_bytes,
+    )
+}
+
+fn evaluate_with_runtime_snapshot(
+    evidence: &Rt0ExitEvidence,
+    golden: (&BoundGoldenReport, &[u8]),
+    fixture: &support::GoldenFixture,
+    release_spec: &[u8],
+    candidate: &str,
+    live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
+    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
+    session_snapshot_bytes: &[u8],
+) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
+    let session_snapshot_artifacts = [session_snapshot_bytes];
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -384,7 +415,6 @@ fn every_quality_threshold_fails_when_exceeded_by_one_millisecond() {
     evidence.quality.first_meaningful_audio.p95 = 3_001;
     evidence.quality.interruption_stop.p95 = 501;
     evidence.quality.first_useful_video.p95 = 2_501;
-    evidence.quality.av_sync_absolute_offset.p95 = 121;
     evidence.quality.recoverable_reconnect.p95 = 5_001;
     let report = evaluate(
         &evidence,
@@ -400,12 +430,69 @@ fn every_quality_threshold_fails_when_exceeded_by_one_millisecond() {
         Rt0ExitFailureCode::AudioLatencyExceeded,
         Rt0ExitFailureCode::InterruptionLatencyExceeded,
         Rt0ExitFailureCode::VideoLatencyExceeded,
-        Rt0ExitFailureCode::AvSyncExceeded,
         Rt0ExitFailureCode::ReconnectLatencyExceeded,
     ] {
         assert!(report.failures.contains(&required), "missing {required:?}");
     }
     assert!(!report.ready);
+}
+
+#[test]
+fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let snapshot = session_snapshot_bytes_with_av_sync([40, 60, 121]);
+    let bound = bind_owner_lab_session_evidence(
+        &[snapshot.as_slice()],
+        &fixture.provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+    let bound_bytes = serde_json::to_vec(&bound).unwrap();
+    let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let probe = live_provider_probe(&fixture.provider_state_bytes);
+    let probe_bytes = serde_json::to_vec(&probe).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.bound_session_aggregate_sha256 = sha256_hex(&bound_bytes);
+    evidence.quality.av_sync_absolute_offset = LatencyDistributionMillis {
+        samples: 3,
+        p50: 60,
+        p95: 121,
+    };
+    let report = evaluate_with_runtime_snapshot(
+        &evidence,
+        (&golden, &golden_bytes),
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+        (&probe, &probe_bytes),
+        (&conversation_attempt, &bound, &bound_bytes),
+        &snapshot,
+    )
+    .unwrap();
+    assert!(report.failures.contains(&Rt0ExitFailureCode::AvSyncExceeded));
+    assert!(!report.ready);
+}
+
+#[test]
+fn av_sync_quality_must_match_recomputed_session_distribution() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.quality.av_sync_absolute_offset.p50 = 59;
+    assert_eq!(
+        evaluate(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+    );
 }
 
 #[test]
