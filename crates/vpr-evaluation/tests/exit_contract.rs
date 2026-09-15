@@ -9,7 +9,8 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
-    evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
+    bind_owner_lab_session_evidence, evaluate_bound_golden_suite, evaluate_rt0_exit_evidence,
+    sha256_hex,
 };
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
@@ -147,33 +148,46 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
-fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
-    serde_json::from_value(serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.2",
-        "candidate_sha":CANDIDATE,
-        "provider_state_sha256":sha256_hex(provider_state_bytes),
-        "snapshot_sha256":[digest('9')],
-        "aggregate":{
-            "schema_version":"rt0-owner-lab-session-aggregate-0.2",
-            "source_schema_version":"rt0-owner-lab-session-evidence-0.2",
-            "sessions":1,
-            "completed_voice_attempts":1,
-            "failed_voice_attempts":0,
-            "canonical_playback_proven":false,
-            "av_sync_proven":false,
-            "stt_latency":null,
-            "llm_latency":null,
-            "avatar_submit_latency":null,
-            "server_total_latency":null,
-            "first_meaningful_audio":null,
-            "interruption_stop":null,
-            "first_useful_video":null,
-            "recoverable_reconnect":null,
-            "estimated_cost_microunits":null,
-            "provider_charge_microunits":null
-        }
+fn session_snapshot_bytes() -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "scope":"browser_observed_media_plane_only",
+        "session_sequence":1,
+        "canonical_playback_proven":true,
+        "av_sync_proven":false,
+        "voice_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":11,
+            "canonical_output_sequence":12,
+            "canonical_playback_confirmed":true,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":100,
+            "llm_millis":120,
+            "avatar_millis":150,
+            "server_total_millis":370,
+            "stt_usage":{
+                "input_units":1,"output_units":0,
+                "estimated_cost_microunits":1,"provider_charge_microunits":null
+            },
+            "llm_usage":{
+                "input_units":1,"output_units":1,
+                "estimated_cost_microunits":1,"provider_charge_microunits":null
+            }
+        }],
+        "media_events":[{
+            "request_sequence":1,
+            "kind":"audio_started",
+            "elapsed_millis":500
+        }]
     }))
     .unwrap()
+}
+
+fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
+    let snapshot = session_snapshot_bytes();
+    bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state_bytes, CANDIDATE)
+        .unwrap()
 }
 
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
@@ -309,6 +323,8 @@ fn evaluate_with_runtime(
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
     runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
+    let session_snapshot_bytes = session_snapshot_bytes();
+    let session_snapshot_artifacts = [session_snapshot_bytes.as_slice()];
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -325,6 +341,7 @@ fn evaluate_with_runtime(
             conversation_attempt_bytes: runtime.0,
             bound_session_aggregate: runtime.1,
             bound_session_aggregate_bytes: runtime.2,
+            session_snapshot_artifacts: &session_snapshot_artifacts,
             release_spec_bytes: release_spec,
             exact_candidate_sha: candidate,
         },
@@ -337,6 +354,11 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
     let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    assert!(
+        bound_session_aggregate(&fixture.provider_state_bytes)
+            .aggregate
+            .canonical_playback_proven
+    );
     let report = evaluate(
         &evidence,
         &golden,
@@ -640,6 +662,24 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
         ),
         Err(Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch)
     );
+
+    let mut forged = bound_session_aggregate(&fixture.provider_state_bytes);
+    forged.aggregate.first_meaningful_audio = Some(distribution(501, 501));
+    let forged_bytes = serde_json::to_vec(&forged).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.bound_session_aggregate_sha256 = sha256_hex(&forged_bytes);
+    assert_eq!(
+        evaluate_with_runtime(
+            &evidence,
+            (&golden, &golden_bytes),
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&probe, &probe_bytes),
+            (&base_conversation, &forged, &forged_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+    );
 }
 
 #[test]
@@ -657,6 +697,8 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let conversation_attempt_bytes = conversation_attempt_bytes(&provider_state_bytes);
     let bound_session_aggregate = bound_session_aggregate(&provider_state_bytes);
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
+    let session_snapshot_bytes = session_snapshot_bytes();
+    let session_snapshot_artifacts = [session_snapshot_bytes.as_slice()];
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -673,6 +715,7 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 conversation_attempt_bytes: &conversation_attempt_bytes,
                 bound_session_aggregate: &bound_session_aggregate,
                 bound_session_aggregate_bytes: &bound_session_aggregate_bytes,
+                session_snapshot_artifacts: &session_snapshot_artifacts,
                 release_spec_bytes: RELEASE_SPEC,
                 exact_candidate_sha: CANDIDATE,
             },

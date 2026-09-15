@@ -7,7 +7,7 @@ use crate::{
     BoundLabSessionEvidenceAggregate, LatencyDistributionMillis, QualityEvidence,
     RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence, Rt0ExitEvidenceError,
-    Rt0ExitVerificationContext, sha256_hex,
+    Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
 };
 
 const RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
@@ -51,7 +51,18 @@ pub(crate) fn validate_runtime_evidence(
         context.bound_session_aggregate,
         context.exact_candidate_sha,
         provider_state_digest,
+    )?;
+
+    let recomputed = bind_owner_lab_session_evidence(
+        context.session_snapshot_artifacts,
+        context.provider_state_bytes,
+        context.exact_candidate_sha,
     )
+    .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    if recomputed != *context.bound_session_aggregate {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    Ok(())
 }
 
 fn validate_bound_session_aggregate(
@@ -67,7 +78,6 @@ fn validate_bound_session_aggregate(
         || bound.aggregate.source_schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || bound.aggregate.sessions == 0
         || usize::try_from(bound.aggregate.sessions).ok() != Some(bound.snapshot_sha256.len())
-        || bound.aggregate.canonical_playback_proven
         || bound.aggregate.av_sync_proven
     {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
