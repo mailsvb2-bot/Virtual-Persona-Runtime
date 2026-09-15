@@ -49,7 +49,7 @@ fn run() -> Result<(), i32> {
         .collect::<Result<Vec<_>, _>>()?;
     let session_snapshot_artifacts: Vec<&[u8]> = session_snapshot_bytes
         .iter()
-        .map(|bytes| bytes.as_slice())
+        .map(Vec::as_slice)
         .collect();
     let release_spec_bytes = read(release_spec_path)?;
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
