@@ -178,7 +178,6 @@ fn bound_session_aggregate(provider_state_sha256: &str) -> Value {
     })
 }
 
-
 struct PreparedPaths {
     _dir: TempDir,
     evidence: PathBuf,
@@ -227,7 +226,11 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     fs::write(&live_provider_probe_path, live_provider_probe_bytes).unwrap();
     fs::write(&conversation_attempt_path, conversation_attempt_bytes).unwrap();
     fs::write(&bound_session_aggregate_path, bound_session_aggregate_bytes).unwrap();
-    fs::write(&evidence_path, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+    fs::write(
+        &evidence_path,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
     fs::write(&spec_path, RELEASE_SPEC).unwrap();
     PreparedPaths {
         _dir: dir,
@@ -286,8 +289,8 @@ fn cli_returns_zero_only_for_complete_exact_bound_evidence() {
 #[test]
 fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
     let paths = prepare(|value| {
-            value["privacy_permissions"]["accepted_private_context_leakage"] = json!(1);
-        });
+        value["privacy_permissions"]["accepted_private_context_leakage"] = json!(1);
+    });
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(1));
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -298,9 +301,14 @@ fn cli_returns_one_for_valid_but_privacy_failing_evidence() {
 #[test]
 fn cli_rejects_tampered_provider_state_even_when_golden_report_is_valid_json() {
     let paths = prepare(|_| {});
-    let mut state: Value = serde_json::from_slice(&fs::read(&paths.provider_state).unwrap()).unwrap();
+    let mut state: Value =
+        serde_json::from_slice(&fs::read(&paths.provider_state).unwrap()).unwrap();
     state["providers"][0]["provider"] = json!("tampered-stt");
-    fs::write(&paths.provider_state, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    fs::write(
+        &paths.provider_state,
+        serde_json::to_vec_pretty(&state).unwrap(),
+    )
+    .unwrap();
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));
     assert!(
@@ -381,8 +389,8 @@ fn cli_returns_two_for_stale_candidate_or_unknown_fields() {
     );
 
     let paths = prepare(|value| {
-            value["api_key"] = json!("must-not-be-accepted");
-        });
+        value["api_key"] = json!("must-not-be-accepted");
+    });
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));
     assert!(

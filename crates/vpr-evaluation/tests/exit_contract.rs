@@ -3,14 +3,13 @@ mod support;
 use vpr_evaluation::{
     AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, AvatarProbeEvidence,
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence,
-    ConversationPairEvidence, CostEvidence,
-    EvidenceOrigin, EvidenceVerificationContext, GoldenEvidenceBundle, GoldenSuite,
-    HumanDimensions, HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis,
-    LiveProviderProbeReceipt, LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence,
-    ProbeUsage, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
-    RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode,
-    Rt0ExitVerificationContext, SttProbeEvidence, evaluate_bound_golden_suite,
-    evaluate_rt0_exit_evidence, sha256_hex,
+    ConversationPairEvidence, CostEvidence, EvidenceOrigin, EvidenceVerificationContext,
+    GoldenEvidenceBundle, GoldenSuite, HumanDimensions, HumanEvaluationEvidence,
+    KnownLimitationsEvidence, LatencyDistributionMillis, LiveProviderProbeReceipt,
+    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
+    RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
+    Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
+    evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
@@ -127,7 +126,6 @@ fn live_provider_probe(provider_state_bytes: &[u8]) -> LiveProviderProbeReceipt 
 fn live_provider_probe_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&live_provider_probe(provider_state_bytes)).unwrap()
 }
-
 
 fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
@@ -598,7 +596,12 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
     assert_eq!(
         evaluate_with_runtime(
-            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
             (&probe, &probe_bytes),
             (b"tampered", &base_session, &base_session_bytes),
         ),
@@ -612,7 +615,12 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     evidence.conversation_attempt_sha256 = sha256_hex(&conversation_bytes);
     assert_eq!(
         evaluate_with_runtime(
-            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
             (&probe, &probe_bytes),
             (&conversation_bytes, &base_session, &base_session_bytes),
         ),
@@ -626,7 +634,12 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     evidence.bound_session_aggregate_sha256 = sha256_hex(&session_bytes);
     assert_eq!(
         evaluate_with_runtime(
-            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
             (&probe, &probe_bytes),
             (&base_conversation, &session, &session_bytes),
         ),

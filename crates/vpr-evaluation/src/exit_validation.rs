@@ -4,9 +4,10 @@ use serde::Deserialize;
 
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
-    BoundLabSessionEvidenceAggregate, LatencyDistributionMillis, QualityEvidence, Rt0ExitEvidence,
-    Rt0ExitEvidenceError, Rt0ExitVerificationContext, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, sha256_hex,
+    BoundLabSessionEvidenceAggregate, LatencyDistributionMillis, QualityEvidence,
+    RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence, Rt0ExitEvidenceError,
+    Rt0ExitVerificationContext, sha256_hex,
 };
 
 const RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
