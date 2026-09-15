@@ -188,7 +188,10 @@ fn avatar_text_delivery_is_sent_then_reconciled_to_played_after_turn_completion(
         .deliver_realtime_avatar_text(&provider, &handle, "Привет")
         .unwrap();
     assert_eq!(delivery.sequence(), 1);
-    assert_eq!(output.output_segments()[0].state(), OutputDeliveryState::Sent);
+    assert_eq!(
+        output.output_segments()[0].state(),
+        OutputDeliveryState::Sent
+    );
     output.complete().unwrap();
     assert_eq!(output.state(), TurnState::Completed);
 

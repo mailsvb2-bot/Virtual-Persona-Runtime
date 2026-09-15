@@ -13,7 +13,10 @@ pub struct OutputDeliveryHandle {
 
 impl OutputDeliveryHandle {
     pub(crate) fn new(turn_id: TurnId, segment_id: OutputSegmentId) -> Self {
-        Self { turn_id, segment_id }
+        Self {
+            turn_id,
+            segment_id,
+        }
     }
 
     #[must_use]
