@@ -85,30 +85,7 @@ fn run() -> Result<(), i32> {
         return usage();
     }
     let root = Path::new(&evidence_dir);
-    let mut items = Vec::with_capacity(REQUIRED.len());
-    let mut missing = Vec::new();
-    let mut all_syntax_valid = true;
-    for &name in REQUIRED {
-        let path = root.join(name);
-        if let Ok(bytes) = fs::read(&path) {
-            let syntax_valid = artifact_syntax_valid(name, &bytes);
-            all_syntax_valid &= syntax_valid;
-            items.push(InventoryItem {
-                name,
-                present: true,
-                syntax_valid,
-                sha256: Some(sha256_hex(&bytes)),
-            });
-        } else {
-            missing.push(name);
-            items.push(InventoryItem {
-                name,
-                present: false,
-                syntax_valid: false,
-                sha256: None,
-            });
-        }
-    }
+    let (items, missing, all_syntax_valid) = collect_inventory_items(root);
 
     let provider = parse_optional::<ProviderStateManifest>(&root.join("provider-state.json"));
     let golden = parse_optional::<BoundGoldenReport>(&root.join("bound-golden-report.json"));
@@ -191,6 +168,34 @@ fn run() -> Result<(), i32> {
     } else {
         Err(1)
     }
+}
+
+fn collect_inventory_items(root: &Path) -> (Vec<InventoryItem>, Vec<&'static str>, bool) {
+    let mut items = Vec::with_capacity(REQUIRED.len());
+    let mut missing = Vec::new();
+    let mut all_syntax_valid = true;
+    for &name in REQUIRED {
+        let path = root.join(name);
+        if let Ok(bytes) = fs::read(&path) {
+            let syntax_valid = artifact_syntax_valid(name, &bytes);
+            all_syntax_valid &= syntax_valid;
+            items.push(InventoryItem {
+                name,
+                present: true,
+                syntax_valid,
+                sha256: Some(sha256_hex(&bytes)),
+            });
+        } else {
+            missing.push(name);
+            items.push(InventoryItem {
+                name,
+                present: false,
+                syntax_valid: false,
+                sha256: None,
+            });
+        }
+    }
+    (items, missing, all_syntax_valid)
 }
 
 fn artifact_syntax_valid(name: &str, bytes: &[u8]) -> bool {

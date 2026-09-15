@@ -66,6 +66,7 @@ fn empty_directory_reports_missing_evidence_without_claiming_readiness() {
             .all(|item| !item["present"].as_bool().unwrap())
     );
 }
+
 fn seed_complete_inventory(dir: &Path) {
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
     assert_eq!(fixture.provider_state.providers.len(), 3);
@@ -109,6 +110,32 @@ fn seed_complete_inventory(dir: &Path) {
         serde_json::to_vec_pretty(&probe).unwrap(),
     )
     .unwrap();
+    seed_bound_runtime_evidence(dir, &provider_digest);
+    for name in [
+        "exit-evidence.json",
+        "ci-evidence.json",
+        "e2e-evidence.json",
+        "owner-conversation.json",
+        "visitor-conversation.json",
+        "acceptance.json",
+        "quality.json",
+        "cost.json",
+        "privacy-permissions.json",
+        "human-evaluation.json",
+        "known-limitations.md",
+    ] {
+        if Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        {
+            fs::write(dir.join(name), b"{}\n").unwrap();
+        } else {
+            fs::write(dir.join(name), format!("inventory fixture: {name}\n")).unwrap();
+        }
+    }
+}
+
+fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str) {
     let conversation = json!({
         "schema_version":"rt0-live-conversation-attempt-0.1",
         "candidate_sha":CANDIDATE,
@@ -160,28 +187,6 @@ fn seed_complete_inventory(dir: &Path) {
         serde_json::to_vec_pretty(&bound_session).unwrap(),
     )
     .unwrap();
-    for name in [
-        "exit-evidence.json",
-        "ci-evidence.json",
-        "e2e-evidence.json",
-        "owner-conversation.json",
-        "visitor-conversation.json",
-        "acceptance.json",
-        "quality.json",
-        "cost.json",
-        "privacy-permissions.json",
-        "human-evaluation.json",
-        "known-limitations.md",
-    ] {
-        if Path::new(name)
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-        {
-            fs::write(dir.join(name), b"{}\n").unwrap();
-        } else {
-            fs::write(dir.join(name), format!("inventory fixture: {name}\n")).unwrap();
-        }
-    }
 }
 
 #[test]
@@ -217,6 +222,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         json!(true)
     );
 }
+
 #[test]
 fn cross_candidate_inventory_fails_closed() {
     let dir = TempDir::new();
