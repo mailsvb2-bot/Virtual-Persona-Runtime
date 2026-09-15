@@ -2,8 +2,9 @@ use std::{env, fs};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundGoldenReport, GoldenEvidenceBundle, LiveProviderProbeReceipt, ProviderStateManifest,
-    Rt0ExitEvidence, Rt0ExitVerificationContext, evaluate_rt0_exit_evidence,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle,
+    LiveProviderProbeReceipt, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitVerificationContext,
+    evaluate_rt0_exit_evidence,
 };
 
 #[derive(Serialize)]
@@ -35,6 +36,12 @@ fn run() -> Result<(), i32> {
     let Some(live_provider_probe_path) = args.next() else {
         return usage();
     };
+    let Some(conversation_attempt_path) = args.next() else {
+        return usage();
+    };
+    let Some(bound_session_aggregate_path) = args.next() else {
+        return usage();
+    };
     let Some(release_spec_path) = args.next() else {
         return usage();
     };
@@ -50,12 +57,16 @@ fn run() -> Result<(), i32> {
     let golden_evidence_bytes = read(&golden_evidence_path)?;
     let provider_state_bytes = read(&provider_state_path)?;
     let live_provider_probe_bytes = read(&live_provider_probe_path)?;
+    let conversation_attempt_bytes = read(&conversation_attempt_path)?;
+    let bound_session_aggregate_bytes = read(&bound_session_aggregate_path)?;
     let release_spec_bytes = read(&release_spec_path)?;
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
     let golden_report: BoundGoldenReport = parse(&golden_report_bytes)?;
     let golden_evidence_bundle: GoldenEvidenceBundle = parse(&golden_evidence_bytes)?;
     let provider_state: ProviderStateManifest = parse(&provider_state_bytes)?;
     let live_provider_probe: LiveProviderProbeReceipt = parse(&live_provider_probe_bytes)?;
+    let bound_session_aggregate: BoundLabSessionEvidenceAggregate =
+        parse(&bound_session_aggregate_bytes)?;
 
     let report = match evaluate_rt0_exit_evidence(
         &evidence,
@@ -69,6 +80,9 @@ fn run() -> Result<(), i32> {
             provider_state_bytes: &provider_state_bytes,
             live_provider_probe: &live_provider_probe,
             live_provider_probe_bytes: &live_provider_probe_bytes,
+            conversation_attempt_bytes: &conversation_attempt_bytes,
+            bound_session_aggregate: &bound_session_aggregate,
+            bound_session_aggregate_bytes: &bound_session_aggregate_bytes,
             release_spec_bytes: &release_spec_bytes,
             exact_candidate_sha: &candidate_sha,
         },
@@ -108,7 +122,7 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
 
 fn usage() -> Result<(), i32> {
     eprintln!(
-        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <release-spec.md> <exact-candidate-sha>"
+        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <release-spec.md> <exact-candidate-sha>"
     );
     Err(2)
 }
