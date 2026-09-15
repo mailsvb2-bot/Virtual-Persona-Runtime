@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::binding::{valid_git_sha, validate_provider_state};
 use crate::{
@@ -11,7 +11,7 @@ use crate::{
 pub const RT0_OWNER_LAB_SESSION_BINDING_SCHEMA: &str =
     "rt0-owner-lab-session-aggregate-binding-0.1";
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BoundLabSessionEvidenceAggregate {
     pub schema_version: String,

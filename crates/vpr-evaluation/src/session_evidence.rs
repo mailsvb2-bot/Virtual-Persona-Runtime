@@ -79,7 +79,8 @@ pub struct LabSessionEvidenceSnapshot {
     pub media_events: Vec<LabMediaEvidence>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LabSessionEvidenceAggregate {
     pub schema_version: String,
     pub source_schema_version: String,
