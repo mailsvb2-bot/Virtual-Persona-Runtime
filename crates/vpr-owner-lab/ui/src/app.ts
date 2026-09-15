@@ -10,6 +10,8 @@ type StartResponse = { evidence_session_sequence: number; offer: SessionDescript
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
+type AvSyncReference = "web_rtc_estimated_playout_timestamp";
+type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
@@ -67,6 +69,9 @@ let activeVoiceEvidence: ActiveVoiceEvidence | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const AUTO_STOP_MILLIS = 29_500;
+const AV_SYNC_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
+const AV_SYNC_SAMPLE_COUNT = 3;
+const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 
 const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): void => {
   statusNode.textContent = text;
@@ -139,6 +144,49 @@ const postMediaEvidence = async (
   await refreshSessionEvidence();
 };
 
+const readAvSyncOffsetMillis = async (): Promise<number | null> => {
+  const currentPeer = peer;
+  if (!currentPeer) return null;
+  const audio: number[] = [];
+  const videoOffsets: number[] = [];
+  const stats = await currentPeer.getStats();
+  stats.forEach((raw) => {
+    const stat = raw as unknown as InboundRtpSyncStat;
+    if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp)) return;
+    const packetsReceived = stat.packetsReceived;
+    if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0) return;
+    const kind = stat.kind ?? stat.mediaType;
+    if (kind === "audio") audio.push(stat.estimatedPlayoutTimestamp as number);
+    else if (kind === "video") videoOffsets.push(stat.estimatedPlayoutTimestamp as number);
+  });
+  if (audio.length !== 1 || videoOffsets.length !== 1) return null;
+  const audioTimestamp = audio[0];
+  const videoTimestamp = videoOffsets[0];
+  if (audioTimestamp === undefined || videoTimestamp === undefined) return null;
+  return Math.round(Math.abs(audioTimestamp - videoTimestamp));
+};
+
+const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => {
+  let recorded = false;
+  for (let index = 0; index < AV_SYNC_SAMPLE_COUNT; index += 1) {
+    const absoluteOffsetMillis = await readAvSyncOffsetMillis();
+    if (absoluteOffsetMillis !== null) {
+      await api<{ ok: true }>("/api/evidence/av-sync", {
+        session_sequence: evidenceSessionSequence,
+        request_sequence: requestSequence,
+        sample_sequence: index + 1,
+        reference: AV_SYNC_REFERENCE,
+        absolute_offset_millis: absoluteOffsetMillis,
+      });
+      recorded = true;
+    }
+    if (index + 1 < AV_SYNC_SAMPLE_COUNT) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, AV_SYNC_SAMPLE_INTERVAL_MILLIS));
+    }
+  }
+  if (recorded) await refreshSessionEvidence();
+};
+
 const rms = (samples: Float32Array): number => {
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
@@ -182,6 +230,7 @@ const monitorRemoteAudio = (): void => {
         voice.audioStartedElapsed = performance.now() - voice.startedAt;
         if (voice.responseComplete) {
           void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
+            .then(() => collectAvSyncEvidence(voice.requestSequence))
             .catch(() => undefined);
         }
       }
@@ -516,6 +565,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       voice.responseComplete = true;
       if (voice.audioStartedElapsed !== null) {
         await postMediaEvidence("audio_started", voice.audioStartedElapsed, requestSequence);
+        await collectAvSyncEvidence(requestSequence).catch(() => undefined);
       }
     }
     await refreshSessionEvidence();

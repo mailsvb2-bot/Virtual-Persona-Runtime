@@ -16,7 +16,8 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
-    LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder, OwnerLabEngine,
+    LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
+    OwnerLabEngine,
     OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
@@ -240,6 +241,11 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             http_evidence::record_media(&state.engine, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(error.status(), error.code()))
+        }),
+        "/api/evidence/av-sync" => parse_json::<LabAvSyncEvidenceInput>(request).and_then(|body| {
+            http_evidence::record_av_sync(&state.evidence, &body)
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),

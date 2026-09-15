@@ -4,7 +4,8 @@ use serde::Deserialize;
 
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
-    BoundLabSessionEvidenceAggregate, LatencyDistributionMillis, QualityEvidence,
+    BoundLabSessionEvidenceAggregate, LabSessionEvidenceAggregate, LatencyDistributionMillis,
+    QualityEvidence,
     RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence, Rt0ExitEvidenceError,
     Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
@@ -62,6 +63,19 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
+    validate_av_sync_quality_binding(evidence, &recomputed.aggregate)
+}
+
+fn validate_av_sync_quality_binding(
+    evidence: &Rt0ExitEvidence,
+    aggregate: &LabSessionEvidenceAggregate,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let Some(av_sync) = aggregate.av_sync_absolute_offset else {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    };
+    if !aggregate.av_sync_proven || av_sync != evidence.quality.av_sync_absolute_offset {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
     Ok(())
 }
 
@@ -78,7 +92,6 @@ fn validate_bound_session_aggregate(
         || bound.aggregate.source_schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || bound.aggregate.sessions == 0
         || usize::try_from(bound.aggregate.sessions).ok() != Some(bound.snapshot_sha256.len())
-        || bound.aggregate.av_sync_proven
     {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
@@ -102,6 +115,7 @@ fn validate_bound_session_aggregate(
         bound.aggregate.llm_latency,
         bound.aggregate.avatar_submit_latency,
         bound.aggregate.server_total_latency,
+        bound.aggregate.av_sync_absolute_offset,
         bound.aggregate.first_meaningful_audio,
         bound.aggregate.interruption_stop,
         bound.aggregate.first_useful_video,

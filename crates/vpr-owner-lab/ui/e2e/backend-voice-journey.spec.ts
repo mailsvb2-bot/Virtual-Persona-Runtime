@@ -176,6 +176,12 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
       }
       async setLocalDescription(): Promise<void> {}
+      async getStats(): Promise<Map<string, object>> {
+        return new Map([
+          ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
+          ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
+        ]);
+      }
       close(): void { this.connectionState = "closed"; }
     }
 
@@ -224,6 +230,8 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(ownerEvidence.ok()).toBeTruthy();
   const ownerEvidenceJson = await ownerEvidence.json() as {
     canonical_playback_proven: boolean;
+    av_sync_proven: boolean;
+    av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
     voice_attempts: Array<{
       request_sequence: number;
       canonical_turn_sequence: number;
@@ -234,6 +242,13 @@ test("owner and visitor voice turns cross the real backend with different contex
     media_events: Array<{ request_sequence: number | null; kind: string }>;
   };
   expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
+  expect(ownerEvidenceJson.av_sync_proven).toBeTruthy();
+  expect(ownerEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(ownerEvidenceJson.av_sync_samples.every((sample) =>
+    sample.request_sequence === 1
+      && sample.reference === "web_rtc_estimated_playout_timestamp"
+      && sample.absolute_offset_millis === 60
+  )).toBeTruthy();
   expect(ownerEvidenceJson.voice_attempts).toMatchObject([{
     request_sequence: 1,
     canonical_playback_confirmed: true,
@@ -263,6 +278,8 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(visitorEvidence.ok()).toBeTruthy();
   const visitorEvidenceJson = await visitorEvidence.json() as {
     canonical_playback_proven: boolean;
+    av_sync_proven: boolean;
+    av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
     voice_attempts: Array<{
       request_sequence: number;
       canonical_turn_sequence: number;
@@ -273,6 +290,13 @@ test("owner and visitor voice turns cross the real backend with different contex
     media_events: Array<{ request_sequence: number | null; kind: string; elapsed_millis: number }>;
   };
   expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
+  expect(visitorEvidenceJson.av_sync_proven).toBeTruthy();
+  expect(visitorEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(visitorEvidenceJson.av_sync_samples.every((sample) =>
+    sample.request_sequence === 1
+      && sample.reference === "web_rtc_estimated_playout_timestamp"
+      && sample.absolute_offset_millis === 60
+  )).toBeTruthy();
   expect(visitorEvidenceJson.voice_attempts).toMatchObject([{
     request_sequence: 1,
     canonical_playback_confirmed: true,
