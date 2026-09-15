@@ -254,10 +254,9 @@ fn conversation_and_session_binding_mismatch_keeps_inventory_incomplete() {
     let dir = TempDir::new();
     seed_complete_inventory(dir.path());
 
-    let mut conversation: Value = serde_json::from_slice(
-        &fs::read(dir.path().join("conversation-attempt.json")).unwrap(),
-    )
-    .unwrap();
+    let mut conversation: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("conversation-attempt.json")).unwrap())
+            .unwrap();
     conversation["provider_state_sha256"] = json!("0".repeat(64));
     fs::write(
         dir.path().join("conversation-attempt.json"),
@@ -265,10 +264,9 @@ fn conversation_and_session_binding_mismatch_keeps_inventory_incomplete() {
     )
     .unwrap();
 
-    let mut session: Value = serde_json::from_slice(
-        &fs::read(dir.path().join("bound-session-aggregate.json")).unwrap(),
-    )
-    .unwrap();
+    let mut session: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("bound-session-aggregate.json")).unwrap())
+            .unwrap();
     session["candidate_sha"] = json!("2".repeat(40));
     fs::write(
         dir.path().join("bound-session-aggregate.json"),
@@ -284,5 +282,8 @@ fn conversation_and_session_binding_mismatch_keeps_inventory_incomplete() {
         report["bindings"]["conversation_provider_state_matches"],
         json!(false)
     );
-    assert_eq!(report["bindings"]["session_candidate_matches"], json!(false));
+    assert_eq!(
+        report["bindings"]["session_candidate_matches"],
+        json!(false)
+    );
 }

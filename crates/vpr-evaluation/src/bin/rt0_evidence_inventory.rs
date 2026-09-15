@@ -3,8 +3,8 @@ use std::{env, fs, path::Path};
 use serde::{Deserialize, Serialize};
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, LiveProviderProbeReceipt,
-    ProviderStateManifest, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    ProviderStateManifest, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
 const SCHEMA: &str = "rt0-evidence-inventory-0.1";
@@ -162,16 +162,18 @@ fn run() -> Result<(), i32> {
         && conversation
             .as_ref()
             .is_some_and(|receipt| receipt.schema_version == LIVE_CONVERSATION_ATTEMPT_SCHEMA)
-        && session.as_ref().is_some_and(|receipt| {
-            receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA
-        })
+        && session
+            .as_ref()
+            .is_some_and(|receipt| receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA)
         && bindings.candidate_sha_valid
         && bindings.golden_candidate_matches.unwrap_or(false)
         && bindings.golden_provider_state_matches.unwrap_or(false)
         && bindings.probe_candidate_matches.unwrap_or(false)
         && bindings.probe_provider_state_matches.unwrap_or(false)
         && bindings.conversation_candidate_matches.unwrap_or(false)
-        && bindings.conversation_provider_state_matches.unwrap_or(false)
+        && bindings
+            .conversation_provider_state_matches
+            .unwrap_or(false)
         && bindings.session_candidate_matches.unwrap_or(false)
         && bindings.session_provider_state_matches.unwrap_or(false);
     let report = InventoryReport {
