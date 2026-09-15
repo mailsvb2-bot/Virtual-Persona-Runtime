@@ -287,8 +287,7 @@ fn evaluate_with_probe(
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
     evaluate_with_runtime(
         evidence,
-        golden,
-        golden_bytes,
+        (golden, golden_bytes),
         fixture,
         release_spec,
         candidate,
@@ -303,8 +302,7 @@ fn evaluate_with_probe(
 
 fn evaluate_with_runtime(
     evidence: &Rt0ExitEvidence,
-    golden: &BoundGoldenReport,
-    golden_bytes: &[u8],
+    golden: (&BoundGoldenReport, &[u8]),
     fixture: &support::GoldenFixture,
     release_spec: &[u8],
     candidate: &str,
@@ -314,10 +312,10 @@ fn evaluate_with_runtime(
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
-        golden,
+        golden.0,
         Rt0ExitVerificationContext {
             exit_evidence_bytes: &exit_bytes,
-            golden_report_bytes: golden_bytes,
+            golden_report_bytes: golden.1,
             golden_evidence_bundle: &fixture.bundle,
             golden_evidence_bytes: &fixture.bundle_bytes,
             provider_state: &fixture.provider_state,
@@ -597,8 +595,7 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     assert_eq!(
         evaluate_with_runtime(
             &evidence,
-            &golden,
-            &golden_bytes,
+            (&golden, &golden_bytes),
             &fixture,
             RELEASE_SPEC,
             CANDIDATE,
@@ -616,8 +613,7 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     assert_eq!(
         evaluate_with_runtime(
             &evidence,
-            &golden,
-            &golden_bytes,
+            (&golden, &golden_bytes),
             &fixture,
             RELEASE_SPEC,
             CANDIDATE,
@@ -635,8 +631,7 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
     assert_eq!(
         evaluate_with_runtime(
             &evidence,
-            &golden,
-            &golden_bytes,
+            (&golden, &golden_bytes),
             &fixture,
             RELEASE_SPEC,
             CANDIDATE,
