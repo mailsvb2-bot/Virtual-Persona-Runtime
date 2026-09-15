@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use vpr_domain::{
-    CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion, SessionId, TurnId,
+    CorrelationId, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion,
+    SessionId, TurnId, TurnState,
 };
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
@@ -171,6 +172,32 @@ fn avatar_handle_is_session_scoped_and_survives_turn_boundary() {
 
     assert_eq!(provider.creates.load(Ordering::SeqCst), 1);
     assert_eq!(provider.speaks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn avatar_text_delivery_is_sent_then_reconciled_to_played_after_turn_completion() {
+    let persona = persona("delivery");
+    let session = active_session("delivery", &persona);
+    let opening = turn("delivery-open", &persona, &session);
+    let provider = RecordingAvatar::default();
+    let handle = opening.open_realtime_avatar(&provider).unwrap();
+
+    let output = turn("delivery-output", &persona, &session);
+    output.begin_output().unwrap();
+    let delivery = output
+        .deliver_realtime_avatar_text(&provider, &handle, "Привет")
+        .unwrap();
+    assert_eq!(delivery.sequence(), 1);
+    assert_eq!(output.output_segments()[0].state(), OutputDeliveryState::Sent);
+    output.complete().unwrap();
+    assert_eq!(output.state(), TurnState::Completed);
+
+    output.acknowledge_output_played(&delivery).unwrap();
+    output.acknowledge_output_played(&delivery).unwrap();
+    assert_eq!(
+        output.output_segments()[0].state(),
+        OutputDeliveryState::Played
+    );
 }
 
 #[test]

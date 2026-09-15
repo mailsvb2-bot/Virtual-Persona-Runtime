@@ -461,6 +461,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert_eq!(voice_json["reply"], "Здравствуйте");
     assert_eq!(voice_json["locale"], "ru-RU");
     assert!(voice_json["evidence_turn_sequence"].as_u64().unwrap() > 0);
+    assert!(voice_json["evidence_output_sequence"].as_u64().unwrap() > 0);
     assert_eq!(voice_json["stt_usage"]["input_units"], 100);
     assert_eq!(voice_json["llm_usage"]["input_units"], 7);
     assert_eq!(voice_json["llm_usage"]["output_units"], 1);
@@ -536,9 +537,25 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
     let evidence_json: Value = serde_json::from_str(&evidence.body).unwrap();
     assert_eq!(evidence_json["session_sequence"], evidence_session);
     assert_eq!(evidence_json["scope"], "browser_observed_media_plane_only");
-    assert_eq!(evidence_json["canonical_playback_proven"], false);
+    assert_eq!(evidence_json["canonical_playback_proven"], true);
     assert_eq!(evidence_json["av_sync_proven"], false);
     assert_eq!(evidence_json["voice_attempts"][0]["request_sequence"], 1);
+    assert!(
+        evidence_json["voice_attempts"][0]["canonical_turn_sequence"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(
+        evidence_json["voice_attempts"][0]["canonical_output_sequence"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(
+        evidence_json["voice_attempts"][0]["canonical_playback_confirmed"],
+        true
+    );
     assert_eq!(evidence_json["voice_attempts"][0]["status"], "completed");
     assert_eq!(evidence_json["media_events"][0]["kind"], "audio_started");
     for private in [

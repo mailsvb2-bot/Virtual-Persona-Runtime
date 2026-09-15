@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LatencyDistributionMillis, sha256_hex};
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.1";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.1";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.2";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.2";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 
@@ -49,6 +49,8 @@ pub enum LabVoiceAttemptStatus {
 pub struct LabVoiceAttemptEvidence {
     pub request_sequence: u64,
     pub canonical_turn_sequence: Option<u64>,
+    pub canonical_output_sequence: Option<u64>,
+    pub canonical_playback_confirmed: bool,
     pub status: LabVoiceAttemptStatus,
     pub failure_code: Option<String>,
     pub stt_millis: Option<u64>,
@@ -146,6 +148,7 @@ pub fn aggregate_owner_lab_session_evidence(
 struct SessionAggregateAccumulator {
     completed: u32,
     failed: u32,
+    playback_sessions: u32,
     stt: Vec<u64>,
     llm: Vec<u64>,
     avatar: Vec<u64>,
@@ -182,7 +185,40 @@ impl SessionAggregateAccumulator {
             &mut self.interruption,
             &mut self.video,
             &mut self.reconnect,
-        )
+        )?;
+        let completed_requests: HashSet<u64> = snapshot
+            .voice_attempts
+            .iter()
+            .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
+            .map(|attempt| attempt.request_sequence)
+            .collect();
+        let playback_requests: HashSet<u64> = snapshot
+            .voice_attempts
+            .iter()
+            .filter(|attempt| attempt.canonical_playback_confirmed)
+            .map(|attempt| attempt.request_sequence)
+            .collect();
+        let audio_requests: HashSet<u64> = snapshot
+            .media_events
+            .iter()
+            .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
+            .filter_map(|event| event.request_sequence)
+            .collect();
+        if playback_requests != audio_requests {
+            return Err(LabSessionAggregateError::InvalidSnapshot);
+        }
+        let derived_playback =
+            !completed_requests.is_empty() && playback_requests == completed_requests;
+        if snapshot.canonical_playback_proven != derived_playback {
+            return Err(LabSessionAggregateError::InvalidSnapshot);
+        }
+        if derived_playback {
+            self.playback_sessions = self
+                .playback_sessions
+                .checked_add(1)
+                .ok_or(LabSessionAggregateError::Overflow)?;
+        }
+        Ok(())
     }
 
     fn consume_attempt(
@@ -205,6 +241,8 @@ impl SessionAggregateAccumulator {
             .as_deref()
             .is_none_or(|code| code.trim().is_empty())
             || attempt.canonical_turn_sequence.is_some()
+            || attempt.canonical_output_sequence.is_some()
+            || attempt.canonical_playback_confirmed
             || attempt.stt_millis.is_some()
             || attempt.llm_millis.is_some()
             || attempt.avatar_millis.is_some()
@@ -227,6 +265,7 @@ impl SessionAggregateAccumulator {
     ) -> Result<(), LabSessionAggregateError> {
         let (
             Some(turn),
+            Some(output),
             Some(stt_ms),
             Some(llm_ms),
             Some(avatar_ms),
@@ -235,6 +274,7 @@ impl SessionAggregateAccumulator {
             Some(llm_usage),
         ) = (
             attempt.canonical_turn_sequence,
+            attempt.canonical_output_sequence,
             attempt.stt_millis,
             attempt.llm_millis,
             attempt.avatar_millis,
@@ -245,7 +285,7 @@ impl SessionAggregateAccumulator {
         else {
             return Err(LabSessionAggregateError::IncompleteAttempt);
         };
-        if turn == 0 || attempt.failure_code.is_some() {
+        if turn == 0 || output == 0 || attempt.failure_code.is_some() {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
         self.completed = self
@@ -285,7 +325,7 @@ impl SessionAggregateAccumulator {
             sessions,
             completed_voice_attempts: self.completed,
             failed_voice_attempts: self.failed,
-            canonical_playback_proven: false,
+            canonical_playback_proven: self.completed > 0 && self.playback_sessions == sessions,
             av_sync_proven: false,
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
@@ -307,7 +347,6 @@ fn validate_snapshot_header(
     if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
         || snapshot.session_sequence == 0
-        || snapshot.canonical_playback_proven
         || snapshot.av_sync_proven
     {
         return Err(LabSessionAggregateError::InvalidSnapshot);

@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 
-use vpr_domain::SessionId;
+use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     ProviderDescriptor, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
     WebRtcIceServer, WebRtcSessionDescription,
@@ -8,7 +8,23 @@ use vpr_integration::{
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::provider::ProviderOperation;
-use crate::{ActiveSession, ActiveTurn};
+use crate::{ActiveSession, ActiveTurn, OutputDeliveryHandle};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RealtimeAvatarOutputError {
+    Runtime(Rt0ReasonCode),
+    Provider(ProviderExecutionError),
+}
+
+impl RealtimeAvatarOutputError {
+    #[must_use]
+    pub const fn reason_code(&self) -> Rt0ReasonCode {
+        match self {
+            Self::Runtime(reason) => *reason,
+            Self::Provider(error) => error.reason_code(),
+        }
+    }
+}
 
 pub struct RealtimeAvatarHandle {
     session_id: SessionId,
@@ -120,6 +136,36 @@ impl ActiveTurn {
         let permit = self.avatar_permit()?;
         port.speak_text(&handle.provider_session, text, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
+    }
+
+    /// Sends avatar text while allocating the canonical output-delivery segment used for later
+    /// participant playback acknowledgement. A successful provider submission records `Sent`;
+    /// browser playback must still reconcile the returned handle to `Played`.
+    ///
+    /// # Errors
+    /// Returns before allocating output evidence for stale/denied avatar handles. Provider failure
+    /// after allocation leaves the generated segment unplayed so terminalization can freeze it.
+    pub fn deliver_realtime_avatar_text(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        self.validate_avatar_handle(port, handle)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
+        port.speak_text(&handle.provider_session, text, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        self.acknowledge_output_sent(&delivery)
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        Ok(delivery)
     }
 
     /// Sends an HTTPS audio URL to an existing avatar using this turn's current authorization.

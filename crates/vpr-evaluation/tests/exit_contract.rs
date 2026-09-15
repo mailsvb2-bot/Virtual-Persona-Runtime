@@ -149,13 +149,13 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
 
 fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
     serde_json::from_value(serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.1",
+        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":sha256_hex(provider_state_bytes),
         "snapshot_sha256":[digest('9')],
         "aggregate":{
-            "schema_version":"rt0-owner-lab-session-aggregate-0.1",
-            "source_schema_version":"rt0-owner-lab-session-evidence-0.1",
+            "schema_version":"rt0-owner-lab-session-aggregate-0.2",
+            "source_schema_version":"rt0-owner-lab-session-evidence-0.2",
             "sessions":1,
             "completed_voice_attempts":1,
             "failed_voice_attempts":0,

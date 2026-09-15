@@ -18,6 +18,8 @@ fn completed(request: u64, base: u64) -> LabVoiceAttemptEvidence {
     LabVoiceAttemptEvidence {
         request_sequence: request,
         canonical_turn_sequence: Some(request + 100),
+        canonical_output_sequence: Some(request + 200),
+        canonical_playback_confirmed: true,
         status: LabVoiceAttemptStatus::Completed,
         failure_code: None,
         stt_millis: Some(base),
@@ -34,7 +36,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
-        canonical_playback_proven: false,
+        canonical_playback_proven: true,
         av_sync_proven: false,
         voice_attempts: vec![completed(request, base)],
         media_events: vec![
@@ -75,7 +77,7 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.recoverable_reconnect.unwrap().p95, 800);
     assert_eq!(aggregate.estimated_cost_microunits, Some(14));
     assert_eq!(aggregate.provider_charge_microunits, Some(20));
-    assert!(!aggregate.canonical_playback_proven);
+    assert!(aggregate.canonical_playback_proven);
     assert!(!aggregate.av_sync_proven);
 }
 
@@ -108,7 +110,7 @@ fn duplicate_pending_and_forged_snapshots_fail_closed() {
     );
 
     let mut forged = snapshot(1, 1, 100);
-    forged.canonical_playback_proven = true;
+    forged.voice_attempts[0].canonical_playback_confirmed = false;
     assert_eq!(
         aggregate_owner_lab_session_evidence(&[forged]),
         Err(LabSessionAggregateError::InvalidSnapshot)
@@ -130,6 +132,8 @@ fn failed_attempts_must_be_clean_and_media_cannot_claim_failed_output() {
     failed.voice_attempts[0] = LabVoiceAttemptEvidence {
         request_sequence: 1,
         canonical_turn_sequence: None,
+        canonical_output_sequence: None,
+        canonical_playback_confirmed: false,
         status: LabVoiceAttemptStatus::Failed,
         failure_code: Some("TURN_CANCELLED".into()),
         stt_millis: None,
@@ -154,6 +158,22 @@ fn same_session_sequence_with_different_content_is_still_duplicate() {
         aggregate_owner_lab_session_evidence(&[first, second]),
         Err(LabSessionAggregateError::DuplicateSnapshot)
     );
+}
+
+#[test]
+fn aggregate_requires_playback_proof_from_every_session() {
+    let proven = snapshot(31, 1, 100);
+    let mut unproven = snapshot(32, 1, 200);
+    unproven.canonical_playback_proven = false;
+    unproven.voice_attempts[0].canonical_playback_confirmed = false;
+    unproven.media_events.retain(|event| {
+        !matches!(
+            event.kind,
+            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
+        )
+    });
+    let aggregate = aggregate_owner_lab_session_evidence(&[proven, unproven]).unwrap();
+    assert!(!aggregate.canonical_playback_proven);
 }
 
 #[test]

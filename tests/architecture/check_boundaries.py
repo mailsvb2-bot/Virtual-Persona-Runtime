@@ -522,7 +522,7 @@ if not owner_lab_mic_worklet.is_file():
 for required_voice_runtime in (
     "execute_stt",
     "execute_llm",
-    "speak_realtime_avatar_text",
+    "deliver_realtime_avatar_text",
     "interrupt_handle",
 ):
     if required_voice_runtime not in owner_lab_voice:
@@ -575,10 +575,12 @@ for required_evidence_boundary in (
     if required_evidence_boundary not in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
 for required_shared_evidence in (
-    "rt0-owner-lab-session-evidence-0.1",
-    "rt0-owner-lab-session-aggregate-0.1",
+    "rt0-owner-lab-session-evidence-0.2",
+    "rt0-owner-lab-session-aggregate-0.2",
     "aggregate_owner_lab_session_evidence",
     "canonical_playback_proven",
+    "canonical_output_sequence",
+    "canonical_playback_confirmed",
     "av_sync_proven",
 ):
     if required_shared_evidence not in evaluation_session_evidence:
@@ -597,6 +599,16 @@ for required_media_endpoint in ("/api/evidence/media", "/api/evidence/session"):
         raise SystemExit(f"Owner Lab HTTP evidence endpoint missing {required_media_endpoint}")
 if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
     raise SystemExit("Owner Lab HTTP evidence correlation header must remain isolated in http_evidence.rs")
+if "acknowledge_voice_playback" not in owner_lab_http_evidence:
+    raise SystemExit("Owner Lab HTTP evidence must reconcile browser audio to canonical runtime playback")
+owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+runtime_avatar = (CRATES / "vpr-runtime" / "src" / "avatar_runtime.rs").read_text(encoding="utf-8")
+if "deliver_realtime_avatar_text" not in runtime_avatar or "OutputDeliveryHandle" not in runtime_avatar:
+    raise SystemExit("realtime avatar output must allocate the canonical delivery handle")
+if "acknowledge_voice_playback" not in owner_lab_voice or "acknowledge_output_played" not in owner_lab_voice:
+    raise SystemExit("Owner Lab voice playback must reconcile through canonical runtime output evidence")
+if "acknowledge_voice_playback" in owner_lab_ui or "acknowledge_output_played" in owner_lab_ui:
+    raise SystemExit("browser UI must not self-promote media observations to canonical playback")
 for required_browser_media_evidence in (
     "requestVideoFrameCallback",
     "AnalyserNode",
@@ -637,6 +649,7 @@ for method in (
     "submit_realtime_avatar_answer",
     "submit_realtime_avatar_ice",
     "speak_realtime_avatar_text",
+    "deliver_realtime_avatar_text",
     "speak_realtime_avatar_audio_url",
     "interrupt_realtime_avatar",
     "close_realtime_avatar",

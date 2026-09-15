@@ -3,14 +3,14 @@ import { mountOwnerCapture } from "./owner-capture.js";
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
 type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; voice_ready: boolean; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
-type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
+type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type StartResponse = { evidence_session_sequence: number; offer: SessionDescription; ice_servers: IceServer[]; capabilities: string[] };
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 const byId = <T extends HTMLElement>(id: string): T => {
@@ -179,8 +179,11 @@ const monitorRemoteAudio = (): void => {
       voice.silentFrames = 0;
       if (!voice.audioStarted) {
         voice.audioStarted = true;
-        void postMediaEvidence("audio_started", performance.now() - voice.startedAt, voice.requestSequence)
-          .catch(() => undefined);
+        voice.audioStartedElapsed = performance.now() - voice.startedAt;
+        if (voice.responseComplete) {
+          void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
+            .catch(() => undefined);
+        }
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -498,8 +501,23 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     nextVoiceRequestSequence += 1;
     const requestSequence = nextVoiceRequestSequence;
     attemptedRequestSequence = requestSequence;
-    activeVoiceEvidence = { requestSequence, startedAt: performance.now(), audioStarted: false, speaking: false, silentFrames: 0 };
+    activeVoiceEvidence = {
+      requestSequence,
+      startedAt: performance.now(),
+      audioStarted: false,
+      audioStartedElapsed: null,
+      responseComplete: false,
+      speaking: false,
+      silentFrames: 0,
+    };
     const result = await apiBinary<VoiceResult>("/api/voice/turn", pcm, requestSequence);
+    const voice = activeVoiceEvidence;
+    if (voice?.requestSequence === requestSequence) {
+      voice.responseComplete = true;
+      if (voice.audioStartedElapsed !== null) {
+        await postMediaEvidence("audio_started", voice.audioStartedElapsed, requestSequence);
+      }
+    }
     await refreshSessionEvidence();
     setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
   } catch (error) {

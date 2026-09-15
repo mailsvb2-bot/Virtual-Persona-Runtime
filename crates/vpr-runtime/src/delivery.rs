@@ -12,6 +12,10 @@ pub struct OutputDeliveryHandle {
 }
 
 impl OutputDeliveryHandle {
+    pub(crate) fn new(turn_id: TurnId, segment_id: OutputSegmentId) -> Self {
+        Self { turn_id, segment_id }
+    }
+
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.segment_id.get()
@@ -90,10 +94,7 @@ impl ActiveTurn {
         segment_id: OutputSegmentId,
         result: Result<(), TransportError>,
     ) -> Result<OutputDeliveryHandle, OutputDeliveryError> {
-        let handle = OutputDeliveryHandle {
-            turn_id: self.snapshot.turn_id().clone(),
-            segment_id,
-        };
+        let handle = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
         match result {
             Ok(()) => {
                 self.state.lock().reconcile_output_sent(segment_id)?;

@@ -45,14 +45,16 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.1",
+        "schema_version":"rt0-owner-lab-session-evidence-0.2",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
-        "canonical_playback_proven":false,
+        "canonical_playback_proven":true,
         "av_sync_proven":false,
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":10 + session,
+            "canonical_output_sequence":20 + session,
+            "canonical_playback_confirmed":true,
             "status":"completed",
             "failure_code":null,
             "stt_millis":100,
@@ -91,7 +93,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["schema_version"],
-        "rt0-owner-lab-session-aggregate-binding-0.1"
+        "rt0-owner-lab-session-aggregate-binding-0.2"
     );
     assert_eq!(
         value["candidate_sha"],
@@ -99,7 +101,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     );
     assert_eq!(value["snapshot_sha256"].as_array().unwrap().len(), 2);
     assert_eq!(value["aggregate"]["sessions"], 2);
-    assert_eq!(value["aggregate"]["canonical_playback_proven"], false);
+    assert_eq!(value["aggregate"]["canonical_playback_proven"], true);
 }
 
 #[test]

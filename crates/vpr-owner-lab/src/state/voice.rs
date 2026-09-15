@@ -7,7 +7,10 @@ use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
     UsageEvidence,
 };
-use vpr_runtime::{ActiveTurn, ProviderExecutionError, TurnInterruptHandle};
+use vpr_runtime::{
+    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarOutputError,
+    TurnInterruptHandle,
+};
 
 use super::{LabError, LabSessionAudience, OwnerLabEngine, map_provider_execution};
 
@@ -17,12 +20,18 @@ const MAX_VOICE_MILLIS: u64 = 30_000;
 const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab voice conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
 const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance briefly in Russian. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
 
+pub(super) struct PendingVoicePlayback {
+    turn: ActiveTurn,
+    delivery: OutputDeliveryHandle,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabVoiceResult {
     pub transcript: String,
     pub reply: String,
     pub locale: String,
     pub evidence_turn_sequence: u64,
+    pub evidence_output_sequence: u64,
     pub stt_millis: u64,
     pub llm_millis: u64,
     pub avatar_millis: u64,
@@ -113,16 +122,23 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
-            .map_err(|error| terminalize_provider_error(&turn, error))?;
+        let delivery = turn
+            .deliver_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
+            .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
         let avatar_millis = elapsed_millis(avatar_started);
+        let evidence_output_sequence = delivery.sequence();
         turn.complete().map_err(LabError::Runtime)?;
+        self.pending_voice_playback.insert(
+            evidence_turn_sequence,
+            PendingVoicePlayback { turn, delivery },
+        );
 
         Ok(LabVoiceResult {
             transcript: transcript.text,
             reply,
             locale: transcript.locale,
             evidence_turn_sequence,
+            evidence_output_sequence,
             stt_millis,
             llm_millis,
             avatar_millis,
@@ -130,6 +146,52 @@ impl OwnerLabEngine {
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&llm_usage),
         })
+    }
+}
+
+impl OwnerLabEngine {
+    /// Reconciles a browser-observed remote-audio start with the exact canonical voice turn.
+    /// Duplicate acknowledgements are idempotent; stale or unknown turn sequences fail closed.
+    ///
+    /// # Errors
+    /// Returns `INVALID_STATE_TRANSITION` when the turn does not belong to the current session or
+    /// no runtime-issued delivery handle exists for it.
+    pub fn acknowledge_voice_playback(
+        &mut self,
+        evidence_turn_sequence: u64,
+        evidence_output_sequence: u64,
+    ) -> Result<(), LabError> {
+        if self.session_audience.is_none()
+            || !self
+                .session
+                .as_ref()
+                .is_some_and(|session| session.state() == vpr_domain::RealtimeSessionState::Active)
+        {
+            return Err(LabError::InvalidState);
+        }
+        let pending = self
+            .pending_voice_playback
+            .get(&evidence_turn_sequence)
+            .ok_or(LabError::InvalidState)?;
+        if pending.delivery.sequence() != evidence_output_sequence {
+            return Err(LabError::InvalidState);
+        }
+        pending
+            .turn
+            .acknowledge_output_played(&pending.delivery)
+            .map_err(LabError::Runtime)
+    }
+}
+
+fn terminalize_avatar_output_error(
+    turn: &ActiveTurn,
+    error: RealtimeAvatarOutputError,
+) -> LabError {
+    match error {
+        RealtimeAvatarOutputError::Runtime(reason) => {
+            terminalize_failed_turn(turn, LabError::Runtime(reason))
+        }
+        RealtimeAvatarOutputError::Provider(error) => terminalize_provider_error(turn, error),
     }
 }
 

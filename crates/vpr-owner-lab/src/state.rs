@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use vpr_domain::{
     ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
@@ -114,6 +116,7 @@ pub struct OwnerLabEngine {
     session_audience: Option<LabSessionAudience>,
     session_counter: u64,
     turn_counter: u64,
+    pending_voice_playback: BTreeMap<u64, voice::PendingVoicePlayback>,
     egress_enabled: bool,
 }
 
@@ -139,6 +142,7 @@ impl OwnerLabEngine {
             session_audience: None,
             session_counter: 0,
             turn_counter: 0,
+            pending_voice_playback: BTreeMap::new(),
             egress_enabled,
         })
     }
@@ -280,6 +284,7 @@ impl OwnerLabEngine {
         {
             return Err(LabError::InvalidState);
         }
+        self.pending_voice_playback.clear();
 
         self.session_counter = self
             .session_counter

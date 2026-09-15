@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub const RT0_OWNER_LAB_SESSION_BINDING_SCHEMA: &str =
-    "rt0-owner-lab-session-aggregate-binding-0.1";
+    "rt0-owner-lab-session-aggregate-binding-0.2";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -34,8 +34,9 @@ pub enum LabSessionBindingError {
 /// Parses, validates and binds sanitized Owner Lab session snapshots to one exact candidate and
 /// one exact provider-state artifact.
 ///
-/// The binding is intentionally evidence-only: it does not promote browser observations to
-/// canonical playback proof, does not prove A/V sync, and does not invent participant identity.
+/// The binding is intentionally evidence-only. It preserves runtime-backed canonical playback
+/// proof when every completed voice attempt was reconciled to `Played`, but browser observations
+/// alone cannot create that proof. It does not prove A/V sync or invent participant identity.
 ///
 /// # Errors
 /// Returns a fail-closed error for malformed candidate/provider state/snapshots, duplicate raw

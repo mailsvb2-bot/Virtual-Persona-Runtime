@@ -34,14 +34,16 @@ impl Drop for TempDir {
 
 fn snapshot(session: u64, elapsed: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.1",
+        "schema_version":"rt0-owner-lab-session-evidence-0.2",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
-        "canonical_playback_proven":false,
+        "canonical_playback_proven":true,
         "av_sync_proven":false,
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":10 + session,
+            "canonical_output_sequence":20 + session,
+            "canonical_playback_confirmed":true,
             "status":"completed",
             "failure_code":null,
             "stt_millis":100,
@@ -77,7 +79,7 @@ fn cli_aggregates_sanitized_snapshots() {
     assert_eq!(value["first_meaningful_audio"]["p50"], 400);
     assert_eq!(value["first_meaningful_audio"]["p95"], 600);
     assert_eq!(value["estimated_cost_microunits"], 14);
-    assert_eq!(value["canonical_playback_proven"], false);
+    assert_eq!(value["canonical_playback_proven"], true);
 }
 
 #[test]
