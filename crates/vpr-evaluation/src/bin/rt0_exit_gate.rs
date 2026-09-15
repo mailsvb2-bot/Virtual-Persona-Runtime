@@ -47,10 +47,8 @@ fn run() -> Result<(), i32> {
         .iter()
         .map(|path| read(path))
         .collect::<Result<Vec<_>, _>>()?;
-    let session_snapshot_artifacts: Vec<&[u8]> = session_snapshot_bytes
-        .iter()
-        .map(Vec::as_slice)
-        .collect();
+    let session_snapshot_artifacts: Vec<&[u8]> =
+        session_snapshot_bytes.iter().map(Vec::as_slice).collect();
     let release_spec_bytes = read(release_spec_path)?;
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
     let golden_report: BoundGoldenReport = parse(&golden_report_bytes)?;
