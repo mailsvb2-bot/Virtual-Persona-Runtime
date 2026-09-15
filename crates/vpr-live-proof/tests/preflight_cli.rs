@@ -307,3 +307,135 @@ fn probe_mode_rejects_private_audio_inside_candidate_checkout() {
     assert!(!provider.exists());
     assert!(!probe.exists());
 }
+
+fn conversation_command(
+    repo: &TempRepo,
+    profile: &Path,
+    owner_audio: &Path,
+    visitor_audio: &Path,
+    provider: &Path,
+    receipt: &Path,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
+    command
+        .current_dir(repo.path())
+        .arg("conversation")
+        .arg(profile)
+        .arg(owner_audio)
+        .arg(visitor_audio)
+        .arg(provider)
+        .arg(receipt)
+        .env_clear();
+    for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+fn write_conversation_inputs(repo: &TempRepo) -> (PathBuf, PathBuf, PathBuf) {
+    let profile = external_output(repo, "conversation-profile.json");
+    let owner_audio = external_output(repo, "conversation-owner.raw");
+    let visitor_audio = external_output(repo, "conversation-visitor.raw");
+    fs::write(
+        &profile,
+        br#"{"schema_version":"rt0-live-conversation-profile-0.1","persona_id":"p","owner_review_confirmed":true,"claims":[{"claim_id":"c","statement":"owner private material","kind":"opinion","owner_approved":true}]}"#,
+    )
+    .unwrap();
+    fs::write(&owner_audio, vec![1_u8; 3_200]).unwrap();
+    fs::write(&visitor_audio, vec![2_u8; 3_200]).unwrap();
+    (profile, owner_audio, visitor_audio)
+}
+
+fn remove_inputs(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = fs::remove_file(path);
+    }
+}
+
+#[test]
+fn conversation_mode_rejects_private_profile_inside_candidate_checkout() {
+    let repo = TempRepo::new();
+    let profile = repo.path().join("private-profile.json");
+    fs::write(&profile, b"{}\n").unwrap();
+    let owner_audio = external_output(&repo, "owner.raw");
+    let visitor_audio = external_output(&repo, "visitor.raw");
+    let provider = external_output(&repo, "conversation-provider.json");
+    let receipt = external_output(&repo, "conversation-receipt.json");
+    fs::write(&owner_audio, vec![1_u8; 3_200]).unwrap();
+    fs::write(&visitor_audio, vec![2_u8; 3_200]).unwrap();
+
+    let output = conversation_command(
+        &repo,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &provider,
+        &receipt,
+    )
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INPUT_PATH_INSIDE_WORKTREE")
+    );
+    assert!(!provider.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[owner_audio, visitor_audio]);
+}
+
+#[test]
+fn conversation_mode_rejects_output_path_conflicts_before_egress() {
+    let repo = TempRepo::new();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let output_path = external_output(&repo, "conversation-conflict.json");
+    let output = conversation_command(
+        &repo,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &output_path,
+        &output_path,
+    )
+    .output()
+    .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("OUTPUT_PATHS_CONFLICT")
+    );
+    assert!(!output_path.exists());
+    remove_inputs(&[profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn conversation_mode_rejects_malformed_profile_without_provider_calls_or_writes() {
+    let repo = TempRepo::new();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    fs::write(&profile, b"not-json").unwrap();
+    let provider = external_output(&repo, "conversation-provider.json");
+    let receipt = external_output(&repo, "conversation-receipt.json");
+    let mut command = conversation_command(
+        &repo,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &provider,
+        &receipt,
+    );
+    configure_live(&mut command, "did-secret", "stt-secret", "llm-secret");
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("INVALID_PROFILE"));
+    for secret in ["did-secret", "stt-secret", "llm-secret"] {
+        assert!(!stderr.contains(secret));
+    }
+    assert!(!provider.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[profile, owner_audio, visitor_audio]);
+}
