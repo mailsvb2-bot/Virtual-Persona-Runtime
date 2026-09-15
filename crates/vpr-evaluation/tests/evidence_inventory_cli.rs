@@ -109,6 +109,57 @@ fn seed_complete_inventory(dir: &Path) {
         serde_json::to_vec_pretty(&probe).unwrap(),
     )
     .unwrap();
+    let conversation = json!({
+        "schema_version":"rt0-live-conversation-attempt-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_digest,
+        "profile_input_sha256":"3".repeat(64),
+        "persona_id_sha256":"4".repeat(64),
+        "persona_version":2,
+        "reviewed_claims":1,
+        "owner":{},
+        "visitor":{},
+        "conversation_attempted":true,
+        "provider_output_submitted":true,
+        "browser_media_playback":"not_proven",
+        "video_render":"not_proven",
+        "human_review":"not_proven"
+    });
+    fs::write(
+        dir.join("conversation-attempt.json"),
+        serde_json::to_vec_pretty(&conversation).unwrap(),
+    )
+    .unwrap();
+    let bound_session = json!({
+        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_digest,
+        "snapshot_sha256":["9".repeat(64)],
+        "aggregate":{
+            "schema_version":"rt0-owner-lab-session-aggregate-0.1",
+            "source_schema_version":"rt0-owner-lab-session-evidence-0.1",
+            "sessions":1,
+            "completed_voice_attempts":1,
+            "failed_voice_attempts":0,
+            "canonical_playback_proven":false,
+            "av_sync_proven":false,
+            "stt_latency":null,
+            "llm_latency":null,
+            "avatar_submit_latency":null,
+            "server_total_latency":null,
+            "first_meaningful_audio":null,
+            "interruption_stop":null,
+            "first_useful_video":null,
+            "recoverable_reconnect":null,
+            "estimated_cost_microunits":null,
+            "provider_charge_microunits":null
+        }
+    });
+    fs::write(
+        dir.join("bound-session-aggregate.json"),
+        serde_json::to_vec_pretty(&bound_session).unwrap(),
+    )
+    .unwrap();
     for name in [
         "exit-evidence.json",
         "ci-evidence.json",
@@ -152,6 +203,19 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["probe_provider_state_matches"],
         json!(true)
     );
+    assert_eq!(
+        report["bindings"]["conversation_candidate_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["conversation_provider_state_matches"],
+        json!(true)
+    );
+    assert_eq!(report["bindings"]["session_candidate_matches"], json!(true));
+    assert_eq!(
+        report["bindings"]["session_provider_state_matches"],
+        json!(true)
+    );
 }
 #[test]
 fn cross_candidate_inventory_fails_closed() {
@@ -183,4 +247,42 @@ fn malformed_json_slot_keeps_inventory_incomplete() {
         .unwrap();
     assert_eq!(quality["present"], json!(true));
     assert_eq!(quality["syntax_valid"], json!(false));
+}
+
+#[test]
+fn conversation_and_session_binding_mismatch_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+
+    let mut conversation: Value = serde_json::from_slice(
+        &fs::read(dir.path().join("conversation-attempt.json")).unwrap(),
+    )
+    .unwrap();
+    conversation["provider_state_sha256"] = json!("0".repeat(64));
+    fs::write(
+        dir.path().join("conversation-attempt.json"),
+        serde_json::to_vec_pretty(&conversation).unwrap(),
+    )
+    .unwrap();
+
+    let mut session: Value = serde_json::from_slice(
+        &fs::read(dir.path().join("bound-session-aggregate.json")).unwrap(),
+    )
+    .unwrap();
+    session["candidate_sha"] = json!("2".repeat(40));
+    fs::write(
+        dir.path().join("bound-session-aggregate.json"),
+        serde_json::to_vec_pretty(&session).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["conversation_provider_state_matches"],
+        json!(false)
+    );
+    assert_eq!(report["bindings"]["session_candidate_matches"], json!(false));
 }
