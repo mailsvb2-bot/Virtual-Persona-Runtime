@@ -81,6 +81,8 @@ impl LabSessionEvidenceRecorder {
             LabVoiceAttemptEvidence {
                 request_sequence,
                 canonical_turn_sequence: None,
+                canonical_output_sequence: None,
+                canonical_playback_confirmed: false,
                 status: LabVoiceAttemptStatus::Pending,
                 failure_code: None,
                 stt_millis: None,
@@ -111,6 +113,8 @@ impl LabSessionEvidenceRecorder {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
         attempt.canonical_turn_sequence = Some(result.evidence_turn_sequence);
+        attempt.canonical_output_sequence = Some(result.evidence_output_sequence);
+        attempt.canonical_playback_confirmed = false;
         attempt.status = LabVoiceAttemptStatus::Completed;
         attempt.stt_millis = Some(result.stt_millis);
         attempt.llm_millis = Some(result.llm_millis);
@@ -142,11 +146,101 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser-observed media-plane latency event.
+    /// Returns the canonical turn/output binding for a completed browser voice request.
+    ///
+    /// # Errors
+    /// Fails for sealed sessions, unknown requests, failed/pending attempts, or missing turn data.
+    pub fn completed_playback_binding(
+        &self,
+        request_sequence: u64,
+    ) -> Result<(u64, u64), LabEvidenceError> {
+        if self.sealed {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        let attempt = self
+            .voice_attempts
+            .get(&request_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        if attempt.status != LabVoiceAttemptStatus::Completed {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        match (
+            attempt.canonical_turn_sequence,
+            attempt.canonical_output_sequence,
+        ) {
+            (Some(turn), Some(output)) if turn > 0 && output > 0 => Ok((turn, output)),
+            _ => Err(LabEvidenceError::InvalidState),
+        }
+    }
+
+    /// Validates one browser audio-start observation and returns the exact canonical turn that
+    /// must be reconciled before the observation may contribute playback proof.
+    ///
+    /// # Errors
+    /// Fails for stale sessions, malformed/duplicate media, unknown requests, or incomplete turns.
+    pub fn prepare_canonical_playback(
+        &self,
+        input: &LabMediaEvidenceInput,
+    ) -> Result<(u64, u64), LabEvidenceError> {
+        if input.kind != LabMediaEvidenceKind::AudioStarted {
+            return Err(LabEvidenceError::InvalidInput);
+        }
+        self.validate_media(input)?;
+        self.completed_playback_binding(
+            input
+                .request_sequence
+                .ok_or(LabEvidenceError::InvalidInput)?,
+        )
+    }
+
+    /// Atomically records a browser audio-start observation after canonical runtime playback
+    /// reconciliation succeeded for the exact completed turn.
+    ///
+    /// # Errors
+    /// Fails for stale, duplicate, unknown, incomplete, or cross-turn acknowledgements.
+    pub fn record_canonical_playback(
+        &mut self,
+        input: &LabMediaEvidenceInput,
+        canonical_turn_sequence: u64,
+        canonical_output_sequence: u64,
+    ) -> Result<(), LabEvidenceError> {
+        if input.kind != LabMediaEvidenceKind::AudioStarted {
+            return Err(LabEvidenceError::InvalidInput);
+        }
+        self.validate_media(input)?;
+        let request_sequence = input
+            .request_sequence
+            .ok_or(LabEvidenceError::InvalidInput)?;
+        if self.completed_playback_binding(request_sequence)?
+            != (canonical_turn_sequence, canonical_output_sequence)
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        let attempt = self
+            .voice_attempts
+            .get_mut(&request_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        attempt.canonical_playback_confirmed = true;
+        self.push_media(input);
+        Ok(())
+    }
+
+    /// Records one browser-observed media-plane latency event without promoting it to canonical
+    /// playback proof. Audio-start evidence reaches `canonical_playback_proven` only through
+    /// `record_canonical_playback` after runtime reconciliation.
     ///
     /// # Errors
     /// Fails for stale sessions, impossible event/request combinations, unknown requests, or duplicates.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
+        if input.kind == LabMediaEvidenceKind::AudioStarted {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        self.validate_media(input)?;
+        self.push_media(input);
+        Ok(())
+    }
+
+    fn validate_media(&self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
         if self.session_sequence != Some(input.session_sequence) || self.sealed {
             return Err(LabEvidenceError::InvalidState);
         }
@@ -173,12 +267,15 @@ impl LabSessionEvidenceRecorder {
         if duplicate {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
+        Ok(())
+    }
+
+    fn push_media(&mut self, input: &LabMediaEvidenceInput) {
         self.media_events.push(LabMediaEvidence {
             request_sequence: input.request_sequence,
             kind: input.kind,
             elapsed_millis: input.elapsed_millis,
         });
-        Ok(())
     }
 
     /// Returns the current sanitized in-memory evidence snapshot.
@@ -189,11 +286,20 @@ impl LabSessionEvidenceRecorder {
         let session_sequence = self
             .session_sequence
             .ok_or(LabEvidenceError::InvalidState)?;
+        let completed_attempts: Vec<&LabVoiceAttemptEvidence> = self
+            .voice_attempts
+            .values()
+            .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
+            .collect();
+        let canonical_playback_proven = !completed_attempts.is_empty()
+            && completed_attempts
+                .iter()
+                .all(|attempt| attempt.canonical_playback_confirmed);
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
-            canonical_playback_proven: false,
+            canonical_playback_proven,
             av_sync_proven: false,
             voice_attempts: self.voice_attempts.values().cloned().collect(),
             media_events: self.media_events.clone(),
@@ -211,6 +317,7 @@ mod tests {
             reply: "приватный ответ".into(),
             locale: "ru".into(),
             evidence_turn_sequence: 7,
+            evidence_output_sequence: 1,
             stt_millis: 100,
             llm_millis: 200,
             avatar_millis: 50,
@@ -236,19 +343,37 @@ mod tests {
         recorder.begin_session(3).unwrap();
         recorder.begin_voice_request(1).unwrap();
         recorder.complete_voice_request(1, &voice_result()).unwrap();
+        let audio_started = LabMediaEvidenceInput {
+            session_sequence: 3,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 410,
+        };
+        assert_eq!(
+            recorder.record_media(&audio_started),
+            Err(LabEvidenceError::InvalidState)
+        );
+        assert_eq!(
+            recorder.prepare_canonical_playback(&audio_started),
+            Ok((7, 1))
+        );
+        assert_eq!(
+            recorder.record_canonical_playback(&audio_started, 7, 2),
+            Err(LabEvidenceError::InvalidState)
+        );
         recorder
-            .record_media(&LabMediaEvidenceInput {
-                session_sequence: 3,
-                request_sequence: Some(1),
-                kind: LabMediaEvidenceKind::AudioStarted,
-                elapsed_millis: 410,
-            })
+            .record_canonical_playback(&audio_started, 7, 1)
             .unwrap();
         let snapshot = recorder.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
+        assert_eq!(
+            snapshot.voice_attempts[0].canonical_output_sequence,
+            Some(1)
+        );
+        assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
         assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
-        assert!(!snapshot.canonical_playback_proven);
+        assert!(snapshot.canonical_playback_proven);
         assert!(!snapshot.av_sync_proven);
         assert!(!json.contains("приватный транскрипт"));
         assert!(!json.contains("приватный ответ"));
@@ -271,14 +396,48 @@ mod tests {
     }
 
     #[test]
+    fn every_completed_voice_request_requires_its_own_runtime_playback_confirmation() {
+        let mut recorder = LabSessionEvidenceRecorder::default();
+        recorder.begin_session(8).unwrap();
+        for request in [1, 2] {
+            recorder.begin_voice_request(request).unwrap();
+            let mut result = voice_result();
+            result.evidence_turn_sequence = request + 10;
+            result.evidence_output_sequence = request;
+            recorder.complete_voice_request(request, &result).unwrap();
+        }
+        let first = LabMediaEvidenceInput {
+            session_sequence: 8,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 100,
+        };
+        recorder.record_canonical_playback(&first, 11, 1).unwrap();
+        assert!(!recorder.snapshot().unwrap().canonical_playback_proven);
+
+        let second = LabMediaEvidenceInput {
+            session_sequence: 8,
+            request_sequence: Some(2),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 120,
+        };
+        recorder.record_canonical_playback(&second, 12, 2).unwrap();
+        assert!(recorder.snapshot().unwrap().canonical_playback_proven);
+        assert_eq!(
+            recorder.record_canonical_playback(&second, 12, 2),
+            Err(LabEvidenceError::DuplicateEvidence)
+        );
+    }
+
+    #[test]
     fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
         let mut recorder = LabSessionEvidenceRecorder::default();
         recorder.begin_session(9).unwrap();
         recorder.begin_voice_request(5).unwrap();
         let event = LabMediaEvidenceInput {
             session_sequence: 9,
-            request_sequence: Some(5),
-            kind: LabMediaEvidenceKind::AudioStarted,
+            request_sequence: None,
+            kind: LabMediaEvidenceKind::VideoReady,
             elapsed_millis: 250,
         };
         recorder.record_media(&event).unwrap();

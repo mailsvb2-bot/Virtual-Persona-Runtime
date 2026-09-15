@@ -81,16 +81,64 @@ const setupReviewedPersona = async (
 
 const installBrowserAudioFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
+    let remoteSpeech = false;
+    let trackSequence = 0;
+    const realFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
+      if (!target.endsWith("/api/voice/turn")) return realFetch(input, init);
+      remoteSpeech = true;
+      const response = await realFetch(input, init);
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+      return response;
+    };
+
     class FakeTrack {
+      id: string;
+      kind: "audio";
+      constructor(kind: "audio" = "audio") {
+        trackSequence += 1;
+        this.id = `fake-track-${trackSequence}`;
+        this.kind = kind;
+      }
       stop(): void {}
     }
-    const fakeStream = {
-      getTracks: () => [new FakeTrack()],
-    };
+
+    class FakeMediaStream {
+      private tracks: FakeTrack[];
+      constructor(tracks: FakeTrack[] = []) { this.tracks = [...tracks]; }
+      getTracks(): FakeTrack[] { return [...this.tracks]; }
+      addTrack(track: FakeTrack): void { this.tracks.push(track); }
+    }
+
+    Object.defineProperty(window, "MediaStream", {
+      configurable: true,
+      value: FakeMediaStream,
+    });
+    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
+      configurable: true,
+      get() { return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null; },
+      set(value: unknown) { (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value; },
+    });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: async () => fakeStream },
+      value: { getUserMedia: async () => new FakeMediaStream([new FakeTrack()]) },
     });
+
+    class FakeAnalyser {
+      fftSize = 256;
+      connect(): void {}
+      disconnect(): void {}
+      getFloatTimeDomainData(samples: Float32Array): void {
+        samples.fill(remoteSpeech ? 0.12 : 0.0005);
+      }
+    }
+    class FakeGain {
+      gain = { value: 1 };
+      connect(): void {}
+      disconnect(): void {}
+    }
     class FakeAudioContext {
       sampleRate = 48_000;
       destination = {};
@@ -98,11 +146,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       async resume(): Promise<void> {}
       async close(): Promise<void> {}
       createMediaStreamSource(): { connect: () => void; disconnect: () => void } {
-        return {
-          connect: () => undefined,
-          disconnect: () => undefined,
-        };
+        return { connect: () => undefined, disconnect: () => undefined };
       }
+      createAnalyser(): FakeAnalyser { return new FakeAnalyser(); }
+      createGain(): FakeGain { return new FakeGain(); }
     }
 
     class FakeAudioWorkletNode {
@@ -119,10 +166,12 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
 
     class FakePeerConnection {
       connectionState = "new";
-      ontrack: ((event: unknown) => void) | null = null;
+      ontrack: ((event: { track: FakeTrack }) => void) | null = null;
       onconnectionstatechange: (() => void) | null = null;
       onicecandidate: ((event: unknown) => void) | null = null;
-      async setRemoteDescription(): Promise<void> {}
+      async setRemoteDescription(): Promise<void> {
+        queueMicrotask(() => this.ontrack?.({ track: new FakeTrack("audio") }));
+      }
       async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
       }
@@ -130,18 +179,9 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       close(): void { this.connectionState = "closed"; }
     }
 
-    Object.defineProperty(window, "AudioContext", {
-      configurable: true,
-      value: FakeAudioContext,
-    });
-    Object.defineProperty(window, "AudioWorkletNode", {
-      configurable: true,
-      value: FakeAudioWorkletNode,
-    });
-    Object.defineProperty(window, "RTCPeerConnection", {
-      configurable: true,
-      value: FakePeerConnection,
-    });
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
+    Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
+    Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
   });
 };
 
@@ -183,11 +223,29 @@ test("owner and visitor voice turns cross the real backend with different contex
   const ownerEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(ownerEvidence.ok()).toBeTruthy();
   const ownerEvidenceJson = await ownerEvidence.json() as {
-    voice_attempts: Array<{ request_sequence: number; status: string }>;
+    canonical_playback_proven: boolean;
+    voice_attempts: Array<{
+      request_sequence: number;
+      canonical_turn_sequence: number;
+      canonical_output_sequence: number;
+      canonical_playback_confirmed: boolean;
+      status: string;
+    }>;
+    media_events: Array<{ request_sequence: number | null; kind: string }>;
   };
-  expect(ownerEvidenceJson.voice_attempts).toMatchObject([
-    { request_sequence: 1, status: "completed" },
-  ]);
+  expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
+  expect(ownerEvidenceJson.voice_attempts).toMatchObject([{
+    request_sequence: 1,
+    canonical_playback_confirmed: true,
+    status: "completed",
+  }]);
+  expect(ownerEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
+  expect(ownerEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(ownerEvidenceJson.media_events).toContainEqual({
+    request_sequence: 1,
+    kind: "audio_started",
+    elapsed_millis: expect.any(Number),
+  });
 
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
@@ -204,11 +262,27 @@ test("owner and visitor voice turns cross the real backend with different contex
   const visitorEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(visitorEvidence.ok()).toBeTruthy();
   const visitorEvidenceJson = await visitorEvidence.json() as {
-    voice_attempts: Array<{ request_sequence: number; status: string }>;
+    canonical_playback_proven: boolean;
+    voice_attempts: Array<{
+      request_sequence: number;
+      canonical_turn_sequence: number;
+      canonical_output_sequence: number;
+      canonical_playback_confirmed: boolean;
+      status: string;
+    }>;
+    media_events: Array<{ request_sequence: number | null; kind: string; elapsed_millis: number }>;
   };
-  expect(visitorEvidenceJson.voice_attempts).toMatchObject([
-    { request_sequence: 1, status: "completed" },
-  ]);
+  expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
+  expect(visitorEvidenceJson.voice_attempts).toMatchObject([{
+    request_sequence: 1,
+    canonical_playback_confirmed: true,
+    status: "completed",
+  }]);
+  expect(visitorEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
+  expect(visitorEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(visitorEvidenceJson.media_events.some((event) =>
+    event.request_sequence === 1 && event.kind === "audio_started"
+  )).toBeTruthy();
 
   await page.getByRole("button", { name: "Отозвать доступ" }).click();
   await expect(page.locator("#status")).toContainText("Доступ отозван");

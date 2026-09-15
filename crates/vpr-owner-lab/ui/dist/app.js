@@ -158,8 +158,11 @@ const monitorRemoteAudio = () => {
             voice.silentFrames = 0;
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
-                void postMediaEvidence("audio_started", performance.now() - voice.startedAt, voice.requestSequence)
-                    .catch(() => undefined);
+                voice.audioStartedElapsed = performance.now() - voice.startedAt;
+                if (voice.responseComplete) {
+                    void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
+                        .catch(() => undefined);
+                }
             }
         }
         else if (voice?.speaking) {
@@ -472,8 +475,23 @@ const finishMicrophoneTurn = async () => {
         nextVoiceRequestSequence += 1;
         const requestSequence = nextVoiceRequestSequence;
         attemptedRequestSequence = requestSequence;
-        activeVoiceEvidence = { requestSequence, startedAt: performance.now(), audioStarted: false, speaking: false, silentFrames: 0 };
+        activeVoiceEvidence = {
+            requestSequence,
+            startedAt: performance.now(),
+            audioStarted: false,
+            audioStartedElapsed: null,
+            responseComplete: false,
+            speaking: false,
+            silentFrames: 0,
+        };
         const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
+        const voice = activeVoiceEvidence;
+        if (voice?.requestSequence === requestSequence) {
+            voice.responseComplete = true;
+            if (voice.audioStartedElapsed !== null) {
+                await postMediaEvidence("audio_started", voice.audioStartedElapsed, requestSequence);
+            }
+        }
         await refreshSessionEvidence();
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
     }

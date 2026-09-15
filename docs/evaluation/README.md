@@ -80,7 +80,7 @@ Even a `0` from this experimental checker does not by itself promote `release.rt
 
 ## Owner Lab session-evidence aggregation and binding
 
-`vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-0.1` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, and reconnect restoration. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
+`vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-0.2` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, and reconnect restoration. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
 
 The legacy aggregation mode remains available:
 
@@ -99,6 +99,6 @@ cargo run -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
   /secure/evidence/session-1.json /secure/evidence/session-2.json
 ```
 
-The bound receipt schema is `rt0-owner-lab-session-aggregate-binding-0.1`. It includes the exact candidate SHA, SHA-256 of the exact provider-state bytes, SHA-256 of every raw snapshot artifact in input order, and the deterministic aggregate. Provider-state structure is revalidated and duplicate/malformed snapshot artifacts fail closed.
+The bound receipt schema is `rt0-owner-lab-session-aggregate-binding-0.2`. It includes the exact candidate SHA, SHA-256 of the exact provider-state bytes, SHA-256 of every raw snapshot artifact in input order, and the deterministic aggregate. Provider-state structure is revalidated and duplicate/malformed snapshot artifacts fail closed.
 
-Binding does not upgrade the semantic strength of the browser observations. The aggregate and bound receipt keep `canonical_playback_proven=false` and `av_sync_proven=false`; they do not invent text-first-response evidence, A/V sync, participant roles, human quality, or canonical played-state proof. The artifact is therefore usable as exact-candidate evidence preparation but cannot by itself satisfy the RT0 exit gate or promote `provider.real_*` / `release.rt0_exit_gate`.
+Binding does not let browser observations self-promote. In schema `0.2`, a completed voice attempt carries the runtime-issued canonical turn and output-segment sequences; `audio_started` can mark that attempt playback-confirmed only after the backend reconciles the exact `OutputDeliveryHandle` to runtime `Played`. The aggregate sets `canonical_playback_proven=true` only when every completed attempt in every input session has that exact per-attempt confirmation. `av_sync_proven` remains false. The current RT0 exit checker still rejects a playback-promoting bound aggregate because it does not yet receive and recompute the raw session snapshots itself; this artifact is therefore exact-candidate evidence preparation, not an exit-gate promotion.

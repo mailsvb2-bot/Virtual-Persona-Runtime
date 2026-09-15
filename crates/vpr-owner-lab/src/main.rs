@@ -237,9 +237,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/audio" => parse_json::<AudioBody>(request)
             .and_then(|body| apply_input(state, OwnerLabTurnInput::AudioUrl(body.audio_url))),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
-            http_evidence::record_media(&state.evidence, &body)
+            http_evidence::record_media(&state.engine, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
+                .map_err(|error| error_response(error.status(), error.code()))
         }),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),
@@ -323,20 +323,23 @@ fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse 
     if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
         return error_response(http_evidence::error_status(error), error.code());
     }
-    let Ok(mut engine) = state.engine.lock() else {
-        let _ = state
-            .evidence
-            .lock()
-            .fail_voice_request(request_sequence, "INTERNAL_ERROR");
-        return error_response(500, "INTERNAL_ERROR");
+    let result = {
+        let Ok(mut engine) = state.engine.lock() else {
+            let _ = state
+                .evidence
+                .lock()
+                .fail_voice_request(request_sequence, "INTERNAL_ERROR");
+            return error_response(500, "INTERNAL_ERROR");
+        };
+        let result = engine.voice_turn(audio, |handle| {
+            *state.active_voice_interrupt.lock() = Some(handle.clone());
+            if state.voice_cancel_requested.load(Ordering::Acquire) {
+                let _ = handle.interrupt();
+            }
+        });
+        *state.active_voice_interrupt.lock() = None;
+        result
     };
-    let result = engine.voice_turn(audio, |handle| {
-        *state.active_voice_interrupt.lock() = Some(handle.clone());
-        if state.voice_cancel_requested.load(Ordering::Acquire) {
-            let _ = handle.interrupt();
-        }
-    });
-    *state.active_voice_interrupt.lock() = None;
     match result {
         Ok(value) => match state
             .evidence

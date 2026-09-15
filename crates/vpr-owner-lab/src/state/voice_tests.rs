@@ -295,9 +295,47 @@ fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
     let result = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     assert_eq!(result.transcript, "Как дела?");
     assert_eq!(result.reply, "Всё хорошо.");
+    assert!(result.evidence_turn_sequence > 0);
+    assert!(result.evidence_output_sequence > 0);
+    assert_eq!(
+        engine.acknowledge_voice_playback(
+            result.evidence_turn_sequence,
+            result.evidence_output_sequence + 1,
+        ),
+        Err(LabError::InvalidState)
+    );
+    engine
+        .acknowledge_voice_playback(
+            result.evidence_turn_sequence,
+            result.evidence_output_sequence,
+        )
+        .unwrap();
+    engine
+        .acknowledge_voice_playback(
+            result.evidence_turn_sequence,
+            result.evidence_output_sequence,
+        )
+        .unwrap();
     assert_eq!(stats.stt.load(Ordering::SeqCst), 1);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn playback_ack_from_a_previous_session_cannot_cross_session_restart() {
+    let (mut engine, _, _) = voice_engine(false);
+    let first = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    engine.close().unwrap();
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    assert_eq!(
+        engine.acknowledge_voice_playback(
+            first.evidence_turn_sequence,
+            first.evidence_output_sequence,
+        ),
+        Err(LabError::InvalidState)
+    );
 }
 
 #[test]
