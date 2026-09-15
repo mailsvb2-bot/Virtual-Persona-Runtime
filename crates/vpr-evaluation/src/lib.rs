@@ -1,6 +1,7 @@
 mod binding;
 mod exit;
 mod exit_context;
+mod exit_validation;
 mod golden;
 mod live_provider;
 mod session_binding;

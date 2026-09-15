@@ -2,7 +2,8 @@ mod support;
 
 use vpr_evaluation::{
     AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, AvatarProbeEvidence,
-    BoundGoldenReport, CheckStatus, ConversationEvidence, ConversationPairEvidence, CostEvidence,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence,
+    ConversationPairEvidence, CostEvidence,
     EvidenceOrigin, EvidenceVerificationContext, GoldenEvidenceBundle, GoldenSuite,
     HumanDimensions, HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis,
     LiveProviderProbeReceipt, LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence,
@@ -127,6 +128,56 @@ fn live_provider_probe_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     serde_json::to_vec(&live_provider_probe(provider_state_bytes)).unwrap()
 }
 
+
+fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version":"rt0-live-conversation-attempt-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":sha256_hex(provider_state_bytes),
+        "profile_input_sha256":digest('3'),
+        "persona_id_sha256":digest('4'),
+        "persona_version":2,
+        "reviewed_claims":1,
+        "owner":{},
+        "visitor":{},
+        "conversation_attempted":true,
+        "provider_output_submitted":true,
+        "browser_media_playback":"not_proven",
+        "video_render":"not_proven",
+        "human_review":"not_proven"
+    }))
+    .unwrap()
+}
+
+fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
+    serde_json::from_value(serde_json::json!({
+        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":sha256_hex(provider_state_bytes),
+        "snapshot_sha256":[digest('9')],
+        "aggregate":{
+            "schema_version":"rt0-owner-lab-session-aggregate-0.1",
+            "source_schema_version":"rt0-owner-lab-session-evidence-0.1",
+            "sessions":1,
+            "completed_voice_attempts":1,
+            "failed_voice_attempts":0,
+            "canonical_playback_proven":false,
+            "av_sync_proven":false,
+            "stt_latency":null,
+            "llm_latency":null,
+            "avatar_submit_latency":null,
+            "server_total_latency":null,
+            "first_meaningful_audio":null,
+            "interruption_stop":null,
+            "first_useful_video":null,
+            "recoverable_reconnect":null,
+            "estimated_cost_microunits":null,
+            "provider_charge_microunits":null
+        }
+    }))
+    .unwrap()
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
@@ -135,6 +186,10 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
         golden_report_sha256: sha256_hex(golden_bytes),
         provider_state_sha256: sha256_hex(provider_state_bytes),
         live_provider_probe_sha256: sha256_hex(&live_provider_probe_bytes(provider_state_bytes)),
+        conversation_attempt_sha256: sha256_hex(&conversation_attempt_bytes(provider_state_bytes)),
+        bound_session_aggregate_sha256: sha256_hex(
+            &serde_json::to_vec(&bound_session_aggregate(provider_state_bytes)).unwrap(),
+        ),
         automated: AutomatedEvidence {
             ci: check(),
             e2e: check(),
@@ -229,6 +284,35 @@ fn evaluate_with_probe(
     candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
+    let conversation_attempt_bytes = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let bound_session_aggregate = bound_session_aggregate(&fixture.provider_state_bytes);
+    let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
+    evaluate_with_runtime(
+        evidence,
+        golden,
+        golden_bytes,
+        fixture,
+        release_spec,
+        candidate,
+        live_provider_probe,
+        (
+            &conversation_attempt_bytes,
+            &bound_session_aggregate,
+            &bound_session_aggregate_bytes,
+        ),
+    )
+}
+
+fn evaluate_with_runtime(
+    evidence: &Rt0ExitEvidence,
+    golden: &BoundGoldenReport,
+    golden_bytes: &[u8],
+    fixture: &support::GoldenFixture,
+    release_spec: &[u8],
+    candidate: &str,
+    live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
+    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
+) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -242,6 +326,9 @@ fn evaluate_with_probe(
             provider_state_bytes: &fixture.provider_state_bytes,
             live_provider_probe: live_provider_probe.0,
             live_provider_probe_bytes: live_provider_probe.1,
+            conversation_attempt_bytes: runtime.0,
+            bound_session_aggregate: runtime.1,
+            bound_session_aggregate_bytes: runtime.2,
             release_spec_bytes: release_spec,
             exact_candidate_sha: candidate,
         },
@@ -498,6 +585,56 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
 }
 
 #[test]
+fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let probe = live_provider_probe(&fixture.provider_state_bytes);
+    let probe_bytes = serde_json::to_vec(&probe).unwrap();
+    let base_conversation = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let base_session = bound_session_aggregate(&fixture.provider_state_bytes);
+    let base_session_bytes = serde_json::to_vec(&base_session).unwrap();
+
+    let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    assert_eq!(
+        evaluate_with_runtime(
+            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            (&probe, &probe_bytes),
+            (b"tampered", &base_session, &base_session_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceDigestMismatch)
+    );
+
+    let mut conversation: serde_json::Value = serde_json::from_slice(&base_conversation).unwrap();
+    conversation["candidate_sha"] = serde_json::json!("2".repeat(40));
+    let conversation_bytes = serde_json::to_vec(&conversation).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.conversation_attempt_sha256 = sha256_hex(&conversation_bytes);
+    assert_eq!(
+        evaluate_with_runtime(
+            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            (&probe, &probe_bytes),
+            (&conversation_bytes, &base_session, &base_session_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch)
+    );
+
+    let mut session = base_session;
+    session.provider_state_sha256 = digest('8');
+    let session_bytes = serde_json::to_vec(&session).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.bound_session_aggregate_sha256 = sha256_hex(&session_bytes);
+    assert_eq!(
+        evaluate_with_runtime(
+            &evidence, &golden, &golden_bytes, &fixture, RELEASE_SPEC, CANDIDATE,
+            (&probe, &probe_bytes),
+            (&base_conversation, &session, &session_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch)
+    );
+}
+
+#[test]
 fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() {
     let fixture = golden_fixture();
     let mut golden = fixture.report.clone();
@@ -509,6 +646,9 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let provider_state_bytes = fixture.provider_state_bytes.clone();
     let live_provider_probe = live_provider_probe(&provider_state_bytes);
     let live_provider_probe_bytes = serde_json::to_vec(&live_provider_probe).unwrap();
+    let conversation_attempt_bytes = conversation_attempt_bytes(&provider_state_bytes);
+    let bound_session_aggregate = bound_session_aggregate(&provider_state_bytes);
+    let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -522,6 +662,9 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 provider_state_bytes: &provider_state_bytes,
                 live_provider_probe: &live_provider_probe,
                 live_provider_probe_bytes: &live_provider_probe_bytes,
+                conversation_attempt_bytes: &conversation_attempt_bytes,
+                bound_session_aggregate: &bound_session_aggregate,
+                bound_session_aggregate_bytes: &bound_session_aggregate_bytes,
                 release_spec_bytes: RELEASE_SPEC,
                 exact_candidate_sha: CANDIDATE,
             },

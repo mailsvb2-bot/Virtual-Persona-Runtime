@@ -7,14 +7,15 @@ use crate::binding::{
     validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
+use crate::exit_validation::{validate_quality_latencies, validate_runtime_evidence};
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
     BoundGoldenReport, GoldenSuite, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
     RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.2";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.2";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.3";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.3";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -173,6 +174,8 @@ pub struct Rt0ExitEvidence {
     pub golden_report_sha256: String,
     pub provider_state_sha256: String,
     pub live_provider_probe_sha256: String,
+    pub conversation_attempt_sha256: String,
+    pub bound_session_aggregate_sha256: String,
     pub automated: AutomatedEvidence,
     pub conversations: ConversationPairEvidence,
     pub acceptance: AcceptanceEvidence,
@@ -226,6 +229,8 @@ pub struct Rt0ExitReport {
     pub provider_state_sha256: String,
     pub golden_report_sha256: String,
     pub live_provider_probe_sha256: String,
+    pub conversation_attempt_sha256: String,
+    pub bound_session_aggregate_sha256: String,
     pub exit_evidence_input_sha256: String,
     pub ready: bool,
     pub failures: Vec<Rt0ExitFailureCode>,
@@ -247,6 +252,10 @@ pub enum Rt0ExitEvidenceError {
     LiveProviderProbeInvalid,
     LiveProviderProbeCandidateMismatch,
     LiveProviderProbeProviderStateMismatch,
+    RuntimeEvidenceDigestMismatch,
+    RuntimeEvidenceInvalid,
+    RuntimeEvidenceCandidateMismatch,
+    RuntimeEvidenceProviderStateMismatch,
     GoldenEvidenceInvalid,
     GoldenReportRecomputeMismatch,
     GoldenReportInvalid,
@@ -300,6 +309,8 @@ pub fn evaluate_rt0_exit_evidence(
         provider_state_sha256: evidence.provider_state_sha256.clone(),
         golden_report_sha256: evidence.golden_report_sha256.clone(),
         live_provider_probe_sha256: evidence.live_provider_probe_sha256.clone(),
+        conversation_attempt_sha256: evidence.conversation_attempt_sha256.clone(),
+        bound_session_aggregate_sha256: evidence.bound_session_aggregate_sha256.clone(),
         exit_evidence_input_sha256: sha256_hex(context.exit_evidence_bytes),
         ready: failures.is_empty(),
         failures,
@@ -323,6 +334,8 @@ fn validate_structure(
         &evidence.golden_report_sha256,
         &evidence.provider_state_sha256,
         &evidence.live_provider_probe_sha256,
+        &evidence.conversation_attempt_sha256,
+        &evidence.bound_session_aggregate_sha256,
     ] {
         if !valid_sha256(digest) {
             return Err(Rt0ExitEvidenceError::InvalidDigest);
@@ -371,6 +384,7 @@ fn validate_structure(
             Rt0ExitEvidenceError::LiveProviderProbeProviderStateMismatch
         }
     })?;
+    validate_runtime_evidence(evidence, context, &provider_state_digest)?;
     validate_golden_report(golden_report)?;
     let required_suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES)
         .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
@@ -391,7 +405,7 @@ fn validate_structure(
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
     }
     validate_artifact_digests(evidence)?;
-    validate_latency_distributions(&evidence.quality)?;
+    validate_quality_latencies(&evidence.quality)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
         || evidence.conversations.visitor.role != ParticipantRole::Visitor
     {
@@ -448,22 +462,6 @@ fn validate_artifact_digests(evidence: &Rt0ExitEvidence) -> Result<(), Rt0ExitEv
     } else {
         Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
     }
-}
-
-fn validate_latency_distributions(quality: &QualityEvidence) -> Result<(), Rt0ExitEvidenceError> {
-    for distribution in [
-        quality.text_first_meaningful_response,
-        quality.first_meaningful_audio,
-        quality.interruption_stop,
-        quality.first_useful_video,
-        quality.av_sync_absolute_offset,
-        quality.recoverable_reconnect,
-    ] {
-        if distribution.samples == 0 || distribution.p50 > distribution.p95 {
-            return Err(Rt0ExitEvidenceError::InvalidLatencyDistribution);
-        }
-    }
-    Ok(())
 }
 
 fn evaluate_conversations(

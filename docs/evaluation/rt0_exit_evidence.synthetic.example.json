@@ -1,10 +1,12 @@
 {
-  "schema_version": "rt0-exit-evidence-0.2",
+  "schema_version": "rt0-exit-evidence-0.3",
   "candidate_sha": "0000000000000000000000000000000000000000",
   "release_spec_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "golden_report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "provider_state_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "live_provider_probe_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "conversation_attempt_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+  "bound_session_aggregate_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
   "automated": {
     "ci": {
       "status": "passed",
