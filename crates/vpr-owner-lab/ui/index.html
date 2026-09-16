@@ -91,10 +91,15 @@
     </section>
 
     <section class="evidence">
-      <h2>Состояние</h2>
+      <h2>Состояние и evidence</h2>
+      <p class="hint">После завершения каждой owner/visitor-сессии сохраните sanitized snapshot. Следующая сессия не начнётся, пока предыдущий snapshot не экспортирован.</p>
+      <div class="row">
+        <button id="export-evidence">Скачать evidence snapshot</button>
+      </div>
       <pre id="evidence">Ожидание…</pre>
     </section>
   </main>
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/evidence-export.js"></script>
 </body>
 </html>

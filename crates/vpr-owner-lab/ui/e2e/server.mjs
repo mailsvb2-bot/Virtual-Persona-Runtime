@@ -9,6 +9,7 @@ const files = new Map([
   ["/styles.css", "styles.css"],
   ["/app.js", "dist/app.js"],
   ["/owner-capture.js", "dist/owner-capture.js"],
+  ["/evidence-export.js", "dist/evidence-export.js"],
   ["/mic-worklet.js", "mic-worklet.js"],
 ]);
 const mime = new Map([
