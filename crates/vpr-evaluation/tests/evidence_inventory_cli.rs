@@ -148,13 +148,16 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     .unwrap();
     evidence["candidate_sha"] = json!(CANDIDATE);
     evidence["release_spec_sha256"] = json!(sha256_hex(RELEASE_SPEC));
-    evidence["golden_report_sha256"] =
-        json!(sha256_hex(&fs::read(dir.join("bound-golden-report.json")).unwrap()));
+    evidence["golden_report_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("bound-golden-report.json")).unwrap()
+    ));
     evidence["provider_state_sha256"] = json!(provider_digest);
-    evidence["live_provider_probe_sha256"] =
-        json!(sha256_hex(&fs::read(dir.join("provider-probe.json")).unwrap()));
-    evidence["conversation_attempt_sha256"] =
-        json!(sha256_hex(&fs::read(dir.join("conversation-attempt.json")).unwrap()));
+    evidence["live_provider_probe_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("provider-probe.json")).unwrap()
+    ));
+    evidence["conversation_attempt_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("conversation-attempt.json")).unwrap()
+    ));
     evidence["bound_session_aggregate_sha256"] = json!(sha256_hex(
         &fs::read(dir.join("bound-session-aggregate.json")).unwrap()
     ));
@@ -275,10 +278,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["exit_provider_state_matches"],
         json!(true)
     );
-    assert_eq!(
-        report["bindings"]["exit_probe_digest_matches"],
-        json!(true)
-    );
+    assert_eq!(report["bindings"]["exit_probe_digest_matches"], json!(true));
     assert_eq!(
         report["bindings"]["exit_conversation_digest_matches"],
         json!(true)

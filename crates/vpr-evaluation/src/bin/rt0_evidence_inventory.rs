@@ -181,9 +181,10 @@ impl ParsedBindingArtifacts {
                 .probe
                 .as_ref()
                 .is_some_and(|receipt| receipt.schema_version == RT0_LIVE_PROVIDER_PROBE_SCHEMA)
-            && self.conversation.as_ref().is_some_and(|receipt| {
-                receipt.schema_version == LIVE_CONVERSATION_ATTEMPT_SCHEMA
-            })
+            && self
+                .conversation
+                .as_ref()
+                .is_some_and(|receipt| receipt.schema_version == LIVE_CONVERSATION_ATTEMPT_SCHEMA)
             && self.session.as_ref().is_some_and(|receipt| {
                 receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA
             })
@@ -316,13 +317,9 @@ fn inspect_exit_binding_checks(
             .exit
             .as_ref()
             .map(|evidence| evidence.candidate_sha == candidate_sha),
-        release_spec_matches_golden: parsed
-            .exit
-            .as_ref()
-            .zip(parsed.golden.as_ref())
-            .map(|(evidence, report)| {
-                evidence.release_spec_sha256 == report.binding.release_spec_sha256
-            }),
+        release_spec_matches_golden: parsed.exit.as_ref().zip(parsed.golden.as_ref()).map(
+            |(evidence, report)| evidence.release_spec_sha256 == report.binding.release_spec_sha256,
+        ),
         golden_report_digest_matches: exit_digest_matches(
             parsed.exit.as_ref(),
             root,
@@ -352,13 +349,12 @@ fn inspect_exit_binding_checks(
             "bound-session-aggregate.json",
             |evidence| &evidence.bound_session_aggregate_sha256,
         ),
-        supporting_artifacts_bound: parsed
-            .exit
-            .as_ref()
-            .zip(parsed.supporting.as_ref())
-            .map(|(evidence, artifacts)| {
-                validate_rt0_exit_supporting_artifacts(evidence, artifacts.as_verification()).is_ok()
-            }),
+        supporting_artifacts_bound: parsed.exit.as_ref().zip(parsed.supporting.as_ref()).map(
+            |(evidence, artifacts)| {
+                validate_rt0_exit_supporting_artifacts(evidence, artifacts.as_verification())
+                    .is_ok()
+            },
+        ),
     }
 }
 
