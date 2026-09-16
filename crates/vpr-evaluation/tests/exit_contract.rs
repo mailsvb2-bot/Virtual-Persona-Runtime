@@ -355,12 +355,7 @@ fn evaluate_with_runtime_snapshot(
     release_spec: &[u8],
     candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
-    runtime: (
-        &[u8],
-        &BoundLabSessionEvidenceAggregate,
-        &[u8],
-        &[u8],
-    ),
+    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8], &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let session_snapshot_artifacts = [runtime.3];
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
