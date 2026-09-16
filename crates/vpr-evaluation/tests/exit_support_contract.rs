@@ -22,8 +22,8 @@ struct SupportingFixture {
 impl SupportingFixture {
     fn bind(evidence: &mut Rt0ExitEvidence) -> Self {
         let fixture = Self {
-            ci: claim_bytes(&evidence.automated.ci),
-            e2e: claim_bytes(&evidence.automated.e2e),
+            ci: automated_claim_bytes(&evidence.automated.ci, &evidence.candidate_sha),
+            e2e: automated_claim_bytes(&evidence.automated.e2e, &evidence.candidate_sha),
             owner: claim_bytes(&evidence.conversations.owner),
             visitor: claim_bytes(&evidence.conversations.visitor),
             acceptance: claim_bytes(&evidence.acceptance),
@@ -104,6 +104,12 @@ fn claim_bytes<T: Serialize>(claim: &T) -> Vec<u8> {
     serde_json::to_vec_pretty(&value).unwrap()
 }
 
+fn automated_claim_bytes<T: Serialize>(claim: &T, candidate_sha: &str) -> Vec<u8> {
+    let mut value: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
+    value["candidate_sha"] = json!(candidate_sha);
+    serde_json::to_vec_pretty(&value).unwrap()
+}
+
 fn set_digest(evidence: &mut Rt0ExitEvidence, index: usize, digest: String) {
     match index {
         0 => evidence.automated.ci.artifact_sha256 = digest,
@@ -181,4 +187,25 @@ fn malformed_rehashed_json_claim_is_rejected() {
         validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
         Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
     );
+}
+
+#[test]
+fn automated_claim_candidate_binding_is_fail_closed_even_after_rehash() {
+    for candidate_sha in ["2".repeat(40), "malformed".into()] {
+        for index in 0..2 {
+            let mut evidence = evidence();
+            let mut fixture = SupportingFixture::bind(&mut evidence);
+            let bytes = fixture.bytes_mut(index);
+            let mut detached: Value = serde_json::from_slice(bytes).unwrap();
+            detached["candidate_sha"] = json!(candidate_sha);
+            *bytes = serde_json::to_vec_pretty(&detached).unwrap();
+            set_digest(&mut evidence, index, sha256_hex(bytes));
+
+            assert_eq!(
+                validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
+                Err(Rt0ExitEvidenceError::InvalidArtifactDigest),
+                "automated supporting claim {index} accepted detached candidate binding",
+            );
+        }
+    }
 }

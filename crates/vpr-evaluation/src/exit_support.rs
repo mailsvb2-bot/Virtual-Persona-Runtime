@@ -71,10 +71,13 @@ pub fn validate_rt0_exit_supporting_artifacts(
     }
 
     let claims = [
-        (artifacts.ci, claim_without_digest(&evidence.automated.ci)?),
+        (
+            artifacts.ci,
+            automated_claim_without_digest(&evidence.automated.ci, &evidence.candidate_sha)?,
+        ),
         (
             artifacts.e2e,
-            claim_without_digest(&evidence.automated.e2e)?,
+            automated_claim_without_digest(&evidence.automated.e2e, &evidence.candidate_sha)?,
         ),
         (
             artifacts.owner_conversation,
@@ -117,6 +120,21 @@ fn claim_without_digest<T: Serialize>(claim: &T) -> Result<Value, Rt0ExitEvidenc
     if object.remove("artifact_sha256").is_none() {
         return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
     }
+    Ok(value)
+}
+
+fn automated_claim_without_digest<T: Serialize>(
+    claim: &T,
+    candidate_sha: &str,
+) -> Result<Value, Rt0ExitEvidenceError> {
+    let mut value = claim_without_digest(claim)?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    };
+    object.insert(
+        "candidate_sha".into(),
+        Value::String(candidate_sha.to_owned()),
+    );
     Ok(value)
 }
 

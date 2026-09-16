@@ -25,7 +25,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
 - evidence-inventory recomputation of that binding from the exact raw sanitized session snapshots, rejecting missing, tampered, duplicate, or extra/unbound snapshot artifacts;
 - exit-gate recomputation of bound Owner Lab session aggregates from the exact raw sanitized snapshots, including fail-closed canonical playback proof;
-- release-CLI binding of all ten declared supporting-evidence digests to the exact presented artifact bytes before any `ready=true` decision, plus canonical claim-projection equality for the nine JSON supporting artifacts so a detached claim cannot become valid merely by rehashing it;
+- release-CLI binding of all ten declared supporting-evidence digests to the exact presented artifact bytes before any `ready=true` decision, plus canonical supporting-projection equality for the nine JSON artifacts; CI/E2E projections additionally bind `candidate_sha`, so neither detached claims nor passed automation from another commit can become valid merely by rehashing it;
 - request-scoped browser A/V sync sampling from W3C WebRTC `estimatedPlayoutTimestamp`, requiring three sequence-numbered samples after canonical playback for each completed voice request;
 - runtime-issued avatar output segments with backend-only browser playback reconciliation and sanitized per-attempt canonical playback evidence;
 - stable RT0 reason-code vocabulary and capability maturity guards;

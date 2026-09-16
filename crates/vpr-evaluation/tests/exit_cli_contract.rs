@@ -128,9 +128,28 @@ fn bind_json_claim(root: &Path, name: &str, claim: &mut Value) {
     claim["artifact_sha256"] = json!(sha256_hex(&bytes));
 }
 
+fn bind_automated_claim(root: &Path, name: &str, candidate_sha: &str, claim: &mut Value) {
+    let mut projected: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
+    projected["candidate_sha"] = json!(candidate_sha);
+    let bytes = serde_json::to_vec_pretty(&projected).unwrap();
+    fs::write(root.join(name), &bytes).unwrap();
+    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
+}
+
 fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
-    bind_json_claim(root, "ci-evidence.json", &mut evidence["automated"]["ci"]);
-    bind_json_claim(root, "e2e-evidence.json", &mut evidence["automated"]["e2e"]);
+    let candidate_sha = evidence["candidate_sha"].as_str().unwrap().to_owned();
+    bind_automated_claim(
+        root,
+        "ci-evidence.json",
+        &candidate_sha,
+        &mut evidence["automated"]["ci"],
+    );
+    bind_automated_claim(
+        root,
+        "e2e-evidence.json",
+        &candidate_sha,
+        &mut evidence["automated"]["e2e"],
+    );
     bind_json_claim(
         root,
         "owner-conversation.json",
@@ -495,6 +514,32 @@ fn cli_rejects_rehashed_supporting_artifact_with_detached_claim() {
 
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INVALID_ARTIFACT_DIGEST")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_automated_artifact_from_another_candidate() {
+    let paths = prepare(|_| {});
+    let ci_path = paths.supporting_artifacts.join("ci-evidence.json");
+    let mut ci: Value = serde_json::from_slice(&fs::read(&ci_path).unwrap()).unwrap();
+    ci["candidate_sha"] = json!("2".repeat(40));
+    let ci_bytes = serde_json::to_vec_pretty(&ci).unwrap();
+    fs::write(&ci_path, &ci_bytes).unwrap();
+
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["automated"]["ci"]["artifact_sha256"] = json!(sha256_hex(&ci_bytes));
     fs::write(
         &paths.evidence,
         serde_json::to_vec_pretty(&evidence).unwrap(),
