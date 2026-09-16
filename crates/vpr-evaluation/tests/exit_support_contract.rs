@@ -4,8 +4,16 @@ use vpr_evaluation::{
 };
 
 const ARTIFACTS: [&[u8]; 10] = [
-    b"ci", b"e2e", b"owner", b"visitor", b"acceptance",
-    b"quality", b"cost", b"privacy", b"human", b"limitations",
+    b"ci",
+    b"e2e",
+    b"owner",
+    b"visitor",
+    b"acceptance",
+    b"quality",
+    b"cost",
+    b"privacy",
+    b"human",
+    b"limitations",
 ];
 
 fn evidence() -> Rt0ExitEvidence {
@@ -43,7 +51,10 @@ fn artifacts() -> Rt0ExitSupportingArtifacts<'static> {
 
 #[test]
 fn exact_supporting_artifact_bytes_are_accepted() {
-    assert_eq!(validate_rt0_exit_supporting_artifacts(&evidence(), artifacts()), Ok(()));
+    assert_eq!(
+        validate_rt0_exit_supporting_artifacts(&evidence(), artifacts()),
+        Ok(())
+    );
 }
 
 #[test]

@@ -1,8 +1,8 @@
+use crate::binding::valid_sha256;
 use crate::{
     BoundGoldenReport, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitReport,
     Rt0ExitVerificationContext, evaluate_rt0_exit_evidence, sha256_hex,
 };
-use crate::binding::valid_sha256;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rt0ExitSupportingArtifacts<'a> {
@@ -29,7 +29,10 @@ pub fn validate_rt0_exit_supporting_artifacts(
 ) -> Result<(), Rt0ExitEvidenceError> {
     let bound = [
         (evidence.automated.ci.artifact_sha256.as_str(), artifacts.ci),
-        (evidence.automated.e2e.artifact_sha256.as_str(), artifacts.e2e),
+        (
+            evidence.automated.e2e.artifact_sha256.as_str(),
+            artifacts.e2e,
+        ),
         (
             evidence.conversations.owner.artifact_sha256.as_str(),
             artifacts.owner_conversation,
@@ -38,7 +41,10 @@ pub fn validate_rt0_exit_supporting_artifacts(
             evidence.conversations.visitor.artifact_sha256.as_str(),
             artifacts.visitor_conversation,
         ),
-        (evidence.acceptance.artifact_sha256.as_str(), artifacts.acceptance),
+        (
+            evidence.acceptance.artifact_sha256.as_str(),
+            artifacts.acceptance,
+        ),
         (evidence.quality.artifact_sha256.as_str(), artifacts.quality),
         (evidence.cost.artifact_sha256.as_str(), artifacts.cost),
         (

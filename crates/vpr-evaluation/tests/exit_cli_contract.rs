@@ -240,7 +240,11 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         "human-evaluation.json",
         "known-limitations.md",
     ] {
-        fs::write(supporting_artifacts_path.join(name), supporting_artifact_bytes).unwrap();
+        fs::write(
+            supporting_artifacts_path.join(name),
+            supporting_artifact_bytes,
+        )
+        .unwrap();
     }
     let supporting_artifact_sha256 = sha256_hex(supporting_artifact_bytes);
     let mut evidence = exit_evidence(
