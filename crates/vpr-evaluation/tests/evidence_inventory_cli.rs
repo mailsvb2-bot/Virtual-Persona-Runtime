@@ -481,7 +481,11 @@ fn rehashed_role_forgery_keeps_inventory_incomplete() {
     )
     .unwrap();
     let bound_bytes = serde_json::to_vec_pretty(&bound).unwrap();
-    fs::write(dir.path().join("bound-session-aggregate.json"), &bound_bytes).unwrap();
+    fs::write(
+        dir.path().join("bound-session-aggregate.json"),
+        &bound_bytes,
+    )
+    .unwrap();
     let exit_path = dir.path().join("exit-evidence.json");
     let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
     exit["bound_session_aggregate_sha256"] = json!(sha256_hex(&bound_bytes));
@@ -491,7 +495,10 @@ fn rehashed_role_forgery_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(true));
+    assert_eq!(
+        report["session_snapshots"]["binding_recomputed"],
+        json!(true)
+    );
     assert_eq!(
         report["session_snapshots"]["conversation_claims_bound"],
         json!(false)

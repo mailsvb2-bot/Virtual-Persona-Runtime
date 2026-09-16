@@ -1,4 +1,8 @@
-use std::{collections::{HashMap, HashSet}, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 
 use serde::Serialize;
 use vpr_evaluation::{
@@ -118,7 +122,10 @@ fn order_bound_snapshots<'a>(
     let mut by_digest: HashMap<&str, &[u8]> = HashMap::new();
     let mut discovered_unique = true;
     for (_, digest, bytes) in discovered {
-        if by_digest.insert(digest.as_str(), bytes.as_slice()).is_some() {
+        if by_digest
+            .insert(digest.as_str(), bytes.as_slice())
+            .is_some()
+        {
             discovered_unique = false;
         }
     }

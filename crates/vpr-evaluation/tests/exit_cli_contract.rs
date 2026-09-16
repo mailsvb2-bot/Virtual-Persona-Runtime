@@ -386,7 +386,11 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     fs::write(&conversation_attempt_path, conversation_attempt_bytes).unwrap();
     fs::write(&bound_session_aggregate_path, bound_session_aggregate_bytes).unwrap();
     fs::write(&owner_session_snapshot_path, owner_session_snapshot_bytes).unwrap();
-    fs::write(&visitor_session_snapshot_path, visitor_session_snapshot_bytes).unwrap();
+    fs::write(
+        &visitor_session_snapshot_path,
+        visitor_session_snapshot_bytes,
+    )
+    .unwrap();
     fs::write(
         &evidence_path,
         serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -575,7 +579,11 @@ fn cli_rejects_rehashed_non_russian_conversation_receipt() {
     fs::write(&paths.conversation_attempt, &conversation_bytes).unwrap();
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["conversation_attempt_sha256"] = json!(sha256_hex(&conversation_bytes));
-    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
 
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));
@@ -589,10 +597,8 @@ fn cli_rejects_rehashed_non_russian_conversation_receipt() {
 #[test]
 fn cli_rejects_rehashed_role_forgery_even_when_session_binding_is_recomputed() {
     let paths = prepare(|_| {});
-    let mut owner: Value = serde_json::from_slice(
-        &fs::read(&paths.owner_session_snapshot).unwrap(),
-    )
-    .unwrap();
+    let mut owner: Value =
+        serde_json::from_slice(&fs::read(&paths.owner_session_snapshot).unwrap()).unwrap();
     owner["participant_role"] = json!("visitor");
     let owner_bytes = serde_json::to_vec_pretty(&owner).unwrap();
     fs::write(&paths.owner_session_snapshot, &owner_bytes).unwrap();
@@ -608,7 +614,11 @@ fn cli_rejects_rehashed_role_forgery_even_when_session_binding_is_recomputed() {
     fs::write(&paths.bound_session_aggregate, &bound_bytes).unwrap();
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["bound_session_aggregate_sha256"] = json!(sha256_hex(&bound_bytes));
-    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
 
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));
@@ -625,7 +635,11 @@ fn cli_rejects_rehashed_detached_completed_turn_claim() {
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["conversations"]["owner"]["completed_turns"] = json!(2);
     bind_supporting_artifacts(&paths.supporting_artifacts, &mut evidence);
-    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
 
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));

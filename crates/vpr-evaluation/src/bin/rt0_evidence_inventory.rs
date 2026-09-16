@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use session_snapshots::{SessionSnapshotChecks, collect_session_snapshot_checks};
 use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
-    BoundGoldenReport, BoundLabSessionEvidenceAggregate,
-    LiveProviderProbeReceipt, ProviderStateManifest, RT0_EXIT_EVIDENCE_SCHEMA,
-    RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, sha256_hex, validate_rt0_exit_supporting_artifacts,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, LiveProviderProbeReceipt,
+    ProviderStateManifest, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, sha256_hex,
+    validate_rt0_exit_supporting_artifacts,
 };
 
 const SCHEMA: &str = "rt0-evidence-inventory-0.4";

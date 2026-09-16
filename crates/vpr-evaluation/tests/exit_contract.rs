@@ -499,16 +499,10 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let owner_snapshot = session_snapshot_bytes_with_av_sync(
-        ParticipantRole::Owner,
-        1,
-        [40, 60, 121],
-    );
-    let visitor_snapshot = session_snapshot_bytes_with_av_sync(
-        ParticipantRole::Visitor,
-        2,
-        [40, 60, 120],
-    );
+    let owner_snapshot =
+        session_snapshot_bytes_with_av_sync(ParticipantRole::Owner, 1, [40, 60, 121]);
+    let visitor_snapshot =
+        session_snapshot_bytes_with_av_sync(ParticipantRole::Visitor, 2, [40, 60, 120]);
     let bound = bind_owner_lab_session_evidence(
         &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
         &fixture.provider_state_bytes,

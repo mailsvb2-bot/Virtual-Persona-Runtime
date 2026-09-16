@@ -36,11 +36,11 @@ pub use exit::{
     evaluate_rt0_exit_evidence,
 };
 pub use exit_context::Rt0ExitVerificationContext;
-pub use exit_validation::validate_rt0_conversation_evidence_binding;
 pub use exit_support::{
     Rt0ExitSupportingArtifacts, evaluate_verified_rt0_exit_evidence,
     validate_rt0_exit_supporting_artifacts,
 };
+pub use exit_validation::validate_rt0_conversation_evidence_binding;
 pub use session_binding::{
     BoundLabSessionEvidenceAggregate, LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     bind_owner_lab_session_evidence,

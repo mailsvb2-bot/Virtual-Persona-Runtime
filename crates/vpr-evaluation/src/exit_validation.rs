@@ -100,8 +100,9 @@ pub fn validate_rt0_conversation_evidence_binding(
     exact_candidate_sha: &str,
     provider_state_digest: &str,
 ) -> Result<(), Rt0ExitEvidenceError> {
-    let conversation: ConversationAttemptBinding = serde_json::from_slice(conversation_attempt_bytes)
-        .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    let conversation: ConversationAttemptBinding =
+        serde_json::from_slice(conversation_attempt_bytes)
+            .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
     validate_conversation_attempt_binding(
         &conversation,
         exact_candidate_sha,
@@ -184,7 +185,10 @@ fn derive_role_conversation_proof(
     role: ParticipantRole,
 ) -> Result<RoleConversationProof, Rt0ExitEvidenceError> {
     let mut proof = RoleConversationProof::default();
-    for snapshot in snapshots.iter().filter(|snapshot| snapshot.participant_role == role) {
+    for snapshot in snapshots
+        .iter()
+        .filter(|snapshot| snapshot.participant_role == role)
+    {
         if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
             || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
             || snapshot.session_sequence == 0
@@ -240,10 +244,10 @@ fn conversation_claim_matches(
     role: ParticipantRole,
     proof: &RoleConversationProof,
 ) -> bool {
-    let voice_proven = proof.completed_turns > 0
-        && proof.playback_sessions == proof.sessions_with_completed_turns;
-    let video_proven = proof.completed_turns > 0
-        && proof.video_sessions == proof.sessions_with_completed_turns;
+    let voice_proven =
+        proof.completed_turns > 0 && proof.playback_sessions == proof.sessions_with_completed_turns;
+    let video_proven =
+        proof.completed_turns > 0 && proof.video_sessions == proof.sessions_with_completed_turns;
     claim.role == role
         && claim.completed_turns == proof.completed_turns
         && claim.russian == check_status(is_russian_locale(&turn.locale))
