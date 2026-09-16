@@ -313,7 +313,7 @@ fn collect_session_snapshot_checks(
         false
     };
 
-    let files = discovered
+    let files: Vec<SessionSnapshotItem> = discovered
         .into_iter()
         .map(|(name, sha256, _)| SessionSnapshotItem {
             bound: expected_set.contains(sha256.as_str()),
