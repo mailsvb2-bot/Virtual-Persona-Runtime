@@ -24,13 +24,41 @@ impl SupportingFixture {
         let fixture = Self {
             ci: automated_claim_bytes(&evidence.automated.ci, &evidence.candidate_sha),
             e2e: automated_claim_bytes(&evidence.automated.e2e, &evidence.candidate_sha),
-            owner: claim_bytes(&evidence.conversations.owner),
-            visitor: claim_bytes(&evidence.conversations.visitor),
-            acceptance: claim_bytes(&evidence.acceptance),
-            quality: claim_bytes(&evidence.quality),
-            cost: claim_bytes(&evidence.cost),
-            privacy: claim_bytes(&evidence.privacy_permissions),
-            human: claim_bytes(&evidence.human_evaluation),
+            owner: real_claim_bytes(
+                &evidence.conversations.owner,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            visitor: real_claim_bytes(
+                &evidence.conversations.visitor,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            acceptance: real_claim_bytes(
+                &evidence.acceptance,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            quality: real_claim_bytes(
+                &evidence.quality,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            cost: real_claim_bytes(
+                &evidence.cost,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            privacy: real_claim_bytes(
+                &evidence.privacy_permissions,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
+            human: real_claim_bytes(
+                &evidence.human_evaluation,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            ),
             limitations: b"reviewed RT0 limitations\n".to_vec(),
         };
         for index in 0..10 {
@@ -107,6 +135,17 @@ fn claim_bytes<T: Serialize>(claim: &T) -> Vec<u8> {
 fn automated_claim_bytes<T: Serialize>(claim: &T, candidate_sha: &str) -> Vec<u8> {
     let mut value: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
     value["candidate_sha"] = json!(candidate_sha);
+    serde_json::to_vec_pretty(&value).unwrap()
+}
+
+fn real_claim_bytes<T: Serialize>(
+    claim: &T,
+    candidate_sha: &str,
+    provider_state_sha256: &str,
+) -> Vec<u8> {
+    let mut value: Value =
+        serde_json::from_slice(&automated_claim_bytes(claim, candidate_sha)).unwrap();
+    value["provider_state_sha256"] = json!(provider_state_sha256);
     serde_json::to_vec_pretty(&value).unwrap()
 }
 
@@ -205,6 +244,31 @@ fn automated_claim_candidate_binding_is_fail_closed_even_after_rehash() {
                 validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
                 Err(Rt0ExitEvidenceError::InvalidArtifactDigest),
                 "automated supporting claim {index} accepted detached candidate binding",
+            );
+        }
+    }
+}
+
+#[test]
+fn real_claim_binding_rejects_stale_candidate_or_provider_after_rehash() {
+    for field in ["candidate_sha", "provider_state_sha256"] {
+        for index in 2..9 {
+            let mut evidence = evidence();
+            let mut fixture = SupportingFixture::bind(&mut evidence);
+            let bytes = fixture.bytes_mut(index);
+            let mut detached: Value = serde_json::from_slice(bytes).unwrap();
+            detached[field] = json!(if field == "candidate_sha" {
+                "2".repeat(40)
+            } else {
+                "2".repeat(64)
+            });
+            *bytes = serde_json::to_vec_pretty(&detached).unwrap();
+            set_digest(&mut evidence, index, sha256_hex(bytes));
+
+            assert_eq!(
+                validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
+                Err(Rt0ExitEvidenceError::InvalidArtifactDigest),
+                "real supporting claim {index} accepted stale {field}",
             );
         }
     }
