@@ -153,7 +153,10 @@ fn bind_real_claim(
 
 fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
     let candidate_sha = evidence["candidate_sha"].as_str().unwrap().to_owned();
-    let provider_state_sha256 = evidence["provider_state_sha256"].as_str().unwrap().to_owned();
+    let provider_state_sha256 = evidence["provider_state_sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     bind_automated_claim(
         root,
         "ci-evidence.json",

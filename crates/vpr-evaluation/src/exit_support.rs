@@ -40,15 +40,36 @@ fn validate_supporting_artifact_digests(
 ) -> Result<(), Rt0ExitEvidenceError> {
     let bound = [
         (evidence.automated.ci.artifact_sha256.as_str(), artifacts.ci),
-        (evidence.automated.e2e.artifact_sha256.as_str(), artifacts.e2e),
-        (evidence.conversations.owner.artifact_sha256.as_str(), artifacts.owner_conversation),
-        (evidence.conversations.visitor.artifact_sha256.as_str(), artifacts.visitor_conversation),
-        (evidence.acceptance.artifact_sha256.as_str(), artifacts.acceptance),
+        (
+            evidence.automated.e2e.artifact_sha256.as_str(),
+            artifacts.e2e,
+        ),
+        (
+            evidence.conversations.owner.artifact_sha256.as_str(),
+            artifacts.owner_conversation,
+        ),
+        (
+            evidence.conversations.visitor.artifact_sha256.as_str(),
+            artifacts.visitor_conversation,
+        ),
+        (
+            evidence.acceptance.artifact_sha256.as_str(),
+            artifacts.acceptance,
+        ),
         (evidence.quality.artifact_sha256.as_str(), artifacts.quality),
         (evidence.cost.artifact_sha256.as_str(), artifacts.cost),
-        (evidence.privacy_permissions.artifact_sha256.as_str(), artifacts.privacy_permissions),
-        (evidence.human_evaluation.artifact_sha256.as_str(), artifacts.human_evaluation),
-        (evidence.known_limitations.document_sha256.as_str(), artifacts.known_limitations),
+        (
+            evidence.privacy_permissions.artifact_sha256.as_str(),
+            artifacts.privacy_permissions,
+        ),
+        (
+            evidence.human_evaluation.artifact_sha256.as_str(),
+            artifacts.human_evaluation,
+        ),
+        (
+            evidence.known_limitations.document_sha256.as_str(),
+            artifacts.known_limitations,
+        ),
     ];
     if bound.into_iter().all(|(digest, bytes)| {
         let actual = sha256_hex(bytes);
