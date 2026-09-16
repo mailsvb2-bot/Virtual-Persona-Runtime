@@ -413,6 +413,12 @@ fn exit_digest_matches(
         .map(|(evidence, digest)| declared(evidence) == &digest)
 }
 
+fn file_digest(root: &Path, name: &str) -> Option<String> {
+    fs::read(root.join(name))
+        .ok()
+        .map(|bytes| sha256_hex(&bytes))
+}
+
 fn collect_inventory_items(root: &Path) -> (Vec<InventoryItem>, Vec<&'static str>, bool) {
     let mut items = Vec::with_capacity(REQUIRED.len());
     let mut missing = Vec::new();
