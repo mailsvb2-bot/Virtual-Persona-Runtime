@@ -122,12 +122,6 @@ fn claim_bytes(claim: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(&claim).unwrap()
 }
 
-fn bind_json_claim(root: &Path, name: &str, claim: &mut Value) {
-    let bytes = claim_bytes(claim);
-    fs::write(root.join(name), &bytes).unwrap();
-    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
-}
-
 fn bind_automated_claim(root: &Path, name: &str, candidate_sha: &str, claim: &mut Value) {
     let mut projected: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
     projected["candidate_sha"] = json!(candidate_sha);
@@ -136,8 +130,27 @@ fn bind_automated_claim(root: &Path, name: &str, candidate_sha: &str, claim: &mu
     claim["artifact_sha256"] = json!(sha256_hex(&bytes));
 }
 
+fn bind_real_claim(
+    root: &Path,
+    name: &str,
+    candidate_sha: &str,
+    provider_state_sha256: &str,
+    claim: &mut Value,
+) {
+    let mut projected: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
+    projected["candidate_sha"] = json!(candidate_sha);
+    projected["provider_state_sha256"] = json!(provider_state_sha256);
+    let bytes = serde_json::to_vec_pretty(&projected).unwrap();
+    fs::write(root.join(name), &bytes).unwrap();
+    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
+}
+
 fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
     let candidate_sha = evidence["candidate_sha"].as_str().unwrap().to_owned();
+    let provider_state_sha256 = evidence["provider_state_sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     bind_automated_claim(
         root,
         "ci-evidence.json",
@@ -150,27 +163,53 @@ fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
         &candidate_sha,
         &mut evidence["automated"]["e2e"],
     );
-    bind_json_claim(
+    bind_real_claim(
         root,
         "owner-conversation.json",
+        &candidate_sha,
+        &provider_state_sha256,
         &mut evidence["conversations"]["owner"],
     );
-    bind_json_claim(
+    bind_real_claim(
         root,
         "visitor-conversation.json",
+        &candidate_sha,
+        &provider_state_sha256,
         &mut evidence["conversations"]["visitor"],
     );
-    bind_json_claim(root, "acceptance.json", &mut evidence["acceptance"]);
-    bind_json_claim(root, "quality.json", &mut evidence["quality"]);
-    bind_json_claim(root, "cost.json", &mut evidence["cost"]);
-    bind_json_claim(
+    bind_real_claim(
+        root,
+        "acceptance.json",
+        &candidate_sha,
+        &provider_state_sha256,
+        &mut evidence["acceptance"],
+    );
+    bind_real_claim(
+        root,
+        "quality.json",
+        &candidate_sha,
+        &provider_state_sha256,
+        &mut evidence["quality"],
+    );
+    bind_real_claim(
+        root,
+        "cost.json",
+        &candidate_sha,
+        &provider_state_sha256,
+        &mut evidence["cost"],
+    );
+    bind_real_claim(
         root,
         "privacy-permissions.json",
+        &candidate_sha,
+        &provider_state_sha256,
         &mut evidence["privacy_permissions"],
     );
-    bind_json_claim(
+    bind_real_claim(
         root,
         "human-evaluation.json",
+        &candidate_sha,
+        &provider_state_sha256,
         &mut evidence["human_evaluation"],
     );
     let limitations = b"reviewed RT0 limitations\n";
@@ -540,6 +579,32 @@ fn cli_rejects_rehashed_automated_artifact_from_another_candidate() {
 
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["automated"]["ci"]["artifact_sha256"] = json!(sha256_hex(&ci_bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INVALID_ARTIFACT_DIGEST")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_real_artifact_from_another_provider_state() {
+    let paths = prepare(|_| {});
+    let quality_path = paths.supporting_artifacts.join("quality.json");
+    let mut quality: Value = serde_json::from_slice(&fs::read(&quality_path).unwrap()).unwrap();
+    quality["provider_state_sha256"] = json!("2".repeat(64));
+    let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
+    fs::write(&quality_path, &quality_bytes).unwrap();
+
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
     fs::write(
         &paths.evidence,
         serde_json::to_vec_pretty(&evidence).unwrap(),

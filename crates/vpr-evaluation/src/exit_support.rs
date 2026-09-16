@@ -30,6 +30,14 @@ pub fn validate_rt0_exit_supporting_artifacts(
     evidence: &Rt0ExitEvidence,
     artifacts: Rt0ExitSupportingArtifacts<'_>,
 ) -> Result<(), Rt0ExitEvidenceError> {
+    validate_supporting_artifact_digests(evidence, artifacts)?;
+    validate_supporting_claims(evidence, artifacts)
+}
+
+fn validate_supporting_artifact_digests(
+    evidence: &Rt0ExitEvidence,
+    artifacts: Rt0ExitSupportingArtifacts<'_>,
+) -> Result<(), Rt0ExitEvidenceError> {
     let bound = [
         (evidence.automated.ci.artifact_sha256.as_str(), artifacts.ci),
         (
@@ -63,13 +71,20 @@ pub fn validate_rt0_exit_supporting_artifacts(
             artifacts.known_limitations,
         ),
     ];
-    if !bound.into_iter().all(|(digest, bytes)| {
+    if bound.into_iter().all(|(digest, bytes)| {
         let actual = sha256_hex(bytes);
         valid_sha256(digest) && digest == actual.as_str()
     }) {
-        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+        Ok(())
+    } else {
+        Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
     }
+}
 
+fn validate_supporting_claims(
+    evidence: &Rt0ExitEvidence,
+    artifacts: Rt0ExitSupportingArtifacts<'_>,
+) -> Result<(), Rt0ExitEvidenceError> {
     let claims = [
         (
             artifacts.ci,
@@ -81,25 +96,59 @@ pub fn validate_rt0_exit_supporting_artifacts(
         ),
         (
             artifacts.owner_conversation,
-            claim_without_digest(&evidence.conversations.owner)?,
+            real_claim_without_digest(
+                &evidence.conversations.owner,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
         ),
         (
             artifacts.visitor_conversation,
-            claim_without_digest(&evidence.conversations.visitor)?,
+            real_claim_without_digest(
+                &evidence.conversations.visitor,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
         ),
         (
             artifacts.acceptance,
-            claim_without_digest(&evidence.acceptance)?,
+            real_claim_without_digest(
+                &evidence.acceptance,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
         ),
-        (artifacts.quality, claim_without_digest(&evidence.quality)?),
-        (artifacts.cost, claim_without_digest(&evidence.cost)?),
+        (
+            artifacts.quality,
+            real_claim_without_digest(
+                &evidence.quality,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
+        ),
+        (
+            artifacts.cost,
+            real_claim_without_digest(
+                &evidence.cost,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
+        ),
         (
             artifacts.privacy_permissions,
-            claim_without_digest(&evidence.privacy_permissions)?,
+            real_claim_without_digest(
+                &evidence.privacy_permissions,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
         ),
         (
             artifacts.human_evaluation,
-            claim_without_digest(&evidence.human_evaluation)?,
+            real_claim_without_digest(
+                &evidence.human_evaluation,
+                &evidence.candidate_sha,
+                &evidence.provider_state_sha256,
+            )?,
         ),
     ];
     if claims.into_iter().all(|(bytes, expected)| {
@@ -134,6 +183,22 @@ fn automated_claim_without_digest<T: Serialize>(
     object.insert(
         "candidate_sha".into(),
         Value::String(candidate_sha.to_owned()),
+    );
+    Ok(value)
+}
+
+fn real_claim_without_digest<T: Serialize>(
+    claim: &T,
+    candidate_sha: &str,
+    provider_state_sha256: &str,
+) -> Result<Value, Rt0ExitEvidenceError> {
+    let mut value = automated_claim_without_digest(claim, candidate_sha)?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    };
+    object.insert(
+        "provider_state_sha256".into(),
+        Value::String(provider_state_sha256.to_owned()),
     );
     Ok(value)
 }
