@@ -1,16 +1,65 @@
-use std::{env, fs};
+use std::{env, fs, path::Path};
 
 use serde::Serialize;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle,
-    LiveProviderProbeReceipt, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitVerificationContext,
-    evaluate_rt0_exit_evidence,
+    LiveProviderProbeReceipt, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitSupportingArtifacts,
+    Rt0ExitVerificationContext,
+    evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
 };
 
 #[derive(Serialize)]
 struct CliError<T: Serialize> {
     ok: bool,
     code: T,
+}
+
+struct SupportingArtifactBytes {
+    ci: Vec<u8>,
+    e2e: Vec<u8>,
+    owner_conversation: Vec<u8>,
+    visitor_conversation: Vec<u8>,
+    acceptance: Vec<u8>,
+    quality: Vec<u8>,
+    cost: Vec<u8>,
+    privacy_permissions: Vec<u8>,
+    human_evaluation: Vec<u8>,
+    known_limitations: Vec<u8>,
+}
+
+impl SupportingArtifactBytes {
+    fn read(root: &Path) -> Result<Self, i32> {
+        if !root.is_dir() {
+            return input_invalid();
+        }
+        Ok(Self {
+            ci: read_path(&root.join("ci-evidence.json"))?,
+            e2e: read_path(&root.join("e2e-evidence.json"))?,
+            owner_conversation: read_path(&root.join("owner-conversation.json"))?,
+            visitor_conversation: read_path(&root.join("visitor-conversation.json"))?,
+            acceptance: read_path(&root.join("acceptance.json"))?,
+            quality: read_path(&root.join("quality.json"))?,
+            cost: read_path(&root.join("cost.json"))?,
+            privacy_permissions: read_path(&root.join("privacy-permissions.json"))?,
+            human_evaluation: read_path(&root.join("human-evaluation.json"))?,
+            known_limitations: read_path(&root.join("known-limitations.md"))?,
+        })
+    }
+
+    fn as_verification(&self) -> Rt0ExitSupportingArtifacts<'_> {
+        Rt0ExitSupportingArtifacts {
+            ci: &self.ci,
+            e2e: &self.e2e,
+            owner_conversation: &self.owner_conversation,
+            visitor_conversation: &self.visitor_conversation,
+            acceptance: &self.acceptance,
+            quality: &self.quality,
+            cost: &self.cost,
+            privacy_permissions: &self.privacy_permissions,
+            human_evaluation: &self.human_evaluation,
+            known_limitations: &self.known_limitations,
+        }
+    }
 }
 
 fn main() {
@@ -21,7 +70,7 @@ fn main() {
 
 fn run() -> Result<(), i32> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() < 10 {
+    if args.len() < 11 {
         return usage();
     }
 
@@ -32,7 +81,8 @@ fn run() -> Result<(), i32> {
     let live_provider_probe_path = &args[4];
     let conversation_attempt_path = &args[5];
     let bound_session_aggregate_path = &args[6];
-    let snapshot_paths = &args[7..args.len() - 2];
+    let supporting_artifacts_dir = &args[7];
+    let snapshot_paths = &args[8..args.len() - 2];
     let release_spec_path = &args[args.len() - 2];
     let candidate_sha = &args[args.len() - 1];
 
@@ -43,6 +93,7 @@ fn run() -> Result<(), i32> {
     let live_provider_probe_bytes = read(live_provider_probe_path)?;
     let conversation_attempt_bytes = read(conversation_attempt_path)?;
     let bound_session_aggregate_bytes = read(bound_session_aggregate_path)?;
+    let supporting_artifacts = SupportingArtifactBytes::read(Path::new(supporting_artifacts_dir))?;
     let session_snapshot_bytes = snapshot_paths
         .iter()
         .map(|path| read(path))
@@ -77,6 +128,7 @@ fn run() -> Result<(), i32> {
             release_spec_bytes: &release_spec_bytes,
             exact_candidate_sha: candidate_sha,
         },
+        supporting_artifacts.as_verification(),
     ) {
         Ok(report) => report,
         Err(code) => {
@@ -90,10 +142,19 @@ fn run() -> Result<(), i32> {
 }
 
 fn read(path: &str) -> Result<Vec<u8>, i32> {
+    read_path(Path::new(path))
+}
+
+fn read_path(path: &Path) -> Result<Vec<u8>, i32> {
     fs::read(path).map_err(|_| {
         let _ = emit_error("INPUT_INVALID");
         2
     })
+}
+
+fn input_invalid<T>() -> Result<T, i32> {
+    let _ = emit_error("INPUT_INVALID");
+    Err(2)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, i32> {
@@ -113,7 +174,7 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
 
 fn usage() -> Result<(), i32> {
     eprintln!(
-        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <session-snapshot.json>... <release-spec.md> <exact-candidate-sha>"
+        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <supporting-evidence-dir> <session-snapshot.json>... <release-spec.md> <exact-candidate-sha>"
     );
     Err(2)
 }

@@ -51,12 +51,13 @@ fn exit_evidence(
     live_provider_probe_sha256: &str,
     conversation_attempt_sha256: &str,
     bound_session_aggregate_sha256: &str,
+    supporting_artifact_sha256: &str,
 ) -> Value {
     let distribution = |p50, p95| json!({"samples":10,"p50":p50,"p95":p95});
     let conversation = |role: &str, interruption: &str| {
         json!({
             "origin":"real","role":role,"russian":"passed","voice":"passed","video":"passed",
-            "completed_turns":2,"interruption_exercised":interruption,"artifact_sha256":digest('a')
+            "completed_turns":2,"interruption_exercised":interruption,"artifact_sha256":supporting_artifact_sha256
         })
     };
     json!({
@@ -69,8 +70,8 @@ fn exit_evidence(
         "conversation_attempt_sha256":conversation_attempt_sha256,
         "bound_session_aggregate_sha256":bound_session_aggregate_sha256,
         "automated":{
-            "ci":{"status":"passed","artifact_sha256":digest('a')},
-            "e2e":{"status":"passed","artifact_sha256":digest('a')}
+            "ci":{"status":"passed","artifact_sha256":supporting_artifact_sha256},
+            "e2e":{"status":"passed","artifact_sha256":supporting_artifact_sha256}
         },
         "conversations":{
             "owner":conversation("owner","passed"),
@@ -79,7 +80,7 @@ fn exit_evidence(
         "acceptance":{
             "origin":"real","owner_happy_path":"passed","visitor_happy_path":"passed",
             "correction_path":"passed","failure_recovery_path":"passed","revoke_deny_path":"passed",
-            "artifact_sha256":digest('a')
+            "artifact_sha256":supporting_artifact_sha256
         },
         "quality":{
             "origin":"real",
@@ -89,25 +90,25 @@ fn exit_evidence(
             "first_useful_video":distribution(1200,2400),
             "av_sync_absolute_offset":{"samples":3,"p50":50,"p95":110},
             "recoverable_reconnect":distribution(2000,4900),
-            "artifact_sha256":digest('a')
+            "artifact_sha256":supporting_artifact_sha256
         },
         "cost":{
             "origin":"real","measured_duration_millis":60000,"measured_cost_microunits":1234,
-            "provider_charge_microunits":null,"artifact_sha256":digest('a')
+            "provider_charge_microunits":null,"artifact_sha256":supporting_artifact_sha256
         },
         "privacy_permissions":{
             "origin":"real","permission_suite":"passed","accepted_private_context_leakage":0,
             "accepted_false_owner_attribution":0,"revocation":"passed","egress_denial":"passed",
-            "artifact_sha256":digest('a')
+            "artifact_sha256":supporting_artifact_sha256
         },
         "human_evaluation":{
             "origin":"real","rubric_version":"rt0-human-v1","reviewer_count":1,
             "dimensions":{"voice_similarity":"recorded","voice_naturalness":"recorded",
                 "appearance_plausibility":"recorded","persona_similarity":"recorded",
                 "conversation_naturalness":"recorded"},
-            "usable_for_continuation":"passed","artifact_sha256":digest('a')
+            "usable_for_continuation":"passed","artifact_sha256":supporting_artifact_sha256
         },
-        "known_limitations":{"review_status":"passed","document_sha256":digest('a')}
+        "known_limitations":{"review_status":"passed","document_sha256":supporting_artifact_sha256}
     })
 }
 
@@ -189,6 +190,7 @@ struct PreparedPaths {
     live_provider_probe: PathBuf,
     conversation_attempt: PathBuf,
     bound_session_aggregate: PathBuf,
+    supporting_artifacts: PathBuf,
     session_snapshot: PathBuf,
     spec: PathBuf,
 }
@@ -201,6 +203,7 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let live_provider_probe_path = dir.path().join("live-provider-probe.json");
     let conversation_attempt_path = dir.path().join("conversation-attempt.json");
     let bound_session_aggregate_path = dir.path().join("bound-session-aggregate.json");
+    let supporting_artifacts_path = dir.path().join("supporting");
     let session_snapshot_path = dir.path().join("session-snapshot.json");
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
@@ -223,12 +226,30 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     .unwrap();
     let bound_session_aggregate_bytes =
         serde_json::to_vec_pretty(&bound_session_aggregate).unwrap();
+    fs::create_dir(&supporting_artifacts_path).unwrap();
+    let supporting_artifact_bytes = b"{\"fixture\":\"rt0 supporting artifact\"}\n";
+    for name in [
+        "ci-evidence.json",
+        "e2e-evidence.json",
+        "owner-conversation.json",
+        "visitor-conversation.json",
+        "acceptance.json",
+        "quality.json",
+        "cost.json",
+        "privacy-permissions.json",
+        "human-evaluation.json",
+        "known-limitations.md",
+    ] {
+        fs::write(supporting_artifacts_path.join(name), supporting_artifact_bytes).unwrap();
+    }
+    let supporting_artifact_sha256 = sha256_hex(supporting_artifact_bytes);
     let mut evidence = exit_evidence(
         &golden_bytes,
         &provider_state_sha256,
         &sha256_hex(&live_provider_probe_bytes),
         &sha256_hex(&conversation_attempt_bytes),
         &sha256_hex(&bound_session_aggregate_bytes),
+        &supporting_artifact_sha256,
     );
     evidence_mutator(&mut evidence);
     fs::write(&golden_path, golden_bytes).unwrap();
@@ -253,6 +274,7 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         live_provider_probe: live_provider_probe_path,
         conversation_attempt: conversation_attempt_path,
         bound_session_aggregate: bound_session_aggregate_path,
+        supporting_artifacts: supporting_artifacts_path,
         session_snapshot: session_snapshot_path,
         spec: spec_path,
     }
@@ -282,6 +304,7 @@ fn run(paths: &PreparedPaths, candidate: &str) -> std::process::Output {
         .arg(&paths.live_provider_probe)
         .arg(&paths.conversation_attempt)
         .arg(&paths.bound_session_aggregate)
+        .arg(&paths.supporting_artifacts)
         .arg(&paths.session_snapshot)
         .arg(&paths.spec)
         .arg(candidate)
@@ -409,6 +432,23 @@ fn cli_rejects_raw_snapshot_that_does_not_recompute_bound_aggregate() {
         String::from_utf8(output.stderr)
             .unwrap()
             .contains("RUNTIME_EVIDENCE_INVALID")
+    );
+}
+
+#[test]
+fn cli_rejects_tampered_supporting_artifact_with_well_formed_declared_digest() {
+    let paths = prepare(|_| {});
+    fs::write(
+        paths.supporting_artifacts.join("ci-evidence.json"),
+        b"tampered ci evidence\n",
+    )
+    .unwrap();
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INVALID_ARTIFACT_DIGEST")
     );
 }
 
