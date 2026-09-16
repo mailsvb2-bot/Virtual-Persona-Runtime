@@ -1,3 +1,6 @@
+use serde::Serialize;
+use serde_json::Value;
+
 use crate::binding::valid_sha256;
 use crate::{
     BoundGoldenReport, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitReport,
@@ -60,14 +63,55 @@ pub fn validate_rt0_exit_supporting_artifacts(
             artifacts.known_limitations,
         ),
     ];
-    if bound.into_iter().all(|(digest, bytes)| {
+    if !bound.into_iter().all(|(digest, bytes)| {
         let actual = sha256_hex(bytes);
         valid_sha256(digest) && digest == actual.as_str()
+    }) {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    }
+
+    let claims = [
+        (artifacts.ci, claim_without_digest(&evidence.automated.ci)?),
+        (artifacts.e2e, claim_without_digest(&evidence.automated.e2e)?),
+        (
+            artifacts.owner_conversation,
+            claim_without_digest(&evidence.conversations.owner)?,
+        ),
+        (
+            artifacts.visitor_conversation,
+            claim_without_digest(&evidence.conversations.visitor)?,
+        ),
+        (artifacts.acceptance, claim_without_digest(&evidence.acceptance)?),
+        (artifacts.quality, claim_without_digest(&evidence.quality)?),
+        (artifacts.cost, claim_without_digest(&evidence.cost)?),
+        (
+            artifacts.privacy_permissions,
+            claim_without_digest(&evidence.privacy_permissions)?,
+        ),
+        (
+            artifacts.human_evaluation,
+            claim_without_digest(&evidence.human_evaluation)?,
+        ),
+    ];
+    if claims.into_iter().all(|(bytes, expected)| {
+        serde_json::from_slice::<Value>(bytes).is_ok_and(|actual| actual == expected)
     }) {
         Ok(())
     } else {
         Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
     }
+}
+
+fn claim_without_digest<T: Serialize>(claim: &T) -> Result<Value, Rt0ExitEvidenceError> {
+    let mut value =
+        serde_json::to_value(claim).map_err(|_| Rt0ExitEvidenceError::InvalidArtifactDigest)?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    };
+    if object.remove("artifact_sha256").is_none() {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    }
+    Ok(value)
 }
 
 /// Evaluates RT0 exit evidence only after binding every supporting artifact digest to exact bytes.

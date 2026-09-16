@@ -112,6 +112,54 @@ fn exit_evidence(
     })
 }
 
+
+fn claim_bytes(claim: &Value) -> Vec<u8> {
+    let mut claim = claim.clone();
+    claim
+        .as_object_mut()
+        .unwrap()
+        .remove("artifact_sha256")
+        .unwrap();
+    serde_json::to_vec_pretty(&claim).unwrap()
+}
+
+fn bind_json_claim(root: &Path, name: &str, claim: &mut Value) {
+    let bytes = claim_bytes(claim);
+    fs::write(root.join(name), &bytes).unwrap();
+    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
+}
+
+fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
+    bind_json_claim(root, "ci-evidence.json", &mut evidence["automated"]["ci"]);
+    bind_json_claim(root, "e2e-evidence.json", &mut evidence["automated"]["e2e"]);
+    bind_json_claim(
+        root,
+        "owner-conversation.json",
+        &mut evidence["conversations"]["owner"],
+    );
+    bind_json_claim(
+        root,
+        "visitor-conversation.json",
+        &mut evidence["conversations"]["visitor"],
+    );
+    bind_json_claim(root, "acceptance.json", &mut evidence["acceptance"]);
+    bind_json_claim(root, "quality.json", &mut evidence["quality"]);
+    bind_json_claim(root, "cost.json", &mut evidence["cost"]);
+    bind_json_claim(
+        root,
+        "privacy-permissions.json",
+        &mut evidence["privacy_permissions"],
+    );
+    bind_json_claim(
+        root,
+        "human-evaluation.json",
+        &mut evidence["human_evaluation"],
+    );
+    let limitations = b"reviewed RT0 limitations\n";
+    fs::write(root.join("known-limitations.md"), limitations).unwrap();
+    evidence["known_limitations"]["document_sha256"] = json!(sha256_hex(limitations));
+}
+
 fn live_provider_probe(provider_state_sha256: &str) -> Value {
     let usage = json!({
         "input_units":1,"input_unit":"token","output_units":1,"output_unit":"token",
@@ -227,35 +275,16 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let bound_session_aggregate_bytes =
         serde_json::to_vec_pretty(&bound_session_aggregate).unwrap();
     fs::create_dir(&supporting_artifacts_path).unwrap();
-    let supporting_artifact_bytes = b"{\"fixture\":\"rt0 supporting artifact\"}\n";
-    for name in [
-        "ci-evidence.json",
-        "e2e-evidence.json",
-        "owner-conversation.json",
-        "visitor-conversation.json",
-        "acceptance.json",
-        "quality.json",
-        "cost.json",
-        "privacy-permissions.json",
-        "human-evaluation.json",
-        "known-limitations.md",
-    ] {
-        fs::write(
-            supporting_artifacts_path.join(name),
-            supporting_artifact_bytes,
-        )
-        .unwrap();
-    }
-    let supporting_artifact_sha256 = sha256_hex(supporting_artifact_bytes);
     let mut evidence = exit_evidence(
         &golden_bytes,
         &provider_state_sha256,
         &sha256_hex(&live_provider_probe_bytes),
         &sha256_hex(&conversation_attempt_bytes),
         &sha256_hex(&bound_session_aggregate_bytes),
-        &supporting_artifact_sha256,
+        &digest('0'),
     );
     evidence_mutator(&mut evidence);
+    bind_supporting_artifacts(&supporting_artifacts_path, &mut evidence);
     fs::write(&golden_path, golden_bytes).unwrap();
     fs::write(&golden_evidence_path, golden_evidence_bytes).unwrap();
     fs::write(&provider_state_path, provider_state_bytes).unwrap();
@@ -447,6 +476,33 @@ fn cli_rejects_tampered_supporting_artifact_with_well_formed_declared_digest() {
         b"tampered ci evidence\n",
     )
     .unwrap();
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("INVALID_ARTIFACT_DIGEST")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_supporting_artifact_with_detached_claim() {
+    let paths = prepare(|_| {});
+    let quality_path = paths.supporting_artifacts.join("quality.json");
+    let mut quality: Value = serde_json::from_slice(&fs::read(&quality_path).unwrap()).unwrap();
+    quality["recoverable_reconnect"]["p95"] = json!(1);
+    let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
+    fs::write(&quality_path, &quality_bytes).unwrap();
+
+    let mut evidence: Value =
+        serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));
     assert!(
