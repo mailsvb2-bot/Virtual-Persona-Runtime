@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 
 pub use vpr_evaluation::{
-    LabMediaEvidence, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
+    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
+    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 use crate::LabVoiceResult;
@@ -36,6 +37,7 @@ pub struct LabSessionEvidenceRecorder {
     sealed: bool,
     voice_attempts: BTreeMap<u64, LabVoiceAttemptEvidence>,
     media_events: Vec<LabMediaEvidence>,
+    av_sync_samples: Vec<LabAvSyncEvidence>,
 }
 
 impl LabSessionEvidenceRecorder {
@@ -51,6 +53,7 @@ impl LabSessionEvidenceRecorder {
         self.sealed = false;
         self.voice_attempts.clear();
         self.media_events.clear();
+        self.av_sync_samples.clear();
         Ok(())
     }
 
@@ -225,6 +228,49 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
+    /// Records one browser WebRTC A/V sync sample after canonical playback is proven for the
+    /// exact completed request. The reference is explicit in the serialized evidence.
+    ///
+    /// # Errors
+    /// Fails for stale sessions, malformed/duplicate samples, unknown requests, or requests whose
+    /// canonical playback has not been confirmed.
+    pub fn record_av_sync(
+        &mut self,
+        input: &LabAvSyncEvidenceInput,
+    ) -> Result<(), LabEvidenceError> {
+        if self.session_sequence != Some(input.session_sequence) || self.sealed {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        if input.request_sequence == 0
+            || !(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).contains(&input.sample_sequence)
+            || input.absolute_offset_millis > MAX_MEDIA_ELAPSED_MILLIS
+        {
+            return Err(LabEvidenceError::InvalidInput);
+        }
+        let attempt = self
+            .voice_attempts
+            .get(&input.request_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        if attempt.status != LabVoiceAttemptStatus::Completed
+            || !attempt.canonical_playback_confirmed
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        if self.av_sync_samples.iter().any(|sample| {
+            sample.request_sequence == input.request_sequence
+                && sample.sample_sequence == input.sample_sequence
+        }) {
+            return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        self.av_sync_samples.push(LabAvSyncEvidence {
+            request_sequence: input.request_sequence,
+            sample_sequence: input.sample_sequence,
+            reference: input.reference,
+            absolute_offset_millis: input.absolute_offset_millis,
+        });
+        Ok(())
+    }
+
     /// Records one browser-observed media-plane latency event without promoting it to canonical
     /// playback proof. Audio-start evidence reaches `canonical_playback_proven` only through
     /// `record_canonical_playback` after runtime reconciliation.
@@ -295,14 +341,24 @@ impl LabSessionEvidenceRecorder {
             && completed_attempts
                 .iter()
                 .all(|attempt| attempt.canonical_playback_confirmed);
+        let av_sync_proven = canonical_playback_proven
+            && completed_attempts.iter().all(|attempt| {
+                (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
+                    self.av_sync_samples.iter().any(|sample| {
+                        sample.request_sequence == attempt.request_sequence
+                            && sample.sample_sequence == sample_sequence
+                    })
+                })
+            });
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
             canonical_playback_proven,
-            av_sync_proven: false,
+            av_sync_proven,
             voice_attempts: self.voice_attempts.values().cloned().collect(),
             media_events: self.media_events.clone(),
+            av_sync_samples: self.av_sync_samples.clone(),
         })
     }
 }
@@ -364,6 +420,28 @@ mod tests {
         recorder
             .record_canonical_playback(&audio_started, 7, 1)
             .unwrap();
+        let av_sync = LabAvSyncEvidenceInput {
+            session_sequence: 3,
+            request_sequence: 1,
+            sample_sequence: 1,
+            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+            absolute_offset_millis: 60,
+        };
+        recorder.record_av_sync(&av_sync).unwrap();
+        assert_eq!(
+            recorder.record_av_sync(&av_sync),
+            Err(LabEvidenceError::DuplicateEvidence)
+        );
+        assert!(!recorder.snapshot().unwrap().av_sync_proven);
+        for sample_sequence in 2..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
+            recorder
+                .record_av_sync(&LabAvSyncEvidenceInput {
+                    sample_sequence,
+                    absolute_offset_millis: 60 + u64::from(sample_sequence),
+                    ..av_sync.clone()
+                })
+                .unwrap();
+        }
         let snapshot = recorder.snapshot().unwrap();
         let json = serde_json::to_string(&snapshot).unwrap();
         assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
@@ -374,7 +452,8 @@ mod tests {
         assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
         assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
         assert!(snapshot.canonical_playback_proven);
-        assert!(!snapshot.av_sync_proven);
+        assert!(snapshot.av_sync_proven);
+        assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
         assert!(!json.contains("приватный транскрипт"));
         assert!(!json.contains("приватный ответ"));
         recorder.seal_session();
@@ -426,6 +505,56 @@ mod tests {
         assert_eq!(
             recorder.record_canonical_playback(&second, 12, 2),
             Err(LabEvidenceError::DuplicateEvidence)
+        );
+    }
+
+    #[test]
+    fn av_sync_requires_completed_canonical_playback_for_the_same_request() {
+        let mut recorder = LabSessionEvidenceRecorder::default();
+        recorder.begin_session(12).unwrap();
+        recorder.begin_voice_request(1).unwrap();
+        let sample = LabAvSyncEvidenceInput {
+            session_sequence: 12,
+            request_sequence: 1,
+            sample_sequence: 1,
+            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+            absolute_offset_millis: 40,
+        };
+        assert_eq!(
+            recorder.record_av_sync(&sample),
+            Err(LabEvidenceError::InvalidState)
+        );
+        recorder.complete_voice_request(1, &voice_result()).unwrap();
+        assert_eq!(
+            recorder.record_av_sync(&sample),
+            Err(LabEvidenceError::InvalidState)
+        );
+        let audio_started = LabMediaEvidenceInput {
+            session_sequence: 12,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 100,
+        };
+        recorder
+            .record_canonical_playback(&audio_started, 7, 1)
+            .unwrap();
+        recorder.record_av_sync(&sample).unwrap();
+        assert!(!recorder.snapshot().unwrap().av_sync_proven);
+        for sample_sequence in 2..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
+            recorder
+                .record_av_sync(&LabAvSyncEvidenceInput {
+                    sample_sequence,
+                    ..sample.clone()
+                })
+                .unwrap();
+        }
+        assert!(recorder.snapshot().unwrap().av_sync_proven);
+        assert_eq!(
+            recorder.record_av_sync(&LabAvSyncEvidenceInput {
+                sample_sequence: RT0_AV_SYNC_SAMPLES_PER_REQUEST + 1,
+                ..sample
+            }),
+            Err(LabEvidenceError::InvalidInput)
         );
     }
 

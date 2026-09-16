@@ -1,6 +1,6 @@
 # RT0 ReleaseSpec — Feasibility & Wow Proof
 
-**Spec version:** `RT0-0.1.0`  
+**Spec version:** `RT0-0.1.1`
 **Status:** ACTIVE  
 **Normative parent:** `docs/CANON.md` v3.4  
 **Maturity ceiling during RT0:** `EXPERIMENTAL` until the RT0 exit gate is evidenced.
@@ -173,7 +173,7 @@ Unknown failures fail closed when they touch sensitive identity, biometric use o
 - Reconnect must not create a new Persona identity or silently widen authority.
 - Owner corrections and revocations must win over stale/cached state.
 
-## 13. QualityContract RT0-0.1
+## 13. QualityContract RT0-0.1.1
 
 Provisional engineering targets from the Canon are adopted unchanged:
 
@@ -187,6 +187,8 @@ Provisional engineering targets from the Canon are adopted unchanged:
 - accepted false attribution of unverified owner opinion: 0.
 
 RT0 calibrates these with real measurements. They may not be silently weakened.
+
+For the RT0 browser WebRTC path, the A/V synchronization reference is the W3C WebRTC Stats `RTCInboundRtpStreamStats.estimatedPlayoutTimestamp` pair for the single active inbound audio and video tracks of the same avatar session. A sample is the absolute difference, in milliseconds, between the audio and video estimated playout timestamps, collected only after canonical playback has been confirmed for the exact voice request. Exactly three samples, sequence-numbered `1..=3`, are required for every completed canonical-playback voice request before that request contributes A/V-sync proof. If either timestamp is unavailable, non-finite, no packets have been received, or the browser exposes an ambiguous set of inbound audio/video tracks, that sample is unavailable and MUST NOT be replaced by wall-clock guessing, first-frame timing, RTP-clock subtraction, or provider-specific timestamps. Human appearance/conversation review remains separate from this media-plane synchronization measurement.
 
 ## 14. Telemetry and cost
 

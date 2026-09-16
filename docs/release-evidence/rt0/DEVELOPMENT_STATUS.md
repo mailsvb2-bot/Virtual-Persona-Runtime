@@ -24,6 +24,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
 - exit-gate recomputation of bound Owner Lab session aggregates from the exact raw sanitized snapshots, including fail-closed canonical playback proof;
+- request-scoped browser A/V sync sampling from W3C WebRTC `estimatedPlayoutTimestamp`, requiring three sequence-numbered samples after canonical playback for each completed voice request;
 - runtime-issued avatar output segments with backend-only browser playback reconciliation and sanitized per-attempt canonical playback evidence;
 - stable RT0 reason-code vocabulary and capability maturity guards;
 - browser-contract E2E plus real Owner Lab HTTP/runtime/provider-adapter E2E for owner/visitor sessions and STT -> LLM -> avatar voice turns, using deterministic test-only provider endpoints.
@@ -34,6 +35,6 @@ RT0 is not complete. The repository now has a fail-closed credentialed owner/vis
 
 The owner-capture API, browser controls, post-review correction path, reviewed-owner-context path, and visitor-scoped test-session path remain `EXPERIMENTAL` and `user_reachable=false` under the RT0 maturity ceiling. The loopback implementation plus deterministic browser E2E are development evidence only; credentialed live-provider and human evidence are still required before promotion.
 
-The exit checker now requires raw sanitized Owner Lab session snapshots and recomputes their exact candidate/provider-state-bound aggregate before accepting runtime-backed `canonical_playback_proven=true`. A forged, rehashed, stale or cross-input aggregate fails structurally. `av_sync_proven` remains false, and playback evidence by itself MUST NOT promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state.
+The exit checker requires raw sanitized Owner Lab session snapshots and recomputes their exact candidate/provider-state-bound aggregate before accepting runtime-backed playback evidence. Schema `0.3` derives request-scoped A/V sync distributions only from three explicit WebRTC estimated-playout samples per completed canonical-playback turn, without provider-clock or wall-clock fallback. The exit checker now requires that recomputed distribution to exactly equal `QualityEvidence.av_sync_absolute_offset`; a detached or hand-edited A/V metric fails structurally. Neither playback nor A/V sampling by itself MUST promote `provider.real_*`, `evaluation.rt0_golden_set`, or `release.rt0_exit_gate` beyond their current catalogue state because the remaining real-provider, privacy, Golden, cost and human evidence is still mandatory.
 
 The capability catalogue remains the machine-readable maturity source.

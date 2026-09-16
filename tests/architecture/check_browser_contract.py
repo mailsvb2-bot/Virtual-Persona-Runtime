@@ -8,10 +8,13 @@ BACKEND_CONFIG = UI / "playwright.backend.config.ts"
 BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
+APP = UI / "src" / "app.ts"
 VOICE_CONFIG = UI / "playwright.voice.config.ts"
 VOICE_PROVIDER = UI / "e2e" / "voice-provider-fixture.mjs"
 VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
+SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
+RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 
 browser_e2e = E2E.read_text(encoding="utf-8")
 backend_e2e = BACKEND_E2E.read_text(encoding="utf-8")
@@ -19,11 +22,14 @@ backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
 backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
+app = APP.read_text(encoding="utf-8")
 voice_config = VOICE_CONFIG.read_text(encoding="utf-8")
 voice_provider = VOICE_PROVIDER.read_text(encoding="utf-8")
 voice_launcher = VOICE_LAUNCHER.read_text(encoding="utf-8")
 default_config = (UI / "playwright.config.ts").read_text(encoding="utf-8")
 ci = CI.read_text(encoding="utf-8")
+session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
+rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 
 for required in (
     "/api/persona/reviewed",
@@ -71,9 +77,28 @@ for required in (
     "Bearer voice-stt-e2e-secret",
     "Bearer voice-llm-e2e-secret",
     "Basic voice-avatar-e2e-secret",
+    "av_sync_proven",
+    "web_rtc_estimated_playout_timestamp",
+    "absolute_offset_millis",
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
+
+for required in (
+    "estimatedPlayoutTimestamp",
+    "/api/evidence/av-sync",
+    "AV_SYNC_SAMPLE_COUNT",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
+
+for source, required in (
+    (app, "const AV_SYNC_SAMPLE_COUNT = 3;"),
+    (session_evidence, "pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;"),
+    (rt0_release_spec, "Exactly three samples, sequence-numbered `1..=3`, are required"),
+):
+    if required not in source:
+        raise SystemExit(f"Owner Lab A/V sync sample-count contract missing: {required}")
 
 for required in (
     "run_owner_lab_voice_backend.py",

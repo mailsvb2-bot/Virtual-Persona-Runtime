@@ -33,7 +33,7 @@ fn provider_state() -> Vec<u8> {
 
 fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "canonical_playback_proven":true,
@@ -55,7 +55,8 @@ fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
         "media_events":[
             {"request_sequence":request,"kind":"audio_started","elapsed_millis":elapsed},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":elapsed + 100}
-        ]
+        ],
+        "av_sync_samples":[]
     }))
     .unwrap()
 }

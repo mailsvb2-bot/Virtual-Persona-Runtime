@@ -87,7 +87,7 @@ fn exit_evidence(
             "first_meaningful_audio":distribution(1400,2900),
             "interruption_stop":distribution(250,450),
             "first_useful_video":distribution(1200,2400),
-            "av_sync_absolute_offset":distribution(50,110),
+            "av_sync_absolute_offset":{"samples":3,"p50":50,"p95":110},
             "recoverable_reconnect":distribution(2000,4900),
             "artifact_sha256":digest('a')
         },
@@ -152,11 +152,11 @@ fn conversation_attempt(provider_state_sha256: &str) -> Value {
 
 fn session_snapshot() -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.2",
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":1,
         "canonical_playback_proven":true,
-        "av_sync_proven":false,
+        "av_sync_proven":true,
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":11,
@@ -171,7 +171,12 @@ fn session_snapshot() -> Value {
             "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
             "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
         }],
-        "media_events":[{"request_sequence":1,"kind":"audio_started","elapsed_millis":500}]
+        "media_events":[{"request_sequence":1,"kind":"audio_started","elapsed_millis":500}],
+        "av_sync_samples":[
+            {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":40},
+            {"request_sequence":1,"sample_sequence":2,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":50},
+            {"request_sequence":1,"sample_sequence":3,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":110}
+        ]
     })
 }
 

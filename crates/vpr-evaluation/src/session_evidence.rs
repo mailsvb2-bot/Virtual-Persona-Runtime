@@ -1,12 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{LatencyDistributionMillis, sha256_hex};
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.2";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.2";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.3";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.3";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
+pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +35,31 @@ pub struct LabMediaEvidenceInput {
     pub request_sequence: Option<u64>,
     pub kind: LabMediaEvidenceKind,
     pub elapsed_millis: u64,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LabAvSyncReference {
+    WebRtcEstimatedPlayoutTimestamp,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LabAvSyncEvidenceInput {
+    pub session_sequence: u64,
+    pub request_sequence: u64,
+    pub sample_sequence: u32,
+    pub reference: LabAvSyncReference,
+    pub absolute_offset_millis: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LabAvSyncEvidence {
+    pub request_sequence: u64,
+    pub sample_sequence: u32,
+    pub reference: LabAvSyncReference,
+    pub absolute_offset_millis: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -79,6 +105,7 @@ pub struct LabSessionEvidenceSnapshot {
     pub av_sync_proven: bool,
     pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
     pub media_events: Vec<LabMediaEvidence>,
+    pub av_sync_samples: Vec<LabAvSyncEvidence>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -91,6 +118,7 @@ pub struct LabSessionEvidenceAggregate {
     pub failed_voice_attempts: u32,
     pub canonical_playback_proven: bool,
     pub av_sync_proven: bool,
+    pub av_sync_absolute_offset: Option<LatencyDistributionMillis>,
     pub stt_latency: Option<LatencyDistributionMillis>,
     pub llm_latency: Option<LatencyDistributionMillis>,
     pub avatar_submit_latency: Option<LatencyDistributionMillis>,
@@ -149,6 +177,8 @@ struct SessionAggregateAccumulator {
     completed: u32,
     failed: u32,
     playback_sessions: u32,
+    av_sync_sessions: u32,
+    av_sync: Vec<u64>,
     stt: Vec<u64>,
     llm: Vec<u64>,
     avatar: Vec<u64>,
@@ -167,7 +197,7 @@ impl SessionAggregateAccumulator {
         &mut self,
         snapshot: &LabSessionEvidenceSnapshot,
     ) -> Result<(), LabSessionAggregateError> {
-        let mut request_status = std::collections::BTreeMap::new();
+        let mut request_status = BTreeMap::new();
         for attempt in &snapshot.voice_attempts {
             if attempt.request_sequence == 0
                 || request_status
@@ -215,6 +245,22 @@ impl SessionAggregateAccumulator {
         if derived_playback {
             self.playback_sessions = self
                 .playback_sessions
+                .checked_add(1)
+                .ok_or(LabSessionAggregateError::Overflow)?;
+        }
+        let av_sync_requests = validate_and_collect_av_sync(
+            snapshot,
+            &request_status,
+            &playback_requests,
+            &mut self.av_sync,
+        )?;
+        let derived_av_sync = derived_playback && av_sync_requests == completed_requests;
+        if snapshot.av_sync_proven != derived_av_sync {
+            return Err(LabSessionAggregateError::InvalidSnapshot);
+        }
+        if derived_av_sync {
+            self.av_sync_sessions = self
+                .av_sync_sessions
                 .checked_add(1)
                 .ok_or(LabSessionAggregateError::Overflow)?;
         }
@@ -326,7 +372,8 @@ impl SessionAggregateAccumulator {
             completed_voice_attempts: self.completed,
             failed_voice_attempts: self.failed,
             canonical_playback_proven: self.completed > 0 && self.playback_sessions == sessions,
-            av_sync_proven: false,
+            av_sync_proven: self.completed > 0 && self.av_sync_sessions == sessions,
+            av_sync_absolute_offset: distribution(self.av_sync)?,
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
             avatar_submit_latency: distribution(self.avatar)?,
@@ -347,7 +394,6 @@ fn validate_snapshot_header(
     if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
         || snapshot.session_sequence == 0
-        || snapshot.av_sync_proven
     {
         return Err(LabSessionAggregateError::InvalidSnapshot);
     }
@@ -356,7 +402,7 @@ fn validate_snapshot_header(
 
 fn validate_and_collect_media(
     snapshot: &LabSessionEvidenceSnapshot,
-    request_status: &std::collections::BTreeMap<u64, LabVoiceAttemptStatus>,
+    request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
     audio: &mut Vec<u64>,
     interruption: &mut Vec<u64>,
     video: &mut Vec<u64>,
@@ -402,6 +448,40 @@ fn validate_and_collect_media(
         }
     }
     Ok(())
+}
+
+fn validate_and_collect_av_sync(
+    snapshot: &LabSessionEvidenceSnapshot,
+    request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
+    playback_requests: &HashSet<u64>,
+    offsets: &mut Vec<u64>,
+) -> Result<HashSet<u64>, LabSessionAggregateError> {
+    let mut unique = HashSet::new();
+    let mut sequences_by_request: BTreeMap<u64, HashSet<u32>> = BTreeMap::new();
+    for sample in &snapshot.av_sync_samples {
+        if sample.request_sequence == 0
+            || !(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).contains(&sample.sample_sequence)
+            || sample.absolute_offset_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || request_status.get(&sample.request_sequence)
+                != Some(&LabVoiceAttemptStatus::Completed)
+            || !playback_requests.contains(&sample.request_sequence)
+            || !unique.insert((sample.request_sequence, sample.sample_sequence))
+        {
+            return Err(LabSessionAggregateError::InvalidMediaEvidence);
+        }
+        sequences_by_request
+            .entry(sample.request_sequence)
+            .or_default()
+            .insert(sample.sample_sequence);
+        offsets.push(sample.absolute_offset_millis);
+    }
+    let required_samples = usize::try_from(RT0_AV_SYNC_SAMPLES_PER_REQUEST)
+        .map_err(|_| LabSessionAggregateError::Overflow)?;
+    Ok(sequences_by_request
+        .into_iter()
+        .filter(|(_, sequences)| sequences.len() == required_samples)
+        .map(|(request, _)| request)
+        .collect())
 }
 
 fn add_cost(total: &mut Option<u64>, value: Option<u64>) -> Result<(), LabSessionAggregateError> {
