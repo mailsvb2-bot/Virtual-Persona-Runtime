@@ -23,6 +23,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - credentialed owner/visitor conversation-attempt runner that reuses the canonical Owner Lab engine and emits only sanitized exact-candidate/provider-state-bound receipts;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
+- evidence-inventory recomputation of that binding from the exact raw sanitized session snapshots, rejecting missing, tampered, duplicate, or extra/unbound snapshot artifacts;
 - exit-gate recomputation of bound Owner Lab session aggregates from the exact raw sanitized snapshots, including fail-closed canonical playback proof;
 - request-scoped browser A/V sync sampling from W3C WebRTC `estimatedPlayoutTimestamp`, requiring three sequence-numbered samples after canonical playback for each completed voice request;
 - runtime-issued avatar output segments with backend-only browser playback reconciliation and sanitized per-attempt canonical playback evidence;

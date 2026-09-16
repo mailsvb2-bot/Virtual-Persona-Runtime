@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
-use vpr_evaluation::sha256_hex;
+use vpr_evaluation::{bind_owner_lab_session_evidence, sha256_hex};
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
 const RELEASE_SPEC: &[u8] = b"rt0 inventory release spec";
@@ -110,7 +110,7 @@ fn seed_complete_inventory(dir: &Path) {
         serde_json::to_vec_pretty(&probe).unwrap(),
     )
     .unwrap();
-    seed_bound_runtime_evidence(dir, &provider_digest);
+    seed_bound_runtime_evidence(dir, &provider_digest, &fixture.provider_state_bytes);
     for name in [
         "exit-evidence.json",
         "ci-evidence.json",
@@ -135,7 +135,11 @@ fn seed_complete_inventory(dir: &Path) {
     }
 }
 
-fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str) {
+fn seed_bound_runtime_evidence(
+    dir: &Path,
+    provider_digest: &str,
+    provider_state_bytes: &[u8],
+) {
     let conversation = json!({
         "schema_version":"rt0-live-conversation-attempt-0.1",
         "candidate_sha":CANDIDATE,
@@ -157,35 +161,28 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str) {
         serde_json::to_vec_pretty(&conversation).unwrap(),
     )
     .unwrap();
-    let bound_session = json!({
-        "schema_version":"rt0-owner-lab-session-aggregate-binding-0.3",
-        "candidate_sha":CANDIDATE,
-        "provider_state_sha256":provider_digest,
-        "snapshot_sha256":["9".repeat(64)],
-        "aggregate":{
-            "schema_version":"rt0-owner-lab-session-aggregate-0.3",
-            "source_schema_version":"rt0-owner-lab-session-evidence-0.3",
-            "sessions":1,
-            "completed_voice_attempts":1,
-            "failed_voice_attempts":0,
-            "canonical_playback_proven":false,
-            "av_sync_proven":false,
-            "av_sync_absolute_offset":null,
-            "stt_latency":null,
-            "llm_latency":null,
-            "avatar_submit_latency":null,
-            "server_total_latency":null,
-            "first_meaningful_audio":null,
-            "interruption_stop":null,
-            "first_useful_video":null,
-            "recoverable_reconnect":null,
-            "estimated_cost_microunits":null,
-            "provider_charge_microunits":null
-        }
+
+    let snapshot = json!({
+        "schema_version":"rt0-owner-lab-session-evidence-0.3",
+        "scope":"browser_observed_media_plane_only",
+        "session_sequence":1,
+        "canonical_playback_proven":false,
+        "av_sync_proven":false,
+        "voice_attempts":[],
+        "media_events":[],
+        "av_sync_samples":[]
     });
+    let snapshot_bytes = serde_json::to_vec_pretty(&snapshot).unwrap();
+    fs::write(dir.join("session-owner.json"), &snapshot_bytes).unwrap();
+    let bound = bind_owner_lab_session_evidence(
+        &[snapshot_bytes.as_slice()],
+        provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
     fs::write(
         dir.join("bound-session-aggregate.json"),
-        serde_json::to_vec_pretty(&bound_session).unwrap(),
+        serde_json::to_vec_pretty(&bound).unwrap(),
     )
     .unwrap();
 }
@@ -222,6 +219,82 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["session_provider_state_matches"],
         json!(true)
     );
+    assert_eq!(report["schema_version"], json!("rt0-evidence-inventory-0.2"));
+    assert_eq!(report["session_snapshots"]["expected"], json!(1));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(1));
+    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(true));
+    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(true));
+    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(true));
+}
+
+#[test]
+fn missing_raw_session_snapshot_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    fs::remove_file(dir.path().join("session-owner.json")).unwrap();
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(report["session_snapshots"]["expected"], json!(1));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(0));
+    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(false));
+    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(false));
+}
+
+#[test]
+fn tampered_raw_session_snapshot_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let path = dir.path().join("session-owner.json");
+    let mut snapshot: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    snapshot["session_sequence"] = json!(2);
+    fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(false));
+    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
+}
+
+#[test]
+fn duplicate_raw_session_snapshot_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let bytes = fs::read(dir.path().join("session-owner.json")).unwrap();
+    fs::write(dir.path().join("session-copy.json"), bytes).unwrap();
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(report["session_snapshots"]["expected"], json!(1));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(2));
+    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
+    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(false));
+}
+
+#[test]
+fn extra_valid_session_snapshot_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let mut snapshot: Value = serde_json::from_slice(
+        &fs::read(dir.path().join("session-owner.json")).unwrap(),
+    )
+    .unwrap();
+    snapshot["session_sequence"] = json!(2);
+    fs::write(
+        dir.path().join("session-stale.json"),
+        serde_json::to_vec_pretty(&snapshot).unwrap(),
+    )
+    .unwrap();
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(report["session_snapshots"]["expected"], json!(1));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(2));
+    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
 }
 
 #[test]

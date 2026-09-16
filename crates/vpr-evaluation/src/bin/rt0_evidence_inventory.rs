@@ -1,13 +1,14 @@
-use std::{env, fs, path::Path};
+use std::{collections::{HashMap, HashSet}, env, fs, path::Path};
 
 use serde::{Deserialize, Serialize};
 use vpr_evaluation::{
-    BoundGoldenReport, BoundLabSessionEvidenceAggregate, LiveProviderProbeReceipt,
-    ProviderStateManifest, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
+    LiveProviderProbeReceipt, ProviderStateManifest, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA,
+    bind_owner_lab_session_evidence, sha256_hex,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.1";
+const SCHEMA: &str = "rt0-evidence-inventory-0.2";
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 const REQUIRED: &[&str] = &[
     "provider-state.json",
@@ -37,6 +38,32 @@ struct InventoryItem {
     sha256: Option<String>,
 }
 #[derive(Serialize)]
+struct SessionSnapshotItem {
+    name: String,
+    sha256: String,
+    bound: bool,
+}
+
+#[derive(Serialize)]
+struct SessionSnapshotChecks {
+    expected: usize,
+    discovered: usize,
+    all_expected_present: bool,
+    no_unbound_snapshots: bool,
+    binding_recomputed: bool,
+    files: Vec<SessionSnapshotItem>,
+}
+
+impl SessionSnapshotChecks {
+    fn complete(&self) -> bool {
+        self.expected > 0
+            && self.all_expected_present
+            && self.no_unbound_snapshots
+            && self.binding_recomputed
+    }
+}
+
+#[derive(Serialize)]
 struct BindingChecks {
     candidate_sha_valid: bool,
     golden_candidate_matches: Option<bool>,
@@ -65,6 +92,7 @@ struct InventoryReport {
     missing: Vec<&'static str>,
     items: Vec<InventoryItem>,
     bindings: BindingChecks,
+    session_snapshots: SessionSnapshotChecks,
 }
 
 fn main() {
@@ -95,9 +123,8 @@ fn run() -> Result<(), i32> {
     let session = parse_optional::<BoundLabSessionEvidenceAggregate>(
         &root.join("bound-session-aggregate.json"),
     );
-    let provider_digest = fs::read(root.join("provider-state.json"))
-        .ok()
-        .map(|bytes| sha256_hex(&bytes));
+    let provider_state_bytes = fs::read(root.join("provider-state.json")).ok();
+    let provider_digest = provider_state_bytes.as_ref().map(|bytes| sha256_hex(bytes));
     let bindings = BindingChecks {
         candidate_sha_valid: valid_candidate_sha(&candidate_sha),
         golden_candidate_matches: golden
@@ -130,6 +157,13 @@ fn run() -> Result<(), i32> {
             .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
     };
 
+    let session_snapshots = collect_session_snapshot_checks(
+        root,
+        session.as_ref(),
+        provider_state_bytes.as_deref(),
+        &candidate_sha,
+    );
+
     let binding_ok = provider
         .as_ref()
         .is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
@@ -157,10 +191,14 @@ fn run() -> Result<(), i32> {
         schema_version: SCHEMA,
         candidate_sha,
         evidence_dir,
-        inventory_complete: missing.is_empty() && all_syntax_valid && binding_ok,
+        inventory_complete: missing.is_empty()
+            && all_syntax_valid
+            && binding_ok
+            && session_snapshots.complete(),
         missing,
         items,
         bindings,
+        session_snapshots,
     };
     println!("{}", serde_json::to_string_pretty(&report).map_err(|_| 2)?);
     if report.inventory_complete {
@@ -196,6 +234,95 @@ fn collect_inventory_items(root: &Path) -> (Vec<InventoryItem>, Vec<&'static str
         }
     }
     (items, missing, all_syntax_valid)
+}
+
+fn collect_session_snapshot_checks(
+    root: &Path,
+    bound: Option<&BoundLabSessionEvidenceAggregate>,
+    provider_state_bytes: Option<&[u8]>,
+    candidate_sha: &str,
+) -> SessionSnapshotChecks {
+    let expected: Vec<String> = bound
+        .map(|receipt| receipt.snapshot_sha256.clone())
+        .unwrap_or_default();
+    let expected_set: HashSet<&str> = expected.iter().map(String::as_str).collect();
+    let expected_unique = expected_set.len() == expected.len();
+
+    let mut discovered = Vec::<(String, String, Vec<u8>)>::new();
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file()
+                || !path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            if serde_json::from_slice::<LabSessionEvidenceSnapshot>(&bytes).is_err() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            discovered.push((name.to_owned(), sha256_hex(&bytes), bytes));
+        }
+    }
+    discovered.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let mut by_digest: HashMap<&str, &[u8]> = HashMap::new();
+    let mut discovered_unique = true;
+    for (_, digest, bytes) in &discovered {
+        if by_digest.insert(digest.as_str(), bytes.as_slice()).is_some() {
+            discovered_unique = false;
+        }
+    }
+    let all_expected_present = expected_unique
+        && expected
+            .iter()
+            .all(|digest| by_digest.contains_key(digest.as_str()));
+    let no_unbound_snapshots = discovered_unique
+        && discovered.len() == expected.len()
+        && discovered
+            .iter()
+            .all(|(_, digest, _)| expected_set.contains(digest.as_str()));
+
+    let binding_recomputed = if all_expected_present && no_unbound_snapshots {
+        match (bound, provider_state_bytes) {
+            (Some(bound), Some(provider_state_bytes)) => {
+                let ordered: Vec<&[u8]> = expected
+                    .iter()
+                    .filter_map(|digest| by_digest.get(digest.as_str()).copied())
+                    .collect();
+                bind_owner_lab_session_evidence(&ordered, provider_state_bytes, candidate_sha)
+                    .is_ok_and(|recomputed| recomputed == *bound)
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    let files = discovered
+        .into_iter()
+        .map(|(name, sha256, _)| SessionSnapshotItem {
+            bound: expected_set.contains(sha256.as_str()),
+            name,
+            sha256,
+        })
+        .collect();
+
+    SessionSnapshotChecks {
+        expected: expected.len(),
+        discovered: files.len(),
+        all_expected_present,
+        no_unbound_snapshots,
+        binding_recomputed,
+        files,
+    }
 }
 
 fn artifact_syntax_valid(name: &str, bytes: &[u8]) -> bool {

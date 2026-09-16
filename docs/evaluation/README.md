@@ -39,7 +39,7 @@ A successful synthetic or mock run is **not** RT0 exit evidence. Release evidenc
 
 ## RT0 evidence inventory preflight
 
-`vpr-rt0-evidence-inventory` is a non-promoting filesystem preflight for an external RT0 evidence directory. It hashes the expected evidence artifacts and checks the exact candidate/provider-state bindings exposed by the bound Golden report, live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate. It does not evaluate conversation quality, human review, latency thresholds, privacy outcomes, or release readiness.
+`vpr-rt0-evidence-inventory` is a non-promoting filesystem preflight for an external RT0 evidence directory. Schema `rt0-evidence-inventory-0.2` hashes the expected evidence artifacts and checks the exact candidate/provider-state bindings exposed by the bound Golden report, live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate. It also discovers raw sanitized `rt0-owner-lab-session-evidence-0.3` JSON snapshots in the evidence directory, matches their exact byte digests to the ordered `snapshot_sha256` list in the bound aggregate, and recomputes the canonical session binding from those raw bytes. Missing, tampered, duplicate, or extra/unbound session snapshots keep the inventory incomplete. Snapshot filenames are not trusted as evidence identity. It does not evaluate conversation quality, human review, latency thresholds, privacy outcomes, or release readiness.
 
 Use canonical filenames in the private evidence directory and run:
 
@@ -49,7 +49,7 @@ cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
   "$(git rev-parse HEAD)"
 ```
 
-Exit `0` means only that every expected inventory slot is present and the candidate/provider-state bindings checked by this preflight match. The canonical inventory now requires `conversation-attempt.json` and `bound-session-aggregate.json`; malformed, stale, cross-candidate, or cross-provider bindings keep the inventory incomplete. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
+Exit `0` means only that every expected inventory slot is present, the candidate/provider-state bindings checked by this preflight match, and the raw session snapshots exactly reproduce the archived bound session aggregate. The canonical inventory requires `conversation-attempt.json`, `bound-session-aggregate.json`, and every raw session snapshot named by that aggregate's `snapshot_sha256` list; malformed, stale, cross-candidate, cross-provider, missing, tampered, duplicate, or unbound snapshot evidence keeps the inventory incomplete. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
 
 ## RT0 exit-evidence gate
 
