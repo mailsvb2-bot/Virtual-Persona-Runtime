@@ -112,7 +112,6 @@ fn exit_evidence(
     })
 }
 
-
 fn claim_bytes(claim: &Value) -> Vec<u8> {
     let mut claim = claim.clone();
     claim
@@ -494,8 +493,7 @@ fn cli_rejects_rehashed_supporting_artifact_with_detached_claim() {
     let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
     fs::write(&quality_path, &quality_bytes).unwrap();
 
-    let mut evidence: Value =
-        serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
     fs::write(
         &paths.evidence,

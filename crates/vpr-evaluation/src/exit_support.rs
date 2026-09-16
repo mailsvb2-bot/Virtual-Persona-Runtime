@@ -72,7 +72,10 @@ pub fn validate_rt0_exit_supporting_artifacts(
 
     let claims = [
         (artifacts.ci, claim_without_digest(&evidence.automated.ci)?),
-        (artifacts.e2e, claim_without_digest(&evidence.automated.e2e)?),
+        (
+            artifacts.e2e,
+            claim_without_digest(&evidence.automated.e2e)?,
+        ),
         (
             artifacts.owner_conversation,
             claim_without_digest(&evidence.conversations.owner)?,
@@ -81,7 +84,10 @@ pub fn validate_rt0_exit_supporting_artifacts(
             artifacts.visitor_conversation,
             claim_without_digest(&evidence.conversations.visitor)?,
         ),
-        (artifacts.acceptance, claim_without_digest(&evidence.acceptance)?),
+        (
+            artifacts.acceptance,
+            claim_without_digest(&evidence.acceptance)?,
+        ),
         (artifacts.quality, claim_without_digest(&evidence.quality)?),
         (artifacts.cost, claim_without_digest(&evidence.cost)?),
         (
