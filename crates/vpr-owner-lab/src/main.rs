@@ -17,7 +17,7 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
-    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
+    ParticipantRole, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -199,15 +199,19 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                     let start_request = OwnerLabStartRequest {
                         consent: body.consent,
                     };
-                    let bundle = match body.audience.as_deref().unwrap_or("owner") {
-                        "owner" => engine.start(start_request),
-                        "visitor" => engine.start_visitor(start_request),
-                        _ => Err(LabError::InvalidInput),
-                    }?;
+                    let (bundle, participant_role) =
+                        match body.audience.as_deref().unwrap_or("owner") {
+                            "owner" => (engine.start(start_request)?, ParticipantRole::Owner),
+                            "visitor" => (
+                                engine.start_visitor(start_request)?,
+                                ParticipantRole::Visitor,
+                            ),
+                            _ => return Err(LabError::InvalidInput),
+                        };
                     state
                         .evidence
                         .lock()
-                        .begin_session(bundle.evidence_session_sequence)
+                        .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
                     Ok(json_response(200, &bundle))
                 })

@@ -229,6 +229,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   const ownerEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(ownerEvidence.ok()).toBeTruthy();
   const ownerEvidenceJson = await ownerEvidence.json() as {
+    participant_role: "owner" | "visitor";
     canonical_playback_proven: boolean;
     av_sync_proven: boolean;
     av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
@@ -241,6 +242,7 @@ test("owner and visitor voice turns cross the real backend with different contex
     }>;
     media_events: Array<{ request_sequence: number | null; kind: string }>;
   };
+  expect(ownerEvidenceJson.participant_role).toBe("owner");
   expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_samples).toHaveLength(3);
@@ -277,6 +279,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   const visitorEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(visitorEvidence.ok()).toBeTruthy();
   const visitorEvidenceJson = await visitorEvidence.json() as {
+    participant_role: "owner" | "visitor";
     canonical_playback_proven: boolean;
     av_sync_proven: boolean;
     av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
@@ -289,6 +292,7 @@ test("owner and visitor voice turns cross the real backend with different contex
     }>;
     media_events: Array<{ request_sequence: number | null; kind: string; elapsed_millis: number }>;
   };
+  expect(visitorEvidenceJson.participant_role).toBe("visitor");
   expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_samples).toHaveLength(3);

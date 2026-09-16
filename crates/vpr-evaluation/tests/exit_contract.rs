@@ -68,7 +68,7 @@ fn conversation(role: ParticipantRole) -> ConversationEvidence {
         russian: CheckStatus::Passed,
         voice: CheckStatus::Passed,
         video: CheckStatus::Passed,
-        completed_turns: 2,
+        completed_turns: 1,
         interruption_exercised: if role == ParticipantRole::Owner {
             CheckStatus::Passed
         } else {
@@ -137,8 +137,24 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
         "persona_id_sha256":digest('4'),
         "persona_version":2,
         "reviewed_claims":1,
-        "owner":{},
-        "visitor":{},
+        "owner":{
+            "audience":"owner",
+            "input_audio_sha256":digest('5'),
+            "transcript_sha256":digest('6'),
+            "transcript_chars":12,
+            "reply_sha256":digest('7'),
+            "reply_chars":18,
+            "locale":"ru"
+        },
+        "visitor":{
+            "audience":"visitor",
+            "input_audio_sha256":digest('8'),
+            "transcript_sha256":digest('9'),
+            "transcript_chars":10,
+            "reply_sha256":digest('a'),
+            "reply_chars":16,
+            "locale":"ru-RU"
+        },
         "conversation_attempted":true,
         "provider_output_submitted":true,
         "browser_media_playback":"not_proven",
@@ -148,17 +164,49 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
-fn session_snapshot_bytes_with_av_sync(offsets: [u64; 3]) -> Vec<u8> {
+fn session_snapshot_bytes_with_av_sync(
+    role: ParticipantRole,
+    session_sequence: u64,
+    offsets: [u64; 3],
+) -> Vec<u8> {
+    let interruption = if role == ParticipantRole::Owner {
+        vec![serde_json::json!({
+            "request_sequence":1,
+            "kind":"interruption_stopped",
+            "elapsed_millis":250
+        })]
+    } else {
+        Vec::new()
+    };
+    let mut media_events = vec![
+        serde_json::json!({
+            "request_sequence":1,
+            "kind":"audio_started",
+            "elapsed_millis":500
+        }),
+        serde_json::json!({
+            "request_sequence":null,
+            "kind":"video_ready",
+            "elapsed_millis":700
+        }),
+        serde_json::json!({
+            "request_sequence":null,
+            "kind":"reconnect_restored",
+            "elapsed_millis":800
+        }),
+    ];
+    media_events.extend(interruption);
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.3",
+        "schema_version":"rt0-owner-lab-session-evidence-0.4",
         "scope":"browser_observed_media_plane_only",
-        "session_sequence":1,
+        "session_sequence":session_sequence,
+        "participant_role":role,
         "canonical_playback_proven":true,
         "av_sync_proven":true,
         "voice_attempts":[{
             "request_sequence":1,
-            "canonical_turn_sequence":11,
-            "canonical_output_sequence":12,
+            "canonical_turn_sequence":10 + session_sequence,
+            "canonical_output_sequence":20 + session_sequence,
             "canonical_playback_confirmed":true,
             "status":"completed",
             "failure_code":null,
@@ -175,11 +223,7 @@ fn session_snapshot_bytes_with_av_sync(offsets: [u64; 3]) -> Vec<u8> {
                 "estimated_cost_microunits":1,"provider_charge_microunits":null
             }
         }],
-        "media_events":[{
-            "request_sequence":1,
-            "kind":"audio_started",
-            "elapsed_millis":500
-        }],
+        "media_events":media_events,
         "av_sync_samples":[
             {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[0]},
             {"request_sequence":1,"sample_sequence":2,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[1]},
@@ -189,14 +233,21 @@ fn session_snapshot_bytes_with_av_sync(offsets: [u64; 3]) -> Vec<u8> {
     .unwrap()
 }
 
-fn session_snapshot_bytes() -> Vec<u8> {
-    session_snapshot_bytes_with_av_sync([40, 60, 120])
+fn session_snapshot_bytes() -> (Vec<u8>, Vec<u8>) {
+    (
+        session_snapshot_bytes_with_av_sync(ParticipantRole::Owner, 1, [40, 60, 120]),
+        session_snapshot_bytes_with_av_sync(ParticipantRole::Visitor, 2, [40, 60, 120]),
+    )
 }
 
 fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
-    let snapshot = session_snapshot_bytes();
-    bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state_bytes, CANDIDATE)
-        .unwrap()
+    let (owner, visitor) = session_snapshot_bytes();
+    bind_owner_lab_session_evidence(
+        &[owner.as_slice(), visitor.as_slice()],
+        provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap()
 }
 
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
@@ -235,7 +286,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             interruption_stop: distribution(250, 500),
             first_useful_video: distribution(1_250, 2_500),
             av_sync_absolute_offset: LatencyDistributionMillis {
-                samples: 3,
+                samples: 6,
                 p50: 60,
                 p95: 120,
             },
@@ -336,28 +387,32 @@ fn evaluate_with_runtime(
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
     runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
-    let session_snapshot_bytes = session_snapshot_bytes();
-    evaluate_with_runtime_snapshot(
+    let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
+    evaluate_with_runtime_snapshots(
         evidence,
         golden,
         fixture,
         release_spec,
         candidate,
         live_provider_probe,
-        (runtime.0, runtime.1, runtime.2, &session_snapshot_bytes),
+        (
+            runtime.0,
+            runtime.1,
+            runtime.2,
+            &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        ),
     )
 }
 
-fn evaluate_with_runtime_snapshot(
+fn evaluate_with_runtime_snapshots(
     evidence: &Rt0ExitEvidence,
     golden: (&BoundGoldenReport, &[u8]),
     fixture: &support::GoldenFixture,
     release_spec: &[u8],
     candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
-    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8], &[u8]),
+    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8], &[&[u8]]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
-    let session_snapshot_artifacts = [runtime.3];
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -374,7 +429,7 @@ fn evaluate_with_runtime_snapshot(
             conversation_attempt_bytes: runtime.0,
             bound_session_aggregate: runtime.1,
             bound_session_aggregate_bytes: runtime.2,
-            session_snapshot_artifacts: &session_snapshot_artifacts,
+            session_snapshot_artifacts: runtime.3,
             release_spec_bytes: release_spec,
             exact_candidate_sha: candidate,
         },
@@ -444,9 +499,18 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let snapshot = session_snapshot_bytes_with_av_sync([40, 60, 121]);
+    let owner_snapshot = session_snapshot_bytes_with_av_sync(
+        ParticipantRole::Owner,
+        1,
+        [40, 60, 121],
+    );
+    let visitor_snapshot = session_snapshot_bytes_with_av_sync(
+        ParticipantRole::Visitor,
+        2,
+        [40, 60, 120],
+    );
     let bound = bind_owner_lab_session_evidence(
-        &[snapshot.as_slice()],
+        &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
         &fixture.provider_state_bytes,
         CANDIDATE,
     )
@@ -458,18 +522,23 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
     let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
     evidence.bound_session_aggregate_sha256 = sha256_hex(&bound_bytes);
     evidence.quality.av_sync_absolute_offset = LatencyDistributionMillis {
-        samples: 3,
+        samples: 6,
         p50: 60,
         p95: 121,
     };
-    let report = evaluate_with_runtime_snapshot(
+    let report = evaluate_with_runtime_snapshots(
         &evidence,
         (&golden, &golden_bytes),
         &fixture,
         RELEASE_SPEC,
         CANDIDATE,
         (&probe, &probe_bytes),
-        (&conversation_attempt, &bound, &bound_bytes, &snapshot),
+        (
+            &conversation_attempt,
+            &bound,
+            &bound_bytes,
+            &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        ),
     )
     .unwrap();
     assert!(
@@ -789,8 +858,8 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let conversation_attempt_bytes = conversation_attempt_bytes(&provider_state_bytes);
     let bound_session_aggregate = bound_session_aggregate(&provider_state_bytes);
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
-    let session_snapshot_bytes = session_snapshot_bytes();
-    let session_snapshot_artifacts = [session_snapshot_bytes.as_slice()];
+    let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
+    let session_snapshot_artifacts = [owner_snapshot.as_slice(), visitor_snapshot.as_slice()];
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,

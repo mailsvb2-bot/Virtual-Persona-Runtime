@@ -57,7 +57,7 @@ fn exit_evidence(
     let conversation = |role: &str, interruption: &str| {
         json!({
             "origin":"real","role":role,"russian":"passed","voice":"passed","video":"passed",
-            "completed_turns":2,"interruption_exercised":interruption,"artifact_sha256":supporting_artifact_sha256
+            "completed_turns":1,"interruption_exercised":interruption,"artifact_sha256":supporting_artifact_sha256
         })
     };
     json!({
@@ -88,7 +88,7 @@ fn exit_evidence(
             "first_meaningful_audio":distribution(1400,2900),
             "interruption_stop":distribution(250,450),
             "first_useful_video":distribution(1200,2400),
-            "av_sync_absolute_offset":{"samples":3,"p50":50,"p95":110},
+            "av_sync_absolute_offset":{"samples":6,"p50":50,"p95":110},
             "recoverable_reconnect":distribution(2000,4900),
             "artifact_sha256":supporting_artifact_sha256
         },
@@ -246,8 +246,24 @@ fn conversation_attempt(provider_state_sha256: &str) -> Value {
         "persona_id_sha256":digest('4'),
         "persona_version":2,
         "reviewed_claims":1,
-        "owner":{},
-        "visitor":{},
+        "owner":{
+            "audience":"owner",
+            "input_audio_sha256":digest('5'),
+            "transcript_sha256":digest('6'),
+            "transcript_chars":12,
+            "reply_sha256":digest('7'),
+            "reply_chars":18,
+            "locale":"ru"
+        },
+        "visitor":{
+            "audience":"visitor",
+            "input_audio_sha256":digest('8'),
+            "transcript_sha256":digest('9'),
+            "transcript_chars":10,
+            "reply_sha256":digest('a'),
+            "reply_chars":16,
+            "locale":"ru-RU"
+        },
         "conversation_attempted":true,
         "provider_output_submitted":true,
         "browser_media_playback":"not_proven",
@@ -256,17 +272,30 @@ fn conversation_attempt(provider_state_sha256: &str) -> Value {
     })
 }
 
-fn session_snapshot() -> Value {
+fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Value {
+    let mut media_events = vec![
+        json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
+        json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
+        json!({"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":800}),
+    ];
+    if interruption {
+        media_events.push(json!({
+            "request_sequence":1,
+            "kind":"interruption_stopped",
+            "elapsed_millis":250
+        }));
+    }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.3",
+        "schema_version":"rt0-owner-lab-session-evidence-0.4",
         "scope":"browser_observed_media_plane_only",
-        "session_sequence":1,
+        "session_sequence":session_sequence,
+        "participant_role":role,
         "canonical_playback_proven":true,
         "av_sync_proven":true,
         "voice_attempts":[{
             "request_sequence":1,
-            "canonical_turn_sequence":11,
-            "canonical_output_sequence":12,
+            "canonical_turn_sequence":10 + session_sequence,
+            "canonical_output_sequence":20 + session_sequence,
             "canonical_playback_confirmed":true,
             "status":"completed",
             "failure_code":null,
@@ -277,7 +306,7 @@ fn session_snapshot() -> Value {
             "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
             "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
         }],
-        "media_events":[{"request_sequence":1,"kind":"audio_started","elapsed_millis":500}],
+        "media_events":media_events,
         "av_sync_samples":[
             {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":40},
             {"request_sequence":1,"sample_sequence":2,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":50},
@@ -296,7 +325,8 @@ struct PreparedPaths {
     conversation_attempt: PathBuf,
     bound_session_aggregate: PathBuf,
     supporting_artifacts: PathBuf,
-    session_snapshot: PathBuf,
+    owner_session_snapshot: PathBuf,
+    visitor_session_snapshot: PathBuf,
     spec: PathBuf,
 }
 
@@ -309,7 +339,8 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let conversation_attempt_path = dir.path().join("conversation-attempt.json");
     let bound_session_aggregate_path = dir.path().join("bound-session-aggregate.json");
     let supporting_artifacts_path = dir.path().join("supporting");
-    let session_snapshot_path = dir.path().join("session-snapshot.json");
+    let owner_session_snapshot_path = dir.path().join("session-owner.json");
+    let visitor_session_snapshot_path = dir.path().join("session-visitor.json");
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
@@ -322,9 +353,15 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         serde_json::to_vec_pretty(&live_provider_probe(&provider_state_sha256)).unwrap();
     let conversation_attempt_bytes =
         serde_json::to_vec_pretty(&conversation_attempt(&provider_state_sha256)).unwrap();
-    let session_snapshot_bytes = serde_json::to_vec_pretty(&session_snapshot()).unwrap();
+    let owner_session_snapshot_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("owner", 1, true)).unwrap();
+    let visitor_session_snapshot_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false)).unwrap();
     let bound_session_aggregate = bind_owner_lab_session_evidence(
-        &[session_snapshot_bytes.as_slice()],
+        &[
+            owner_session_snapshot_bytes.as_slice(),
+            visitor_session_snapshot_bytes.as_slice(),
+        ],
         &provider_state_bytes,
         CANDIDATE,
     )
@@ -348,7 +385,8 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     fs::write(&live_provider_probe_path, live_provider_probe_bytes).unwrap();
     fs::write(&conversation_attempt_path, conversation_attempt_bytes).unwrap();
     fs::write(&bound_session_aggregate_path, bound_session_aggregate_bytes).unwrap();
-    fs::write(&session_snapshot_path, session_snapshot_bytes).unwrap();
+    fs::write(&owner_session_snapshot_path, owner_session_snapshot_bytes).unwrap();
+    fs::write(&visitor_session_snapshot_path, visitor_session_snapshot_bytes).unwrap();
     fs::write(
         &evidence_path,
         serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -365,7 +403,8 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         conversation_attempt: conversation_attempt_path,
         bound_session_aggregate: bound_session_aggregate_path,
         supporting_artifacts: supporting_artifacts_path,
-        session_snapshot: session_snapshot_path,
+        owner_session_snapshot: owner_session_snapshot_path,
+        visitor_session_snapshot: visitor_session_snapshot_path,
         spec: spec_path,
     }
 }
@@ -395,7 +434,8 @@ fn run(paths: &PreparedPaths, candidate: &str) -> std::process::Output {
         .arg(&paths.conversation_attempt)
         .arg(&paths.bound_session_aggregate)
         .arg(&paths.supporting_artifacts)
-        .arg(&paths.session_snapshot)
+        .arg(&paths.owner_session_snapshot)
+        .arg(&paths.visitor_session_snapshot)
         .arg(&paths.spec)
         .arg(candidate)
         .output()
@@ -508,13 +548,84 @@ fn cli_rejects_rehashed_runtime_evidence_from_wrong_binding() {
 fn cli_rejects_raw_snapshot_that_does_not_recompute_bound_aggregate() {
     let paths = prepare(|_| {});
     let mut snapshot: Value =
-        serde_json::from_slice(&fs::read(&paths.session_snapshot).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(&paths.owner_session_snapshot).unwrap()).unwrap();
     snapshot["media_events"][0]["elapsed_millis"] = json!(501);
     fs::write(
-        &paths.session_snapshot,
+        &paths.owner_session_snapshot,
         serde_json::to_vec_pretty(&snapshot).unwrap(),
     )
     .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_non_russian_conversation_receipt() {
+    let paths = prepare(|_| {});
+    let mut conversation: Value =
+        serde_json::from_slice(&fs::read(&paths.conversation_attempt).unwrap()).unwrap();
+    conversation["owner"]["locale"] = json!("en-US");
+    let conversation_bytes = serde_json::to_vec_pretty(&conversation).unwrap();
+    fs::write(&paths.conversation_attempt, &conversation_bytes).unwrap();
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["conversation_attempt_sha256"] = json!(sha256_hex(&conversation_bytes));
+    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_role_forgery_even_when_session_binding_is_recomputed() {
+    let paths = prepare(|_| {});
+    let mut owner: Value = serde_json::from_slice(
+        &fs::read(&paths.owner_session_snapshot).unwrap(),
+    )
+    .unwrap();
+    owner["participant_role"] = json!("visitor");
+    let owner_bytes = serde_json::to_vec_pretty(&owner).unwrap();
+    fs::write(&paths.owner_session_snapshot, &owner_bytes).unwrap();
+    let visitor_bytes = fs::read(&paths.visitor_session_snapshot).unwrap();
+    let provider_state_bytes = fs::read(&paths.provider_state).unwrap();
+    let bound = bind_owner_lab_session_evidence(
+        &[owner_bytes.as_slice(), visitor_bytes.as_slice()],
+        &provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+    let bound_bytes = serde_json::to_vec_pretty(&bound).unwrap();
+    fs::write(&paths.bound_session_aggregate, &bound_bytes).unwrap();
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["bound_session_aggregate_sha256"] = json!(sha256_hex(&bound_bytes));
+    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_detached_completed_turn_claim() {
+    let paths = prepare(|_| {});
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["conversations"]["owner"]["completed_turns"] = json!(2);
+    bind_supporting_artifacts(&paths.supporting_artifacts, &mut evidence);
+    fs::write(&paths.evidence, serde_json::to_vec_pretty(&evidence).unwrap()).unwrap();
 
     let output = run(&paths, CANDIDATE);
     assert_eq!(output.status.code(), Some(2));

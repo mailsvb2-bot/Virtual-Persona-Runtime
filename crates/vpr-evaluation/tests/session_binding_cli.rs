@@ -45,9 +45,10 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.3",
+        "schema_version":"rt0-owner-lab-session-evidence-0.4",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
+        "participant_role":"owner",
         "canonical_playback_proven":true,
         "av_sync_proven":false,
         "voice_attempts":[{
@@ -94,7 +95,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["schema_version"],
-        "rt0-owner-lab-session-aggregate-binding-0.3"
+        "rt0-owner-lab-session-aggregate-binding-0.4"
     );
     assert_eq!(
         value["candidate_sha"],

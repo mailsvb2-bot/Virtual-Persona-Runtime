@@ -4,19 +4,49 @@ use serde::Deserialize;
 
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
-    BoundLabSessionEvidenceAggregate, LabSessionEvidenceAggregate, LatencyDistributionMillis,
-    QualityEvidence, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence, Rt0ExitEvidenceError,
-    Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
+    BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, LabMediaEvidenceKind,
+    LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
+    LatencyDistributionMillis, ParticipantRole, QualityEvidence,
+    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence,
+    Rt0ExitEvidenceError, Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
 };
 
 const RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
+
+#[derive(Deserialize)]
+struct ConversationTurnBinding {
+    audience: ParticipantRole,
+    input_audio_sha256: String,
+    transcript_sha256: String,
+    transcript_chars: u64,
+    reply_sha256: String,
+    reply_chars: u64,
+    locale: String,
+}
 
 #[derive(Deserialize)]
 struct ConversationAttemptBinding {
     schema_version: String,
     candidate_sha: String,
     provider_state_sha256: String,
+    profile_input_sha256: String,
+    persona_id_sha256: String,
+    persona_version: u64,
+    reviewed_claims: usize,
+    owner: ConversationTurnBinding,
+    visitor: ConversationTurnBinding,
+    conversation_attempted: bool,
+    provider_output_submitted: bool,
+}
+
+#[derive(Default)]
+struct RoleConversationProof {
+    completed_turns: u32,
+    sessions_with_completed_turns: u32,
+    playback_sessions: u32,
+    video_sessions: u32,
+    interruption_exercised: bool,
 }
 
 pub(crate) fn validate_runtime_evidence(
@@ -31,21 +61,13 @@ pub(crate) fn validate_runtime_evidence(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceDigestMismatch);
     }
 
-    let conversation: ConversationAttemptBinding =
-        serde_json::from_slice(context.conversation_attempt_bytes)
-            .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
-    if conversation.schema_version != RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA
-        || !valid_git_sha(&conversation.candidate_sha)
-        || !valid_sha256(&conversation.provider_state_sha256)
-    {
-        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
-    }
-    if conversation.candidate_sha != context.exact_candidate_sha {
-        return Err(Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch);
-    }
-    if conversation.provider_state_sha256 != provider_state_digest {
-        return Err(Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch);
-    }
+    validate_rt0_conversation_evidence_binding(
+        evidence,
+        context.conversation_attempt_bytes,
+        context.session_snapshot_artifacts,
+        context.exact_candidate_sha,
+        provider_state_digest,
+    )?;
 
     validate_bound_session_aggregate(
         context.bound_session_aggregate,
@@ -63,6 +85,184 @@ pub(crate) fn validate_runtime_evidence(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
     validate_av_sync_quality_binding(evidence, &recomputed.aggregate)
+}
+
+/// Validates that real-conversation claims are derived from the credentialed conversation receipt
+/// plus exact raw role-bound Owner Lab session snapshots.
+///
+/// # Errors
+/// Returns a runtime-evidence error for malformed, stale, cross-candidate/provider, role-mismatched,
+/// or detached conversation claims.
+pub fn validate_rt0_conversation_evidence_binding(
+    evidence: &Rt0ExitEvidence,
+    conversation_attempt_bytes: &[u8],
+    session_snapshot_artifacts: &[&[u8]],
+    exact_candidate_sha: &str,
+    provider_state_digest: &str,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let conversation: ConversationAttemptBinding = serde_json::from_slice(conversation_attempt_bytes)
+        .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    validate_conversation_attempt_binding(
+        &conversation,
+        exact_candidate_sha,
+        provider_state_digest,
+    )?;
+    let snapshots = parse_role_bound_snapshots(session_snapshot_artifacts)?;
+    let owner = derive_role_conversation_proof(&snapshots, ParticipantRole::Owner)?;
+    let visitor = derive_role_conversation_proof(&snapshots, ParticipantRole::Visitor)?;
+    if !conversation_claim_matches(
+        &evidence.conversations.owner,
+        &conversation.owner,
+        ParticipantRole::Owner,
+        &owner,
+    ) || !conversation_claim_matches(
+        &evidence.conversations.visitor,
+        &conversation.visitor,
+        ParticipantRole::Visitor,
+        &visitor,
+    ) {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    Ok(())
+}
+
+fn validate_conversation_attempt_binding(
+    conversation: &ConversationAttemptBinding,
+    exact_candidate_sha: &str,
+    provider_state_digest: &str,
+) -> Result<(), Rt0ExitEvidenceError> {
+    if conversation.schema_version != RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA
+        || !valid_git_sha(&conversation.candidate_sha)
+        || !valid_sha256(&conversation.provider_state_sha256)
+        || !valid_sha256(&conversation.profile_input_sha256)
+        || !valid_sha256(&conversation.persona_id_sha256)
+        || conversation.persona_version == 0
+        || conversation.reviewed_claims == 0
+        || !conversation.conversation_attempted
+        || !conversation.provider_output_submitted
+        || !valid_conversation_turn(&conversation.owner, ParticipantRole::Owner)
+        || !valid_conversation_turn(&conversation.visitor, ParticipantRole::Visitor)
+    {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    if conversation.candidate_sha != exact_candidate_sha {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch);
+    }
+    if conversation.provider_state_sha256 != provider_state_digest {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch);
+    }
+    Ok(())
+}
+
+fn valid_conversation_turn(turn: &ConversationTurnBinding, role: ParticipantRole) -> bool {
+    turn.audience == role
+        && valid_sha256(&turn.input_audio_sha256)
+        && valid_sha256(&turn.transcript_sha256)
+        && turn.transcript_chars > 0
+        && valid_sha256(&turn.reply_sha256)
+        && turn.reply_chars > 0
+        && !turn.locale.trim().is_empty()
+}
+
+fn parse_role_bound_snapshots(
+    artifacts: &[&[u8]],
+) -> Result<Vec<LabSessionEvidenceSnapshot>, Rt0ExitEvidenceError> {
+    if artifacts.is_empty() {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    artifacts
+        .iter()
+        .map(|bytes| {
+            serde_json::from_slice::<LabSessionEvidenceSnapshot>(bytes)
+                .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+        })
+        .collect()
+}
+
+fn derive_role_conversation_proof(
+    snapshots: &[LabSessionEvidenceSnapshot],
+    role: ParticipantRole,
+) -> Result<RoleConversationProof, Rt0ExitEvidenceError> {
+    let mut proof = RoleConversationProof::default();
+    for snapshot in snapshots.iter().filter(|snapshot| snapshot.participant_role == role) {
+        if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
+            || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
+            || snapshot.session_sequence == 0
+        {
+            return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+        }
+        let completed = u32::try_from(
+            snapshot
+                .voice_attempts
+                .iter()
+                .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
+                .count(),
+        )
+        .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+        if completed == 0 {
+            continue;
+        }
+        proof.completed_turns = proof
+            .completed_turns
+            .checked_add(completed)
+            .ok_or(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+        proof.sessions_with_completed_turns = proof
+            .sessions_with_completed_turns
+            .checked_add(1)
+            .ok_or(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+        if snapshot.canonical_playback_proven {
+            proof.playback_sessions = proof
+                .playback_sessions
+                .checked_add(1)
+                .ok_or(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+        }
+        if snapshot
+            .media_events
+            .iter()
+            .any(|event| event.kind == LabMediaEvidenceKind::VideoReady)
+        {
+            proof.video_sessions = proof
+                .video_sessions
+                .checked_add(1)
+                .ok_or(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+        }
+        proof.interruption_exercised |= snapshot
+            .media_events
+            .iter()
+            .any(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped);
+    }
+    Ok(proof)
+}
+
+fn conversation_claim_matches(
+    claim: &ConversationEvidence,
+    turn: &ConversationTurnBinding,
+    role: ParticipantRole,
+    proof: &RoleConversationProof,
+) -> bool {
+    let voice_proven = proof.completed_turns > 0
+        && proof.playback_sessions == proof.sessions_with_completed_turns;
+    let video_proven = proof.completed_turns > 0
+        && proof.video_sessions == proof.sessions_with_completed_turns;
+    claim.role == role
+        && claim.completed_turns == proof.completed_turns
+        && claim.russian == check_status(is_russian_locale(&turn.locale))
+        && claim.voice == check_status(voice_proven)
+        && claim.video == check_status(video_proven)
+        && claim.interruption_exercised == check_status(proof.interruption_exercised)
+}
+
+fn check_status(passed: bool) -> CheckStatus {
+    if passed {
+        CheckStatus::Passed
+    } else {
+        CheckStatus::Failed
+    }
+}
+
+fn is_russian_locale(locale: &str) -> bool {
+    let normalized = locale.trim().to_ascii_lowercase();
+    normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
 fn validate_av_sync_quality_binding(

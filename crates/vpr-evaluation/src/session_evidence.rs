@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LatencyDistributionMillis, sha256_hex};
+use crate::{LatencyDistributionMillis, ParticipantRole, sha256_hex};
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.3";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.3";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.4";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.4";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -101,6 +101,7 @@ pub struct LabSessionEvidenceSnapshot {
     pub schema_version: String,
     pub scope: String,
     pub session_sequence: u64,
+    pub participant_role: ParticipantRole,
     pub canonical_playback_proven: bool,
     pub av_sync_proven: bool,
     pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
