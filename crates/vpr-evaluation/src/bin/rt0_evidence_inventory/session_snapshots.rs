@@ -18,12 +18,18 @@ pub(super) struct SessionSnapshotItem {
 }
 
 #[derive(Serialize)]
-pub(super) struct SessionSnapshotChecks {
-    expected: usize,
-    discovered: usize,
+struct SessionSnapshotIntegrity {
     all_expected_present: bool,
     no_unbound_snapshots: bool,
     binding_recomputed: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct SessionSnapshotChecks {
+    expected: usize,
+    discovered: usize,
+    #[serde(flatten)]
+    integrity: SessionSnapshotIntegrity,
     conversation_claims_bound: bool,
     files: Vec<SessionSnapshotItem>,
 }
@@ -31,9 +37,9 @@ pub(super) struct SessionSnapshotChecks {
 impl SessionSnapshotChecks {
     pub(super) fn complete(&self) -> bool {
         self.expected > 0
-            && self.all_expected_present
-            && self.no_unbound_snapshots
-            && self.binding_recomputed
+            && self.integrity.all_expected_present
+            && self.integrity.no_unbound_snapshots
+            && self.integrity.binding_recomputed
             && self.conversation_claims_bound
     }
 }
@@ -77,9 +83,11 @@ pub(super) fn collect_session_snapshot_checks(
     SessionSnapshotChecks {
         expected: expected.len(),
         discovered: files.len(),
-        all_expected_present,
-        no_unbound_snapshots,
-        binding_recomputed,
+        integrity: SessionSnapshotIntegrity {
+            all_expected_present,
+            no_unbound_snapshots,
+            binding_recomputed,
+        },
         conversation_claims_bound,
         files,
     }
