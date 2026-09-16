@@ -344,8 +344,7 @@ fn evaluate_with_runtime(
         release_spec,
         candidate,
         live_provider_probe,
-        runtime,
-        &session_snapshot_bytes,
+        (runtime.0, runtime.1, runtime.2, &session_snapshot_bytes),
     )
 }
 
@@ -356,10 +355,14 @@ fn evaluate_with_runtime_snapshot(
     release_spec: &[u8],
     candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
-    runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8]),
-    session_snapshot_bytes: &[u8],
+    runtime: (
+        &[u8],
+        &BoundLabSessionEvidenceAggregate,
+        &[u8],
+        &[u8],
+    ),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
-    let session_snapshot_artifacts = [session_snapshot_bytes];
+    let session_snapshot_artifacts = [runtime.3];
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
     evaluate_rt0_exit_evidence(
         evidence,
@@ -471,8 +474,7 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
         RELEASE_SPEC,
         CANDIDATE,
         (&probe, &probe_bytes),
-        (&conversation_attempt, &bound, &bound_bytes),
-        &snapshot,
+        (&conversation_attempt, &bound, &bound_bytes, &snapshot),
     )
     .unwrap();
     assert!(
