@@ -22,6 +22,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - credentialed live-proof preflight and sanitized live-provider reachability probe;
 - credentialed owner/visitor conversation-attempt runner that reuses the canonical Owner Lab engine and emits only sanitized exact-candidate/provider-state-bound receipts;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
+- CSRF-protected exact-byte export of terminal sanitized Owner Lab session snapshots, with a server-side next-session gate so a closed/revoked owner or visitor snapshot cannot be silently replaced before an explicit export request; the server-side gate remains authoritative across browser reloads while the independent export action remains available;
 - server-derived owner/visitor participant-role binding in raw Owner Lab session evidence, with exit/inventory recomputation of Russian, completed-turn, canonical-playback/voice, rendered-video and interruption conversation claims from the credentialed receipt plus exact raw snapshots;
 - exact-candidate + exact provider-state binding for aggregated Owner Lab session evidence;
 - evidence-inventory `0.4` verification of exit-manifest candidate/provider and presented artifact digests, reuse of the canonical supporting-artifact validator, plus recomputation of the exact raw sanitized session-snapshot binding, rejecting missing, stale, tampered, duplicate, or extra/unbound evidence;

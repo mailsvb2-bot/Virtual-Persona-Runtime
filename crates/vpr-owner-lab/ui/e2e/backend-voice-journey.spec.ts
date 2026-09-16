@@ -266,6 +266,10 @@ test("owner and visitor voice turns cross the real backend with different contex
 
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  const ownerEvidenceDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  const ownerEvidenceDownload = await ownerEvidenceDownloadPromise;
+  expect(ownerEvidenceDownload.suggestedFilename()).toBe("session-1-owner.json");
   await page.getByLabel("Режим тестовой сессии").selectOption("visitor");
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("Visitor-сессия WebRTC согласована");
@@ -316,6 +320,10 @@ test("owner and visitor voice turns cross the real backend with different contex
   await expect(page.locator("#status")).toContainText("Доступ отозван");
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  const visitorEvidenceDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  const visitorEvidenceDownload = await visitorEvidenceDownloadPromise;
+  expect(visitorEvidenceDownload.suggestedFilename()).toBe("session-2-visitor.json");
 
   const providerState = await request.get(`${providerUrl}/__state`);
   expect(providerState.ok()).toBeTruthy();

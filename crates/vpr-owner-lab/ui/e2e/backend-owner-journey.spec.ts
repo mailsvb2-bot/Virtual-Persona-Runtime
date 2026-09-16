@@ -71,8 +71,24 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await page.getByLabel("Что должен сказать аватар").fill("Проверка реального backend пути");
   await page.getByRole("button", { name: "Сказать", exact: true }).click();
+  const prematureExport = await request.post(`${ownerLabUrl}/api/evidence/session/export`, {
+    headers: csrfHeaders(csrf),
+    data: {},
+  });
+  expect(prematureExport.status()).toBe(409);
+  expect(await prematureExport.json()).toMatchObject({ code: "EVIDENCE_SESSION_NOT_TERMINAL" });
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  const blockedNextSession = await request.post(`${ownerLabUrl}/api/avatar/start`, {
+    headers: csrfHeaders(csrf),
+    data: { consent: true, audience: "visitor" },
+  });
+  expect(blockedNextSession.status()).toBe(409);
+  expect(await blockedNextSession.json()).toMatchObject({ code: "EVIDENCE_EXPORT_REQUIRED" });
+  const ownerEvidenceDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  const ownerEvidenceDownload = await ownerEvidenceDownloadPromise;
+  expect(ownerEvidenceDownload.suggestedFilename()).toBe("session-1-owner.json");
   const reviewedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
     headers: csrfHeaders(csrf),
     data: {},
@@ -129,6 +145,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await expect(page.locator("#status")).toContainText("Доступ отозван");
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  const visitorEvidenceDownloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  const visitorEvidenceDownload = await visitorEvidenceDownloadPromise;
+  expect(visitorEvidenceDownload.suggestedFilename()).toBe("session-2-visitor.json");
 
   const backendStatus = await request.get(`${ownerLabUrl}/api/status`);
   const backendJson = await backendStatus.json();

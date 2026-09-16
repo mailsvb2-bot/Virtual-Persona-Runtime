@@ -2,6 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 UI = ROOT / "crates" / "vpr-owner-lab" / "ui"
+INDEX = UI / "index.html"
 E2E = UI / "e2e" / "owner-journey.spec.ts"
 BACKEND_E2E = UI / "e2e" / "backend-owner-journey.spec.ts"
 BACKEND_CONFIG = UI / "playwright.backend.config.ts"
@@ -9,6 +10,8 @@ BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 APP = UI / "src" / "app.ts"
+FIXTURE_SERVER = UI / "e2e" / "server.mjs"
+EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
 VOICE_CONFIG = UI / "playwright.voice.config.ts"
 VOICE_PROVIDER = UI / "e2e" / "voice-provider-fixture.mjs"
 VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
@@ -16,6 +19,7 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 
+index_html = INDEX.read_text(encoding="utf-8")
 browser_e2e = E2E.read_text(encoding="utf-8")
 backend_e2e = BACKEND_E2E.read_text(encoding="utf-8")
 backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
@@ -23,6 +27,8 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
+evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
 voice_config = VOICE_CONFIG.read_text(encoding="utf-8")
 voice_provider = VOICE_PROVIDER.read_text(encoding="utf-8")
 voice_launcher = VOICE_LAUNCHER.read_text(encoding="utf-8")
@@ -91,6 +97,30 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
+
+for required in ('id="export-evidence"', "Скачать evidence snapshot"):
+    if required not in index_html:
+        raise SystemExit(f"Owner Lab evidence export DOM missing: {required}")
+
+if '["/evidence-export.js", "dist/evidence-export.js"]' not in fixture_server:
+    raise SystemExit("Owner Lab browser fixture must serve generated evidence export module")
+
+if '<script type="module" src="/evidence-export.js"></script>' not in index_html:
+    raise SystemExit("Owner Lab evidence export module must load independently from the main app")
+
+for required in (
+    "/api/bootstrap",
+    "/api/evidence/session/export",
+    "response.arrayBuffer()",
+    'document.getElementById("export-evidence")',
+    "session-${identity.session_sequence}-${identity.participant_role}.json",
+):
+    if required not in evidence_export:
+        raise SystemExit(f"Owner Lab exact-byte evidence export missing: {required}")
+
+for required in ("session-1-owner.json", "session-2-visitor.json"):
+    if required not in backend_e2e or required not in voice_e2e:
+        raise SystemExit(f"Owner Lab owner/visitor evidence export proof missing: {required}")
 
 for source, required in (
     (app, "const AV_SYNC_SAMPLE_COUNT = 3;"),

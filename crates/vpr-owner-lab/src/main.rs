@@ -29,6 +29,7 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
+const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 
@@ -42,6 +43,7 @@ struct AppState {
     voice_cancel_requested: AtomicBool,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
+    evidence_export: http_evidence::EvidenceExportTracker,
     csrf_token: String,
     port: u16,
 }
@@ -116,6 +118,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_cancel_requested: AtomicBool::new(false),
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
+        evidence_export: http_evidence::EvidenceExportTracker::default(),
         csrf_token: generate_csrf_token()?,
         port,
     });
@@ -156,6 +159,9 @@ fn handle_request(mut request: Request, state: &AppState) {
         (&Method::Get, "/owner-capture.js") => {
             static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8")
         }
+        (&Method::Get, "/evidence-export.js") => {
+            static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
+        }
         (&Method::Get, "/styles.css") => static_response(STYLES_CSS, "text/css; charset=utf-8"),
         (&Method::Get, "/mic-worklet.js") => {
             static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8")
@@ -193,7 +199,14 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         return result.unwrap_or_else(|response| response);
     }
     match path {
-        "/api/avatar/start" => reject_if_session_ending(state).and_then(|()| {
+        "/api/avatar/start" => http_evidence::ensure_previous_exported(
+            &state.engine,
+            &state.evidence,
+            &state.evidence_export,
+        )
+        .map_err(|error| error_response(error.status(), error.code()))
+        .and_then(|()| reject_if_session_ending(state))
+        .and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
                 with_engine_result(state, |engine| {
                     let start_request = OwnerLabStartRequest {
@@ -250,6 +263,13 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
+        "/api/evidence/session/export" => http_evidence::export_terminal_snapshot(
+            &state.engine,
+            &state.evidence,
+            &state.evidence_export,
+        )
+        .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
+        .map_err(|error| error_response(error.status(), error.code())),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),
         "/api/session/close" => end_session(state, true),
