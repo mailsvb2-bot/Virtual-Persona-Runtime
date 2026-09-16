@@ -111,28 +111,88 @@ fn seed_complete_inventory(dir: &Path) {
     )
     .unwrap();
     seed_bound_runtime_evidence(dir, &provider_digest, &fixture.provider_state_bytes);
-    for name in [
-        "exit-evidence.json",
-        "ci-evidence.json",
-        "e2e-evidence.json",
-        "owner-conversation.json",
-        "visitor-conversation.json",
-        "acceptance.json",
-        "quality.json",
-        "cost.json",
-        "privacy-permissions.json",
-        "human-evaluation.json",
-        "known-limitations.md",
-    ] {
-        if Path::new(name)
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-        {
-            fs::write(dir.join(name), b"{}\n").unwrap();
-        } else {
-            fs::write(dir.join(name), format!("inventory fixture: {name}\n")).unwrap();
-        }
+    seed_exit_and_supporting(dir, &provider_digest);
+}
+
+fn claim_bytes(claim: &Value) -> Vec<u8> {
+    let mut claim = claim.clone();
+    claim
+        .as_object_mut()
+        .unwrap()
+        .remove("artifact_sha256")
+        .unwrap();
+    serde_json::to_vec_pretty(&claim).unwrap()
+}
+
+fn bind_projected_claim(
+    dir: &Path,
+    name: &str,
+    claim: &mut Value,
+    candidate_sha: &str,
+    provider_state_sha256: Option<&str>,
+) {
+    let mut projected: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
+    projected["candidate_sha"] = json!(candidate_sha);
+    if let Some(provider_state_sha256) = provider_state_sha256 {
+        projected["provider_state_sha256"] = json!(provider_state_sha256);
     }
+    let bytes = serde_json::to_vec_pretty(&projected).unwrap();
+    fs::write(dir.join(name), &bytes).unwrap();
+    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
+}
+
+fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
+    let mut evidence: Value = serde_json::from_str(include_str!(
+        "../../../docs/evaluation/rt0_exit_evidence.synthetic.example.json"
+    ))
+    .unwrap();
+    evidence["candidate_sha"] = json!(CANDIDATE);
+    evidence["release_spec_sha256"] = json!(sha256_hex(RELEASE_SPEC));
+    evidence["golden_report_sha256"] =
+        json!(sha256_hex(&fs::read(dir.join("bound-golden-report.json")).unwrap()));
+    evidence["provider_state_sha256"] = json!(provider_digest);
+    evidence["live_provider_probe_sha256"] =
+        json!(sha256_hex(&fs::read(dir.join("provider-probe.json")).unwrap()));
+    evidence["conversation_attempt_sha256"] =
+        json!(sha256_hex(&fs::read(dir.join("conversation-attempt.json")).unwrap()));
+    evidence["bound_session_aggregate_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("bound-session-aggregate.json")).unwrap()
+    ));
+
+    bind_projected_claim(
+        dir,
+        "ci-evidence.json",
+        &mut evidence["automated"]["ci"],
+        CANDIDATE,
+        None,
+    );
+    bind_projected_claim(
+        dir,
+        "e2e-evidence.json",
+        &mut evidence["automated"]["e2e"],
+        CANDIDATE,
+        None,
+    );
+    for (name, pointer) in [
+        ("owner-conversation.json", "/conversations/owner"),
+        ("visitor-conversation.json", "/conversations/visitor"),
+        ("acceptance.json", "/acceptance"),
+        ("quality.json", "/quality"),
+        ("cost.json", "/cost"),
+        ("privacy-permissions.json", "/privacy_permissions"),
+        ("human-evaluation.json", "/human_evaluation"),
+    ] {
+        let claim = evidence.pointer_mut(pointer).unwrap();
+        bind_projected_claim(dir, name, claim, CANDIDATE, Some(provider_digest));
+    }
+    let limitations = b"reviewed RT0 inventory limitations\n";
+    fs::write(dir.join("known-limitations.md"), limitations).unwrap();
+    evidence["known_limitations"]["document_sha256"] = json!(sha256_hex(limitations));
+    fs::write(
+        dir.join("exit-evidence.json"),
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
 }
 
 fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state_bytes: &[u8]) {
@@ -202,6 +262,35 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["probe_provider_state_matches"],
         json!(true)
     );
+    assert_eq!(report["bindings"]["exit_candidate_matches"], json!(true));
+    assert_eq!(
+        report["bindings"]["exit_release_spec_matches_golden"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["exit_golden_report_digest_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["exit_provider_state_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["exit_probe_digest_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["exit_conversation_digest_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["exit_session_digest_matches"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["supporting_artifacts_bound"],
+        json!(true)
+    );
     assert_eq!(
         report["bindings"]["conversation_candidate_matches"],
         json!(true)
@@ -217,7 +306,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.2")
+        json!("rt0-evidence-inventory-0.3")
     );
     assert_eq!(report["session_snapshots"]["expected"], json!(1));
     assert_eq!(report["session_snapshots"]["discovered"], json!(1));
@@ -335,6 +424,54 @@ fn cross_candidate_inventory_fails_closed() {
     assert_eq!(report["bindings"]["candidate_sha_valid"], json!(true));
     assert_eq!(report["bindings"]["golden_candidate_matches"], json!(false));
     assert_eq!(report["bindings"]["probe_candidate_matches"], json!(false));
+    assert_eq!(report["bindings"]["exit_candidate_matches"], json!(false));
+}
+
+#[test]
+fn rehashed_stale_supporting_claim_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let quality_path = dir.path().join("quality.json");
+    let mut quality: Value = serde_json::from_slice(&fs::read(&quality_path).unwrap()).unwrap();
+    quality["provider_state_sha256"] = json!("2".repeat(64));
+    let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
+    fs::write(&quality_path, &quality_bytes).unwrap();
+    let exit_path = dir.path().join("exit-evidence.json");
+    let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
+    exit["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
+    fs::write(&exit_path, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["supporting_artifacts_bound"],
+        json!(false)
+    );
+}
+
+#[test]
+fn stale_exit_manifest_digest_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let exit_path = dir.path().join("exit-evidence.json");
+    let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
+    exit["live_provider_probe_sha256"] = json!("0".repeat(64));
+    fs::write(&exit_path, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["exit_probe_digest_matches"],
+        json!(false)
+    );
+    assert_eq!(
+        report["bindings"]["supporting_artifacts_bound"],
+        json!(true)
+    );
 }
 
 #[test]

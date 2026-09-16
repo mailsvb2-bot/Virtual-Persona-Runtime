@@ -4,15 +4,20 @@ use std::{
     path::Path,
 };
 
+#[path = "rt0_evidence_inventory/supporting.rs"]
+mod supporting;
+
 use serde::{Deserialize, Serialize};
+use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
-    LiveProviderProbeReceipt, ProviderStateManifest, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA,
-    bind_owner_lab_session_evidence, sha256_hex,
+    LiveProviderProbeReceipt, ProviderStateManifest, RT0_EXIT_EVIDENCE_SCHEMA,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, bind_owner_lab_session_evidence, sha256_hex,
+    validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.2";
+const SCHEMA: &str = "rt0-evidence-inventory-0.3";
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 const REQUIRED: &[&str] = &[
     "provider-state.json",
@@ -70,6 +75,62 @@ impl SessionSnapshotChecks {
 #[derive(Serialize)]
 struct BindingChecks {
     candidate_sha_valid: bool,
+    exit_candidate_matches: Option<bool>,
+    exit_release_spec_matches_golden: Option<bool>,
+    exit_golden_report_digest_matches: Option<bool>,
+    exit_provider_state_matches: Option<bool>,
+    exit_probe_digest_matches: Option<bool>,
+    exit_conversation_digest_matches: Option<bool>,
+    exit_session_digest_matches: Option<bool>,
+    supporting_artifacts_bound: Option<bool>,
+    golden_candidate_matches: Option<bool>,
+    golden_provider_state_matches: Option<bool>,
+    probe_candidate_matches: Option<bool>,
+    probe_provider_state_matches: Option<bool>,
+    conversation_candidate_matches: Option<bool>,
+    conversation_provider_state_matches: Option<bool>,
+    session_candidate_matches: Option<bool>,
+    session_provider_state_matches: Option<bool>,
+}
+
+impl BindingChecks {
+    fn complete(&self) -> bool {
+        self.candidate_sha_valid
+            && [
+                self.exit_candidate_matches,
+                self.exit_release_spec_matches_golden,
+                self.exit_golden_report_digest_matches,
+                self.exit_provider_state_matches,
+                self.exit_probe_digest_matches,
+                self.exit_conversation_digest_matches,
+                self.exit_session_digest_matches,
+                self.supporting_artifacts_bound,
+                self.golden_candidate_matches,
+                self.golden_provider_state_matches,
+                self.probe_candidate_matches,
+                self.probe_provider_state_matches,
+                self.conversation_candidate_matches,
+                self.conversation_provider_state_matches,
+                self.session_candidate_matches,
+                self.session_provider_state_matches,
+            ]
+            .into_iter()
+            .all(|check| check == Some(true))
+    }
+}
+
+struct ExitBindingChecks {
+    candidate_matches: Option<bool>,
+    release_spec_matches_golden: Option<bool>,
+    golden_report_digest_matches: Option<bool>,
+    provider_state_matches: Option<bool>,
+    probe_digest_matches: Option<bool>,
+    conversation_digest_matches: Option<bool>,
+    session_digest_matches: Option<bool>,
+    supporting_artifacts_bound: Option<bool>,
+}
+
+struct ExternalBindingChecks {
     golden_candidate_matches: Option<bool>,
     golden_provider_state_matches: Option<bool>,
     probe_candidate_matches: Option<bool>,
@@ -85,6 +146,52 @@ struct ExternalBindingView {
     schema_version: String,
     candidate_sha: String,
     provider_state_sha256: String,
+}
+
+struct ParsedBindingArtifacts {
+    provider: Option<ProviderStateManifest>,
+    golden: Option<BoundGoldenReport>,
+    probe: Option<LiveProviderProbeReceipt>,
+    conversation: Option<ExternalBindingView>,
+    session: Option<BoundLabSessionEvidenceAggregate>,
+    exit: Option<Rt0ExitEvidence>,
+    supporting: Option<SupportingArtifactBytes>,
+    provider_state_bytes: Option<Vec<u8>>,
+}
+
+impl ParsedBindingArtifacts {
+    fn read(root: &Path) -> Self {
+        Self {
+            provider: parse_optional(&root.join("provider-state.json")),
+            golden: parse_optional(&root.join("bound-golden-report.json")),
+            probe: parse_optional(&root.join("provider-probe.json")),
+            conversation: parse_optional(&root.join("conversation-attempt.json")),
+            session: parse_optional(&root.join("bound-session-aggregate.json")),
+            exit: parse_optional(&root.join("exit-evidence.json")),
+            supporting: SupportingArtifactBytes::read(root),
+            provider_state_bytes: fs::read(root.join("provider-state.json")).ok(),
+        }
+    }
+
+    fn schemas_valid(&self) -> bool {
+        self.provider
+            .as_ref()
+            .is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
+            && self
+                .probe
+                .as_ref()
+                .is_some_and(|receipt| receipt.schema_version == RT0_LIVE_PROVIDER_PROBE_SCHEMA)
+            && self.conversation.as_ref().is_some_and(|receipt| {
+                receipt.schema_version == LIVE_CONVERSATION_ATTEMPT_SCHEMA
+            })
+            && self.session.as_ref().is_some_and(|receipt| {
+                receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA
+            })
+            && self
+                .exit
+                .as_ref()
+                .is_some_and(|evidence| evidence.schema_version == RT0_EXIT_EVIDENCE_SCHEMA)
+    }
 }
 
 struct InspectedBindings {
@@ -154,74 +261,160 @@ fn run() -> Result<(), i32> {
 }
 
 fn inspect_bindings(root: &Path, candidate_sha: &str) -> InspectedBindings {
-    let provider = parse_optional::<ProviderStateManifest>(&root.join("provider-state.json"));
-    let golden = parse_optional::<BoundGoldenReport>(&root.join("bound-golden-report.json"));
-    let probe = parse_optional::<LiveProviderProbeReceipt>(&root.join("provider-probe.json"));
-    let conversation =
-        parse_optional::<ExternalBindingView>(&root.join("conversation-attempt.json"));
-    let session = parse_optional::<BoundLabSessionEvidenceAggregate>(
-        &root.join("bound-session-aggregate.json"),
-    );
-    let provider_state_bytes = fs::read(root.join("provider-state.json")).ok();
-    let provider_digest = provider_state_bytes.as_ref().map(|bytes| sha256_hex(bytes));
-    let checks = BindingChecks {
-        candidate_sha_valid: valid_candidate_sha(candidate_sha),
-        golden_candidate_matches: golden
-            .as_ref()
-            .map(|report| report.binding.candidate_sha == candidate_sha),
-        golden_provider_state_matches: golden
-            .as_ref()
-            .zip(provider_digest.as_ref())
-            .map(|(report, digest)| report.binding.provider_state_sha256 == digest.as_str()),
-        probe_candidate_matches: probe
-            .as_ref()
-            .map(|receipt| receipt.candidate_sha == candidate_sha),
-        probe_provider_state_matches: probe
-            .as_ref()
-            .zip(provider_digest.as_ref())
-            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
-        conversation_candidate_matches: conversation
-            .as_ref()
-            .map(|receipt| receipt.candidate_sha == candidate_sha),
-        conversation_provider_state_matches: conversation
-            .as_ref()
-            .zip(provider_digest.as_ref())
-            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
-        session_candidate_matches: session
-            .as_ref()
-            .map(|receipt| receipt.candidate_sha == candidate_sha),
-        session_provider_state_matches: session
-            .as_ref()
-            .zip(provider_digest.as_ref())
-            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
-    };
-    let valid = provider
-        .as_ref()
-        .is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
-        && probe
-            .as_ref()
-            .is_some_and(|receipt| receipt.schema_version == RT0_LIVE_PROVIDER_PROBE_SCHEMA)
-        && conversation
-            .as_ref()
-            .is_some_and(|receipt| receipt.schema_version == LIVE_CONVERSATION_ATTEMPT_SCHEMA)
-        && session
-            .as_ref()
-            .is_some_and(|receipt| receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA)
-        && checks.candidate_sha_valid
-        && checks.golden_candidate_matches.unwrap_or(false)
-        && checks.golden_provider_state_matches.unwrap_or(false)
-        && checks.probe_candidate_matches.unwrap_or(false)
-        && checks.probe_provider_state_matches.unwrap_or(false)
-        && checks.conversation_candidate_matches.unwrap_or(false)
-        && checks.conversation_provider_state_matches.unwrap_or(false)
-        && checks.session_candidate_matches.unwrap_or(false)
-        && checks.session_provider_state_matches.unwrap_or(false);
+    let parsed = ParsedBindingArtifacts::read(root);
+    let checks = inspect_binding_checks(root, candidate_sha, &parsed);
+    let valid = parsed.schemas_valid() && checks.complete();
     InspectedBindings {
         checks,
         valid,
-        session,
-        provider_state_bytes,
+        session: parsed.session,
+        provider_state_bytes: parsed.provider_state_bytes,
     }
+}
+
+fn inspect_binding_checks(
+    root: &Path,
+    candidate_sha: &str,
+    parsed: &ParsedBindingArtifacts,
+) -> BindingChecks {
+    let provider_digest = parsed
+        .provider_state_bytes
+        .as_ref()
+        .map(|bytes| sha256_hex(bytes));
+    let exit = inspect_exit_binding_checks(root, candidate_sha, parsed, provider_digest.as_deref());
+    let external =
+        inspect_external_binding_checks(candidate_sha, parsed, provider_digest.as_deref());
+    BindingChecks {
+        candidate_sha_valid: valid_candidate_sha(candidate_sha),
+        exit_candidate_matches: exit.candidate_matches,
+        exit_release_spec_matches_golden: exit.release_spec_matches_golden,
+        exit_golden_report_digest_matches: exit.golden_report_digest_matches,
+        exit_provider_state_matches: exit.provider_state_matches,
+        exit_probe_digest_matches: exit.probe_digest_matches,
+        exit_conversation_digest_matches: exit.conversation_digest_matches,
+        exit_session_digest_matches: exit.session_digest_matches,
+        supporting_artifacts_bound: exit.supporting_artifacts_bound,
+        golden_candidate_matches: external.golden_candidate_matches,
+        golden_provider_state_matches: external.golden_provider_state_matches,
+        probe_candidate_matches: external.probe_candidate_matches,
+        probe_provider_state_matches: external.probe_provider_state_matches,
+        conversation_candidate_matches: external.conversation_candidate_matches,
+        conversation_provider_state_matches: external.conversation_provider_state_matches,
+        session_candidate_matches: external.session_candidate_matches,
+        session_provider_state_matches: external.session_provider_state_matches,
+    }
+}
+
+fn inspect_exit_binding_checks(
+    root: &Path,
+    candidate_sha: &str,
+    parsed: &ParsedBindingArtifacts,
+    provider_digest: Option<&str>,
+) -> ExitBindingChecks {
+    ExitBindingChecks {
+        candidate_matches: parsed
+            .exit
+            .as_ref()
+            .map(|evidence| evidence.candidate_sha == candidate_sha),
+        release_spec_matches_golden: parsed
+            .exit
+            .as_ref()
+            .zip(parsed.golden.as_ref())
+            .map(|(evidence, report)| {
+                evidence.release_spec_sha256 == report.binding.release_spec_sha256
+            }),
+        golden_report_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "bound-golden-report.json",
+            |evidence| &evidence.golden_report_sha256,
+        ),
+        provider_state_matches: parsed
+            .exit
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(evidence, digest)| evidence.provider_state_sha256 == digest),
+        probe_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "provider-probe.json",
+            |evidence| &evidence.live_provider_probe_sha256,
+        ),
+        conversation_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "conversation-attempt.json",
+            |evidence| &evidence.conversation_attempt_sha256,
+        ),
+        session_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "bound-session-aggregate.json",
+            |evidence| &evidence.bound_session_aggregate_sha256,
+        ),
+        supporting_artifacts_bound: parsed
+            .exit
+            .as_ref()
+            .zip(parsed.supporting.as_ref())
+            .map(|(evidence, artifacts)| {
+                validate_rt0_exit_supporting_artifacts(evidence, artifacts.as_verification()).is_ok()
+            }),
+    }
+}
+
+fn inspect_external_binding_checks(
+    candidate_sha: &str,
+    parsed: &ParsedBindingArtifacts,
+    provider_digest: Option<&str>,
+) -> ExternalBindingChecks {
+    ExternalBindingChecks {
+        golden_candidate_matches: parsed
+            .golden
+            .as_ref()
+            .map(|report| report.binding.candidate_sha == candidate_sha),
+        golden_provider_state_matches: parsed
+            .golden
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(report, digest)| report.binding.provider_state_sha256 == digest),
+        probe_candidate_matches: parsed
+            .probe
+            .as_ref()
+            .map(|receipt| receipt.candidate_sha == candidate_sha),
+        probe_provider_state_matches: parsed
+            .probe
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
+        conversation_candidate_matches: parsed
+            .conversation
+            .as_ref()
+            .map(|receipt| receipt.candidate_sha == candidate_sha),
+        conversation_provider_state_matches: parsed
+            .conversation
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
+        session_candidate_matches: parsed
+            .session
+            .as_ref()
+            .map(|receipt| receipt.candidate_sha == candidate_sha),
+        session_provider_state_matches: parsed
+            .session
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
+    }
+}
+
+fn exit_digest_matches(
+    exit: Option<&Rt0ExitEvidence>,
+    root: &Path,
+    name: &str,
+    declared: impl FnOnce(&Rt0ExitEvidence) -> &String,
+) -> Option<bool> {
+    exit.zip(file_digest(root, name))
+        .map(|(evidence, digest)| declared(evidence) == &digest)
 }
 
 fn collect_inventory_items(root: &Path) -> (Vec<InventoryItem>, Vec<&'static str>, bool) {
