@@ -77,9 +77,10 @@ pub fn export_required_for_state(
     if !matches!(session_state, "revoked" | "closed") {
         return false;
     }
-    recorder.lock().snapshot().is_ok_and(|snapshot| {
-        snapshot.session_sequence != tracker.exported_session_sequence()
-    })
+    recorder
+        .lock()
+        .snapshot()
+        .is_ok_and(|snapshot| snapshot.session_sequence != tracker.exported_session_sequence())
 }
 
 pub fn ensure_previous_exported(
