@@ -1,4 +1,8 @@
-use std::{collections::{HashMap, HashSet}, env, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+    path::Path,
+};
 
 use serde::{Deserialize, Serialize};
 use vpr_evaluation::{
@@ -276,7 +280,10 @@ fn collect_session_snapshot_checks(
     let mut by_digest: HashMap<&str, &[u8]> = HashMap::new();
     let mut discovered_unique = true;
     for (_, digest, bytes) in &discovered {
-        if by_digest.insert(digest.as_str(), bytes.as_slice()).is_some() {
+        if by_digest
+            .insert(digest.as_str(), bytes.as_slice())
+            .is_some()
+        {
             discovered_unique = false;
         }
     }

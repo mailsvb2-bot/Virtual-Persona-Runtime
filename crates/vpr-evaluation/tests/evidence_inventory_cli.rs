@@ -135,11 +135,7 @@ fn seed_complete_inventory(dir: &Path) {
     }
 }
 
-fn seed_bound_runtime_evidence(
-    dir: &Path,
-    provider_digest: &str,
-    provider_state_bytes: &[u8],
-) {
+fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state_bytes: &[u8]) {
     let conversation = json!({
         "schema_version":"rt0-live-conversation-attempt-0.1",
         "candidate_sha":CANDIDATE,
@@ -219,12 +215,24 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["session_provider_state_matches"],
         json!(true)
     );
-    assert_eq!(report["schema_version"], json!("rt0-evidence-inventory-0.2"));
+    assert_eq!(
+        report["schema_version"],
+        json!("rt0-evidence-inventory-0.2")
+    );
     assert_eq!(report["session_snapshots"]["expected"], json!(1));
     assert_eq!(report["session_snapshots"]["discovered"], json!(1));
-    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(true));
-    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(true));
-    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(true));
+    assert_eq!(
+        report["session_snapshots"]["all_expected_present"],
+        json!(true)
+    );
+    assert_eq!(
+        report["session_snapshots"]["no_unbound_snapshots"],
+        json!(true)
+    );
+    assert_eq!(
+        report["session_snapshots"]["binding_recomputed"],
+        json!(true)
+    );
 }
 
 #[test]
@@ -238,8 +246,14 @@ fn missing_raw_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(report["inventory_complete"], json!(false));
     assert_eq!(report["session_snapshots"]["expected"], json!(1));
     assert_eq!(report["session_snapshots"]["discovered"], json!(0));
-    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(false));
-    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(false));
+    assert_eq!(
+        report["session_snapshots"]["all_expected_present"],
+        json!(false)
+    );
+    assert_eq!(
+        report["session_snapshots"]["binding_recomputed"],
+        json!(false)
+    );
 }
 
 #[test]
@@ -254,8 +268,14 @@ fn tampered_raw_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert_eq!(report["session_snapshots"]["all_expected_present"], json!(false));
-    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
+    assert_eq!(
+        report["session_snapshots"]["all_expected_present"],
+        json!(false)
+    );
+    assert_eq!(
+        report["session_snapshots"]["no_unbound_snapshots"],
+        json!(false)
+    );
 }
 
 #[test]
@@ -270,18 +290,22 @@ fn duplicate_raw_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(report["inventory_complete"], json!(false));
     assert_eq!(report["session_snapshots"]["expected"], json!(1));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
-    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
-    assert_eq!(report["session_snapshots"]["binding_recomputed"], json!(false));
+    assert_eq!(
+        report["session_snapshots"]["no_unbound_snapshots"],
+        json!(false)
+    );
+    assert_eq!(
+        report["session_snapshots"]["binding_recomputed"],
+        json!(false)
+    );
 }
 
 #[test]
 fn extra_valid_session_snapshot_keeps_inventory_incomplete() {
     let dir = TempDir::new();
     seed_complete_inventory(dir.path());
-    let mut snapshot: Value = serde_json::from_slice(
-        &fs::read(dir.path().join("session-owner.json")).unwrap(),
-    )
-    .unwrap();
+    let mut snapshot: Value =
+        serde_json::from_slice(&fs::read(dir.path().join("session-owner.json")).unwrap()).unwrap();
     snapshot["session_sequence"] = json!(2);
     fs::write(
         dir.path().join("session-stale.json"),
@@ -294,7 +318,10 @@ fn extra_valid_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(report["inventory_complete"], json!(false));
     assert_eq!(report["session_snapshots"]["expected"], json!(1));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
-    assert_eq!(report["session_snapshots"]["no_unbound_snapshots"], json!(false));
+    assert_eq!(
+        report["session_snapshots"]["no_unbound_snapshots"],
+        json!(false)
+    );
 }
 
 #[test]
