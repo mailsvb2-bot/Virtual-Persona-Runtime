@@ -122,12 +122,6 @@ fn claim_bytes(claim: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(&claim).unwrap()
 }
 
-fn bind_json_claim(root: &Path, name: &str, claim: &mut Value) {
-    let bytes = claim_bytes(claim);
-    fs::write(root.join(name), &bytes).unwrap();
-    claim["artifact_sha256"] = json!(sha256_hex(&bytes));
-}
-
 fn bind_automated_claim(root: &Path, name: &str, candidate_sha: &str, claim: &mut Value) {
     let mut projected: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
     projected["candidate_sha"] = json!(candidate_sha);
