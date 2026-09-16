@@ -230,7 +230,9 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
     assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 2);
 
     let mut duplicate = snapshot(42, 1, 100);
-    duplicate.av_sync_samples.push(duplicate.av_sync_samples[0].clone());
+    duplicate
+        .av_sync_samples
+        .push(duplicate.av_sync_samples[0].clone());
     assert_eq!(
         aggregate_owner_lab_session_evidence(&[duplicate]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)

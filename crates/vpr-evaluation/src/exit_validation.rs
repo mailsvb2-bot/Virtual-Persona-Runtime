@@ -5,8 +5,7 @@ use serde::Deserialize;
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
     BoundLabSessionEvidenceAggregate, LabSessionEvidenceAggregate, LatencyDistributionMillis,
-    QualityEvidence,
-    RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    QualityEvidence, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence, Rt0ExitEvidenceError,
     Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
 };

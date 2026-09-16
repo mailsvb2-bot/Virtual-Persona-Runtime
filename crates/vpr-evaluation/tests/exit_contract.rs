@@ -234,7 +234,11 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             first_meaningful_audio: distribution(1_500, 3_000),
             interruption_stop: distribution(250, 500),
             first_useful_video: distribution(1_250, 2_500),
-            av_sync_absolute_offset: LatencyDistributionMillis { samples: 3, p50: 60, p95: 120 },
+            av_sync_absolute_offset: LatencyDistributionMillis {
+                samples: 3,
+                p50: 60,
+                p95: 120,
+            },
             recoverable_reconnect: distribution(2_500, 5_000),
             artifact_sha256: digest('2'),
         },
@@ -471,7 +475,11 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
         &snapshot,
     )
     .unwrap();
-    assert!(report.failures.contains(&Rt0ExitFailureCode::AvSyncExceeded));
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::AvSyncExceeded)
+    );
     assert!(!report.ready);
 }
 

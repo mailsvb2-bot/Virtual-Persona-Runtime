@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 pub use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
-    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
-    LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
+    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 use crate::LabVoiceResult;
@@ -251,7 +251,8 @@ impl LabSessionEvidenceRecorder {
             .voice_attempts
             .get(&input.request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabVoiceAttemptStatus::Completed || !attempt.canonical_playback_confirmed
+        if attempt.status != LabVoiceAttemptStatus::Completed
+            || !attempt.canonical_playback_confirmed
         {
             return Err(LabEvidenceError::InvalidState);
         }

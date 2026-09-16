@@ -17,8 +17,7 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
-    OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
+    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
 

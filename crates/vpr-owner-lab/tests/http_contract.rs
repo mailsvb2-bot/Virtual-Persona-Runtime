@@ -538,7 +538,10 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
         let body = format!(
             r#"{{"session_sequence":{evidence_session},"request_sequence":1,"sample_sequence":{sample_sequence},"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":60}}"#
         );
-        assert_eq!(post(port, host, csrf, "/api/evidence/av-sync", &body).status, 200);
+        assert_eq!(
+            post(port, host, csrf, "/api/evidence/av-sync", &body).status,
+            200
+        );
     }
     let stale_media = format!(
         r#"{{"session_sequence":{},"request_sequence":null,"kind":"video_ready","elapsed_millis":10}}"#,
@@ -556,13 +559,19 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
     assert_eq!(evidence_json["scope"], "browser_observed_media_plane_only");
     assert_eq!(evidence_json["canonical_playback_proven"], true);
     assert_eq!(evidence_json["av_sync_proven"], true);
-    assert_eq!(evidence_json["av_sync_samples"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        evidence_json["av_sync_samples"].as_array().unwrap().len(),
+        3
+    );
     assert_eq!(evidence_json["av_sync_samples"][0]["request_sequence"], 1);
     assert_eq!(
         evidence_json["av_sync_samples"][0]["reference"],
         "web_rtc_estimated_playout_timestamp"
     );
-    assert_eq!(evidence_json["av_sync_samples"][0]["absolute_offset_millis"], 60);
+    assert_eq!(
+        evidence_json["av_sync_samples"][0]["absolute_offset_millis"],
+        60
+    );
     assert_eq!(evidence_json["voice_attempts"][0]["request_sequence"], 1);
     assert!(
         evidence_json["voice_attempts"][0]["canonical_turn_sequence"]

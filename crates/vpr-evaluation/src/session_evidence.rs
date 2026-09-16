@@ -462,7 +462,8 @@ fn validate_and_collect_av_sync(
         if sample.request_sequence == 0
             || !(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).contains(&sample.sample_sequence)
             || sample.absolute_offset_millis > MAX_MEDIA_ELAPSED_MILLIS
-            || request_status.get(&sample.request_sequence) != Some(&LabVoiceAttemptStatus::Completed)
+            || request_status.get(&sample.request_sequence)
+                != Some(&LabVoiceAttemptStatus::Completed)
             || !playback_requests.contains(&sample.request_sequence)
             || !unique.insert((sample.request_sequence, sample.sample_sequence))
         {
