@@ -207,8 +207,24 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
         "persona_id_sha256":"4".repeat(64),
         "persona_version":2,
         "reviewed_claims":1,
-        "owner":{},
-        "visitor":{},
+        "owner":{
+            "audience":"owner",
+            "input_audio_sha256":"5".repeat(64),
+            "transcript_sha256":"6".repeat(64),
+            "transcript_chars":12,
+            "reply_sha256":"7".repeat(64),
+            "reply_chars":18,
+            "locale":"ru"
+        },
+        "visitor":{
+            "audience":"visitor",
+            "input_audio_sha256":"8".repeat(64),
+            "transcript_sha256":"9".repeat(64),
+            "transcript_chars":10,
+            "reply_sha256":"a".repeat(64),
+            "reply_chars":16,
+            "locale":"ru-RU"
+        },
         "conversation_attempted":true,
         "provider_output_submitted":true,
         "browser_media_playback":"not_proven",
@@ -221,20 +237,49 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
     )
     .unwrap();
 
-    let snapshot = json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.3",
-        "scope":"browser_observed_media_plane_only",
-        "session_sequence":1,
-        "canonical_playback_proven":false,
-        "av_sync_proven":false,
-        "voice_attempts":[],
-        "media_events":[],
-        "av_sync_samples":[]
-    });
-    let snapshot_bytes = serde_json::to_vec_pretty(&snapshot).unwrap();
-    fs::write(dir.join("session-owner.json"), &snapshot_bytes).unwrap();
+    let snapshot = |role: &str, session_sequence: u64, interruption: bool| {
+        let mut media = vec![
+            json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
+            json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
+        ];
+        if interruption {
+            media.push(json!({
+                "request_sequence":1,
+                "kind":"interruption_stopped",
+                "elapsed_millis":250
+            }));
+        }
+        json!({
+            "schema_version":"rt0-owner-lab-session-evidence-0.4",
+            "scope":"browser_observed_media_plane_only",
+            "session_sequence":session_sequence,
+            "participant_role":role,
+            "canonical_playback_proven":true,
+            "av_sync_proven":false,
+            "voice_attempts":[{
+                "request_sequence":1,
+                "canonical_turn_sequence":10 + session_sequence,
+                "canonical_output_sequence":20 + session_sequence,
+                "canonical_playback_confirmed":true,
+                "status":"completed",
+                "failure_code":null,
+                "stt_millis":100,
+                "llm_millis":120,
+                "avatar_millis":150,
+                "server_total_millis":370,
+                "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+                "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+            }],
+            "media_events":media,
+            "av_sync_samples":[]
+        })
+    };
+    let owner_bytes = serde_json::to_vec_pretty(&snapshot("owner", 1, true)).unwrap();
+    let visitor_bytes = serde_json::to_vec_pretty(&snapshot("visitor", 2, false)).unwrap();
+    fs::write(dir.join("session-owner.json"), &owner_bytes).unwrap();
+    fs::write(dir.join("session-visitor.json"), &visitor_bytes).unwrap();
     let bound = bind_owner_lab_session_evidence(
-        &[snapshot_bytes.as_slice()],
+        &[owner_bytes.as_slice(), visitor_bytes.as_slice()],
         provider_state_bytes,
         CANDIDATE,
     )
@@ -306,10 +351,10 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.3")
+        json!("rt0-evidence-inventory-0.4")
     );
-    assert_eq!(report["session_snapshots"]["expected"], json!(1));
-    assert_eq!(report["session_snapshots"]["discovered"], json!(1));
+    assert_eq!(report["session_snapshots"]["expected"], json!(2));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(2));
     assert_eq!(
         report["session_snapshots"]["all_expected_present"],
         json!(true)
@@ -320,6 +365,10 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["session_snapshots"]["binding_recomputed"],
+        json!(true)
+    );
+    assert_eq!(
+        report["session_snapshots"]["conversation_claims_bound"],
         json!(true)
     );
 }
@@ -333,8 +382,8 @@ fn missing_raw_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert_eq!(report["session_snapshots"]["expected"], json!(1));
-    assert_eq!(report["session_snapshots"]["discovered"], json!(0));
+    assert_eq!(report["session_snapshots"]["expected"], json!(2));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(1));
     assert_eq!(
         report["session_snapshots"]["all_expected_present"],
         json!(false)
@@ -377,8 +426,8 @@ fn duplicate_raw_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert_eq!(report["session_snapshots"]["expected"], json!(1));
-    assert_eq!(report["session_snapshots"]["discovered"], json!(2));
+    assert_eq!(report["session_snapshots"]["expected"], json!(2));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(3));
     assert_eq!(
         report["session_snapshots"]["no_unbound_snapshots"],
         json!(false)
@@ -395,7 +444,7 @@ fn extra_valid_session_snapshot_keeps_inventory_incomplete() {
     seed_complete_inventory(dir.path());
     let mut snapshot: Value =
         serde_json::from_slice(&fs::read(dir.path().join("session-owner.json")).unwrap()).unwrap();
-    snapshot["session_sequence"] = json!(2);
+    snapshot["session_sequence"] = json!(3);
     fs::write(
         dir.path().join("session-stale.json"),
         serde_json::to_vec_pretty(&snapshot).unwrap(),
@@ -405,10 +454,85 @@ fn extra_valid_session_snapshot_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert_eq!(report["session_snapshots"]["expected"], json!(1));
-    assert_eq!(report["session_snapshots"]["discovered"], json!(2));
+    assert_eq!(report["session_snapshots"]["expected"], json!(2));
+    assert_eq!(report["session_snapshots"]["discovered"], json!(3));
     assert_eq!(
         report["session_snapshots"]["no_unbound_snapshots"],
+        json!(false)
+    );
+}
+
+#[test]
+fn rehashed_role_forgery_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let owner_path = dir.path().join("session-owner.json");
+    let visitor_path = dir.path().join("session-visitor.json");
+    let mut owner: Value = serde_json::from_slice(&fs::read(&owner_path).unwrap()).unwrap();
+    owner["participant_role"] = json!("visitor");
+    let owner_bytes = serde_json::to_vec_pretty(&owner).unwrap();
+    fs::write(&owner_path, &owner_bytes).unwrap();
+    let visitor_bytes = fs::read(&visitor_path).unwrap();
+    let provider_state_bytes = fs::read(dir.path().join("provider-state.json")).unwrap();
+    let bound = bind_owner_lab_session_evidence(
+        &[owner_bytes.as_slice(), visitor_bytes.as_slice()],
+        &provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+    let bound_bytes = serde_json::to_vec_pretty(&bound).unwrap();
+    fs::write(
+        dir.path().join("bound-session-aggregate.json"),
+        &bound_bytes,
+    )
+    .unwrap();
+    let exit_path = dir.path().join("exit-evidence.json");
+    let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
+    exit["bound_session_aggregate_sha256"] = json!(sha256_hex(&bound_bytes));
+    fs::write(&exit_path, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["session_snapshots"]["binding_recomputed"],
+        json!(true)
+    );
+    assert_eq!(
+        report["session_snapshots"]["conversation_claims_bound"],
+        json!(false)
+    );
+}
+
+#[test]
+fn detached_completed_turn_claim_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let exit_path = dir.path().join("exit-evidence.json");
+    let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
+    exit["conversations"]["owner"]["completed_turns"] = json!(2);
+    let provider_digest = sha256_hex(&fs::read(dir.path().join("provider-state.json")).unwrap());
+    let owner_claim = exit.pointer_mut("/conversations/owner").unwrap();
+    bind_projected_claim(
+        dir.path(),
+        "owner-conversation.json",
+        owner_claim,
+        CANDIDATE,
+        Some(provider_digest.as_str()),
+    );
+    fs::write(&exit_path, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["supporting_artifacts_bound"],
+        json!(true)
+    );
+    assert_eq!(
+        report["session_snapshots"]["conversation_claims_bound"],
         json!(false)
     );
 }

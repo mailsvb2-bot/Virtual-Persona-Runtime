@@ -3,13 +3,12 @@ use std::collections::BTreeMap;
 pub use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
     LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
-    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 use crate::LabVoiceResult;
-#[cfg(test)]
-use crate::LabVoiceUsage;
 
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 
@@ -34,6 +33,7 @@ impl LabEvidenceError {
 #[derive(Debug, Default)]
 pub struct LabSessionEvidenceRecorder {
     session_sequence: Option<u64>,
+    participant_role: Option<ParticipantRole>,
     sealed: bool,
     voice_attempts: BTreeMap<u64, LabVoiceAttemptEvidence>,
     media_events: Vec<LabMediaEvidence>,
@@ -45,11 +45,16 @@ impl LabSessionEvidenceRecorder {
     ///
     /// # Errors
     /// Returns `InvalidInput` for a zero session sequence.
-    pub fn begin_session(&mut self, session_sequence: u64) -> Result<(), LabEvidenceError> {
+    pub fn begin_session(
+        &mut self,
+        session_sequence: u64,
+        participant_role: ParticipantRole,
+    ) -> Result<(), LabEvidenceError> {
         if session_sequence == 0 {
             return Err(LabEvidenceError::InvalidInput);
         }
         self.session_sequence = Some(session_sequence);
+        self.participant_role = Some(participant_role);
         self.sealed = false;
         self.voice_attempts.clear();
         self.media_events.clear();
@@ -332,6 +337,9 @@ impl LabSessionEvidenceRecorder {
         let session_sequence = self
             .session_sequence
             .ok_or(LabEvidenceError::InvalidState)?;
+        let participant_role = self
+            .participant_role
+            .ok_or(LabEvidenceError::InvalidState)?;
         let completed_attempts: Vec<&LabVoiceAttemptEvidence> = self
             .voice_attempts
             .values()
@@ -354,6 +362,7 @@ impl LabSessionEvidenceRecorder {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
+            participant_role,
             canonical_playback_proven,
             av_sync_proven,
             voice_attempts: self.voice_attempts.values().cloned().collect(),
@@ -364,233 +373,5 @@ impl LabSessionEvidenceRecorder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn voice_result() -> LabVoiceResult {
-        LabVoiceResult {
-            transcript: "приватный транскрипт".into(),
-            reply: "приватный ответ".into(),
-            locale: "ru".into(),
-            evidence_turn_sequence: 7,
-            evidence_output_sequence: 1,
-            stt_millis: 100,
-            llm_millis: 200,
-            avatar_millis: 50,
-            total_millis: 350,
-            stt_usage: LabVoiceUsage {
-                input_units: Some(1000),
-                output_units: None,
-                estimated_cost_microunits: Some(3),
-                provider_charge_microunits: None,
-            },
-            llm_usage: LabVoiceUsage {
-                input_units: Some(12),
-                output_units: Some(4),
-                estimated_cost_microunits: Some(5),
-                provider_charge_microunits: Some(6),
-            },
-        }
-    }
-
-    #[test]
-    fn session_reset_and_snapshot_are_payload_redacted() {
-        let mut recorder = LabSessionEvidenceRecorder::default();
-        recorder.begin_session(3).unwrap();
-        recorder.begin_voice_request(1).unwrap();
-        recorder.complete_voice_request(1, &voice_result()).unwrap();
-        let audio_started = LabMediaEvidenceInput {
-            session_sequence: 3,
-            request_sequence: Some(1),
-            kind: LabMediaEvidenceKind::AudioStarted,
-            elapsed_millis: 410,
-        };
-        assert_eq!(
-            recorder.record_media(&audio_started),
-            Err(LabEvidenceError::InvalidState)
-        );
-        assert_eq!(
-            recorder.prepare_canonical_playback(&audio_started),
-            Ok((7, 1))
-        );
-        assert_eq!(
-            recorder.record_canonical_playback(&audio_started, 7, 2),
-            Err(LabEvidenceError::InvalidState)
-        );
-        recorder
-            .record_canonical_playback(&audio_started, 7, 1)
-            .unwrap();
-        let av_sync = LabAvSyncEvidenceInput {
-            session_sequence: 3,
-            request_sequence: 1,
-            sample_sequence: 1,
-            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
-            absolute_offset_millis: 60,
-        };
-        recorder.record_av_sync(&av_sync).unwrap();
-        assert_eq!(
-            recorder.record_av_sync(&av_sync),
-            Err(LabEvidenceError::DuplicateEvidence)
-        );
-        assert!(!recorder.snapshot().unwrap().av_sync_proven);
-        for sample_sequence in 2..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
-            recorder
-                .record_av_sync(&LabAvSyncEvidenceInput {
-                    sample_sequence,
-                    absolute_offset_millis: 60 + u64::from(sample_sequence),
-                    ..av_sync.clone()
-                })
-                .unwrap();
-        }
-        let snapshot = recorder.snapshot().unwrap();
-        let json = serde_json::to_string(&snapshot).unwrap();
-        assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
-        assert_eq!(
-            snapshot.voice_attempts[0].canonical_output_sequence,
-            Some(1)
-        );
-        assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
-        assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
-        assert!(snapshot.canonical_playback_proven);
-        assert!(snapshot.av_sync_proven);
-        assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
-        assert!(!json.contains("приватный транскрипт"));
-        assert!(!json.contains("приватный ответ"));
-        recorder.seal_session();
-        assert_eq!(
-            recorder.begin_voice_request(2),
-            Err(LabEvidenceError::InvalidState)
-        );
-        assert_eq!(
-            recorder.record_media(&LabMediaEvidenceInput {
-                session_sequence: 3,
-                request_sequence: None,
-                kind: LabMediaEvidenceKind::VideoReady,
-                elapsed_millis: 1,
-            }),
-            Err(LabEvidenceError::InvalidState)
-        );
-        recorder.begin_session(4).unwrap();
-        assert!(recorder.snapshot().unwrap().voice_attempts.is_empty());
-    }
-
-    #[test]
-    fn every_completed_voice_request_requires_its_own_runtime_playback_confirmation() {
-        let mut recorder = LabSessionEvidenceRecorder::default();
-        recorder.begin_session(8).unwrap();
-        for request in [1, 2] {
-            recorder.begin_voice_request(request).unwrap();
-            let mut result = voice_result();
-            result.evidence_turn_sequence = request + 10;
-            result.evidence_output_sequence = request;
-            recorder.complete_voice_request(request, &result).unwrap();
-        }
-        let first = LabMediaEvidenceInput {
-            session_sequence: 8,
-            request_sequence: Some(1),
-            kind: LabMediaEvidenceKind::AudioStarted,
-            elapsed_millis: 100,
-        };
-        recorder.record_canonical_playback(&first, 11, 1).unwrap();
-        assert!(!recorder.snapshot().unwrap().canonical_playback_proven);
-
-        let second = LabMediaEvidenceInput {
-            session_sequence: 8,
-            request_sequence: Some(2),
-            kind: LabMediaEvidenceKind::AudioStarted,
-            elapsed_millis: 120,
-        };
-        recorder.record_canonical_playback(&second, 12, 2).unwrap();
-        assert!(recorder.snapshot().unwrap().canonical_playback_proven);
-        assert_eq!(
-            recorder.record_canonical_playback(&second, 12, 2),
-            Err(LabEvidenceError::DuplicateEvidence)
-        );
-    }
-
-    #[test]
-    fn av_sync_requires_completed_canonical_playback_for_the_same_request() {
-        let mut recorder = LabSessionEvidenceRecorder::default();
-        recorder.begin_session(12).unwrap();
-        recorder.begin_voice_request(1).unwrap();
-        let sample = LabAvSyncEvidenceInput {
-            session_sequence: 12,
-            request_sequence: 1,
-            sample_sequence: 1,
-            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
-            absolute_offset_millis: 40,
-        };
-        assert_eq!(
-            recorder.record_av_sync(&sample),
-            Err(LabEvidenceError::InvalidState)
-        );
-        recorder.complete_voice_request(1, &voice_result()).unwrap();
-        assert_eq!(
-            recorder.record_av_sync(&sample),
-            Err(LabEvidenceError::InvalidState)
-        );
-        let audio_started = LabMediaEvidenceInput {
-            session_sequence: 12,
-            request_sequence: Some(1),
-            kind: LabMediaEvidenceKind::AudioStarted,
-            elapsed_millis: 100,
-        };
-        recorder
-            .record_canonical_playback(&audio_started, 7, 1)
-            .unwrap();
-        recorder.record_av_sync(&sample).unwrap();
-        assert!(!recorder.snapshot().unwrap().av_sync_proven);
-        for sample_sequence in 2..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
-            recorder
-                .record_av_sync(&LabAvSyncEvidenceInput {
-                    sample_sequence,
-                    ..sample.clone()
-                })
-                .unwrap();
-        }
-        assert!(recorder.snapshot().unwrap().av_sync_proven);
-        assert_eq!(
-            recorder.record_av_sync(&LabAvSyncEvidenceInput {
-                sample_sequence: RT0_AV_SYNC_SAMPLES_PER_REQUEST + 1,
-                ..sample
-            }),
-            Err(LabEvidenceError::InvalidInput)
-        );
-    }
-
-    #[test]
-    fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
-        let mut recorder = LabSessionEvidenceRecorder::default();
-        recorder.begin_session(9).unwrap();
-        recorder.begin_voice_request(5).unwrap();
-        let event = LabMediaEvidenceInput {
-            session_sequence: 9,
-            request_sequence: None,
-            kind: LabMediaEvidenceKind::VideoReady,
-            elapsed_millis: 250,
-        };
-        recorder.record_media(&event).unwrap();
-        assert_eq!(
-            recorder.record_media(&event),
-            Err(LabEvidenceError::DuplicateEvidence)
-        );
-        assert_eq!(
-            recorder.record_media(&LabMediaEvidenceInput {
-                session_sequence: 8,
-                request_sequence: None,
-                kind: LabMediaEvidenceKind::VideoReady,
-                elapsed_millis: 10,
-            }),
-            Err(LabEvidenceError::InvalidState)
-        );
-        assert_eq!(
-            recorder.record_media(&LabMediaEvidenceInput {
-                session_sequence: 9,
-                request_sequence: Some(999),
-                kind: LabMediaEvidenceKind::InterruptionStopped,
-                elapsed_millis: 10,
-            }),
-            Err(LabEvidenceError::InvalidState)
-        );
-    }
-}
+#[path = "evidence_tests.rs"]
+mod tests;

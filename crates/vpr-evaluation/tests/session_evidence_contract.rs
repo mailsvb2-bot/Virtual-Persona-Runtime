@@ -1,7 +1,7 @@
 use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncReference, LabMediaEvidence, LabMediaEvidenceKind,
     LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
-    LabVoiceAttemptStatus, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabVoiceAttemptStatus, ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
     aggregate_owner_lab_session_evidence,
 };
@@ -37,6 +37,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
+        participant_role: ParticipantRole::Owner,
         canonical_playback_proven: true,
         av_sync_proven: true,
         voice_attempts: vec![completed(request, base)],

@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub const RT0_OWNER_LAB_SESSION_BINDING_SCHEMA: &str =
-    "rt0-owner-lab-session-aggregate-binding-0.3";
+    "rt0-owner-lab-session-aggregate-binding-0.4";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -36,8 +36,8 @@ pub enum LabSessionBindingError {
 ///
 /// The binding is intentionally evidence-only. It preserves runtime-backed canonical playback
 /// proof when every completed voice attempt was reconciled to `Played`, but browser observations
-/// alone cannot create that proof. Schema `0.3` also preserves request-scoped A/V sync evidence
-/// derived from the explicit WebRTC estimated-playout reference. It does not invent participant identity.
+/// alone cannot create that proof. Schema `0.4` also preserves request-scoped A/V sync evidence and the server-derived participant
+/// role carried by each raw session snapshot. It does not infer participant identity from filenames.
 ///
 /// # Errors
 /// Returns a fail-closed error for malformed candidate/provider state/snapshots, duplicate raw

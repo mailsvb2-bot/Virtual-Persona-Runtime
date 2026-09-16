@@ -7,7 +7,8 @@ mod state;
 pub use evidence::{
     LabAvSyncEvidenceInput, LabAvSyncReference, LabEvidenceError, LabMediaEvidenceInput,
     LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 pub use owner_capture::{
