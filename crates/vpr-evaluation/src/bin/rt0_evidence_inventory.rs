@@ -131,14 +131,14 @@ struct ExitBindingChecks {
 }
 
 struct ExternalBindingChecks {
-    golden_candidate_matches: Option<bool>,
-    golden_provider_state_matches: Option<bool>,
-    probe_candidate_matches: Option<bool>,
-    probe_provider_state_matches: Option<bool>,
-    conversation_candidate_matches: Option<bool>,
-    conversation_provider_state_matches: Option<bool>,
-    session_candidate_matches: Option<bool>,
-    session_provider_state_matches: Option<bool>,
+    golden_candidate: Option<bool>,
+    golden_provider_state: Option<bool>,
+    probe_candidate: Option<bool>,
+    probe_provider_state: Option<bool>,
+    conversation_candidate: Option<bool>,
+    conversation_provider_state: Option<bool>,
+    session_candidate: Option<bool>,
+    session_provider_state: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -295,14 +295,14 @@ fn inspect_binding_checks(
         exit_conversation_digest_matches: exit.conversation_digest_matches,
         exit_session_digest_matches: exit.session_digest_matches,
         supporting_artifacts_bound: exit.supporting_artifacts_bound,
-        golden_candidate_matches: external.golden_candidate_matches,
-        golden_provider_state_matches: external.golden_provider_state_matches,
-        probe_candidate_matches: external.probe_candidate_matches,
-        probe_provider_state_matches: external.probe_provider_state_matches,
-        conversation_candidate_matches: external.conversation_candidate_matches,
-        conversation_provider_state_matches: external.conversation_provider_state_matches,
-        session_candidate_matches: external.session_candidate_matches,
-        session_provider_state_matches: external.session_provider_state_matches,
+        golden_candidate_matches: external.golden_candidate,
+        golden_provider_state_matches: external.golden_provider_state,
+        probe_candidate_matches: external.probe_candidate,
+        probe_provider_state_matches: external.probe_provider_state,
+        conversation_candidate_matches: external.conversation_candidate,
+        conversation_provider_state_matches: external.conversation_provider_state,
+        session_candidate_matches: external.session_candidate,
+        session_provider_state_matches: external.session_provider_state,
     }
 }
 
@@ -364,38 +364,38 @@ fn inspect_external_binding_checks(
     provider_digest: Option<&str>,
 ) -> ExternalBindingChecks {
     ExternalBindingChecks {
-        golden_candidate_matches: parsed
+        golden_candidate: parsed
             .golden
             .as_ref()
             .map(|report| report.binding.candidate_sha == candidate_sha),
-        golden_provider_state_matches: parsed
+        golden_provider_state: parsed
             .golden
             .as_ref()
             .zip(provider_digest)
             .map(|(report, digest)| report.binding.provider_state_sha256 == digest),
-        probe_candidate_matches: parsed
+        probe_candidate: parsed
             .probe
             .as_ref()
             .map(|receipt| receipt.candidate_sha == candidate_sha),
-        probe_provider_state_matches: parsed
+        probe_provider_state: parsed
             .probe
             .as_ref()
             .zip(provider_digest)
             .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
-        conversation_candidate_matches: parsed
+        conversation_candidate: parsed
             .conversation
             .as_ref()
             .map(|receipt| receipt.candidate_sha == candidate_sha),
-        conversation_provider_state_matches: parsed
+        conversation_provider_state: parsed
             .conversation
             .as_ref()
             .zip(provider_digest)
             .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
-        session_candidate_matches: parsed
+        session_candidate: parsed
             .session
             .as_ref()
             .map(|receipt| receipt.candidate_sha == candidate_sha),
-        session_provider_state_matches: parsed
+        session_provider_state: parsed
             .session
             .as_ref()
             .zip(provider_digest)
