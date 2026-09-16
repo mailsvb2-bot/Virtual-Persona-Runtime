@@ -100,6 +100,11 @@ pub fn validate_rt0_conversation_evidence_binding(
     exact_candidate_sha: &str,
     provider_state_digest: &str,
 ) -> Result<(), Rt0ExitEvidenceError> {
+    if evidence.conversations.owner.role != ParticipantRole::Owner
+        || evidence.conversations.visitor.role != ParticipantRole::Visitor
+    {
+        return Err(Rt0ExitEvidenceError::ParticipantRoleMismatch);
+    }
     let conversation: ConversationAttemptBinding =
         serde_json::from_slice(conversation_attempt_bytes)
             .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
