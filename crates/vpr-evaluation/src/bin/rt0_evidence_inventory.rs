@@ -87,6 +87,13 @@ struct ExternalBindingView {
     provider_state_sha256: String,
 }
 
+struct InspectedBindings {
+    checks: BindingChecks,
+    valid: bool,
+    session: Option<BoundLabSessionEvidenceAggregate>,
+    provider_state_bytes: Option<Vec<u8>>,
+}
+
 #[derive(Serialize)]
 struct InventoryReport {
     schema_version: &'static str,
@@ -118,7 +125,35 @@ fn run() -> Result<(), i32> {
     }
     let root = Path::new(&evidence_dir);
     let (items, missing, all_syntax_valid) = collect_inventory_items(root);
+    let inspected = inspect_bindings(root, &candidate_sha);
+    let session_snapshots = collect_session_snapshot_checks(
+        root,
+        inspected.session.as_ref(),
+        inspected.provider_state_bytes.as_deref(),
+        &candidate_sha,
+    );
+    let report = InventoryReport {
+        schema_version: SCHEMA,
+        candidate_sha,
+        evidence_dir,
+        inventory_complete: missing.is_empty()
+            && all_syntax_valid
+            && inspected.valid
+            && session_snapshots.complete(),
+        missing,
+        items,
+        bindings: inspected.checks,
+        session_snapshots,
+    };
+    println!("{}", serde_json::to_string_pretty(&report).map_err(|_| 2)?);
+    if report.inventory_complete {
+        Ok(())
+    } else {
+        Err(1)
+    }
+}
 
+fn inspect_bindings(root: &Path, candidate_sha: &str) -> InspectedBindings {
     let provider = parse_optional::<ProviderStateManifest>(&root.join("provider-state.json"));
     let golden = parse_optional::<BoundGoldenReport>(&root.join("bound-golden-report.json"));
     let probe = parse_optional::<LiveProviderProbeReceipt>(&root.join("provider-probe.json"));
@@ -129,8 +164,8 @@ fn run() -> Result<(), i32> {
     );
     let provider_state_bytes = fs::read(root.join("provider-state.json")).ok();
     let provider_digest = provider_state_bytes.as_ref().map(|bytes| sha256_hex(bytes));
-    let bindings = BindingChecks {
-        candidate_sha_valid: valid_candidate_sha(&candidate_sha),
+    let checks = BindingChecks {
+        candidate_sha_valid: valid_candidate_sha(candidate_sha),
         golden_candidate_matches: golden
             .as_ref()
             .map(|report| report.binding.candidate_sha == candidate_sha),
@@ -160,15 +195,7 @@ fn run() -> Result<(), i32> {
             .zip(provider_digest.as_ref())
             .map(|(receipt, digest)| receipt.provider_state_sha256 == digest.as_str()),
     };
-
-    let session_snapshots = collect_session_snapshot_checks(
-        root,
-        session.as_ref(),
-        provider_state_bytes.as_deref(),
-        &candidate_sha,
-    );
-
-    let binding_ok = provider
+    let valid = provider
         .as_ref()
         .is_some_and(|state| state.schema_version == RT0_PROVIDER_STATE_SCHEMA)
         && probe
@@ -180,35 +207,20 @@ fn run() -> Result<(), i32> {
         && session
             .as_ref()
             .is_some_and(|receipt| receipt.schema_version == RT0_OWNER_LAB_SESSION_BINDING_SCHEMA)
-        && bindings.candidate_sha_valid
-        && bindings.golden_candidate_matches.unwrap_or(false)
-        && bindings.golden_provider_state_matches.unwrap_or(false)
-        && bindings.probe_candidate_matches.unwrap_or(false)
-        && bindings.probe_provider_state_matches.unwrap_or(false)
-        && bindings.conversation_candidate_matches.unwrap_or(false)
-        && bindings
-            .conversation_provider_state_matches
-            .unwrap_or(false)
-        && bindings.session_candidate_matches.unwrap_or(false)
-        && bindings.session_provider_state_matches.unwrap_or(false);
-    let report = InventoryReport {
-        schema_version: SCHEMA,
-        candidate_sha,
-        evidence_dir,
-        inventory_complete: missing.is_empty()
-            && all_syntax_valid
-            && binding_ok
-            && session_snapshots.complete(),
-        missing,
-        items,
-        bindings,
-        session_snapshots,
-    };
-    println!("{}", serde_json::to_string_pretty(&report).map_err(|_| 2)?);
-    if report.inventory_complete {
-        Ok(())
-    } else {
-        Err(1)
+        && checks.candidate_sha_valid
+        && checks.golden_candidate_matches.unwrap_or(false)
+        && checks.golden_provider_state_matches.unwrap_or(false)
+        && checks.probe_candidate_matches.unwrap_or(false)
+        && checks.probe_provider_state_matches.unwrap_or(false)
+        && checks.conversation_candidate_matches.unwrap_or(false)
+        && checks.conversation_provider_state_matches.unwrap_or(false)
+        && checks.session_candidate_matches.unwrap_or(false)
+        && checks.session_provider_state_matches.unwrap_or(false);
+    InspectedBindings {
+        checks,
+        valid,
+        session,
+        provider_state_bytes,
     }
 }
 
