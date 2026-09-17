@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   materialize:
-    if: github.event.head_commit.message == 'ci: materialize RT0 TTS final candidate'
+    if: github.event.head_commit.message == 'ci: materialize RT0 TTS final candidate v2'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -19,8 +19,8 @@ jobs:
       - name: Toolchain
         run: rustup component add rustfmt
       - name: Materialize contracts
-        shell: python
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           inventory = Path('crates/vpr-evaluation/tests/evidence_inventory_cli.rs')
@@ -73,6 +73,7 @@ jobs:
               '    "VPR_OWNER_LAB_LLM_ENDPOINT",\n    "VPR_OWNER_LAB_TTS_API_KEY",\n    "VPR_OWNER_LAB_TTS_ENDPOINT",\n):',
           )
           guard.write_text(text)
+          PY
       - name: Refresh lock and format
         run: |
           cargo generate-lockfile
