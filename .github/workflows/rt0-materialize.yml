@@ -1,0 +1,96 @@
+name: RT0 TTS materialize
+
+on:
+  push:
+    branches: [feat/rt0-real-exit-runner]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.event.head_commit.message == 'ci: materialize RT0 TTS final candidate'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/rt0-real-exit-runner
+          fetch-depth: 0
+      - name: Toolchain
+        run: rustup component add rustfmt
+      - name: Materialize contracts
+        shell: python
+        run: |
+          from pathlib import Path
+
+          inventory = Path('crates/vpr-evaluation/tests/evidence_inventory_cli.rs')
+          text = inventory.read_text()
+          text = text.replace('fixture.provider_state.providers.len(), 3', 'fixture.provider_state.providers.len(), 4')
+          text = text.replace('"schema_version":"rt0-live-provider-probe-0.1"', '"schema_version":"rt0-live-provider-probe-0.2"')
+          text = text.replace(
+              '"llm":{"latency_millis":120,"output_chars":5,"usage":usage},\n        "avatar"',
+              '"llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},\n        "tts":{"latency_millis":80,"audio_sha256":"8".repeat(64),"audio_millis":200,"usage":usage},\n        "avatar"',
+          )
+          inventory.write_text(text)
+
+          readme = Path('docs/evaluation/README.md')
+          text = readme.read_text()
+          text = text.replace(
+              'Provider-state schema `rt0-provider-state-0.1` requires exactly one STT, LLM, and Avatar descriptor.',
+              'Provider-state schema `rt0-provider-state-0.2` requires exactly one STT, LLM, TTS, and Avatar descriptor.',
+          )
+          anchor = 'A successful synthetic or mock run is **not** RT0 exit evidence.'
+          note = ('Credentialed provider reachability uses `rt0-live-provider-probe-0.2`: STT, LLM, canonical TTS, and Avatar are all exercised for the same exact provider state. TTS evidence stores only synthesized-audio SHA-256, duration, latency, and usage/cost metadata; raw synthesized PCM is not release evidence.\n\n')
+          if note not in text:
+              text = text.replace(anchor, note + anchor)
+          readme.write_text(text)
+
+          guard = Path('tests/architecture/check_boundaries.py')
+          text = guard.read_text()
+          text = text.replace(
+              '        "vpr-provider-did-agent-streams",\n        "vpr-provider-gemini",',
+              '        "vpr-provider-did-agent-streams",\n        "vpr-provider-elevenlabs-tts",\n        "vpr-provider-gemini",',
+              1,
+          )
+          text = text.replace(
+              '        "vpr-provider-openai-compatible",\n        "vpr-provider-openai-transcription",',
+              '        "vpr-provider-openai-compatible",\n        "vpr-provider-openai-speech",\n        "vpr-provider-openai-transcription",',
+              1,
+          )
+          text = text.replace(
+              'for forbidden in ("VPR_DID_API_KEY", "VPR_OWNER_LAB_STT_API_KEY", "VPR_OWNER_LAB_LLM_API_KEY"):',
+              'for forbidden in (\n    "VPR_DID_API_KEY",\n    "VPR_OWNER_LAB_STT_API_KEY",\n    "VPR_OWNER_LAB_LLM_API_KEY",\n    "VPR_OWNER_LAB_TTS_API_KEY",\n):',
+          )
+          text = text.replace('    "execute_llm(",\n    "OwnerLabEngine::new",', '    "execute_llm(",\n    "execute_tts(",\n    "OwnerLabEngine::new",')
+          text = text.replace('    "ProviderRole::Llm",\n    "ProviderRole::Avatar",', '    "ProviderRole::Llm",\n    "ProviderRole::Tts",\n    "ProviderRole::Avatar",')
+          text = text.replace(
+              '    "VPR_OWNER_LAB_LLM_API_KEY",\n    "ProviderBundle",',
+              '    "VPR_OWNER_LAB_LLM_API_KEY",\n    "VPR_OWNER_LAB_TTS_API_KEY",\n    "ProviderBundle",',
+          )
+          text = text.replace('    "gemini",\n):', '    "gemini",\n    "openai-speech",\n    "elevenlabs",\n):', 1)
+          text = text.replace(
+              '    "VPR_OWNER_LAB_LLM_ENDPOINT",\n):',
+              '    "VPR_OWNER_LAB_LLM_ENDPOINT",\n    "VPR_OWNER_LAB_TTS_API_KEY",\n    "VPR_OWNER_LAB_TTS_ENDPOINT",\n):',
+          )
+          guard.write_text(text)
+      - name: Refresh lock and format
+        run: |
+          cargo generate-lockfile
+          cargo fmt --all
+      - name: Verify boundaries
+        run: |
+          python3 tests/architecture/check_boundaries.py
+          python3 tests/architecture/check_release_contracts.py
+          python3 tests/architecture/check_browser_contract.py
+          git diff --check
+      - name: Remove temporary workflows
+        run: |
+          rm .github/workflows/rt0-tts-diagnostic.yml
+          rm .github/workflows/rt0-materialize.yml
+      - name: Commit exact candidate
+        run: |
+          git config user.name 'VPR RT0 materializer'
+          git config user.email 'vpr-rt0@users.noreply.github.com'
+          git add -A
+          git commit -m 'RT0: finalize credentialed TTS provider proof'
+          git push origin HEAD:feat/rt0-real-exit-runner
