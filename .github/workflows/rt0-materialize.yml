@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   materialize:
-    if: github.event.head_commit.message == 'ci: materialize RT0 TTS final candidate v2'
+    if: "${{ github.event.head_commit.message == 'ci: materialize RT0 TTS final candidate v3' }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
