@@ -34,10 +34,11 @@ impl Drop for TempDir {
 
 fn provider_state() -> Value {
     json!({
-        "schema_version":"rt0-provider-state-0.1",
+        "schema_version":"rt0-provider-state-0.2",
         "providers":[
             {"role":"stt","provider":"openai-transcription","model_or_representation":"stt-model","configuration_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
             {"role":"llm","provider":"anthropic","model_or_representation":"llm-model","configuration_fingerprint_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            {"role":"tts","provider":"openai-speech","model_or_representation":"tts-model/voice","configuration_fingerprint_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"},
             {"role":"avatar","provider":"did-agents-streams","model_or_representation":"avatar-representation","configuration_fingerprint_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
         ]
     })

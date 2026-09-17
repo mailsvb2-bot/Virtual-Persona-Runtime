@@ -1,13 +1,15 @@
 use std::env;
 
 use sha2::{Digest, Sha256};
-use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
+use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
+use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
+use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
@@ -20,9 +22,11 @@ pub struct ProviderBundle {
     pub avatar: Box<dyn RealtimeAvatarPort>,
     pub stt: Option<Box<dyn SttPort>>,
     pub llm: Option<Box<dyn LlmPort>>,
+    pub tts: Option<Box<dyn TtsPort>>,
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
+    pub tts_descriptor: Option<ProviderDescriptor>,
 }
 
 impl ProviderBundle {
@@ -52,6 +56,7 @@ impl ProviderBundle {
 
         let stt_name = optional_env("VPR_OWNER_LAB_STT_PROVIDER");
         let llm_name = optional_env("VPR_OWNER_LAB_LLM_PROVIDER");
+        let tts_name = optional_env("VPR_OWNER_LAB_TTS_PROVIDER");
         let (stt, llm, stt_descriptor, llm_descriptor) = match (stt_name, llm_name) {
             (None, None) if !require_voice => (None, None, None, None),
             (Some(stt_name), Some(llm_name)) => {
@@ -71,13 +76,25 @@ impl ProviderBundle {
                 );
             }
         };
+        let (tts, tts_descriptor) = match tts_name {
+            Some(name) => {
+                let (tts, descriptor) = build_tts(&name)?;
+                (Some(tts), Some(descriptor))
+            }
+            None if require_voice => {
+                return Err("live proof requires VPR_OWNER_LAB_TTS_PROVIDER".into());
+            }
+            None => (None, None),
+        };
         Ok(Self {
             avatar: Box::new(avatar),
             stt,
             llm,
+            tts,
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
+            tts_descriptor,
         })
     }
 }
@@ -156,6 +173,44 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
     Ok((
         provider,
         descriptor("llm", canonical, &model, &[&endpoint, &model]),
+    ))
+}
+
+fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    let endpoint = required_env("VPR_OWNER_LAB_TTS_ENDPOINT")?;
+    let api_key = required_env("VPR_OWNER_LAB_TTS_API_KEY")?;
+    let model = required_env("VPR_OWNER_LAB_TTS_MODEL")?;
+    let voice = required_env("VPR_OWNER_LAB_TTS_VOICE")?;
+    let (canonical, provider): (&str, Box<dyn TtsPort>) = match name {
+        "openai" | "openai-speech" => (
+            "openai-speech",
+            Box::new(
+                OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
+                    endpoint.clone(),
+                    api_key,
+                    model.clone(),
+                    voice.clone(),
+                ))
+                .map_err(|_| "TTS provider configuration rejected")?,
+            ),
+        ),
+        "elevenlabs" => (
+            "elevenlabs",
+            Box::new(
+                ElevenLabsTts::new(ElevenLabsTtsConfig::new(
+                    endpoint.clone(),
+                    api_key,
+                    model.clone(),
+                    voice.clone(),
+                ))
+                .map_err(|_| "TTS provider configuration rejected")?,
+            ),
+        ),
+        _ => return Err(format!("unsupported TTS provider: {name}")),
+    };
+    Ok((
+        provider,
+        descriptor("tts", canonical, &format!("{model}/{voice}"), &[&endpoint, &model, &voice]),
     ))
 }
 

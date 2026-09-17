@@ -17,7 +17,7 @@ pub use conversation::{
 pub use probe::{LiveProviderProbeError, run_provider_probe};
 pub use vpr_evaluation::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
-    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, TtsProbeEvidence,
 };
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";
@@ -119,11 +119,16 @@ fn provider_state(
         .llm_descriptor
         .as_ref()
         .ok_or(LiveProofPreflightError::ProviderConfigurationInvalid)?;
+    let tts = bundle
+        .tts_descriptor
+        .as_ref()
+        .ok_or(LiveProofPreflightError::ProviderConfigurationInvalid)?;
     Ok(ProviderStateManifest {
         schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
         providers: vec![
             binding(ProviderRole::Stt, stt),
             binding(ProviderRole::Llm, llm),
+            binding(ProviderRole::Tts, tts),
             binding(ProviderRole::Avatar, &bundle.avatar_descriptor),
         ],
     })

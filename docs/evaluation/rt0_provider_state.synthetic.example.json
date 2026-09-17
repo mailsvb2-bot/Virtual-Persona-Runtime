@@ -1,5 +1,5 @@
 {
-  "schema_version": "rt0-provider-state-0.1",
+  "schema_version": "rt0-provider-state-0.2",
   "providers": [
     {
       "role": "stt",
@@ -12,6 +12,12 @@
       "provider": "synthetic-llm",
       "model_or_representation": "example-only",
       "configuration_fingerprint_sha256": "72a59755e95880a8f8577233afe0db9a6bb2057011cbb170e95fdfb07b316e42"
+    },
+    {
+      "role": "tts",
+      "provider": "synthetic-tts",
+      "model_or_representation": "example-only",
+      "configuration_fingerprint_sha256": "f350dc7119f43aa0d76e66678417e2d287f41ae15ad903e922904f7afae7c691"
     },
     {
       "role": "avatar",

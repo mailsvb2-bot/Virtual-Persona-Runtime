@@ -54,6 +54,12 @@ fn provider_state_bytes() -> Vec<u8> {
                 "configuration_fingerprint_sha256": sha256_hex(b"llm-config")
             },
             {
+                "role": "tts",
+                "provider": "contract-tts",
+                "model_or_representation": "contract-v1",
+                "configuration_fingerprint_sha256": sha256_hex(b"tts-config")
+            },
+            {
                 "role": "avatar",
                 "provider": "contract-avatar",
                 "model_or_representation": "contract-v1",

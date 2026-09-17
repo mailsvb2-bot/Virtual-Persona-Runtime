@@ -63,6 +63,7 @@ fn provider_state() -> ProviderStateManifest {
         providers: vec![
             provider(ProviderRole::Stt, "contract-stt", b"stt-config"),
             provider(ProviderRole::Llm, "contract-llm", b"llm-config"),
+            provider(ProviderRole::Tts, "contract-tts", b"tts-config"),
             provider(ProviderRole::Avatar, "contract-avatar", b"avatar-config"),
         ],
     }
