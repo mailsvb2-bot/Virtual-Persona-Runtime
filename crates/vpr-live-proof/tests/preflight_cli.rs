@@ -97,7 +97,10 @@ fn configure_live(
         .env("VPR_OWNER_LAB_LLM_API_KEY", llm_key)
         .env("VPR_OWNER_LAB_LLM_MODEL", "gpt-contract")
         .env("VPR_OWNER_LAB_TTS_PROVIDER", "openai-speech")
-        .env("VPR_OWNER_LAB_TTS_ENDPOINT", "https://api.openai.com/v1/audio/speech")
+        .env(
+            "VPR_OWNER_LAB_TTS_ENDPOINT",
+            "https://api.openai.com/v1/audio/speech",
+        )
         .env("VPR_OWNER_LAB_TTS_API_KEY", tts_key)
         .env("VPR_OWNER_LAB_TTS_MODEL", "tts-contract")
         .env("VPR_OWNER_LAB_TTS_VOICE", "voice-contract");

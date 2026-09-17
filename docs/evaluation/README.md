@@ -16,7 +16,7 @@ The evaluator binds five inputs to one report:
 
 The evidence JSON has `binding` and `observations`. Binding schema `rt0-evidence-binding-0.1` contains the candidate SHA plus SHA-256 digests of the suite, ReleaseSpec, and provider-state file. The evaluator recomputes all three artifact digests itself and rejects stale or mismatched evidence.
 
-Golden suite schema is fixed at `rt0-golden-0.1`; unknown schema versions or unknown fields fail closed. Provider-state schema `rt0-provider-state-0.1` requires exactly one STT, LLM, and Avatar descriptor. Each descriptor names its provider and model/representation and includes a lowercase SHA-256 fingerprint of its deterministic sanitized configuration. `rt0_provider_state.synthetic.example.json` demonstrates the shape only; it is not release evidence.
+Golden suite schema is fixed at `rt0-golden-0.1`; unknown schema versions or unknown fields fail closed. Provider-state schema `rt0-provider-state-0.2` requires exactly one STT, LLM, TTS, and Avatar descriptor. Each descriptor names its provider and model/representation and includes a lowercase SHA-256 fingerprint of its deterministic sanitized configuration. `rt0_provider_state.synthetic.example.json` demonstrates the shape only; it is not release evidence.
 
 Provider fingerprints must never be calculated from or expose API keys, authorization headers, private documents, raw audio/video, prompts, or other secrets. Archive the sanitized configuration artifact used to produce each fingerprint with the private release evidence so the fingerprint is reproducible.
 
@@ -34,6 +34,8 @@ cargo run -p vpr-evaluation -- \
 ```
 
 Exit codes are stable: `0` means the bound Golden bundle passed, `1` means the binding is valid but one or more Golden cases failed, and `2` means input or binding is invalid/stale.
+
+Credentialed provider reachability uses `rt0-live-provider-probe-0.2`: STT, LLM, canonical TTS, and Avatar are all exercised for the same exact provider state. TTS evidence stores only synthesized-audio SHA-256, duration, latency, and usage/cost metadata; raw synthesized PCM is not release evidence.
 
 A successful synthetic or mock run is **not** RT0 exit evidence. Release evidence still requires the same exact candidate/provider state to have real owner and non-owner conversations, measured latency/cost, permission/privacy results, and human evaluation as required by the Canon and ReleaseSpec.
 

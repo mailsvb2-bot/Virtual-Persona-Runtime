@@ -66,7 +66,7 @@ impl LiveProviderProbeError {
             | Self::AvatarCleanup(reason) => reason.as_str(),
             Self::InvalidSttOutput | Self::InvalidLlmOutput | Self::InvalidTtsOutput => {
                 "PROVIDER_INVALID_RESPONSE"
-            },
+            }
             Self::Internal => "INTERNAL_ERROR",
         }
     }

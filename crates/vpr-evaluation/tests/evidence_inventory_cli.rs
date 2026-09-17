@@ -69,7 +69,7 @@ fn empty_directory_reports_missing_evidence_without_claiming_readiness() {
 
 fn seed_complete_inventory(dir: &Path) {
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
-    assert_eq!(fixture.provider_state.providers.len(), 3);
+    assert_eq!(fixture.provider_state.providers.len(), 4);
     assert_eq!(fixture.bundle.binding.candidate_sha, CANDIDATE);
     let provider_digest = sha256_hex(&fixture.provider_state_bytes);
     fs::write(
@@ -93,7 +93,7 @@ fn seed_complete_inventory(dir: &Path) {
         "estimated_cost_microunits":1,"provider_charge_microunits":null
     });
     let probe = json!({
-        "schema_version":"rt0-live-provider-probe-0.1",
+        "schema_version":"rt0-live-provider-probe-0.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_digest,
         "input_audio_sha256":"7".repeat(64),
@@ -102,7 +102,8 @@ fn seed_complete_inventory(dir: &Path) {
         "conversation_evidence":false,
         "output_delivery_proven":false,
         "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
-        "llm":{"latency_millis":120,"output_chars":5,"usage":usage},
+        "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
+        "tts":{"latency_millis":80,"audio_sha256":"8".repeat(64),"audio_millis":200,"usage":usage},
         "avatar":{"open_millis":150,"close_millis":50}
     });
     fs::write(

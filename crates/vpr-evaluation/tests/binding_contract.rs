@@ -162,7 +162,9 @@ fn provider_state_requires_all_four_roles_and_valid_fingerprints() {
     );
 
     let mut state = provider_state();
-    state.providers.retain(|provider| provider.role != ProviderRole::Tts);
+    state
+        .providers
+        .retain(|provider| provider.role != ProviderRole::Tts);
     let provider_bytes = provider_state_bytes(&state);
     let evidence = bundle(&provider_bytes);
     assert_eq!(

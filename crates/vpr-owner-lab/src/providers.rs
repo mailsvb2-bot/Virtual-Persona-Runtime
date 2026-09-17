@@ -5,11 +5,11 @@ use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
+use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
-use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
-use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
+use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
@@ -210,7 +210,12 @@ fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), Strin
     };
     Ok((
         provider,
-        descriptor("tts", canonical, &format!("{model}/{voice}"), &[&endpoint, &model, &voice]),
+        descriptor(
+            "tts",
+            canonical,
+            &format!("{model}/{voice}"),
+            &[&endpoint, &model, &voice],
+        ),
     ))
 }
 

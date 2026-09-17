@@ -4,8 +4,8 @@ use vpr_evaluation::{
     ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
-    PcmSampleFormat, ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat,
+    ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
     RealtimeAvatarSession, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
     UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
