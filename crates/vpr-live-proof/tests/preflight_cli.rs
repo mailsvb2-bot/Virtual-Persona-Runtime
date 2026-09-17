@@ -70,7 +70,13 @@ fn command(repo: &TempRepo, output: &Path) -> Command {
     command
 }
 
-fn configure_live(command: &mut Command, did_key: &str, stt_key: &str, llm_key: &str) {
+fn configure_live(
+    command: &mut Command,
+    did_key: &str,
+    stt_key: &str,
+    llm_key: &str,
+    tts_key: &str,
+) {
     command
         .env("VPR_LIVE_PROOF_ALLOW_EGRESS", "true")
         .env("VPR_DID_ENDPOINT", "https://api.d-id.com")
@@ -89,7 +95,12 @@ fn configure_live(command: &mut Command, did_key: &str, stt_key: &str, llm_key: 
             "https://api.openai.com/v1/chat/completions",
         )
         .env("VPR_OWNER_LAB_LLM_API_KEY", llm_key)
-        .env("VPR_OWNER_LAB_LLM_MODEL", "gpt-contract");
+        .env("VPR_OWNER_LAB_LLM_MODEL", "gpt-contract")
+        .env("VPR_OWNER_LAB_TTS_PROVIDER", "openai-speech")
+        .env("VPR_OWNER_LAB_TTS_ENDPOINT", "https://api.openai.com/v1/audio/speech")
+        .env("VPR_OWNER_LAB_TTS_API_KEY", tts_key)
+        .env("VPR_OWNER_LAB_TTS_MODEL", "tts-contract")
+        .env("VPR_OWNER_LAB_TTS_VOICE", "voice-contract");
 }
 
 #[test]
@@ -173,6 +184,7 @@ fn successful_preflight_is_sanitized_and_secret_independent() {
         "did-secret-one",
         "stt-secret-one",
         "llm-secret-one",
+        "tts-secret-one",
     );
     let first = first.output().unwrap();
     assert_eq!(
@@ -189,6 +201,7 @@ fn successful_preflight_is_sanitized_and_secret_independent() {
         "did-secret-two",
         "stt-secret-two",
         "llm-secret-two",
+        "tts-secret-two",
     );
     let second = second.output().unwrap();
     assert_eq!(
@@ -205,7 +218,7 @@ fn successful_preflight_is_sanitized_and_secret_independent() {
         "credential rotation must not change sanitized provider state"
     );
     let parsed: ProviderStateManifest = serde_json::from_slice(&first_state).unwrap();
-    assert_eq!(parsed.providers.len(), 3);
+    assert_eq!(parsed.providers.len(), 4);
 
     let receipt: Value = serde_json::from_slice(&first.stdout).unwrap();
     assert_eq!(receipt["schema_version"], "rt0-live-proof-preflight-0.1");
@@ -219,7 +232,12 @@ fn successful_preflight_is_sanitized_and_secret_independent() {
         String::from_utf8_lossy(&first.stderr),
         String::from_utf8_lossy(&first_state)
     );
-    for secret in ["did-secret-one", "stt-secret-one", "llm-secret-one"] {
+    for secret in [
+        "did-secret-one",
+        "stt-secret-one",
+        "llm-secret-one",
+        "tts-secret-one",
+    ] {
         assert!(!all_output.contains(secret));
     }
     let _ = fs::remove_file(first_path);
@@ -427,12 +445,18 @@ fn conversation_mode_rejects_malformed_profile_without_provider_calls_or_writes(
         &provider,
         &receipt,
     );
-    configure_live(&mut command, "did-secret", "stt-secret", "llm-secret");
+    configure_live(
+        &mut command,
+        "did-secret",
+        "stt-secret",
+        "llm-secret",
+        "tts-secret",
+    );
     let output = command.output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("INVALID_PROFILE"));
-    for secret in ["did-secret", "stt-secret", "llm-secret"] {
+    for secret in ["did-secret", "stt-secret", "llm-secret", "tts-secret"] {
         assert!(!stderr.contains(secret));
     }
     assert!(!provider.exists());

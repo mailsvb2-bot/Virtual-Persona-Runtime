@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const RT0_EVIDENCE_BINDING_SCHEMA: &str = "rt0-evidence-binding-0.1";
-pub const RT0_PROVIDER_STATE_SCHEMA: &str = "rt0-provider-state-0.1";
+pub const RT0_PROVIDER_STATE_SCHEMA: &str = "rt0-provider-state-0.2";
 
 use crate::{
     GoldenObservation, GoldenReport, GoldenSuite, GoldenSuiteError, evaluate_golden_suite,
@@ -15,6 +15,7 @@ use crate::{
 pub enum ProviderRole {
     Stt,
     Llm,
+    Tts,
     Avatar,
 }
 
@@ -185,7 +186,12 @@ pub(crate) fn validate_provider_state(
             return Err(EvidenceBindingError::InvalidProviderFingerprint);
         }
     }
-    for required in [ProviderRole::Stt, ProviderRole::Llm, ProviderRole::Avatar] {
+    for required in [
+        ProviderRole::Stt,
+        ProviderRole::Llm,
+        ProviderRole::Tts,
+        ProviderRole::Avatar,
+    ] {
         if !roles.contains(&required) {
             return Err(EvidenceBindingError::MissingProviderRole);
         }

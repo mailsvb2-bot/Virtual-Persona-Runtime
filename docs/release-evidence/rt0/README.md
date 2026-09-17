@@ -39,11 +39,13 @@ A checker PASS is necessary evidence hygiene, not proof that the referenced priv
 VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- /secure/evidence/provider-state.json
 ```
 
-The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires D-ID plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
+The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires D-ID plus configured STT, LLM and TTS providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
 
-A preflight PASS proves only that an exact clean candidate has a complete local provider configuration and explicit egress authorization. It does **not** prove external provider reachability, conversation quality, or RT0 completion. `provider.real_*` and `release.rt0_exit_gate` remain `NOT_IMPLEMENTED` until credentialed live runs and the rest of the exit evidence exist.
+A preflight PASS proves only that an exact clean candidate has a complete local provider configuration for STT, LLM, TTS and avatar plus explicit egress authorization. It does **not** prove external provider reachability, conversation quality, or RT0 completion. `provider.real_*` and `release.rt0_exit_gate` remain `NOT_IMPLEMENTED` until credentialed live runs and the rest of the exit evidence exist.
 
 Live-proof preflight output must use an absolute path outside the canonical Git worktree; evidence generation must not dirty the candidate it claims to describe.
+
+Credentialed RT0 live proof requires `VPR_OWNER_LAB_TTS_PROVIDER` plus `VPR_OWNER_LAB_TTS_ENDPOINT`, `VPR_OWNER_LAB_TTS_API_KEY`, `VPR_OWNER_LAB_TTS_MODEL` and `VPR_OWNER_LAB_TTS_VOICE`. Supported proof adapters are `openai-speech` and `elevenlabs`. These credentials are consumed only by the canonical Owner Lab provider composition and are never serialized into evidence.
 
 ## Credentialed live-provider probe
 
@@ -55,9 +57,9 @@ VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- probe /secure/in
 
 The input must be raw PCM S16LE, mono, 16 kHz and must live outside the Git worktree. STT and LLM execute only through canonical `ActiveTurn::execute_stt` / `execute_llm`; realtime avatar open/close executes through `OwnerLabEngine`. The transcript is not forwarded to the LLM: the LLM reachability probe uses a fixed safe Russian prompt.
 
-The serialized probe receipt contains only stage latency, usage/cost counters, transcript/output character counts, exact candidate/provider-state binding, SHA-256 + duration binding for the private PCM input, and explicit `conversation_evidence=false` / `output_delivery_proven=false`. It never stores raw audio, transcript text, generated reply, WebRTC signaling, provider session identifiers, or credentials.
+The serialized probe receipt contains only stage latency, usage/cost counters, transcript/output character counts, a SHA-256 + duration for synthesized TTS PCM, exact candidate/provider-state binding, SHA-256 + duration binding for the private STT PCM input, and explicit `conversation_evidence=false` / `output_delivery_proven=false`. It never stores raw audio, transcript text, generated reply, WebRTC signaling, provider session identifiers, or credentials.
 
-A probe PASS proves credentialed provider reachability only. It does not prove a real owner/non-owner conversation, rendered media delivery, human quality, Golden Set completion, or RT0 release readiness. `provider.real_*` and `release.rt0_exit_gate` therefore remain `NOT_IMPLEMENTED` until the required external evidence exists and is reviewed.
+The probe executes STT, LLM and TTS only through canonical `ActiveTurn::execute_*` paths; TTS uses a fixed safe Russian phrase and retains only sanitized audio digest/duration evidence. Avatar open/close remains through `OwnerLabEngine`. A probe PASS proves credentialed provider reachability only. It does not prove a real owner/non-owner conversation, rendered media delivery, human quality, Golden Set completion, or RT0 release readiness. `provider.real_*` and `release.rt0_exit_gate` therefore remain `NOT_IMPLEMENTED` until the required external evidence exists and is reviewed.
 ## Credentialed owner/visitor conversation attempt
 
 `vpr-live-proof conversation` reuses the canonical Owner Lab engine for one owner turn followed by one visitor-scoped turn over the same reviewed `DIGITAL_TWIN` Persona and the same credentialed STT/LLM/avatar provider composition:

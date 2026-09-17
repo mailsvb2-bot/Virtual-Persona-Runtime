@@ -24,6 +24,7 @@ fn provider_state() -> ProviderStateManifest {
         providers: vec![
             provider(ProviderRole::Stt, "contract-stt"),
             provider(ProviderRole::Llm, "contract-llm"),
+            provider(ProviderRole::Tts, "contract-tts"),
             provider(ProviderRole::Avatar, "contract-avatar"),
         ],
     }
@@ -80,7 +81,7 @@ fn exact_candidate_and_provider_state_are_preserved_in_redacted_report() {
         report.evidence_input_sha256,
         sha256_hex(b"private evidence artifact")
     );
-    assert_eq!(report.provider_state.providers.len(), 3);
+    assert_eq!(report.provider_state.providers.len(), 4);
     assert_eq!(report.golden.total, 12);
     assert_eq!(report.golden.failed, 12);
     let json = serde_json::to_string(&report).unwrap();
@@ -150,9 +151,18 @@ fn stale_candidate_and_artifact_digests_fail_closed() {
 }
 
 #[test]
-fn provider_state_requires_unique_stt_llm_and_avatar_fingerprints() {
+fn provider_state_requires_all_four_roles_and_valid_fingerprints() {
     let mut state = provider_state();
     state.providers.pop();
+    let provider_bytes = provider_state_bytes(&state);
+    let evidence = bundle(&provider_bytes);
+    assert_eq!(
+        evaluate(&state, &provider_bytes, &evidence, CANDIDATE),
+        Err(EvidenceBindingError::MissingProviderRole)
+    );
+
+    let mut state = provider_state();
+    state.providers.retain(|provider| provider.role != ProviderRole::Tts);
     let provider_bytes = provider_state_bytes(&state);
     let evidence = bundle(&provider_bytes);
     assert_eq!(

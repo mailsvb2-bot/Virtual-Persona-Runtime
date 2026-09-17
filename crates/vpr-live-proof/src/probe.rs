@@ -6,11 +6,11 @@ use vpr_domain::{
 };
 use vpr_evaluation::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
-    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, sha256_hex,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, TtsProbeEvidence, sha256_hex,
 };
 use vpr_integration::{
-    AudioInput, GeneratedTextBuffer, LlmRequest, PcmSampleFormat, RealtimeAvatarPort, SttRequest,
-    UsageEvidence, UsageUnit,
+    AudioInput, GeneratedAudioBuffer, GeneratedTextBuffer, LlmRequest, PcmSampleFormat,
+    RealtimeAvatarPort, SttRequest, TtsRequest, UsageEvidence, UsageUnit,
 };
 use vpr_owner_lab::{LabError, OwnerLabEngine, OwnerLabStartRequest};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
@@ -23,6 +23,7 @@ const SAMPLE_RATE_HZ: u32 = 16_000;
 const CHANNELS: u16 = 1;
 const PROVIDER_SCOPE: &str = "provider.egress";
 const LLM_PROBE_PROMPT: &str = "Ответь одним коротким словом на русском языке: готов.";
+const TTS_PROBE_TEXT: &str = "Готов.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiveProviderProbeError {
@@ -32,6 +33,8 @@ pub enum LiveProviderProbeError {
     InvalidSttOutput,
     Llm(Rt0ReasonCode),
     InvalidLlmOutput,
+    Tts(Rt0ReasonCode),
+    InvalidTtsOutput,
     Avatar(Rt0ReasonCode),
     AvatarCleanup(Rt0ReasonCode),
     Internal,
@@ -45,6 +48,7 @@ impl LiveProviderProbeError {
             Self::Runtime(_) | Self::Internal => "runtime",
             Self::Stt(_) | Self::InvalidSttOutput => "stt",
             Self::Llm(_) | Self::InvalidLlmOutput => "llm",
+            Self::Tts(_) | Self::InvalidTtsOutput => "tts",
             Self::Avatar(_) => "avatar_open",
             Self::AvatarCleanup(_) => "avatar_cleanup",
         }
@@ -57,15 +61,18 @@ impl LiveProviderProbeError {
             Self::Runtime(reason)
             | Self::Stt(reason)
             | Self::Llm(reason)
+            | Self::Tts(reason)
             | Self::Avatar(reason)
             | Self::AvatarCleanup(reason) => reason.as_str(),
-            Self::InvalidSttOutput | Self::InvalidLlmOutput => "PROVIDER_INVALID_RESPONSE",
+            Self::InvalidSttOutput | Self::InvalidLlmOutput | Self::InvalidTtsOutput => {
+                "PROVIDER_INVALID_RESPONSE"
+            },
             Self::Internal => "INTERNAL_ERROR",
         }
     }
 }
 
-/// Probes credentialed STT, LLM, and realtime-avatar control-plane reachability through canonical runtime paths.
+/// Probes credentialed STT, LLM, TTS, and realtime-avatar control-plane reachability through canonical runtime paths.
 ///
 /// The returned receipt intentionally contains no transcript, generated reply, raw audio, WebRTC signaling,
 /// provider session identifiers, or credentials. It is reachability evidence only, not conversation evidence.
@@ -98,6 +105,10 @@ pub fn run_provider_probe(
         .ok_or(LiveProviderProbeError::Internal)?;
     let llm = providers
         .llm
+        .take()
+        .ok_or(LiveProviderProbeError::Internal)?;
+    let tts = providers
+        .tts
         .take()
         .ok_or(LiveProviderProbeError::Internal)?;
     let turn = canonical_turn()?;
@@ -145,6 +156,33 @@ pub fn run_provider_probe(
         ));
     }
     let output_chars = count_chars(generated.as_str());
+
+    let tts_started = Instant::now();
+    let mut synthesized = GeneratedAudioBuffer::default();
+    let tts_usage = turn
+        .execute_tts(
+            tts.as_ref(),
+            &TtsRequest {
+                text: TTS_PROBE_TEXT.into(),
+                locale_hint: Some("ru-RU".into()),
+            },
+            &mut synthesized,
+        )
+        .map_err(|error| {
+            terminalize_failed_probe_turn(&turn, LiveProviderProbeError::Tts(error.reason_code()))
+        })?;
+    let tts_millis = elapsed_millis(tts_started);
+    let tts_audio_millis = synthesized.duration_millis().ok_or_else(|| {
+        terminalize_failed_probe_turn(&turn, LiveProviderProbeError::InvalidTtsOutput)
+    })?;
+    if synthesized.pcm().is_empty() || tts_audio_millis == 0 || tts_audio_millis > 30_000 {
+        return Err(terminalize_failed_probe_turn(
+            &turn,
+            LiveProviderProbeError::InvalidTtsOutput,
+        ));
+    }
+    let tts_audio_sha256 = sha256_hex(synthesized.pcm());
+
     turn.begin_output()
         .map_err(LiveProviderProbeError::Runtime)?;
     turn.complete().map_err(LiveProviderProbeError::Runtime)?;
@@ -169,6 +207,12 @@ pub fn run_provider_probe(
             latency_millis: llm_millis,
             output_chars,
             usage: map_usage(&llm_usage),
+        },
+        tts: TtsProbeEvidence {
+            latency_millis: tts_millis,
+            audio_sha256: tts_audio_sha256,
+            audio_millis: tts_audio_millis,
+            usage: map_usage(&tts_usage),
         },
         avatar: avatar_evidence,
     })

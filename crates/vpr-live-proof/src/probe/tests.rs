@@ -4,11 +4,11 @@ use vpr_evaluation::{
     ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
-    ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
+    PcmSampleFormat, ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarSession, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
@@ -81,6 +81,38 @@ impl LlmPort for FakeLlm {
             output_units: Some(2),
             output_unit: Some(UsageUnit::Token),
             estimated_cost_microunits: Some(7),
+            provider_charge_microunits: None,
+        })
+    }
+}
+
+struct FakeTts;
+
+impl TtsPort for FakeTts {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor {
+            provider: "fake-tts".into(),
+            model: "fake-tts-v1".into(),
+            representation: Some("fake-voice".into()),
+        }
+    }
+
+    fn synthesize(
+        &self,
+        request: &TtsRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        assert_eq!(request.text, "Готов.");
+        assert_eq!(request.locale_hint.as_deref(), Some("ru-RU"));
+        sink.push_generated_audio(&vec![3_u8; 6_400], 16_000, 1, PcmSampleFormat::S16Le)?;
+        Ok(UsageEvidence {
+            input_units: Some(6),
+            input_unit: Some(UsageUnit::TextCharacter),
+            output_units: Some(200),
+            output_unit: Some(UsageUnit::AudioMillisecond),
+            estimated_cost_microunits: Some(5),
             provider_charge_microunits: None,
         })
     }
@@ -183,12 +215,14 @@ fn descriptor(provider: &str, model: &str, fill: char) -> ProviderDescriptor {
 fn prepared(stats: Arc<Mutex<AvatarStats>>) -> PreparedLiveProof {
     let stt_descriptor = descriptor("fake-stt", "fake-stt-v1", 'a');
     let llm_descriptor = descriptor("fake-llm", "fake-llm-v1", 'b');
+    let tts_descriptor = descriptor("fake-tts", "fake-tts-v1/fake-voice", 'd');
     let avatar_descriptor = descriptor("fake-avatar", "fake-avatar-v1", 'c');
     let provider_state = ProviderStateManifest {
         schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
         providers: vec![
             state_binding(ProviderRole::Stt, &stt_descriptor),
             state_binding(ProviderRole::Llm, &llm_descriptor),
+            state_binding(ProviderRole::Tts, &tts_descriptor),
             state_binding(ProviderRole::Avatar, &avatar_descriptor),
         ],
     };
@@ -203,9 +237,11 @@ fn prepared(stats: Arc<Mutex<AvatarStats>>) -> PreparedLiveProof {
             avatar: Box::new(FakeAvatar { stats }),
             stt: Some(Box::new(FakeStt)),
             llm: Some(Box::new(FakeLlm)),
+            tts: Some(Box::new(FakeTts)),
             avatar_descriptor,
             stt_descriptor: Some(stt_descriptor),
             llm_descriptor: Some(llm_descriptor),
+            tts_descriptor: Some(tts_descriptor),
         },
     }
 }
@@ -230,6 +266,9 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     assert_eq!(receipt.input_audio_sha256.len(), 64);
     assert!(receipt.stt.transcript_chars > 0);
     assert!(receipt.llm.output_chars > 0);
+    assert_eq!(receipt.tts.audio_millis, 200);
+    assert_eq!(receipt.tts.audio_sha256.len(), 64);
+    assert_eq!(receipt.tts.usage.output_units, Some(200));
     let json = serde_json::to_string(&receipt).unwrap();
     for secret in [
         "Секретная тестовая транскрипция",

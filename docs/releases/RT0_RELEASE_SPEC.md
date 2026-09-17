@@ -1,6 +1,6 @@
 # RT0 ReleaseSpec — Feasibility & Wow Proof
 
-**Spec version:** `RT0-0.1.1`
+**Spec version:** `RT0-0.1.2`
 **Status:** ACTIVE  
 **Normative parent:** `docs/CANON.md` v3.4  
 **Maturity ceiling during RT0:** `EXPERIMENTAL` until the RT0 exit gate is evidenced.
@@ -97,7 +97,7 @@ RT0 defines canonical ports for:
 
 Vendor SDK types MUST NOT cross into `vpr-domain`. Adapters declare provider/model/representation versions and return structured provider evidence, measured usage/cost inputs and typed failures.
 
-Initial provider selection is an implementation decision recorded in RT0 evidence, not canonical identity.
+Initial provider selection is an implementation decision recorded in RT0 evidence, not canonical identity. The credentialed RT0 provider-state manifest binds distinct `STT`, `LLM`, `TTS` and `Avatar` roles. An avatar provider's built-in speech does not substitute for proof of the canonical `TtsPort`; the live-provider reachability probe must exercise `TtsPort` through the runtime boundary when RT0 evidence is collected.
 
 ## 8. Authorization and egress
 
@@ -173,7 +173,7 @@ Unknown failures fail closed when they touch sensitive identity, biometric use o
 - Reconnect must not create a new Persona identity or silently widen authority.
 - Owner corrections and revocations must win over stale/cached state.
 
-## 13. QualityContract RT0-0.1.1
+## 13. QualityContract RT0-0.1.2
 
 Provisional engineering targets from the Canon are adopted unchanged:
 

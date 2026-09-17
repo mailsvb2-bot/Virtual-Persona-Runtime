@@ -5,11 +5,11 @@ use vpr_evaluation::{
     sha256_hex,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
     ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarSession, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
@@ -100,6 +100,27 @@ impl LlmPort for FakeLlm {
             estimated_cost_microunits: Some(7),
             provider_charge_microunits: Some(11),
         })
+    }
+}
+
+struct UnusedTts;
+
+impl TtsPort for UnusedTts {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor {
+            provider: "fake-tts".into(),
+            model: "fake-tts-v1".into(),
+            representation: Some("fake-voice".into()),
+        }
+    }
+
+    fn synthesize(
+        &self,
+        _request: &TtsRequest,
+        _cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        panic!("headless conversation path must not masquerade avatar speech as canonical TTS")
     }
 }
 
@@ -210,12 +231,14 @@ fn state_binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> Provide
 fn prepared(stats: Arc<Mutex<ConversationStats>>) -> PreparedLiveProof {
     let stt_descriptor = descriptor("fake-stt", "fake-stt-v1", 'a');
     let llm_descriptor = descriptor("fake-llm", "fake-llm-v1", 'b');
+    let tts_descriptor = descriptor("fake-tts", "fake-tts-v1/fake-voice", 'd');
     let avatar_descriptor = descriptor("fake-avatar", "fake-avatar-v1", 'c');
     let provider_state = ProviderStateManifest {
         schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
         providers: vec![
             state_binding(ProviderRole::Stt, &stt_descriptor),
             state_binding(ProviderRole::Llm, &llm_descriptor),
+            state_binding(ProviderRole::Tts, &tts_descriptor),
             state_binding(ProviderRole::Avatar, &avatar_descriptor),
         ],
     };
@@ -233,9 +256,11 @@ fn prepared(stats: Arc<Mutex<ConversationStats>>) -> PreparedLiveProof {
             }),
             stt: Some(Box::new(FakeStt)),
             llm: Some(Box::new(FakeLlm { stats })),
+            tts: Some(Box::new(UnusedTts)),
             avatar_descriptor,
             stt_descriptor: Some(stt_descriptor),
             llm_descriptor: Some(llm_descriptor),
+            tts_descriptor: Some(tts_descriptor),
         },
     }
 }

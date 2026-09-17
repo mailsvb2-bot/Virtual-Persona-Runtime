@@ -34,6 +34,8 @@ allowed_internal_dependencies = {
         "vpr-provider-gemini",
         "vpr-provider-openai-compatible",
         "vpr-provider-openai-transcription",
+        "vpr-provider-openai-speech",
+        "vpr-provider-elevenlabs-tts",
         "vpr-runtime",
     },
     "vpr-rt0-smoke": {
@@ -242,7 +244,12 @@ for required in (
 ):
     if required not in live_proof_text:
         raise SystemExit(f"RT0 live-proof preflight missing mandatory invariant {required}")
-for forbidden in ("VPR_DID_API_KEY", "VPR_OWNER_LAB_STT_API_KEY", "VPR_OWNER_LAB_LLM_API_KEY"):
+for forbidden in (
+    "VPR_DID_API_KEY",
+    "VPR_OWNER_LAB_STT_API_KEY",
+    "VPR_OWNER_LAB_LLM_API_KEY",
+    "VPR_OWNER_LAB_TTS_API_KEY",
+):
     if forbidden in live_proof_text:
         raise SystemExit(f"live-proof layer must not read provider secrets directly: {forbidden}")
 
@@ -251,6 +258,7 @@ probe_source = (live_proof_src / "probe.rs").read_text(encoding="utf-8")
 for required_probe_boundary in (
     "execute_stt(",
     "execute_llm(",
+    "execute_tts(",
     "OwnerLabEngine::new",
     ".start(OwnerLabStartRequest { consent: true })",
     ".close()",
@@ -266,7 +274,7 @@ for required_probe_boundary in (
         raise SystemExit(
             f"RT0 live-provider probe missing canonical/evidence boundary {required_probe_boundary}"
         )
-for forbidden_probe_call in (".transcribe(", ".stream(", ".create_session("):
+for forbidden_probe_call in (".transcribe(", ".stream(", ".synthesize(", ".create_session("):
     if forbidden_probe_call in probe_source:
         raise SystemExit(
             f"RT0 live-provider probe must not bypass canonical runtime with {forbidden_probe_call}"
@@ -331,6 +339,7 @@ for required in (
     "ProviderStateDigestMismatch",
     "ProviderRole::Stt",
     "ProviderRole::Llm",
+    "ProviderRole::Tts",
     "ProviderRole::Avatar",
     "configuration_fingerprint_sha256",
     "evidence_input_sha256",
@@ -470,6 +479,7 @@ for required_provider_boundary in (
     "VPR_DID_API_KEY",
     "VPR_OWNER_LAB_STT_API_KEY",
     "VPR_OWNER_LAB_LLM_API_KEY",
+    "VPR_OWNER_LAB_TTS_API_KEY",
     "ProviderBundle",
     "configuration_fingerprint_sha256",
 ):
