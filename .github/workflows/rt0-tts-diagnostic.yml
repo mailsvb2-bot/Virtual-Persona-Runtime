@@ -1,0 +1,22 @@
+name: RT0 TTS diagnostic
+
+on:
+  push:
+    branches: [feat/rt0-real-exit-runner]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: rustup component add rustfmt clippy
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-targets
