@@ -84,6 +84,7 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
+    let bargeInInterruptSent = false;
     let providerDataChannel: {
       label: string;
       readyState: "open" | "closed";
@@ -151,8 +152,11 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
             __vprBargeInOrder: string[];
             __vprMicStartedWhileRemoteSpeech: boolean;
           };
-          state.__vprBargeInOrder.push("mic");
-          if (remoteSpeech) state.__vprMicStartedWhileRemoteSpeech = true;
+          if (bargeInInterruptSent) {
+            state.__vprBargeInOrder.push("mic");
+            if (remoteSpeech) state.__vprMicStartedWhileRemoteSpeech = true;
+            bargeInInterruptSent = false;
+          }
           return new FakeMediaStream([new FakeTrack()]);
         },
       },
@@ -215,6 +219,7 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
             };
             state.__vprInterruptPayloads.push(payload);
             state.__vprBargeInOrder.push("interrupt");
+            bargeInInterruptSent = true;
             window.setTimeout(() => {
               remoteSpeech = false;
               channel.onmessage?.({ data: "stream/done:{}" });
