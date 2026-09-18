@@ -22,7 +22,7 @@ const statusNode = byId("status");
 const evidenceNode = byId("evidence");
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, text_ready: false, voice_ready: false, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer = null;
 let answerSubmitted = false;
@@ -310,9 +310,11 @@ const updateAudienceMode = () => {
 };
 const updateControls = () => {
     const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
-    speakButton.disabled = !transportReady || !backendStatus.text_ready || textRequestInFlight || voiceRequestInFlight;
+    const textReady = backendStatus.conversation_readiness !== "none";
+    const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
     interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight;
-    voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || textRequestInFlight || voiceRequestInFlight;
+    voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
         || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
