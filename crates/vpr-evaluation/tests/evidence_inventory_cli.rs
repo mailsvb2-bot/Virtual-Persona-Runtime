@@ -262,7 +262,8 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
             "text_attempts":[{
                 "request_sequence":1,
                 "canonical_turn_sequence":5 + session_sequence,
-                "status":"completed",
+                "canonical_output_sequence":15 + session_sequence,
+            "status":"completed",
                 "failure_code":null,
                 "first_meaningful_response_millis":if role == "owner" { 900 } else { 2_400 },
                 "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
