@@ -21,6 +21,11 @@ type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
+type BargeInSilenceWait = {
+  silentFrames: number;
+  timer: number;
+  resolve: (confirmed: boolean) => void;
+};
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -78,11 +83,14 @@ let remoteEvidenceFrame: number | null = null;
 let baselineRms = 0.002;
 let activeVoiceEvidence: ActiveVoiceEvidence | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
+let bargeInSilenceWait: BargeInSilenceWait | null = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const AUTO_STOP_MILLIS = 29_500;
 const AV_SYNC_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
+const BARGE_IN_SILENCE_FRAMES = 4;
+const BARGE_IN_SILENCE_TIMEOUT_MILLIS = 1_000;
 
 const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): void => {
   statusNode.textContent = text;
@@ -238,6 +246,11 @@ const stopRemoteEvidence = (): void => {
   remoteMediaStream = null;
   activeVoiceEvidence = null;
   interruptEvidenceWatch = null;
+  if (bargeInSilenceWait) {
+    window.clearTimeout(bargeInSilenceWait.timer);
+    bargeInSilenceWait.resolve(false);
+    bargeInSilenceWait = null;
+  }
   baselineRms = 0.002;
 };
 
@@ -269,12 +282,12 @@ const monitorRemoteAudio = (): void => {
       voice.silentFrames += 1;
       if (voice.silentFrames >= 6) voice.speaking = false;
     }
+    const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
     if (interruptEvidenceWatch) {
-      const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
       interruptEvidenceWatch.silentFrames = level < silenceThreshold
         ? interruptEvidenceWatch.silentFrames + 1
         : 0;
-      if (interruptEvidenceWatch.silentFrames >= 4) {
+      if (interruptEvidenceWatch.silentFrames >= BARGE_IN_SILENCE_FRAMES) {
         const watch = interruptEvidenceWatch;
         interruptEvidenceWatch = null;
         void postMediaEvidence(
@@ -282,6 +295,17 @@ const monitorRemoteAudio = (): void => {
           performance.now() - watch.startedAt,
           watch.requestSequence,
         ).catch(() => undefined);
+      }
+    }
+    if (bargeInSilenceWait) {
+      bargeInSilenceWait.silentFrames = level < silenceThreshold
+        ? bargeInSilenceWait.silentFrames + 1
+        : 0;
+      if (bargeInSilenceWait.silentFrames >= BARGE_IN_SILENCE_FRAMES) {
+        const wait = bargeInSilenceWait;
+        bargeInSilenceWait = null;
+        window.clearTimeout(wait.timer);
+        wait.resolve(true);
       }
     }
     remoteEvidenceFrame = requestAnimationFrame(tick);
@@ -336,6 +360,9 @@ const flushIce = async (): Promise<void> => {
 
 const backendSessionPresent = (): boolean => !["none", "closed"].includes(backendStatus.session_state);
 
+const clientInterruptAvailable = (): boolean =>
+  providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
+
 const selectedAudience = (): SessionAudience => backendStatus.session_audience ?? (audienceSelect.value as SessionAudience);
 
 const updateAudienceMode = (): void => {
@@ -346,7 +373,7 @@ const updateControls = (): void => {
   const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
   const textReady = backendStatus.conversation_readiness !== "none";
   const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
-  const clientInterruptReady = providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
+  const clientInterruptReady = clientInterruptAvailable();
   speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
   interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
   voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
@@ -639,8 +666,12 @@ const finishMicrophoneTurn = async (): Promise<void> => {
 
 const toggleVoice = async (): Promise<void> => {
   try {
-    if (recording) await finishMicrophoneTurn();
-    else await startMicrophone();
+    if (recording) {
+      await finishMicrophoneTurn();
+    } else {
+      if (!(await prepareMicrophoneBargeIn())) return;
+      await startMicrophone();
+    }
   } catch (error) {
     stopMicrophoneCapture();
     setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
@@ -666,7 +697,7 @@ const speak = async (): Promise<void> => {
   }
 };
 
-const interruptAvatar = async (): Promise<void> => {
+const interruptAvatar = async (): Promise<boolean> => {
   const voice = activeVoiceEvidence;
   if (voice?.audioStarted) {
     interruptEvidenceWatch = {
@@ -694,15 +725,60 @@ const interruptAvatar = async (): Promise<void> => {
       providerPlaybackId = null;
       updateControls();
       await refreshSessionEvidence();
-      return;
+      return true;
     }
     await api<{ ok: true }>("/api/avatar/interrupt", {});
     await refreshSessionEvidence();
+    return true;
   } catch (error) {
     interruptEvidenceWatch = null;
     setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
     updateControls();
+    return false;
   }
+};
+
+const waitForRemoteSilence = (): Promise<boolean> => {
+  if (!remoteAudioAnalyser || bargeInSilenceWait) return Promise.resolve(false);
+  return new Promise<boolean>((resolve) => {
+    const wait: BargeInSilenceWait = {
+      silentFrames: 0,
+      timer: 0,
+      resolve,
+    };
+    wait.timer = window.setTimeout(() => {
+      if (bargeInSilenceWait === wait) bargeInSilenceWait = null;
+      resolve(false);
+    }, BARGE_IN_SILENCE_TIMEOUT_MILLIS);
+    bargeInSilenceWait = wait;
+  });
+};
+
+const cancelBargeInSilenceWait = (): void => {
+  if (!bargeInSilenceWait) return;
+  const wait = bargeInSilenceWait;
+  bargeInSilenceWait = null;
+  window.clearTimeout(wait.timer);
+  wait.resolve(false);
+};
+
+const prepareMicrophoneBargeIn = async (): Promise<boolean> => {
+  if (!clientInterruptAvailable()) return true;
+  if (!remoteAudioAnalyser) {
+    setStatus("Не удалось подтвердить остановку Persona — запись не начата", "error");
+    return false;
+  }
+  setStatus("Останавливаю ответ Persona перед записью…");
+  const silence = waitForRemoteSilence();
+  if (!(await interruptAvatar())) {
+    cancelBargeInSilenceWait();
+    return false;
+  }
+  if (!(await silence)) {
+    setStatus("Persona не остановилась вовремя — запись не начата", "error");
+    return false;
+  }
+  return true;
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
