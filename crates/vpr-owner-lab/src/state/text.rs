@@ -130,7 +130,9 @@ impl OwnerLabEngine {
                 terminalize_failed_turn(&turn, LabError::Runtime(error.reason_code()))
             })?;
         let evidence_output_sequence = delivery.sequence();
-        let reply = output.take_delivered()?;
+        let reply = output
+            .take_delivered()
+            .map_err(|error| terminalize_failed_turn(&turn, error))?;
         turn.complete().map_err(LabError::Runtime)?;
         Ok(LabTextResult {
             reply,
