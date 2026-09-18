@@ -424,9 +424,19 @@ for required in (
 avatar_source = (CRATES / "vpr-integration" / "src" / "avatar.rs").read_text(encoding="utf-8")
 if "pub trait RealtimeAvatarPort" not in avatar_source:
     raise SystemExit("provider-neutral RealtimeAvatarPort must remain in vpr-integration")
-for method in ("create_session", "submit_answer", "submit_ice_candidate", "speak_text", "speak_audio_url", "close_session"):
+for method in (
+    "create_session",
+    "submit_answer",
+    "submit_ice_candidate",
+    "speak_text",
+    "speak_audio_url",
+    "client_control",
+    "parse_client_event",
+    "prepare_client_interrupt",
+    "close_session",
+):
     if f"fn {method}" not in avatar_source:
-        raise SystemExit(f"RealtimeAvatarPort missing lifecycle operation {method}")
+        raise SystemExit(f"RealtimeAvatarPort missing lifecycle/client-control operation {method}")
 for secret_type in ("WebRtcSessionDescription", "WebRtcIceServer", "WebRtcIceCandidate", "RealtimeAvatarSession"):
     derive = re.search(
         rf"#\[derive\(([^)]*)\)\]\s*pub struct {secret_type}\b",
@@ -450,12 +460,19 @@ if did_config_derive is not None and any(
     raise SystemExit("D-ID config must not expose or clone API credentials through derived traits")
 if "impl RealtimeAvatarPort for DidAgentStreamsAvatar" not in did_source:
     raise SystemExit("D-ID adapter must remain behind RealtimeAvatarPort")
+did_client_control = (
+    CRATES / "vpr-provider-did-agent-streams" / "src" / "client_control.rs"
+).read_text(encoding="utf-8")
+for required in ("JanusDataChannel", "stream/started", "stream/done", "stream/interrupt", "videoId"):
+    if required not in did_client_control:
+        raise SystemExit(f"D-ID client-control wire contract missing {required}")
 
 owner_lab_src = CRATES / "vpr-owner-lab" / "src"
 owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
 owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
 owner_lab_providers = (owner_lab_src / "providers.rs").read_text(encoding="utf-8")
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
+owner_lab_app = (owner_lab_ui_root / "src" / "app.ts").read_text(encoding="utf-8")
 owner_lab_bundle = owner_lab_ui_root / "dist" / "app.js"
 if not owner_lab_bundle.is_file():
     raise SystemExit("Owner Lab browser bundle must remain versioned for Rust include_str embedding")
@@ -493,6 +510,13 @@ for required_provider_boundary in (
         )
 if "open_realtime_avatar" not in owner_lab_state or ".create_session(" in owner_lab_state:
     raise SystemExit("Owner Lab must use canonical runtime avatar binding, not provider session creation")
+owner_lab_client_control = (owner_lab_src / "state" / "client_control.rs").read_text(encoding="utf-8")
+for required in (
+    "parse_realtime_avatar_client_event",
+    "prepare_realtime_avatar_client_interrupt",
+):
+    if required not in owner_lab_client_control:
+        raise SystemExit(f"Owner Lab client control must remain runtime-bound: {required}")
 if "if !self.egress_enabled" not in owner_lab_state or "if !request.consent" not in owner_lab_state:
     raise SystemExit("Owner Lab production start path must retain process egress and explicit-consent gates")
 for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secret-key"):
@@ -500,6 +524,22 @@ for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secr
         raise SystemExit(f"Owner Lab UI must not contain provider secrets/endpoints: {forbidden}")
 if 'fetch("http' in owner_lab_ui or "fetch('http" in owner_lab_ui:
     raise SystemExit("Owner Lab UI must use same-origin backend APIs only")
+for forbidden_did_wire in ("JanusDataChannel", "stream/started", "stream/done", "stream/interrupt"):
+    if forbidden_did_wire in owner_lab_app:
+        raise SystemExit(
+            f"Owner Lab application must not own D-ID data-channel protocol: {forbidden_did_wire}"
+        )
+for required_client_control in (
+    "start.client_control",
+    "createDataChannel",
+    "/api/avatar/client-event",
+    "/api/avatar/client-interrupt",
+    "channel.send(command.payload)",
+):
+    if required_client_control not in owner_lab_app:
+        raise SystemExit(
+            f"Owner Lab browser client-control transport missing {required_client_control}"
+        )
 for required_ui_recovery in (
     "backendSessionPresent",
     "syncStatus",
@@ -690,6 +730,8 @@ for method in (
     "speak_realtime_avatar_text",
     "deliver_realtime_avatar_text",
     "speak_realtime_avatar_audio_url",
+    "parse_realtime_avatar_client_event",
+    "prepare_realtime_avatar_client_interrupt",
     "interrupt_realtime_avatar",
     "close_realtime_avatar",
 ):
