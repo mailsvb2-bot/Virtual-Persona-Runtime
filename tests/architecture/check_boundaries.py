@@ -528,6 +528,24 @@ if "owner_context_state" not in owner_lab_ui or "!ownerCaptureReviewed" not in o
 if "OWNER_CAPTURE_JS" not in owner_lab_main or '"/owner-capture.js"' not in owner_lab_main:
     raise SystemExit("Owner Lab backend must serve the versioned owner-capture browser module")
 
+owner_lab_text = (owner_lab_src / "state" / "text.rs").read_text(encoding="utf-8")
+for required_text_runtime in (
+    "execute_llm",
+    "TimedGeneratedTextBuffer",
+    "deliver_text",
+    "interrupt_handle",
+    "evidence_output_sequence",
+):
+    if required_text_runtime not in owner_lab_text:
+        raise SystemExit(f"Owner Lab text path must remain canonical: {required_text_runtime}")
+for required_text_http in (
+    "/api/text/turn",
+    "begin_text_request",
+    "complete_text_request",
+):
+    if required_text_http not in owner_lab_main:
+        raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
+
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
 owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
@@ -582,6 +600,9 @@ evaluation_session_evidence = (CRATES / "vpr-evaluation" / "src" / "session_evid
 for required_evidence_boundary in (
     "LabSessionEvidenceRecorder",
     "LabMediaEvidenceInput",
+    "begin_text_request",
+    "complete_text_request",
+    "first_meaningful_response_millis",
     "stt_millis",
     "llm_millis",
     "server_total_millis",
@@ -589,8 +610,8 @@ for required_evidence_boundary in (
     if required_evidence_boundary not in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
 for required_shared_evidence in (
-    "rt0-owner-lab-session-evidence-0.4",
-    "rt0-owner-lab-session-aggregate-0.4",
+    "rt0-owner-lab-session-evidence-0.5",
+    "rt0-owner-lab-session-aggregate-0.5",
     "aggregate_owner_lab_session_evidence",
     "canonical_playback_proven",
     "canonical_output_sequence",
