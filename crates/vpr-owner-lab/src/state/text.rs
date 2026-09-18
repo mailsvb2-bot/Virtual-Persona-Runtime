@@ -85,7 +85,7 @@ impl OwnerLabEngine {
     /// cancellation, empty provider output, or a provider failure.
     pub fn text_turn(
         &mut self,
-        input: String,
+        input: &str,
         register_interrupt: impl FnOnce(TurnInterruptHandle),
     ) -> Result<LabTextResult, LabError> {
         let input = input.trim();
