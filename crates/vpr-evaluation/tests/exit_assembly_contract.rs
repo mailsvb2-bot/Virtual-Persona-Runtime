@@ -238,12 +238,9 @@ impl AssemblyFixture {
             ],
             "av_sync_samples":[]
         }));
-        let bound = bind_owner_lab_session_evidence(
-            &[snapshot.as_slice()],
-            &provider_state,
-            CANDIDATE,
-        )
-        .unwrap();
+        let bound =
+            bind_owner_lab_session_evidence(&[snapshot.as_slice()], &provider_state, CANDIDATE)
+                .unwrap();
         let session = serde_json::to_vec_pretty(&bound).unwrap();
         let supporting = SupportingFixture::new(&provider_digest);
         Self {
@@ -285,7 +282,9 @@ fn assembler_preserves_failed_real_evidence_without_claiming_readiness() {
         CheckStatus::Failed
     );
     assert_eq!(
-        evidence.privacy_permissions.accepted_private_context_leakage,
+        evidence
+            .privacy_permissions
+            .accepted_private_context_leakage,
         1
     );
     assert_eq!(
