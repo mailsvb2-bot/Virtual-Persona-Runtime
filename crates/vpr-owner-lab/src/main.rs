@@ -107,8 +107,11 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut providers = ProviderBundle::from_env(false)?;
     let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
         .map_err(|_| "owner-lab runtime initialization failed")?;
-    if let (Some(stt), Some(llm)) = (providers.stt.take(), providers.llm.take()) {
-        engine = engine.with_voice(stt, llm);
+    if let Some(llm) = providers.llm.take() {
+        engine = engine.with_llm(llm);
+    }
+    if let Some(stt) = providers.stt.take() {
+        engine = engine.with_stt(stt);
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
@@ -249,6 +252,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 }),
             )
         }),
+        "/api/text/turn" => text_turn_response(request, state),
         "/api/avatar/speak" => parse_json::<SpeakBody>(request)
             .and_then(|body| apply_input(state, OwnerLabTurnInput::Text(body.text))),
         "/api/avatar/audio" => parse_json::<AudioBody>(request)
@@ -321,6 +325,68 @@ fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpRespon
                 state.session_end_requested.store(false, Ordering::Release);
             }
             Err(lab_error_response(&error))
+        }
+    }
+}
+
+fn text_turn_response(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    reject_if_session_ending(state)?;
+    if state
+        .voice_busy
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    let _busy =
+        http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
+    reject_if_session_ending(state)?;
+    let request_sequence = http_evidence::request_sequence(request)
+        .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+    let body = parse_json::<SpeakBody>(request)?;
+    state
+        .evidence
+        .lock()
+        .begin_text_request(request_sequence)
+        .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+
+    let result = {
+        let Ok(mut engine) = state.engine.lock() else {
+            let _ = state
+                .evidence
+                .lock()
+                .fail_text_request(request_sequence, "INTERNAL_ERROR");
+            return Err(error_response(500, "INTERNAL_ERROR"));
+        };
+        let result = engine.text_turn(body.text, |handle| {
+            *state.active_voice_interrupt.lock() = Some(handle.clone());
+            if state.voice_cancel_requested.load(Ordering::Acquire) {
+                let _ = handle.interrupt();
+            }
+        });
+        *state.active_voice_interrupt.lock() = None;
+        result
+    };
+    match result {
+        Ok(value) => state
+            .evidence
+            .lock()
+            .complete_text_request(request_sequence, &value)
+            .map(|()| json_response(200, &value))
+            .map_err(|error| error_response(http_evidence::error_status(error), error.code())),
+        Err(error) => {
+            if let Err(evidence_error) = state
+                .evidence
+                .lock()
+                .fail_text_request(request_sequence, error.code())
+            {
+                Err(error_response(
+                    http_evidence::error_status(evidence_error),
+                    evidence_error.code(),
+                ))
+            } else {
+                Err(lab_error_response(&error))
+            }
         }
     }
 }
