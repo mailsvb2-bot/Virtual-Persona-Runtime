@@ -95,7 +95,7 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
-    validate_browser_quality_binding(evidence, &recomputed.aggregate)
+    validate_session_quality_binding(evidence, &recomputed.aggregate)
 }
 
 /// Validates that real-conversation claims are derived from the credentialed conversation receipt
