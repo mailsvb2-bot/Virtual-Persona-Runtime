@@ -253,6 +253,7 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
         "text_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":6,
+            "canonical_output_sequence":16,
             "status":"completed",
             "failure_code":null,
             "first_meaningful_response_millis":100,
