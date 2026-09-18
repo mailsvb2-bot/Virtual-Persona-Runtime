@@ -9,9 +9,8 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
-    TtsProbeEvidence,
-    bind_owner_lab_session_evidence, evaluate_bound_golden_suite, evaluate_rt0_exit_evidence,
-    sha256_hex,
+    TtsProbeEvidence, bind_owner_lab_session_evidence, evaluate_bound_golden_suite,
+    evaluate_rt0_exit_evidence, sha256_hex,
 };
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
