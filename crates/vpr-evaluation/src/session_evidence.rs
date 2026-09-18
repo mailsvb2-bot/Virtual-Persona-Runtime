@@ -2,22 +2,16 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{LatencyDistributionMillis, ParticipantRole, sha256_hex};
+use crate::{
+    LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
+    SessionUsageEvidence, sha256_hex,
+};
 
 pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.5";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.5";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct SessionUsageEvidence {
-    pub input_units: Option<u64>,
-    pub output_units: Option<u64>,
-    pub estimated_cost_microunits: Option<u64>,
-    pub provider_charge_microunits: Option<u64>,
-}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -84,27 +78,6 @@ pub struct LabVoiceAttemptEvidence {
     pub avatar_millis: Option<u64>,
     pub server_total_millis: Option<u64>,
     pub stt_usage: Option<SessionUsageEvidence>,
-    pub llm_usage: Option<SessionUsageEvidence>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum LabTextAttemptStatus {
-    Pending,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LabTextAttemptEvidence {
-    pub request_sequence: u64,
-    pub canonical_turn_sequence: Option<u64>,
-    pub canonical_output_sequence: Option<u64>,
-    pub status: LabTextAttemptStatus,
-    pub failure_code: Option<String>,
-    pub first_meaningful_response_millis: Option<u64>,
-    pub server_total_millis: Option<u64>,
     pub llm_usage: Option<SessionUsageEvidence>,
 }
 
