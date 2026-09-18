@@ -68,13 +68,13 @@ pub struct LiveProviderProbeReceipt {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LiveProviderProbeValidationError {
+pub enum LiveProviderProbeValidationError {
     Invalid,
     CandidateMismatch,
     ProviderStateMismatch,
 }
 
-pub(crate) fn validate_live_provider_probe(
+pub fn validate_live_provider_probe(
     probe: &LiveProviderProbeReceipt,
     exact_candidate_sha: &str,
     provider_state_sha256: &str,
