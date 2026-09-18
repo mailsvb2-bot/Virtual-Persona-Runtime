@@ -1,9 +1,7 @@
 use serde::Deserialize;
 use tiny_http::Request;
 
-use super::{
-    AppState, HttpResponse, parse_json, reject_if_session_ending, with_engine_result,
-};
+use super::{AppState, HttpResponse, parse_json, reject_if_session_ending, with_engine_result};
 
 #[derive(Deserialize)]
 struct ClientInterruptBody {
@@ -21,14 +19,16 @@ pub(super) fn route_post(
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     match path {
-        "/api/avatar/client-event" => Some(parse_json::<ClientEventBody>(request).and_then(|body| {
-            reject_if_session_ending(state)?;
-            with_engine_result(state, |engine| {
-                engine
-                    .parse_client_event(&body.message)
-                    .map(|event| super::json_response(200, &event))
-            })
-        })),
+        "/api/avatar/client-event" => {
+            Some(parse_json::<ClientEventBody>(request).and_then(|body| {
+                reject_if_session_ending(state)?;
+                with_engine_result(state, |engine| {
+                    engine
+                        .parse_client_event(&body.message)
+                        .map(|event| super::json_response(200, &event))
+                })
+            }))
+        }
         "/api/avatar/client-interrupt" => {
             Some(parse_json::<ClientInterruptBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
