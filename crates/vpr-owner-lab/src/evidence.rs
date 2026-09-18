@@ -116,7 +116,11 @@ impl LabSessionEvidenceRecorder {
             .text_attempts
             .get_mut(&request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabTextAttemptStatus::Pending
+        if attempt.status != LabTextAttemptStatus::Pending {
+            return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        if result.evidence_turn_sequence == 0
+            || result.evidence_output_sequence == 0
             || result.first_meaningful_response_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.first_meaningful_response_millis > result.total_millis
