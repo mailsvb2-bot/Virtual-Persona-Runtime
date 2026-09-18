@@ -6,8 +6,8 @@ use vpr_domain::{
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
-    LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, SttPort, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    LlmPort, RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarPort, SttPort,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -43,11 +43,34 @@ pub enum OwnerLabTurnInput {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LabClientControl {
+    pub data_channel_label: String,
+    pub interrupt: bool,
+}
+
+#[derive(Clone, Serialize, PartialEq, Eq)]
+pub struct LabClientCommand {
+    pub data_channel_label: String,
+    pub payload: String,
+}
+
+impl std::fmt::Debug for LabClientCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LabClientCommand")
+            .field("data_channel_label", &self.data_channel_label)
+            .field("payload_bytes", &self.payload.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabSignalBundle {
     pub evidence_session_sequence: u64,
     pub offer: LabSessionDescription,
     pub ice_servers: Vec<LabIceServer>,
     pub capabilities: Vec<String>,
+    pub client_control: Option<LabClientControl>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -368,6 +391,34 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
+    /// Prepares one provider-specific browser data-channel interruption command through the
+    /// canonical runtime authority boundary.
+    ///
+    /// # Errors
+    /// Fails closed when no session-scoped client interruption is available, the playback
+    /// identifier is malformed, or current authority/egress policy denies the operation.
+    pub fn prepare_client_interrupt(
+        &mut self,
+        playback_id: &str,
+    ) -> Result<LabClientCommand, LabError> {
+        if playback_id.trim().is_empty() {
+            return Err(LabError::InvalidInput);
+        }
+        let turn = self.new_turn()?;
+        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        let command: RealtimeAvatarClientCommand = turn
+            .prepare_realtime_avatar_client_interrupt(
+                self.provider.as_ref(),
+                handle,
+                playback_id,
+            )
+            .map_err(map_provider_execution)?;
+        Ok(LabClientCommand {
+            data_channel_label: command.data_channel_label,
+            payload: command.payload,
+        })
+    }
+
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
@@ -465,7 +516,11 @@ fn signal_bundle(
     evidence_session_sequence: u64,
 ) -> LabSignalBundle {
     let provider_capabilities = port.capabilities();
-    let capabilities = [
+    let client_control = handle.client_control().map(|control| LabClientControl {
+        data_channel_label: control.data_channel_label.clone(),
+        interrupt: control.interrupt,
+    });
+    let mut capabilities: Vec<String> = [
         (RealtimeAvatarCapability::TextInput, "text"),
         (RealtimeAvatarCapability::AudioUrlInput, "audio_url"),
         (RealtimeAvatarCapability::Interrupt, "interrupt"),
@@ -474,6 +529,11 @@ fn signal_bundle(
     .filter(|(capability, _)| provider_capabilities.supports(*capability))
     .map(|(_, name)| name.to_owned())
     .collect();
+    if client_control.as_ref().is_some_and(|control| control.interrupt)
+        && !capabilities.iter().any(|name| name == "interrupt")
+    {
+        capabilities.push("interrupt".to_owned());
+    }
     LabSignalBundle {
         evidence_session_sequence,
         offer: LabSessionDescription {
@@ -482,6 +542,7 @@ fn signal_bundle(
         },
         ice_servers: handle.ice_servers().iter().map(map_ice_server).collect(),
         capabilities,
+        client_control,
     }
 }
 
