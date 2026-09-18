@@ -24,3 +24,7 @@ path = "src/bin/rt0_session_aggregate.rs"
 [[bin]]
 name = "vpr-rt0-evidence-inventory"
 path = "src/bin/rt0_evidence_inventory.rs"
+
+[[bin]]
+name = "vpr-rt0-supporting-preflight"
+path = "src/bin/rt0_supporting_preflight.rs"

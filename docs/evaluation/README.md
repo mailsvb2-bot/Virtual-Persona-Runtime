@@ -53,6 +53,30 @@ cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
 
 Exit `0` means only that every expected inventory slot is present, `exit-evidence.json` is structurally bound to the presented core/supporting artifacts for the exact candidate/provider state, the external runtime receipts agree with those bindings, and the raw session snapshots exactly reproduce the archived bound session aggregate. The canonical inventory requires `conversation-attempt.json`, `bound-session-aggregate.json`, all ten supporting-evidence files, and every raw session snapshot named by that aggregate's `snapshot_sha256` list; malformed, stale, cross-candidate, cross-provider, detached, missing, tampered, duplicate, or unbound evidence keeps the inventory incomplete. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
 
+## RT0 supporting-evidence preflight
+
+Before assembling `exit-evidence.json`, `vpr-rt0-supporting-preflight` can validate the ten
+supporting artifacts as a non-promoting typed preflight:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-supporting-preflight -- \
+  /secure/evidence/rt0-candidate/supporting \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  "$(git rev-parse HEAD)"
+```
+
+The preflight requires exact candidate binding for CI/E2E and exact candidate + provider-state
+binding for owner/visitor conversation, acceptance, quality, cost, privacy/permissions and human
+evaluation. The seven real-evidence slots must declare `origin=real`; owner/visitor roles are
+checked; latency distributions must be structurally valid; human review must contain a non-empty
+rubric, at least one reviewer and all five mandatory recorded dimensions; `known-limitations.md`
+must be non-empty.
+
+A successful report emits exact SHA-256 digests for all ten supporting artifacts and
+`preflight_complete=true`. It deliberately has no `ready` field and does not turn failed
+acceptance/privacy/usability results into passes. The final exit gate remains responsible for the
+substantive RT0 thresholds and for binding these artifact bytes to `exit-evidence.json`.
+
 ## RT0 exit-evidence gate
 
 `vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as a successful bound Golden report. The exit checker also re-evaluates the archived private Golden evidence against the compiled mandatory RT0 minimum suite before trusting that report. It does not create evidence and cannot turn mock/synthetic results into real evidence.

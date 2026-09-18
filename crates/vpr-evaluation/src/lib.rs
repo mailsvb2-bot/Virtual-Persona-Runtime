@@ -7,6 +7,7 @@ mod golden;
 mod live_provider;
 mod session_binding;
 mod session_evidence;
+mod supporting_preflight;
 
 pub use binding::{
     BoundGoldenReport, EvidenceBinding, EvidenceBindingError, EvidenceVerificationContext,
@@ -52,4 +53,9 @@ pub use session_evidence::{
     LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
     SessionUsageEvidence, aggregate_owner_lab_session_evidence,
+};
+
+pub use supporting_preflight::{
+    RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,
+    Rt0SupportingPreflightError, Rt0SupportingPreflightReport, preflight_rt0_supporting_artifacts,
 };
