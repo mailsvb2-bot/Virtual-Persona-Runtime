@@ -188,11 +188,7 @@ pub fn preflight_rt0_supporting_artifacts(
         exact_candidate_sha,
         &provider_state_sha256,
     )?;
-    validate_cost(
-        artifacts.cost,
-        exact_candidate_sha,
-        &provider_state_sha256,
-    )?;
+    validate_cost(artifacts.cost, exact_candidate_sha, &provider_state_sha256)?;
     validate_privacy(
         artifacts.privacy_permissions,
         exact_candidate_sha,
@@ -315,8 +311,7 @@ fn validate_quality(
         recoverable_reconnect: claim.recoverable_reconnect,
         artifact_sha256: "0".repeat(64),
     };
-    validate_quality_latencies(&quality)
-        .map_err(|_| Rt0SupportingPreflightError::InvalidQuality)
+    validate_quality_latencies(&quality).map_err(|_| Rt0SupportingPreflightError::InvalidQuality)
 }
 
 fn validate_cost(
