@@ -6,7 +6,8 @@ use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
 use vpr_owner_lab::{OwnerCaptureError, OwnerContextState, Rt0OwnerCapture};
 
 use crate::{
-    AppState, HttpResponse, error_response, json_response, lab_error_response, parse_json,
+    AppState, HttpResponse, error_response, json_response, lab_error_response, parse_empty_json,
+    parse_json,
 };
 
 #[derive(Default)]
@@ -70,11 +71,11 @@ pub(crate) fn route_post(
     let result = match path {
         "/api/persona/create" => create_persona(request, state),
         "/api/persona/capture/answer" => submit_answer(request, state),
-        "/api/persona/capture/finish" => finish_capture(state),
+        "/api/persona/capture/finish" => finish_capture(request, state),
         "/api/persona/claims/approve" => approve_claim(request, state),
         "/api/persona/claims/correct" => correct_claim(request, state),
-        "/api/persona/review/complete" => complete_review(state),
-        "/api/persona/reviewed" => reviewed_snapshot(state),
+        "/api/persona/review/complete" => complete_review(request, state),
+        "/api/persona/reviewed" => reviewed_snapshot(request, state),
         _ => return None,
     };
     Some(result)
@@ -113,7 +114,8 @@ fn submit_answer(request: &mut Request, state: &AppState) -> Result<HttpResponse
     .map(|snapshot| json_response(200, &snapshot))
 }
 
-fn finish_capture(state: &AppState) -> Result<HttpResponse, HttpResponse> {
+fn finish_capture(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    parse_empty_json(request)?;
     with_capture(state, |capture| {
         capture.finish_capture()?;
         Ok(capture.snapshot())
@@ -156,7 +158,8 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
     Ok(json_response(200, &engine.status()))
 }
 
-fn reviewed_snapshot(state: &AppState) -> Result<HttpResponse, HttpResponse> {
+fn reviewed_snapshot(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    parse_empty_json(request)?;
     let engine = state
         .engine
         .lock()
@@ -167,7 +170,8 @@ fn reviewed_snapshot(state: &AppState) -> Result<HttpResponse, HttpResponse> {
     Ok(json_response(200, &snapshot))
 }
 
-fn complete_review(state: &AppState) -> Result<HttpResponse, HttpResponse> {
+fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    parse_empty_json(request)?;
     let mut engine = state
         .engine
         .lock()
