@@ -47,8 +47,20 @@ impl DidClientControlRegistry {
 
     pub(super) fn parse_event(
         &self,
+        session: &RealtimeAvatarSession,
         message: &str,
     ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+        if !self
+            .interrupt_sessions
+            .lock()
+            .map_err(|_| invalid_response())?
+            .contains(&session_key(session))
+        {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: false,
+            });
+        }
         if message.len() > MAX_CLIENT_EVENT_BYTES {
             return Err(invalid_response());
         }
