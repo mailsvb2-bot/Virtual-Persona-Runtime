@@ -341,10 +341,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["golden_evidence_digest_matches_report"],
         json!(true)
     );
-    assert_eq!(
-        report["bindings"]["golden_report_recomputed"],
-        json!(true)
-    );
+    assert_eq!(report["bindings"]["golden_report_recomputed"], json!(true));
     assert_eq!(
         report["bindings"]["exit_golden_report_digest_matches"],
         json!(true)
@@ -471,10 +468,7 @@ fn tampered_private_golden_bytes_keep_inventory_incomplete() {
         report["bindings"]["golden_evidence_digest_matches_report"],
         json!(false)
     );
-    assert_eq!(
-        report["bindings"]["golden_report_recomputed"],
-        json!(false)
-    );
+    assert_eq!(report["bindings"]["golden_report_recomputed"], json!(false));
 }
 
 #[test]
