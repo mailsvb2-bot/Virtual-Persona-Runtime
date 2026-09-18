@@ -6,6 +6,7 @@ fn text_result() -> LabTextResult {
         reply: "приватный текстовый ответ".into(),
         locale: "ru-RU".into(),
         evidence_turn_sequence: 6,
+        evidence_output_sequence: 2,
         first_meaningful_response_millis: 90,
         total_millis: 140,
         llm_usage: LabVoiceUsage {
@@ -97,6 +98,7 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     let snapshot = recorder.snapshot().unwrap();
     let json = serde_json::to_string(&snapshot).unwrap();
     assert_eq!(snapshot.text_attempts[0].canonical_turn_sequence, Some(6));
+    assert_eq!(snapshot.text_attempts[0].canonical_output_sequence, Some(2));
     assert_eq!(
         snapshot.text_attempts[0].first_meaningful_response_millis,
         Some(90)
