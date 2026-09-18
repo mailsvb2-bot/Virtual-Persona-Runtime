@@ -15,7 +15,7 @@ use vpr_evaluation::{
     validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.4";
+const SCHEMA: &str = "rt0-evidence-inventory-0.5";
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 const REQUIRED: &[&str] = &[
     "provider-state.json",
@@ -25,6 +25,7 @@ const REQUIRED: &[&str] = &[
     "bound-golden-report.json",
     "private-golden-evidence.json",
     "exit-evidence.json",
+    "release-spec.md",
     "ci-evidence.json",
     "e2e-evidence.json",
     "owner-conversation.json",
@@ -49,6 +50,8 @@ struct BindingChecks {
     candidate_sha_valid: bool,
     exit_candidate_matches: Option<bool>,
     exit_release_spec_matches_golden: Option<bool>,
+    release_spec_digest_matches_exit: Option<bool>,
+    release_spec_digest_matches_golden: Option<bool>,
     exit_golden_report_digest_matches: Option<bool>,
     exit_provider_state_matches: Option<bool>,
     exit_probe_digest_matches: Option<bool>,
@@ -71,6 +74,8 @@ impl BindingChecks {
             && [
                 self.exit_candidate_matches,
                 self.exit_release_spec_matches_golden,
+                self.release_spec_digest_matches_exit,
+                self.release_spec_digest_matches_golden,
                 self.exit_golden_report_digest_matches,
                 self.exit_provider_state_matches,
                 self.exit_probe_digest_matches,
@@ -94,6 +99,8 @@ impl BindingChecks {
 struct ExitBindingChecks {
     candidate_matches: Option<bool>,
     release_spec_matches_golden: Option<bool>,
+    release_spec_digest_matches_exit: Option<bool>,
+    release_spec_digest_matches_golden: Option<bool>,
     golden_report_digest_matches: Option<bool>,
     provider_state_matches: Option<bool>,
     probe_digest_matches: Option<bool>,
@@ -261,6 +268,8 @@ fn inspect_binding_checks(
         candidate_sha_valid: valid_candidate_sha(candidate_sha),
         exit_candidate_matches: exit.candidate_matches,
         exit_release_spec_matches_golden: exit.release_spec_matches_golden,
+        release_spec_digest_matches_exit: exit.release_spec_digest_matches_exit,
+        release_spec_digest_matches_golden: exit.release_spec_digest_matches_golden,
         exit_golden_report_digest_matches: exit.golden_report_digest_matches,
         exit_provider_state_matches: exit.provider_state_matches,
         exit_probe_digest_matches: exit.probe_digest_matches,
@@ -292,6 +301,16 @@ fn inspect_exit_binding_checks(
         release_spec_matches_golden: parsed.exit.as_ref().zip(parsed.golden.as_ref()).map(
             |(evidence, report)| evidence.release_spec_sha256 == report.binding.release_spec_sha256,
         ),
+        release_spec_digest_matches_exit: parsed
+            .exit
+            .as_ref()
+            .zip(file_digest(root, "release-spec.md"))
+            .map(|(evidence, digest)| evidence.release_spec_sha256 == digest),
+        release_spec_digest_matches_golden: parsed
+            .golden
+            .as_ref()
+            .zip(file_digest(root, "release-spec.md"))
+            .map(|(report, digest)| report.binding.release_spec_sha256 == digest),
         golden_report_digest_matches: exit_digest_matches(
             parsed.exit.as_ref(),
             root,
