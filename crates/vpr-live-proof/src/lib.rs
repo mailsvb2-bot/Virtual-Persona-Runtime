@@ -17,7 +17,7 @@ pub use conversation::{
 pub use probe::{LiveProviderProbeError, run_provider_probe};
 pub use vpr_evaluation::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
-    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, TtsProbeEvidence,
 };
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";

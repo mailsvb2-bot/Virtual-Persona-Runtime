@@ -19,7 +19,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - owner-only post-review browser correction over a CSRF-protected current-revision snapshot; corrections preserve history internally, advance PersonaVersion, and the next canonical turn reads the corrected current revision;
 - visitor-scoped Owner Lab sessions over the same reviewed Persona identity/version, with owner-reviewed claim text and claim-count metadata withheld from visitor scope, direct speech injection denied, and visitor LLM context assembled without owner-private material;
 - deterministic Golden harness and exact-candidate RT0 exit-evidence checker;
-- credentialed live-proof preflight and sanitized live-provider reachability probe;
+- credentialed live-proof preflight and sanitized STT/LLM/TTS/avatar live-provider reachability probe; TTS is exercised through canonical `ActiveTurn::execute_tts` with its own sanitized provider/model fingerprint, synthesized-audio digest/duration and usage evidence without being misrepresented as part of the STT/LLM/realtime-avatar conversation provider state;
 - credentialed owner/visitor conversation-attempt runner that reuses the canonical Owner Lab engine and emits only sanitized exact-candidate/provider-state-bound receipts;
 - sanitized Owner Lab session-evidence capture and deterministic multi-session latency/cost aggregation;
 - CSRF-protected exact-byte export of terminal sanitized Owner Lab session snapshots, with a server-side next-session gate so a closed/revoked owner or visitor snapshot cannot be silently replaced before an explicit export request; the server-side gate remains authoritative across browser reloads while the independent export action remains available;

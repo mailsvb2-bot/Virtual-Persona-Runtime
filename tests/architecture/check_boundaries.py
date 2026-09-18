@@ -31,8 +31,10 @@ allowed_internal_dependencies = {
         "vpr-provider-anthropic",
         "vpr-provider-deepgram-stt",
         "vpr-provider-did-agent-streams",
+        "vpr-provider-elevenlabs-tts",
         "vpr-provider-gemini",
         "vpr-provider-openai-compatible",
+        "vpr-provider-openai-speech",
         "vpr-provider-openai-transcription",
         "vpr-runtime",
     },
@@ -242,7 +244,12 @@ for required in (
 ):
     if required not in live_proof_text:
         raise SystemExit(f"RT0 live-proof preflight missing mandatory invariant {required}")
-for forbidden in ("VPR_DID_API_KEY", "VPR_OWNER_LAB_STT_API_KEY", "VPR_OWNER_LAB_LLM_API_KEY"):
+for forbidden in (
+    "VPR_DID_API_KEY",
+    "VPR_OWNER_LAB_STT_API_KEY",
+    "VPR_OWNER_LAB_LLM_API_KEY",
+    "VPR_OWNER_LAB_TTS_API_KEY",
+):
     if forbidden in live_proof_text:
         raise SystemExit(f"live-proof layer must not read provider secrets directly: {forbidden}")
 
@@ -251,6 +258,11 @@ probe_source = (live_proof_src / "probe.rs").read_text(encoding="utf-8")
 for required_probe_boundary in (
     "execute_stt(",
     "execute_llm(",
+    "execute_tts(",
+    "TtsProbeEvidence",
+    "configuration_fingerprint_sha256",
+    "audio_sha256",
+    "audio_millis",
     "OwnerLabEngine::new",
     ".start(OwnerLabStartRequest { consent: true })",
     ".close()",
@@ -470,6 +482,8 @@ for required_provider_boundary in (
     "VPR_DID_API_KEY",
     "VPR_OWNER_LAB_STT_API_KEY",
     "VPR_OWNER_LAB_LLM_API_KEY",
+    "VPR_OWNER_LAB_TTS_API_KEY",
+    "build_tts_probe_from_env",
     "ProviderBundle",
     "configuration_fingerprint_sha256",
 ):
