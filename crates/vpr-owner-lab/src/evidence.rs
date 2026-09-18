@@ -92,6 +92,7 @@ impl LabSessionEvidenceRecorder {
             LabTextAttemptEvidence {
                 request_sequence,
                 canonical_turn_sequence: None,
+                canonical_output_sequence: None,
                 status: LabTextAttemptStatus::Pending,
                 failure_code: None,
                 first_meaningful_response_millis: None,
@@ -123,6 +124,7 @@ impl LabSessionEvidenceRecorder {
             return Err(LabEvidenceError::InvalidInput);
         }
         attempt.canonical_turn_sequence = Some(result.evidence_turn_sequence);
+        attempt.canonical_output_sequence = Some(result.evidence_output_sequence);
         attempt.status = LabTextAttemptStatus::Completed;
         attempt.first_meaningful_response_millis = Some(result.first_meaningful_response_millis);
         attempt.server_total_millis = Some(result.total_millis);
