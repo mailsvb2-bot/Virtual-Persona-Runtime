@@ -95,7 +95,7 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
-    validate_browser_quality_binding(evidence, &recomputed.aggregate)
+    validate_session_quality_binding(evidence, &recomputed.aggregate)
 }
 
 /// Validates that real-conversation claims are derived from the credentialed conversation receipt
@@ -285,18 +285,20 @@ fn is_russian_locale(locale: &str) -> bool {
     normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
-pub(crate) fn validate_browser_quality_binding(
+pub(crate) fn validate_session_quality_binding(
     evidence: &Rt0ExitEvidence,
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
     validate_quality_latencies(&evidence.quality)?;
     let (
+        Some(first_text),
         Some(first_audio),
         Some(interruption_stop),
         Some(first_video),
         Some(av_sync),
         Some(reconnect),
     ) = (
+        aggregate.text_first_meaningful_response,
         aggregate.first_meaningful_audio,
         aggregate.interruption_stop,
         aggregate.first_useful_video,
@@ -307,6 +309,7 @@ pub(crate) fn validate_browser_quality_binding(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     };
     if !aggregate.av_sync_proven
+        || first_text != evidence.quality.text_first_meaningful_response
         || first_audio != evidence.quality.first_meaningful_audio
         || interruption_stop != evidence.quality.interruption_stop
         || first_video != evidence.quality.first_useful_video
@@ -350,6 +353,7 @@ pub(crate) fn validate_bound_session_aggregate(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
     for distribution in [
+        bound.aggregate.text_first_meaningful_response,
         bound.aggregate.stt_latency,
         bound.aggregate.llm_latency,
         bound.aggregate.avatar_submit_latency,

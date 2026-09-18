@@ -34,12 +34,22 @@ impl Drop for TempDir {
 
 fn snapshot(session: u64, elapsed: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.4",
+        "schema_version":"rt0-owner-lab-session-evidence-0.5",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
         "canonical_playback_proven":true,
         "av_sync_proven":false,
+        "text_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":5 + session,
+            "canonical_output_sequence":15 + session,
+            "status":"completed",
+            "failure_code":null,
+            "first_meaningful_response_millis":elapsed - 250,
+            "server_total_millis":elapsed - 200,
+            "llm_usage":{"input_units":8,"output_units":3,"estimated_cost_microunits":2,"provider_charge_microunits":3}
+        }],
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":10 + session,
@@ -78,9 +88,11 @@ fn cli_aggregates_sanitized_snapshots() {
     );
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["sessions"], 2);
+    assert_eq!(value["text_first_meaningful_response"]["p50"], 150);
+    assert_eq!(value["text_first_meaningful_response"]["p95"], 350);
     assert_eq!(value["first_meaningful_audio"]["p50"], 400);
     assert_eq!(value["first_meaningful_audio"]["p95"], 600);
-    assert_eq!(value["estimated_cost_microunits"], 14);
+    assert_eq!(value["estimated_cost_microunits"], 18);
     assert_eq!(value["canonical_playback_proven"], true);
 }
 

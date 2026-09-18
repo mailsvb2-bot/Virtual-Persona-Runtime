@@ -191,6 +191,16 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
   });
 };
 
+const recordTextTurn = async (
+  page: Page,
+  input: string,
+  reply: string,
+): Promise<void> => {
+  await page.getByLabel("Текстовый разговор").fill(input);
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
+};
+
 const recordVoiceTurn = async (
   page: Page,
   transcript: string,
@@ -220,7 +230,13 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
 
+  await recordTextTurn(
+    page,
+    "Текстовый вопрос владельца",
+    "Текстовый ответ владельцу",
+  );
   await recordVoiceTurn(
     page,
     "Привет из браузера",
@@ -233,6 +249,14 @@ test("owner and visitor voice turns cross the real backend with different contex
     canonical_playback_proven: boolean;
     av_sync_proven: boolean;
     av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
+    text_attempts: Array<{
+      request_sequence: number;
+      canonical_turn_sequence: number;
+      canonical_output_sequence: number;
+      status: string;
+      first_meaningful_response_millis: number;
+      server_total_millis: number;
+    }>;
     voice_attempts: Array<{
       request_sequence: number;
       canonical_turn_sequence: number;
@@ -246,6 +270,15 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(ownerEvidenceJson.text_attempts).toMatchObject([{
+    request_sequence: 1,
+    status: "completed",
+  }]);
+  expect(ownerEvidenceJson.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
+  expect(ownerEvidenceJson.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(ownerEvidenceJson.text_attempts[0]?.first_meaningful_response_millis).toBeLessThanOrEqual(
+    ownerEvidenceJson.text_attempts[0]?.server_total_millis ?? -1,
+  );
   expect(ownerEvidenceJson.av_sync_samples.every((sample) =>
     sample.request_sequence === 1
       && sample.reference === "web_rtc_estimated_playout_timestamp"
@@ -274,6 +307,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("Visitor-сессия WebRTC согласована");
 
+  await recordTextTurn(
+    page,
+    "Текстовый вопрос visitor",
+    "Текстовый ответ visitor",
+  );
   await recordVoiceTurn(
     page,
     "Что думает владелец?",
@@ -287,6 +325,14 @@ test("owner and visitor voice turns cross the real backend with different contex
     canonical_playback_proven: boolean;
     av_sync_proven: boolean;
     av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
+    text_attempts: Array<{
+      request_sequence: number;
+      canonical_turn_sequence: number;
+      canonical_output_sequence: number;
+      status: string;
+      first_meaningful_response_millis: number;
+      server_total_millis: number;
+    }>;
     voice_attempts: Array<{
       request_sequence: number;
       canonical_turn_sequence: number;
@@ -300,6 +346,12 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(visitorEvidenceJson.text_attempts).toMatchObject([{
+    request_sequence: 1,
+    status: "completed",
+  }]);
+  expect(visitorEvidenceJson.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
+  expect(visitorEvidenceJson.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
   expect(visitorEvidenceJson.av_sync_samples.every((sample) =>
     sample.request_sequence === 1
       && sample.reference === "web_rtc_estimated_playout_timestamp"
@@ -343,7 +395,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
   expect(stt).toHaveLength(2);
-  expect(llm).toHaveLength(2);
+  expect(llm).toHaveLength(4);
   expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
@@ -352,13 +404,18 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(stt.every((entry) => entry.contentType?.startsWith("multipart/form-data"))).toBeTruthy();
   expect(stt.every((entry) => entry.bodyLength > 3_000)).toBeTruthy();
   expect(llm.every((entry) => entry.authorization === "Bearer voice-llm-e2e-secret")).toBeTruthy();
-  expect(llm[0]?.bodyText).toContain("Привет из браузера");
+  expect(llm[0]?.bodyText).toContain("Текстовый вопрос владельца");
+  expect(llm[1]?.bodyText).toContain("Привет из браузера");
   for (const ownerAnswer of ownerAnswers) {
     expect(llm[0]?.bodyText).toContain(ownerAnswer);
-    expect(llm[1]?.bodyText).not.toContain(ownerAnswer);
+    expect(llm[1]?.bodyText).toContain(ownerAnswer);
+    expect(llm[2]?.bodyText).not.toContain(ownerAnswer);
+    expect(llm[3]?.bodyText).not.toContain(ownerAnswer);
   }
-  expect(llm[1]?.bodyText).toContain("Что думает владелец?");
-  expect(llm[1]?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
+  expect(llm[2]?.bodyText).toContain("Текстовый вопрос visitor");
+  expect(llm[3]?.bodyText).toContain("Что думает владелец?");
+  expect(llm[2]?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
+  expect(llm[3]?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
 
   expect(avatar.every((entry) => entry.authorization === "Basic voice-avatar-e2e-secret")).toBeTruthy();
   const ownerSpeech = avatar.find((entry) =>

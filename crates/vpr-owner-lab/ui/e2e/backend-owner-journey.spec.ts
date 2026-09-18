@@ -69,8 +69,12 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
-  await page.getByLabel("Что должен сказать аватар").fill("Проверка реального backend пути");
-  await page.getByRole("button", { name: "Сказать", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeDisabled();
+  const directOwnerSpeech = await request.post(`${ownerLabUrl}/api/avatar/speak`, {
+    headers: csrfHeaders(csrf),
+    data: { text: "Проверка низкоуровневого avatar speak" },
+  });
+  expect(directOwnerSpeech.ok()).toBeTruthy();
   const prematureExport = await request.post(`${ownerLabUrl}/api/evidence/session/export`, {
     headers: csrfHeaders(csrf),
     data: {},
@@ -166,6 +170,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   expect(requests.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
   expect(requests.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
   const speech = requests.find((entry) => entry.method === "POST" && entry.path.endsWith("/stream-1"));
-  expect(speech?.body).toContain("Проверка реального backend пути");
+  expect(speech?.body).toContain("Проверка низкоуровневого avatar speak");
   expect(requests.every((entry) => entry.authorization === "Basic backend-e2e-secret")).toBeTruthy();
 });

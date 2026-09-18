@@ -1,5 +1,22 @@
 use super::*;
-use crate::LabVoiceUsage;
+use crate::{LabTextResult, LabVoiceUsage};
+
+fn text_result() -> LabTextResult {
+    LabTextResult {
+        reply: "приватный текстовый ответ".into(),
+        locale: "ru-RU".into(),
+        evidence_turn_sequence: 6,
+        evidence_output_sequence: 2,
+        first_meaningful_response_millis: 90,
+        total_millis: 140,
+        llm_usage: LabVoiceUsage {
+            input_units: Some(10),
+            output_units: Some(3),
+            estimated_cost_microunits: Some(4),
+            provider_charge_microunits: None,
+        },
+    }
+}
 
 fn voice_result() -> LabVoiceResult {
     LabVoiceResult {
@@ -31,6 +48,8 @@ fn voice_result() -> LabVoiceResult {
 fn session_reset_and_snapshot_are_payload_redacted() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(3, ParticipantRole::Owner).unwrap();
+    recorder.begin_text_request(1).unwrap();
+    recorder.complete_text_request(1, &text_result()).unwrap();
     recorder.begin_voice_request(1).unwrap();
     recorder.complete_voice_request(1, &voice_result()).unwrap();
     let audio_started = LabMediaEvidenceInput {
@@ -78,6 +97,12 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     }
     let snapshot = recorder.snapshot().unwrap();
     let json = serde_json::to_string(&snapshot).unwrap();
+    assert_eq!(snapshot.text_attempts[0].canonical_turn_sequence, Some(6));
+    assert_eq!(snapshot.text_attempts[0].canonical_output_sequence, Some(2));
+    assert_eq!(
+        snapshot.text_attempts[0].first_meaningful_response_millis,
+        Some(90)
+    );
     assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
     assert_eq!(
         snapshot.voice_attempts[0].canonical_output_sequence,
@@ -91,7 +116,12 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
     assert!(!json.contains("приватный транскрипт"));
     assert!(!json.contains("приватный ответ"));
+    assert!(!json.contains("приватный текстовый ответ"));
     recorder.seal_session();
+    assert_eq!(
+        recorder.begin_text_request(2),
+        Err(LabEvidenceError::InvalidState)
+    );
     assert_eq!(
         recorder.begin_voice_request(2),
         Err(LabEvidenceError::InvalidState)
@@ -107,8 +137,40 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     );
     recorder.begin_session(4, ParticipantRole::Visitor).unwrap();
     let reset = recorder.snapshot().unwrap();
+    assert!(reset.text_attempts.is_empty());
     assert!(reset.voice_attempts.is_empty());
     assert_eq!(reset.participant_role, ParticipantRole::Visitor);
+}
+
+#[test]
+fn text_attempts_fail_closed_and_keep_payloads_out_of_evidence() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(5, ParticipantRole::Visitor).unwrap();
+    recorder.begin_text_request(1).unwrap();
+    assert_eq!(
+        recorder.begin_text_request(1),
+        Err(LabEvidenceError::DuplicateEvidence)
+    );
+    recorder.complete_text_request(1, &text_result()).unwrap();
+    assert_eq!(
+        recorder.fail_text_request(1, "PROVIDER_TIMEOUT"),
+        Err(LabEvidenceError::DuplicateEvidence)
+    );
+
+    recorder.begin_text_request(2).unwrap();
+    recorder.fail_text_request(2, "PROVIDER_TIMEOUT").unwrap();
+    let snapshot = recorder.snapshot().unwrap();
+    assert_eq!(snapshot.text_attempts.len(), 2);
+    assert_eq!(
+        snapshot.text_attempts[0].status,
+        LabTextAttemptStatus::Completed
+    );
+    assert_eq!(
+        snapshot.text_attempts[1].status,
+        LabTextAttemptStatus::Failed
+    );
+    let encoded = serde_json::to_string(&snapshot).unwrap();
+    assert!(!encoded.contains("приватный текстовый ответ"));
 }
 
 #[test]

@@ -469,7 +469,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
 
     let status = http(port, "GET", "/api/status", &host, &[], "");
     let status_json: Value = serde_json::from_str(&status.body).unwrap();
-    assert_eq!(status_json["voice_ready"], true);
+    assert_eq!(status_json["conversation_readiness"], "text_and_voice");
 
     let start = post(
         port,

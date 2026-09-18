@@ -71,9 +71,14 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
     llmSequence += 1;
     record("llm", request, url, body);
-    const reply = llmSequence === 1
-      ? "Голосовой ответ владельцу"
-      : "В visitor scope нет подтверждённых данных владельца";
+    const prompt = body.toString("utf8");
+    const reply = prompt.includes("Текстовый вопрос владельца")
+      ? "Текстовый ответ владельцу"
+      : prompt.includes("Привет из браузера")
+        ? "Голосовой ответ владельцу"
+        : prompt.includes("Текстовый вопрос visitor")
+          ? "Текстовый ответ visitor"
+          : "В visitor scope нет подтверждённых данных владельца";
     return sendText(
       response,
       200,

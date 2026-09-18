@@ -18,6 +18,8 @@ use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwne
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
+const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
+const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance briefly in Russian. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OwnerLabStartRequest {
@@ -68,12 +70,20 @@ pub enum OwnerContextState {
     Reviewed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationReadiness {
+    None,
+    Text,
+    TextAndVoice,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabStatus {
     pub session_state: String,
     pub avatar_open: bool,
     pub egress_enabled: bool,
-    pub voice_ready: bool,
+    pub conversation_readiness: ConversationReadiness,
     pub session_audience: Option<LabSessionAudience>,
     pub owner_context_state: OwnerContextState,
     pub persona_version: u64,
@@ -225,7 +235,11 @@ impl OwnerLabEngine {
                 .as_ref()
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
-            voice_ready: self.stt.is_some() && self.llm.is_some(),
+            conversation_readiness: match (self.llm.is_some(), self.stt.is_some()) {
+                (true, true) => ConversationReadiness::TextAndVoice,
+                (true, false) => ConversationReadiness::Text,
+                (false, _) => ConversationReadiness::None,
+            },
             session_audience: self.session_audience,
             owner_context_state: if self.reviewed_owner_context.is_some() {
                 OwnerContextState::Reviewed
@@ -404,6 +418,17 @@ impl OwnerLabEngine {
         Ok(())
     }
 
+    pub(super) fn conversation_context(&self, utterance: &str) -> Result<String, LabError> {
+        let audience = self.session_audience.ok_or(LabError::InvalidState)?;
+        Ok(match audience {
+            LabSessionAudience::Owner => self.reviewed_owner_context.as_ref().map_or_else(
+                || format!("{OWNER_LAB_FALLBACK_PROMPT_PREFIX}{utterance}"),
+                |context| context.conversation_prompt(utterance),
+            ),
+            LabSessionAudience::Visitor => format!("{VISITOR_PROMPT_PREFIX}{utterance}"),
+        })
+    }
+
     fn persona_identity(&self) -> &PersonaIdentity {
         self.reviewed_owner_context
             .as_ref()
@@ -502,8 +527,10 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
     }
 }
 
+mod text;
 mod voice;
-pub use voice::{LabVoiceResult, LabVoiceUsage};
+pub use text::LabTextResult;
+pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceUsage};
 
 #[cfg(test)]
 mod tests;

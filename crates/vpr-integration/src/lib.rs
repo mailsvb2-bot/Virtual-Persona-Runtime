@@ -69,6 +69,52 @@ mod sealed {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GeneratedTextBuffer(String);
 
+#[derive(Debug)]
+pub struct TimedGeneratedTextBuffer {
+    text: String,
+    started: std::time::Instant,
+    first_meaningful_elapsed_millis: Option<u64>,
+}
+
+impl TimedGeneratedTextBuffer {
+    #[must_use]
+    pub fn start() -> Self {
+        Self {
+            text: String::new(),
+            started: std::time::Instant::now(),
+            first_meaningful_elapsed_millis: None,
+        }
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    #[must_use]
+    pub fn first_meaningful_elapsed_millis(&self) -> Option<u64> {
+        self.first_meaningful_elapsed_millis
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (String, Option<u64>) {
+        (self.text, self.first_meaningful_elapsed_millis)
+    }
+}
+
+impl sealed::GeneratedTextSink for TimedGeneratedTextBuffer {}
+
+impl GeneratedTextSink for TimedGeneratedTextBuffer {
+    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
+        self.text.push_str(chunk);
+        if self.first_meaningful_elapsed_millis.is_none() && !self.text.trim().is_empty() {
+            self.first_meaningful_elapsed_millis =
+                u64::try_from(self.started.elapsed().as_millis()).ok();
+        }
+        Ok(())
+    }
+}
+
 impl GeneratedTextBuffer {
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -458,6 +504,18 @@ mod tests {
         buffer.push_generated_text("При").unwrap();
         buffer.push_generated_text("вет").unwrap();
         assert_eq!(buffer.as_str(), "Привет");
+    }
+
+    #[test]
+    fn timed_generated_text_marks_only_first_meaningful_chunk() {
+        let mut buffer = TimedGeneratedTextBuffer::start();
+        buffer.push_generated_text("   ").unwrap();
+        assert_eq!(buffer.first_meaningful_elapsed_millis(), None);
+        buffer.push_generated_text("Привет").unwrap();
+        let first = buffer.first_meaningful_elapsed_millis().unwrap();
+        buffer.push_generated_text("!").unwrap();
+        assert_eq!(buffer.as_str(), "   Привет!");
+        assert_eq!(buffer.first_meaningful_elapsed_millis(), Some(first));
     }
 
     #[test]

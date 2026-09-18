@@ -61,7 +61,7 @@
         <option value="owner">Владелец — reviewed owner context разрешён</option>
         <option value="visitor">Посетитель — owner context закрыт</option>
       </select>
-      <p class="hint">Visitor-сессия использует ту же Persona, но не получает owner-reviewed личный контекст и не может отправлять прямой текст в голос/аватар.</p>
+      <p class="hint">Visitor-сессия использует ту же Persona, но не получает owner-reviewed личный контекст. Текстовый и голосовой разговоры остаются visitor-scoped; прямой avatar speak не используется как разговор.</p>
       <label class="consent">
         <input id="consent" type="checkbox">
         <span>Я разрешаю отправку данных выбранным внешним провайдерам (аватар, распознавание речи и языковая модель) для этой тестовой сессии.</span>
@@ -74,10 +74,11 @@
     </section>
 
     <section class="panel">
-      <label for="message">Что должен сказать аватар</label>
-      <textarea id="message" rows="3" placeholder="Введите короткую фразу на русском"></textarea>
+      <label for="message">Текстовый разговор</label>
+      <p class="hint">Сообщение идёт через canonical Persona → LLM turn. Первый непустой streaming-ответ измеряется на backend и попадает в sanitized evidence без текста сообщения или ответа.</p>
+      <textarea id="message" rows="3" placeholder="Напишите сообщение на русском"></textarea>
       <div class="row">
-        <button id="speak" class="primary" disabled>Сказать</button>
+        <button id="speak" class="primary" disabled>Отправить</button>
         <button id="interrupt" disabled>Прервать</button>
       </div>
     </section>

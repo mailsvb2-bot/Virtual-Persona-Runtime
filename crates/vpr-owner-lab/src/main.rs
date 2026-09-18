@@ -2,6 +2,7 @@ mod http_evidence;
 mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
+mod http_text;
 
 use std::env;
 use std::error::Error;
@@ -107,8 +108,11 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut providers = ProviderBundle::from_env(false)?;
     let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
         .map_err(|_| "owner-lab runtime initialization failed")?;
-    if let (Some(stt), Some(llm)) = (providers.stt.take(), providers.llm.take()) {
-        engine = engine.with_voice(stt, llm);
+    if let Some(llm) = providers.llm.take() {
+        engine = engine.with_llm(llm);
+    }
+    if let Some(stt) = providers.stt.take() {
+        engine = engine.with_stt(stt);
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
@@ -249,6 +253,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 }),
             )
         }),
+        "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/avatar/speak" => parse_json::<SpeakBody>(request)
             .and_then(|body| apply_input(state, OwnerLabTurnInput::Text(body.text))),
         "/api/avatar/audio" => parse_json::<AudioBody>(request)
