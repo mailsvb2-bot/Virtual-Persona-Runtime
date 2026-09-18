@@ -72,7 +72,12 @@ const server = http.createServer(async (request, response) => {
     llmSequence += 1;
     record("llm", request, url, body);
     const prompt = body.toString("utf8");
-    const reply = prompt.includes("Текстовый вопрос владельца")
+    if (prompt.includes("Спровоцируй отказ провайдера")) {
+      return sendJson(response, 503, { error: { message: "fixture unavailable" } });
+    }
+    const reply = prompt.includes("Восстановление после отказа")
+      ? "Ответ после восстановления"
+      : prompt.includes("Текстовый вопрос владельца")
       ? "Текстовый ответ владельцу"
       : prompt.includes("Привет из браузера")
         ? "Голосовой ответ владельцу"
