@@ -15,6 +15,18 @@ fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
     }
 }
 
+fn completed_text(request: u64, base: u64) -> LabTextAttemptEvidence {
+    LabTextAttemptEvidence {
+        request_sequence: request,
+        canonical_turn_sequence: Some(request + 50),
+        status: LabTextAttemptStatus::Completed,
+        failure_code: None,
+        first_meaningful_response_millis: Some(base + 50),
+        server_total_millis: Some(base + 150),
+        llm_usage: Some(usage(Some(2), Some(3))),
+    }
+}
+
 fn completed(request: u64, base: u64) -> LabVoiceAttemptEvidence {
     LabVoiceAttemptEvidence {
         request_sequence: request,
@@ -40,6 +52,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         participant_role: ParticipantRole::Owner,
         canonical_playback_proven: true,
         av_sync_proven: true,
+        text_attempts: vec![completed_text(request, base)],
         voice_attempts: vec![completed(request, base)],
         media_events: vec![
             LabMediaEvidence {
@@ -91,14 +104,24 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     let aggregate =
         aggregate_owner_lab_session_evidence(&[snapshot(1, 1, 100), snapshot(2, 1, 300)]).unwrap();
     assert_eq!(aggregate.sessions, 2);
+    assert_eq!(aggregate.completed_text_attempts, 2);
+    assert_eq!(aggregate.failed_text_attempts, 0);
     assert_eq!(aggregate.completed_voice_attempts, 2);
+    assert_eq!(
+        aggregate.text_first_meaningful_response.unwrap().p50,
+        150
+    );
+    assert_eq!(
+        aggregate.text_first_meaningful_response.unwrap().p95,
+        350
+    );
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
     assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
     assert_eq!(aggregate.first_useful_video.unwrap().p95, 700);
     assert_eq!(aggregate.recoverable_reconnect.unwrap().p95, 800);
-    assert_eq!(aggregate.estimated_cost_microunits, Some(14));
-    assert_eq!(aggregate.provider_charge_microunits, Some(20));
+    assert_eq!(aggregate.estimated_cost_microunits, Some(18));
+    assert_eq!(aggregate.provider_charge_microunits, Some(26));
     assert!(aggregate.canonical_playback_proven);
     assert!(aggregate.av_sync_proven);
     assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p50, 40);
@@ -116,6 +139,39 @@ fn partial_cost_never_becomes_a_fake_complete_total() {
     let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
     assert_eq!(aggregate.estimated_cost_microunits, None);
     assert_eq!(aggregate.provider_charge_microunits, Some(10));
+}
+
+#[test]
+fn text_attempts_are_exact_and_fail_closed() {
+    let mut pending = snapshot(50, 1, 100);
+    pending.text_attempts[0].status = LabTextAttemptStatus::Pending;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[pending]),
+        Err(LabSessionAggregateError::IncompleteAttempt)
+    );
+
+    let mut impossible = snapshot(51, 1, 100);
+    impossible.text_attempts[0].first_meaningful_response_millis = Some(300);
+    impossible.text_attempts[0].server_total_millis = Some(200);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[impossible]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+
+    let mut failed = snapshot(52, 1, 100);
+    failed.text_attempts[0] = LabTextAttemptEvidence {
+        request_sequence: 1,
+        canonical_turn_sequence: None,
+        status: LabTextAttemptStatus::Failed,
+        failure_code: Some("PROVIDER_TIMEOUT".into()),
+        first_meaningful_response_millis: None,
+        server_total_millis: None,
+        llm_usage: None,
+    };
+    let aggregate = aggregate_owner_lab_session_evidence(&[failed]).unwrap();
+    assert_eq!(aggregate.completed_text_attempts, 0);
+    assert_eq!(aggregate.failed_text_attempts, 1);
+    assert_eq!(aggregate.text_first_meaningful_response, None);
 }
 
 #[test]
