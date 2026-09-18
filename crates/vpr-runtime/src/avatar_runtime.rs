@@ -3,7 +3,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer,
+    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer,
     WebRtcSessionDescription,
 };
 
@@ -190,6 +190,21 @@ impl ActiveTurn {
         self.validate_avatar_handle(port, handle)?;
         let permit = self.avatar_permit()?;
         port.speak_audio_url(&handle.provider_session, audio_url, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Normalizes one provider data-channel message against this exact avatar handle.
+    ///
+    /// # Errors
+    /// Returns a denial for a stale/cross-session handle or a typed provider parse failure.
+    pub fn parse_realtime_avatar_client_event(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        port.parse_client_event(&handle.provider_session, message)
             .map_err(ProviderExecutionError::from)
     }
 
