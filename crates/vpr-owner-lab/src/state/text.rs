@@ -114,21 +114,17 @@ impl OwnerLabEngine {
             )
             .map_err(|error| terminalize_provider_error(&turn, error))?;
         let (reply, first_meaningful_response_millis) = generated.into_parts();
-        let first_meaningful_response_millis =
-            first_meaningful_response_millis.ok_or_else(|| {
-                terminalize_failed_turn(&turn, LabError::InvalidInput)
-            })?;
+        let first_meaningful_response_millis = first_meaningful_response_millis
+            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         if reply.trim().is_empty() {
             return Err(terminalize_failed_turn(&turn, LabError::InvalidInput));
         }
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let output = OwnerLabTextOutputPort::default();
-        let delivery = turn
-            .deliver_text(&output, &reply)
-            .map_err(|error| {
-                terminalize_failed_turn(&turn, LabError::Runtime(error.reason_code()))
-            })?;
+        let delivery = turn.deliver_text(&output, &reply).map_err(|error| {
+            terminalize_failed_turn(&turn, LabError::Runtime(error.reason_code()))
+        })?;
         let evidence_output_sequence = delivery.sequence();
         let reply = output
             .take_delivered()
