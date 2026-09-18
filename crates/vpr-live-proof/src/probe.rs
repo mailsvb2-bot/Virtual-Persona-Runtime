@@ -77,6 +77,17 @@ impl LiveProviderProbeError {
     }
 }
 
+/// Validates the private PCM probe input without constructing or calling providers.
+///
+/// # Errors
+/// Returns `InvalidAudio` when the raw PCM shape cannot satisfy the RT0 probe contract.
+pub fn validate_provider_probe_audio(
+    pcm_s16le_mono_16khz: &[u8],
+) -> Result<(), LiveProviderProbeError> {
+    validate_provider_probe_audio(&pcm_s16le_mono_16khz)?;
+    Ok(())
+}
+
 /// Probes credentialed STT, LLM, TTS, and realtime-avatar control-plane reachability through canonical runtime paths.
 ///
 /// The returned receipt intentionally contains no transcript, generated reply, raw audio, WebRTC signaling,
