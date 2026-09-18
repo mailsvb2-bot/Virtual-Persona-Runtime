@@ -54,6 +54,10 @@ for required in (
     "/api/persona/reviewed",
     "/api/avatar/speak",
     "Отозвать доступ",
+    "/api/avatar/answer",
+    "INVALID_STATE_TRANSITION",
+    "revoked-must-not-egress",
+    "providerAfterRevokedJson.requests",
     "entry.method === \"DELETE\"",
 ):
     if required not in backend_e2e:
