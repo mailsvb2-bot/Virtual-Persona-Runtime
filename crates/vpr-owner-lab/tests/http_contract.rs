@@ -1,5 +1,5 @@
 use std::fmt::Write as FmtWrite;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -109,7 +109,24 @@ fn http_bytes(
     stream.write_all(head.as_bytes()).unwrap();
     stream.write_all(body).unwrap();
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).unwrap();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => response.extend_from_slice(&chunk[..read]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::ConnectionReset
+                        | ErrorKind::ConnectionAborted
+                        | ErrorKind::BrokenPipe
+                ) && http_response_complete(&response) =>
+            {
+                break;
+            }
+            Err(error) => panic!("HTTP response read failed before a complete response: {error}"),
+        }
+    }
     let marker = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -130,6 +147,22 @@ fn http_bytes(
         headers: head.to_ascii_lowercase(),
         body,
     }
+}
+
+fn http_response_complete(response: &[u8]) -> bool {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&response[..header_end]);
+    let Some(content_length) = headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    }) else {
+        return false;
+    };
+    response.len() >= header_end + 4 + content_length
 }
 
 fn http(
@@ -315,6 +348,18 @@ fn assert_provider_sequence(captured: &mpsc::Receiver<String>) {
             .contains("authorization: basic integration-secret")
     }));
     assert!(captured.recv_timeout(Duration::from_millis(100)).is_err());
+}
+
+#[test]
+fn http_response_completion_requires_full_declared_body() {
+    let complete = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone";
+    assert!(http_response_complete(complete));
+    assert!(!http_response_complete(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndo"
+    ));
+    assert!(!http_response_complete(
+        b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\ndone"
+    ));
 }
 
 #[test]
