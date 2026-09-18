@@ -158,7 +158,10 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
     Ok(json_response(200, &engine.status()))
 }
 
-fn reviewed_snapshot(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+fn reviewed_snapshot(
+    request: &mut Request,
+    state: &AppState,
+) -> Result<HttpResponse, HttpResponse> {
     parse_empty_json(request)?;
     let engine = state
         .engine
