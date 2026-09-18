@@ -1,7 +1,12 @@
 use std::time::Instant;
 
 use serde::Serialize;
-use vpr_integration::{LlmRequest, TimedGeneratedTextBuffer};
+use std::sync::Mutex;
+
+use vpr_integration::{
+    CancellationProbe, LlmRequest, RealtimeOutputPort, RealtimeTextOutputEvent,
+    TimedGeneratedTextBuffer, TransportError, TransportErrorKind,
+};
 use vpr_runtime::TurnInterruptHandle;
 
 use super::voice::{
@@ -17,9 +22,54 @@ pub struct LabTextResult {
     pub reply: String,
     pub locale: String,
     pub evidence_turn_sequence: u64,
+    pub evidence_output_sequence: u64,
     pub first_meaningful_response_millis: u64,
     pub total_millis: u64,
     pub llm_usage: LabProviderUsage,
+}
+
+#[derive(Default)]
+struct OwnerLabTextOutputPort {
+    delivered: Mutex<Option<String>>,
+}
+
+impl OwnerLabTextOutputPort {
+    fn take_delivered(&self) -> Result<String, LabError> {
+        self.delivered
+            .lock()
+            .map_err(|_| LabError::Internal)?
+            .take()
+            .ok_or(LabError::Internal)
+    }
+}
+
+impl RealtimeOutputPort for OwnerLabTextOutputPort {
+    fn send_text(
+        &self,
+        event: &RealtimeTextOutputEvent,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), TransportError> {
+        if cancellation.is_cancelled() {
+            return Err(TransportError {
+                kind: TransportErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        let Ok(mut delivered) = self.delivered.lock() else {
+            return Err(TransportError {
+                kind: TransportErrorKind::Unavailable,
+                retryable: false,
+            });
+        };
+        if delivered.is_some() {
+            return Err(TransportError {
+                kind: TransportErrorKind::DeliveryUncertain,
+                retryable: false,
+            });
+        }
+        *delivered = Some(event.text.clone());
+        Ok(())
+    }
 }
 
 impl OwnerLabEngine {
@@ -73,11 +123,20 @@ impl OwnerLabEngine {
         }
 
         turn.begin_output().map_err(LabError::Runtime)?;
+        let output = OwnerLabTextOutputPort::default();
+        let delivery = turn
+            .deliver_text(&output, &reply)
+            .map_err(|error| {
+                terminalize_failed_turn(&turn, LabError::Runtime(error.reason_code()))
+            })?;
+        let evidence_output_sequence = delivery.sequence();
+        let reply = output.take_delivered()?;
         turn.complete().map_err(LabError::Runtime)?;
         Ok(LabTextResult {
             reply,
             locale: "ru-RU".to_owned(),
             evidence_turn_sequence,
+            evidence_output_sequence,
             first_meaningful_response_millis,
             total_millis: elapsed_millis(total_started),
             llm_usage: map_usage(&llm_usage),
