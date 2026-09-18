@@ -39,6 +39,7 @@ let recording = false;
 let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let bargeInPending = false;
 let evidenceSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
@@ -54,11 +55,14 @@ let remoteEvidenceFrame = null;
 let baselineRms = 0.002;
 let activeVoiceEvidence = null;
 let interruptEvidenceWatch = null;
+let bargeInSilenceWait = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const AUTO_STOP_MILLIS = 29_500;
 const AV_SYNC_REFERENCE = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
+const BARGE_IN_SILENCE_FRAMES = 4;
+const BARGE_IN_SILENCE_TIMEOUT_MILLIS = 1_000;
 const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
@@ -211,6 +215,11 @@ const stopRemoteEvidence = () => {
     remoteMediaStream = null;
     activeVoiceEvidence = null;
     interruptEvidenceWatch = null;
+    if (bargeInSilenceWait) {
+        window.clearTimeout(bargeInSilenceWait.timer);
+        bargeInSilenceWait.resolve(false);
+        bargeInSilenceWait = null;
+    }
     baselineRms = 0.002;
 };
 const monitorRemoteAudio = () => {
@@ -246,15 +255,26 @@ const monitorRemoteAudio = () => {
             if (voice.silentFrames >= 6)
                 voice.speaking = false;
         }
+        const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
         if (interruptEvidenceWatch) {
-            const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
             interruptEvidenceWatch.silentFrames = level < silenceThreshold
                 ? interruptEvidenceWatch.silentFrames + 1
                 : 0;
-            if (interruptEvidenceWatch.silentFrames >= 4) {
+            if (interruptEvidenceWatch.silentFrames >= BARGE_IN_SILENCE_FRAMES) {
                 const watch = interruptEvidenceWatch;
                 interruptEvidenceWatch = null;
                 void postMediaEvidence("interruption_stopped", performance.now() - watch.startedAt, watch.requestSequence).catch(() => undefined);
+            }
+        }
+        if (bargeInSilenceWait) {
+            bargeInSilenceWait.silentFrames = level < silenceThreshold
+                ? bargeInSilenceWait.silentFrames + 1
+                : 0;
+            if (bargeInSilenceWait.silentFrames >= BARGE_IN_SILENCE_FRAMES) {
+                const wait = bargeInSilenceWait;
+                bargeInSilenceWait = null;
+                window.clearTimeout(wait.timer);
+                wait.resolve(true);
             }
         }
         remoteEvidenceFrame = requestAnimationFrame(tick);
@@ -306,6 +326,7 @@ const flushIce = async () => {
         await postIce(candidate);
 };
 const backendSessionPresent = () => !["none", "closed"].includes(backendStatus.session_state);
+const clientInterruptAvailable = () => providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
 const selectedAudience = () => backendStatus.session_audience ?? audienceSelect.value;
 const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
@@ -314,10 +335,13 @@ const updateControls = () => {
     const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
     const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
-    const clientInterruptReady = providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
-    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
-    interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
-    voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
+    const clientInterruptReady = clientInterruptAvailable();
+    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || bargeInPending;
+    interruptButton.disabled = bargeInPending
+        || (!textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady);
+    voiceButton.disabled = recording
+        ? false
+        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || bargeInPending;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
         || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
@@ -612,10 +636,14 @@ const finishMicrophoneTurn = async () => {
 };
 const toggleVoice = async () => {
     try {
-        if (recording)
+        if (recording) {
             await finishMicrophoneTurn();
-        else
+        }
+        else {
+            if (!(await prepareMicrophoneBargeIn()))
+                return;
             await startMicrophone();
+        }
     }
     catch (error) {
         stopMicrophoneCapture();
@@ -670,14 +698,68 @@ const interruptAvatar = async () => {
             providerPlaybackId = null;
             updateControls();
             await refreshSessionEvidence();
-            return;
+            return true;
         }
         await api("/api/avatar/interrupt", {});
         await refreshSessionEvidence();
+        return true;
     }
     catch (error) {
         interruptEvidenceWatch = null;
         setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
+        updateControls();
+        return false;
+    }
+};
+const waitForRemoteSilence = () => {
+    if (!remoteAudioAnalyser || bargeInSilenceWait)
+        return Promise.resolve(false);
+    return new Promise((resolve) => {
+        const wait = {
+            silentFrames: 0,
+            timer: 0,
+            resolve,
+        };
+        wait.timer = window.setTimeout(() => {
+            if (bargeInSilenceWait === wait)
+                bargeInSilenceWait = null;
+            resolve(false);
+        }, BARGE_IN_SILENCE_TIMEOUT_MILLIS);
+        bargeInSilenceWait = wait;
+    });
+};
+const cancelBargeInSilenceWait = () => {
+    if (!bargeInSilenceWait)
+        return;
+    const wait = bargeInSilenceWait;
+    bargeInSilenceWait = null;
+    window.clearTimeout(wait.timer);
+    wait.resolve(false);
+};
+const prepareMicrophoneBargeIn = async () => {
+    if (!clientInterruptAvailable())
+        return true;
+    if (!remoteAudioAnalyser || bargeInPending) {
+        setStatus("Не удалось подтвердить остановку Persona — запись не начата", "error");
+        return false;
+    }
+    bargeInPending = true;
+    updateControls();
+    setStatus("Останавливаю ответ Persona перед записью…");
+    try {
+        const silence = waitForRemoteSilence();
+        if (!(await interruptAvatar())) {
+            cancelBargeInSilenceWait();
+            return false;
+        }
+        if (!(await silence)) {
+            setStatus("Persona не остановилась вовремя — запись не начата", "error");
+            return false;
+        }
+        return true;
+    }
+    finally {
+        bargeInPending = false;
         updateControls();
     }
 };
