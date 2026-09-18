@@ -90,7 +90,9 @@ for required in (
     "stream/interrupt",
     "videoId",
     "interruption_stopped",
-    'getByRole("button", { name: "Прервать", exact: true })',
+    "__vprMicStartedWhileRemoteSpeech",
+    '__vprBargeInOrder',
+    'toEqual(["interrupt", "mic"])',
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
@@ -99,6 +101,12 @@ for required in (
     "estimatedPlayoutTimestamp",
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",
+    "prepareMicrophoneBargeIn",
+    "waitForRemoteSilence",
+    "BARGE_IN_SILENCE_FRAMES",
+    "BARGE_IN_SILENCE_TIMEOUT_MILLIS",
+    "await prepareMicrophoneBargeIn()",
+    "bargeInPending",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
