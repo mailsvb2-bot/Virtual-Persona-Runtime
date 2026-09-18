@@ -161,8 +161,14 @@ fn text_attempts_fail_closed_and_keep_payloads_out_of_evidence() {
     recorder.fail_text_request(2, "PROVIDER_TIMEOUT").unwrap();
     let snapshot = recorder.snapshot().unwrap();
     assert_eq!(snapshot.text_attempts.len(), 2);
-    assert_eq!(snapshot.text_attempts[0].status, LabTextAttemptStatus::Completed);
-    assert_eq!(snapshot.text_attempts[1].status, LabTextAttemptStatus::Failed);
+    assert_eq!(
+        snapshot.text_attempts[0].status,
+        LabTextAttemptStatus::Completed
+    );
+    assert_eq!(
+        snapshot.text_attempts[1].status,
+        LabTextAttemptStatus::Failed
+    );
     let encoded = serde_json::to_string(&snapshot).unwrap();
     assert!(!encoded.contains("приватный текстовый ответ"));
 }
