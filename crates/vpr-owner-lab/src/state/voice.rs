@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use serde::Serialize;
 use vpr_domain::{Rt0ReasonCode, TurnState};
-pub use vpr_evaluation::SessionUsageEvidence as LabVoiceUsage;
+pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
+pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
     UsageEvidence,
@@ -12,13 +13,11 @@ use vpr_runtime::{
     TurnInterruptHandle,
 };
 
-use super::{LabError, LabSessionAudience, OwnerLabEngine, map_provider_execution};
+use super::{LabError, OwnerLabEngine, map_provider_execution};
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
-const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab voice conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
-const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance briefly in Russian. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
 
 pub(super) struct PendingVoicePlayback {
     turn: ActiveTurn,
@@ -42,10 +41,20 @@ pub struct LabVoiceResult {
 
 impl OwnerLabEngine {
     #[must_use]
-    pub fn with_voice(mut self, stt: Box<dyn SttPort>, llm: Box<dyn LlmPort>) -> Self {
+    pub fn with_stt(mut self, stt: Box<dyn SttPort>) -> Self {
         self.stt = Some(stt);
+        self
+    }
+
+    #[must_use]
+    pub fn with_llm(mut self, llm: Box<dyn LlmPort>) -> Self {
         self.llm = Some(llm);
         self
+    }
+
+    #[must_use]
+    pub fn with_voice(self, stt: Box<dyn SttPort>, llm: Box<dyn LlmPort>) -> Self {
+        self.with_stt(stt).with_llm(llm)
     }
 
     /// Runs one microphone utterance through STT -> LLM -> realtime avatar on one canonical turn.
@@ -72,7 +81,6 @@ impl OwnerLabEngine {
         if self.stt.is_none() || self.llm.is_none() || self.avatar.is_none() {
             return Err(LabError::InvalidState);
         }
-        let audience = self.session_audience.ok_or(LabError::InvalidState)?;
         let turn = self.new_turn()?;
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
@@ -93,15 +101,7 @@ impl OwnerLabEngine {
             .map_err(|error| terminalize_provider_error(&turn, error))?;
         let stt_millis = elapsed_millis(stt_started);
 
-        let llm_context = match audience {
-            LabSessionAudience::Owner => self.reviewed_owner_context.as_ref().map_or_else(
-                || format!("{OWNER_LAB_FALLBACK_PROMPT_PREFIX}{}", transcript.text),
-                |context| context.voice_prompt(&transcript.text),
-            ),
-            LabSessionAudience::Visitor => {
-                format!("{VISITOR_PROMPT_PREFIX}{}", transcript.text)
-            }
-        };
+        let llm_context = self.conversation_context(&transcript.text)?;
         let llm_started = Instant::now();
         let mut generated = GeneratedTextBuffer::default();
         let llm_usage = turn
@@ -195,12 +195,12 @@ fn terminalize_avatar_output_error(
     }
 }
 
-fn terminalize_provider_error(turn: &ActiveTurn, error: ProviderExecutionError) -> LabError {
+pub(super) fn terminalize_provider_error(turn: &ActiveTurn, error: ProviderExecutionError) -> LabError {
     let mapped = map_provider_execution(error);
     terminalize_failed_turn(turn, mapped)
 }
 
-fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> LabError {
+pub(super) fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> LabError {
     match turn.state() {
         TurnState::Processing | TurnState::Outputting => match turn.fail() {
             Ok(()) => error,
@@ -214,7 +214,7 @@ fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> LabError {
     }
 }
 
-fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
+pub(super) fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
     LabVoiceUsage {
         input_units: usage.input_units,
         output_units: usage.output_units,
@@ -223,6 +223,6 @@ fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
     }
 }
 
-fn elapsed_millis(started: Instant) -> u64 {
+pub(super) fn elapsed_millis(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
