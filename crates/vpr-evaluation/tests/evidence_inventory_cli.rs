@@ -191,8 +191,7 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
         let claim = evidence.pointer_mut(pointer).unwrap();
         bind_projected_claim(dir, name, claim, CANDIDATE, Some(provider_digest));
     }
-    let limitations =
-        b"RT0-Review-Status: passed\n\nReviewed RT0 inventory limitations.\n";
+    let limitations = b"RT0-Review-Status: passed\n\nReviewed RT0 inventory limitations.\n";
     fs::write(dir.join("known-limitations.md"), limitations).unwrap();
     evidence["known_limitations"]["document_sha256"] = json!(sha256_hex(limitations));
     fs::write(
