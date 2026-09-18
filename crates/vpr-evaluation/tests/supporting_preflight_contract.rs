@@ -111,7 +111,8 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            limitations: b"# Known limitations\n\nReviewed limitations for this candidate.\n".to_vec(),
+            limitations: b"# Known limitations\n\nReviewed limitations for this candidate.\n"
+                .to_vec(),
         }
     }
 
@@ -149,16 +150,16 @@ fn mutate(bytes: &mut Vec<u8>, path: &[&str], value: Value) {
 fn exact_bound_real_supporting_bundle_is_preflight_complete_without_release_ready_claim() {
     let fixture = Fixture::valid();
     let provider_state = provider_state();
-    let report = preflight_rt0_supporting_artifacts(
-        fixture.as_preflight(),
-        &provider_state,
-        &candidate(),
-    )
-    .unwrap();
+    let report =
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state, &candidate())
+            .unwrap();
 
     assert!(report.preflight_complete);
     assert_eq!(report.provider_state_sha256, sha256_hex(&provider_state));
-    assert_eq!(report.artifact_digests.human_evaluation, sha256_hex(&fixture.human));
+    assert_eq!(
+        report.artifact_digests.human_evaluation,
+        sha256_hex(&fixture.human)
+    );
     let json = serde_json::to_string(&report).unwrap();
     assert!(!json.contains("\"ready\""));
     assert!(!json.contains("release_ready"));
@@ -167,24 +168,22 @@ fn exact_bound_real_supporting_bundle_is_preflight_complete_without_release_read
 #[test]
 fn failed_substantive_results_remain_valid_evidence_for_preflight() {
     let fixture = Fixture::valid();
-    assert!(preflight_rt0_supporting_artifacts(
-        fixture.as_preflight(),
-        &provider_state(),
-        &candidate()
-    )
-    .is_ok());
+    assert!(
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate())
+            .is_ok()
+    );
 }
 
 #[test]
 fn stale_candidate_binding_is_rejected() {
     let mut fixture = Fixture::valid();
-    mutate(&mut fixture.human, &["candidate_sha"], json!("2".repeat(40)));
+    mutate(
+        &mut fixture.human,
+        &["candidate_sha"],
+        json!("2".repeat(40)),
+    );
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::CandidateMismatch)
     );
 }
@@ -198,11 +197,7 @@ fn stale_provider_state_binding_is_rejected() {
         json!("2".repeat(64)),
     );
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::ProviderStateMismatch)
     );
 }
@@ -212,11 +207,7 @@ fn synthetic_real_supporting_slot_is_rejected() {
     let mut fixture = Fixture::valid();
     mutate(&mut fixture.acceptance, &["origin"], json!("synthetic"));
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::OriginNotReal)
     );
 }
@@ -226,11 +217,7 @@ fn conversation_role_mismatch_is_rejected() {
     let mut fixture = Fixture::valid();
     mutate(&mut fixture.owner, &["role"], json!("visitor"));
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::ParticipantRoleMismatch)
     );
 }
@@ -249,11 +236,7 @@ fn malformed_quality_distribution_is_rejected() {
         json!(200),
     );
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::InvalidQuality)
     );
 }
@@ -263,11 +246,7 @@ fn incomplete_human_review_is_rejected_without_inventing_a_review() {
     let mut fixture = Fixture::valid();
     mutate(&mut fixture.human, &["reviewer_count"], json!(0));
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::IncompleteHumanReview)
     );
 
@@ -278,11 +257,7 @@ fn incomplete_human_review_is_rejected_without_inventing_a_review() {
         json!("missing"),
     );
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::IncompleteHumanReview)
     );
 }
@@ -292,11 +267,7 @@ fn empty_known_limitations_is_rejected() {
     let mut fixture = Fixture::valid();
     fixture.limitations = b" \n\t".to_vec();
     assert_eq!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        ),
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
         Err(Rt0SupportingPreflightError::InvalidKnownLimitations)
     );
 }
