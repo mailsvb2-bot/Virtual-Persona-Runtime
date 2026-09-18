@@ -95,8 +95,7 @@ pub fn run_provider_probe(
     {
         return Err(LiveProviderProbeError::InvalidAudio);
     }
-    let tts =
-        build_tts_probe_from_env().map_err(|_| LiveProviderProbeError::TtsConfiguration)?;
+    let tts = build_tts_probe_from_env().map_err(|_| LiveProviderProbeError::TtsConfiguration)?;
     run_provider_probe_with_tts(prepared, pcm_s16le_mono_16khz, tts)
 }
 
@@ -192,7 +191,8 @@ pub(crate) fn run_provider_probe_with_tts(
     let tts_audio_millis = synthesized.duration_millis().ok_or_else(|| {
         terminalize_failed_probe_turn(&turn, LiveProviderProbeError::InvalidTtsOutput)
     })?;
-    if synthesized.pcm().is_empty() || tts_audio_millis == 0 || tts_audio_millis > MAX_AUDIO_MILLIS {
+    if synthesized.pcm().is_empty() || tts_audio_millis == 0 || tts_audio_millis > MAX_AUDIO_MILLIS
+    {
         return Err(terminalize_failed_probe_turn(
             &turn,
             LiveProviderProbeError::InvalidTtsOutput,
