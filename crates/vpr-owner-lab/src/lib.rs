@@ -23,4 +23,6 @@ pub use state::{
     OwnerContextState, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
-pub use providers::{ProviderBundle, ProviderDescriptor, PreparedTtsProbe, build_tts_probe_from_env};
+pub use providers::{
+    PreparedTtsProbe, ProviderBundle, ProviderDescriptor, build_tts_probe_from_env,
+};
