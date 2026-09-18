@@ -24,7 +24,7 @@ struct SupportingFixture {
 
 impl SupportingFixture {
     fn new(provider_state_sha256: &str) -> Self {
-        let distribution = json!({"samples": 3, "p50": 100, "p95": 200});
+        let text_distribution = json!({"samples": 3, "p50": 100, "p95": 200});
         Self {
             ci: bytes(&json!({"status":"failed","candidate_sha":CANDIDATE})),
             e2e: bytes(&json!({"status":"passed","candidate_sha":CANDIDATE})),
@@ -62,12 +62,12 @@ impl SupportingFixture {
             })),
             quality: bytes(&json!({
                 "origin":"real",
-                "text_first_meaningful_response":distribution,
-                "first_meaningful_audio":distribution,
-                "interruption_stop":distribution,
-                "first_useful_video":distribution,
-                "av_sync_absolute_offset":distribution,
-                "recoverable_reconnect":distribution,
+                "text_first_meaningful_response":text_distribution,
+                "first_meaningful_audio":{"samples":1,"p50":500,"p95":500},
+                "interruption_stop":{"samples":1,"p50":250,"p95":250},
+                "first_useful_video":{"samples":1,"p50":700,"p95":700},
+                "av_sync_absolute_offset":{"samples":3,"p50":60,"p95":120},
+                "recoverable_reconnect":{"samples":1,"p50":800,"p95":800},
                 "candidate_sha":CANDIDATE,
                 "provider_state_sha256":provider_state_sha256
             })),
@@ -249,7 +249,7 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
         "session_sequence":1,
         "participant_role":"owner",
         "canonical_playback_proven":true,
-        "av_sync_proven":false,
+        "av_sync_proven":true,
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":11,
@@ -277,9 +277,14 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
         "media_events":[
             {"request_sequence":1,"kind":"audio_started","elapsed_millis":500},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":700},
-            {"request_sequence":1,"kind":"interruption_stopped","elapsed_millis":250}
+            {"request_sequence":1,"kind":"interruption_stopped","elapsed_millis":250},
+            {"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":800}
         ],
-        "av_sync_samples":[]
+        "av_sync_samples":[
+            {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":40},
+            {"request_sequence":1,"sample_sequence":2,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":60},
+            {"request_sequence":1,"sample_sequence":3,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":120}
+        ]
     }));
     let bound =
         bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state, CANDIDATE).unwrap();
@@ -316,6 +321,20 @@ fn assembler_preserves_failed_real_evidence_without_claiming_readiness() {
     );
     let serialized = serde_json::to_value(&evidence).unwrap();
     assert!(serialized.get("ready").is_none());
+}
+
+#[test]
+fn assembler_rejects_browser_quality_detached_from_bound_session() {
+    let mut fixture = AssemblyFixture::new();
+    let mut quality: Value = serde_json::from_slice(&fixture.supporting.quality).unwrap();
+    quality["recoverable_reconnect"]["p50"] = json!(700);
+    quality["recoverable_reconnect"]["p95"] = json!(700);
+    fixture.supporting.quality = bytes(&quality);
+
+    assert_eq!(
+        assemble_rt0_exit_evidence(fixture.inputs()),
+        Err(Rt0ExitAssemblyError::BrowserQualityMismatch)
+    );
 }
 
 #[test]
