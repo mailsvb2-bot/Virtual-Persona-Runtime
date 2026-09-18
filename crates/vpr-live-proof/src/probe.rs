@@ -84,7 +84,12 @@ impl LiveProviderProbeError {
 pub fn validate_provider_probe_audio(
     pcm_s16le_mono_16khz: &[u8],
 ) -> Result<(), LiveProviderProbeError> {
-    validate_provider_probe_audio(&pcm_s16le_mono_16khz)?;
+    if pcm_s16le_mono_16khz.len() < 32
+        || pcm_s16le_mono_16khz.len() % 2 != 0
+        || pcm_s16le_mono_16khz.len() > MAX_PCM_BYTES
+    {
+        return Err(LiveProviderProbeError::InvalidAudio);
+    }
     Ok(())
 }
 
@@ -100,12 +105,7 @@ pub fn run_provider_probe(
     prepared: PreparedLiveProof,
     pcm_s16le_mono_16khz: Vec<u8>,
 ) -> Result<LiveProviderProbeReceipt, LiveProviderProbeError> {
-    if pcm_s16le_mono_16khz.len() < 32
-        || pcm_s16le_mono_16khz.len() % 2 != 0
-        || pcm_s16le_mono_16khz.len() > MAX_PCM_BYTES
-    {
-        return Err(LiveProviderProbeError::InvalidAudio);
-    }
+    validate_provider_probe_audio(&pcm_s16le_mono_16khz)?;
     let tts = build_tts_probe_from_env().map_err(|_| LiveProviderProbeError::TtsConfiguration)?;
     run_provider_probe_with_tts(prepared, pcm_s16le_mono_16khz, tts)
 }
