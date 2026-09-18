@@ -439,3 +439,132 @@ fn conversation_mode_rejects_malformed_profile_without_provider_calls_or_writes(
     assert!(!receipt.exists());
     remove_inputs(&[profile, owner_audio, visitor_audio]);
 }
+
+
+fn candidate_command(
+    repo: &TempRepo,
+    probe_audio: &Path,
+    profile: &Path,
+    owner_audio: &Path,
+    visitor_audio: &Path,
+    provider: &Path,
+    probe: &Path,
+    receipt: &Path,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
+    command
+        .current_dir(repo.path())
+        .arg("candidate")
+        .arg(probe_audio)
+        .arg(profile)
+        .arg(owner_audio)
+        .arg(visitor_audio)
+        .arg(provider)
+        .arg(probe)
+        .arg(receipt)
+        .env_clear();
+    for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+#[test]
+fn candidate_mode_rejects_invalid_probe_audio_before_egress_and_writes_nothing() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "candidate-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let provider = external_output(&repo, "candidate-provider.json");
+    let probe = external_output(&repo, "candidate-probe.json");
+    let receipt = external_output(&repo, "candidate-conversation.json");
+
+    let output = candidate_command(
+        &repo,
+        &probe_audio,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &provider,
+        &probe,
+        &receipt,
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("INVALID_INPUT"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert!(!provider.exists());
+    assert!(!probe.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn candidate_mode_rejects_malformed_profile_before_egress_and_writes_nothing() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "candidate-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    fs::write(&profile, b"not-json").unwrap();
+    let provider = external_output(&repo, "candidate-provider.json");
+    let probe = external_output(&repo, "candidate-probe.json");
+    let receipt = external_output(&repo, "candidate-conversation.json");
+
+    let output = candidate_command(
+        &repo,
+        &probe_audio,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &provider,
+        &probe,
+        &receipt,
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("INVALID_PROFILE"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert!(!provider.exists());
+    assert!(!probe.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "candidate-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let shared_output = external_output(&repo, "candidate-conflict.json");
+    let receipt = external_output(&repo, "candidate-conversation.json");
+
+    let output = candidate_command(
+        &repo,
+        &probe_audio,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &shared_output,
+        &shared_output,
+        &receipt,
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("OUTPUT_PATHS_CONFLICT"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert!(!shared_output.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
