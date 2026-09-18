@@ -405,11 +405,13 @@ fn missing_release_spec_keeps_inventory_incomplete() {
     assert_eq!(output.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["inventory_complete"], json!(false));
-    assert!(report["missing"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|name| name == "release-spec.md"));
+    assert!(
+        report["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "release-spec.md")
+    );
     assert_eq!(
         report["bindings"]["release_spec_digest_matches_exit"],
         Value::Null
