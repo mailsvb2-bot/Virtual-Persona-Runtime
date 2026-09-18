@@ -77,6 +77,34 @@ The sanitized receipt schema is `rt0-live-conversation-attempt-0.1`. It binds th
 
 A successful attempt proves only that real credentialed provider calls traversed the canonical owner and visitor policy paths and that generated output was submitted to the realtime-avatar provider. It deliberately records `browser_media_playback="not_proven"`, `video_render="not_proven"`, and `human_review="not_proven"`. It therefore cannot by itself satisfy the RT0 real-conversation, media-plane, A/V-sync, privacy acceptance or human-evaluation exit conditions.
 
+## Atomic credentialed candidate run
+
+For the private RT0 credentialed headless proof, prefer the atomic `candidate` mode over running
+`probe` and `conversation` as unrelated processes:
+
+```text
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
+  /secure/input/probe.raw \
+  /secure/input/reviewed-profile.json \
+  /secure/input/owner.raw \
+  /secure/input/visitor.raw \
+  /secure/evidence/provider-state.json \
+  /secure/evidence/provider-probe.json \
+  /secure/evidence/conversation-attempt.json
+```
+
+The command validates all private inputs and path conflicts before any provider egress, freezes the
+exact Git candidate, runs the credentialed provider probe, then reconstructs the canonical provider
+composition and requires its sanitized provider-state digest to remain identical before the
+owner/visitor attempt begins. The three output artifacts are written only after both credentialed
+stages succeed and the exact candidate is re-verified clean; partial release-evidence files are
+removed on write or final snapshot failure.
+
+This only reduces operator/configuration drift during evidence capture. It does **not** prove browser
+media playback, rendered video, A/V sync, privacy acceptance, Golden completion, human quality, or
+RT0 exit readiness. Browser Owner Lab evidence and the remaining supporting artifacts are still
+mandatory.
+
 ## Owner Lab live-session evidence
 
 Owner Lab can collect one in-memory sanitized session-evidence snapshot for the current canonical session. Browser voice requests carry a local evidence request sequence; the backend correlates it with the canonical turn sequence and records only stage latency, usage/cost counters, stable failure codes, and browser-observed media-plane latency events. Raw microphone PCM, transcript/reply text, SDP/ICE, provider stream/session identifiers, and credentials are not part of this artifact.

@@ -6,7 +6,8 @@ use std::process::Command;
 use serde::Serialize;
 use vpr_live_proof::{
     LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, preflight,
-    prepare, run_live_conversation_attempt, run_provider_probe,
+    prepare, run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
+    validate_provider_probe_audio,
 };
 
 #[derive(Serialize)]
@@ -17,6 +18,13 @@ struct CliError<'a> {
     stage: Option<&'a str>,
 }
 
+#[derive(Serialize)]
+struct CandidateRunReceipt<'a> {
+    ok: bool,
+    candidate_sha: &'a str,
+    provider_state_sha256: &'a str,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum BoundaryError {
     InputPathInvalid,
@@ -24,6 +32,7 @@ enum BoundaryError {
     OutputPathInvalid,
     OutputPathInsideWorktree,
     OutputPathsConflict,
+    ProviderStateChanged,
     InputReadFailed,
     ArtifactWriteFailed,
 }
@@ -36,6 +45,7 @@ impl BoundaryError {
             Self::OutputPathInvalid => "OUTPUT_PATH_INVALID",
             Self::OutputPathInsideWorktree => "OUTPUT_PATH_INSIDE_WORKTREE",
             Self::OutputPathsConflict => "OUTPUT_PATHS_CONFLICT",
+            Self::ProviderStateChanged => "PROVIDER_STATE_CHANGED",
             Self::InputReadFailed => "INPUT_READ_FAILED",
             Self::ArtifactWriteFailed => "ARTIFACT_WRITE_FAILED",
         }
@@ -76,9 +86,27 @@ fn run() -> Result<(), i32> {
             Path::new(provider_state_output),
             Path::new(receipt_output),
         ),
+        [
+            mode,
+            probe_audio,
+            profile_input,
+            owner_audio,
+            visitor_audio,
+            provider_state_output,
+            probe_output,
+            receipt_output,
+        ] if mode == "candidate" => run_candidate(
+            Path::new(probe_audio),
+            Path::new(profile_input),
+            Path::new(owner_audio),
+            Path::new(visitor_audio),
+            Path::new(provider_state_output),
+            Path::new(probe_output),
+            Path::new(receipt_output),
+        ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }
@@ -191,6 +219,106 @@ fn run_conversation(
         return Err(emit_preflight(error));
     }
     println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
+    Ok(())
+}
+
+fn run_candidate(
+    probe_audio_path: &Path,
+    profile_path: &Path,
+    owner_audio_path: &Path,
+    visitor_audio_path: &Path,
+    provider_path: &Path,
+    probe_path: &Path,
+    receipt_path: &Path,
+) -> Result<(), i32> {
+    let snapshot = repo_snapshot()?;
+    let probe_audio_path =
+        validated_input_path(probe_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let profile_path = validated_input_path(profile_path, &snapshot.root).map_err(emit_boundary)?;
+    let owner_audio_path =
+        validated_input_path(owner_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let visitor_audio_path =
+        validated_input_path(visitor_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let provider_path =
+        validated_output_path(provider_path, &snapshot.root).map_err(emit_boundary)?;
+    let probe_path = validated_output_path(probe_path, &snapshot.root).map_err(emit_boundary)?;
+    let receipt_path =
+        validated_output_path(receipt_path, &snapshot.root).map_err(emit_boundary)?;
+    ensure_unique_paths(&[
+        probe_audio_path.as_path(),
+        profile_path.as_path(),
+        owner_audio_path.as_path(),
+        visitor_audio_path.as_path(),
+        provider_path.as_path(),
+        probe_path.as_path(),
+        receipt_path.as_path(),
+    ])
+    .map_err(emit_boundary)?;
+
+    let probe_audio =
+        fs::read(&probe_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let profile =
+        fs::read(&profile_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let owner_audio =
+        fs::read(&owner_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let visitor_audio =
+        fs::read(&visitor_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+
+    validate_provider_probe_audio(&probe_audio).map_err(|error| emit_probe(&error))?;
+    validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
+        .map_err(emit_conversation)?;
+
+    let clean = worktree_clean()?;
+    let prepared_probe =
+        prepare(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
+    let provider_state_sha256 = prepared_probe.receipt().provider_state_sha256.clone();
+    let provider_state =
+        serde_json::to_vec_pretty(&prepared_probe.receipt().provider_state).map_err(|_| 2)?;
+    let probe =
+        run_provider_probe(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
+
+    let prepared_conversation =
+        prepare(&snapshot.candidate, worktree_clean()?, egress_authorized())
+            .map_err(emit_preflight)?;
+    if prepared_conversation.receipt().provider_state_sha256 != provider_state_sha256 {
+        return Err(emit_boundary(BoundaryError::ProviderStateChanged));
+    }
+    let receipt =
+        run_live_conversation_attempt(prepared_conversation, &profile, owner_audio, visitor_audio)
+            .map_err(emit_conversation)?;
+
+    let probe_bytes = serde_json::to_vec_pretty(&probe).map_err(|_| 2)?;
+    let receipt_bytes = serde_json::to_vec_pretty(&receipt).map_err(|_| 2)?;
+    verify_snapshot(&snapshot).map_err(emit_preflight)?;
+
+    if let Err(error) = atomic_write(&provider_path, &provider_state) {
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = atomic_write(&probe_path, &probe_bytes) {
+        let _ = fs::remove_file(&provider_path);
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = atomic_write(&receipt_path, &receipt_bytes) {
+        let _ = fs::remove_file(&provider_path);
+        let _ = fs::remove_file(&probe_path);
+        return Err(emit_boundary(error));
+    }
+    if let Err(error) = verify_snapshot(&snapshot) {
+        let _ = fs::remove_file(&provider_path);
+        let _ = fs::remove_file(&probe_path);
+        let _ = fs::remove_file(&receipt_path);
+        return Err(emit_preflight(error));
+    }
+
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&CandidateRunReceipt {
+            ok: true,
+            candidate_sha: &snapshot.candidate,
+            provider_state_sha256: &provider_state_sha256,
+        })
+        .map_err(|_| 2)?
+    );
     Ok(())
 }
 
