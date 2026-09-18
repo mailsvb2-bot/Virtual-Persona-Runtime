@@ -302,7 +302,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         message: &str,
     ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
         Self::validate_session(session)?;
-        self.client_control.parse_event(message)
+        self.client_control.parse_event(session, message)
     }
 
     fn prepare_client_interrupt(
