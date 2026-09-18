@@ -93,7 +93,7 @@ fn seed_complete_inventory(dir: &Path) {
         "estimated_cost_microunits":1,"provider_charge_microunits":null
     });
     let probe = json!({
-        "schema_version":"rt0-live-provider-probe-0.1",
+        "schema_version":"rt0-live-provider-probe-0.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_digest,
         "input_audio_sha256":"7".repeat(64),
@@ -102,7 +102,10 @@ fn seed_complete_inventory(dir: &Path) {
         "conversation_evidence":false,
         "output_delivery_proven":false,
         "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
-        "llm":{"latency_millis":120,"output_chars":5,"usage":usage},
+        "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
+        "tts":{"provider":"fake-tts","model_or_representation":"fake-model/fake-voice",
+            "configuration_fingerprint_sha256":"e".repeat(64),"latency_millis":80,
+            "audio_sha256":"a".repeat(64),"audio_millis":200,"usage":usage},
         "avatar":{"open_millis":150,"close_millis":50}
     });
     fs::write(
