@@ -330,7 +330,6 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             .map_err(|error| map_transport_error(&error))?;
         Self::expect_success(response)?;
         self.client_control.forget(session)
-
     }
 }
 
