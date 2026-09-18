@@ -6,7 +6,8 @@ use vpr_domain::{
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
-    LlmPort, RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarPort, SttPort,
+    LlmPort, RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientEvent,
+    RealtimeAvatarPort, SttPort,
     WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
@@ -46,6 +47,13 @@ pub enum OwnerLabTurnInput {
 pub struct LabClientControl {
     pub data_channel_label: String,
     pub interrupt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LabClientEvent {
+    PlaybackStarted { playback_id: String },
+    PlaybackDone,
 }
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
@@ -389,6 +397,31 @@ impl OwnerLabEngine {
             }
         }
         .map_err(map_provider_execution)
+    }
+
+    /// Normalizes one transient browser-received provider data-channel message against the exact
+    /// current avatar session. Raw provider payloads are not retained.
+    ///
+    /// # Errors
+    /// Fails closed for stale sessions or malformed recognized provider events.
+    pub fn parse_client_event(
+        &mut self,
+        message: &str,
+    ) -> Result<Option<LabClientEvent>, LabError> {
+        if message.is_empty() {
+            return Err(LabError::InvalidInput);
+        }
+        let turn = self.new_turn()?;
+        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        let event = turn
+            .parse_realtime_avatar_client_event(self.provider.as_ref(), handle, message)
+            .map_err(map_provider_execution)?;
+        Ok(event.map(|event| match event {
+            RealtimeAvatarClientEvent::PlaybackStarted { playback_id } => {
+                LabClientEvent::PlaybackStarted { playback_id }
+            }
+            RealtimeAvatarClientEvent::PlaybackDone => LabClientEvent::PlaybackDone,
+        }))
     }
 
     /// Prepares one provider-specific browser data-channel interruption command through the
