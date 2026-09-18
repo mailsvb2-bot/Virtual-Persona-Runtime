@@ -90,6 +90,11 @@ struct AudioBody {
     audio_url: String,
 }
 
+#[derive(Deserialize)]
+struct ClientInterruptBody {
+    playback_id: String,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -275,6 +280,14 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         )
         .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
         .map_err(|error| error_response(error.status(), error.code())),
+        "/api/avatar/client-interrupt" => parse_json::<ClientInterruptBody>(request).and_then(|body| {
+            reject_if_session_ending(state)?;
+            with_engine_result(state, |engine| {
+                engine
+                    .prepare_client_interrupt(&body.playback_id)
+                    .map(|command| json_response(200, &command))
+            })
+        }),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),
         "/api/session/close" => end_session(state, true),
