@@ -15,7 +15,7 @@ use vpr_evaluation::{
     validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.4";
+const SCHEMA: &str = "rt0-evidence-inventory-0.5";
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 const REQUIRED: &[&str] = &[
     "provider-state.json",
