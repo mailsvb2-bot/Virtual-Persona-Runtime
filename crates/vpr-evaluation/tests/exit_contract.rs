@@ -291,15 +291,31 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
         quality: QualityEvidence {
             origin: EvidenceOrigin::Real,
             text_first_meaningful_response: distribution(1_000, 2_500),
-            first_meaningful_audio: distribution(1_500, 3_000),
-            interruption_stop: distribution(250, 500),
-            first_useful_video: distribution(1_250, 2_500),
+            first_meaningful_audio: LatencyDistributionMillis {
+                samples: 2,
+                p50: 500,
+                p95: 500,
+            },
+            interruption_stop: LatencyDistributionMillis {
+                samples: 1,
+                p50: 250,
+                p95: 250,
+            },
+            first_useful_video: LatencyDistributionMillis {
+                samples: 2,
+                p50: 700,
+                p95: 700,
+            },
             av_sync_absolute_offset: LatencyDistributionMillis {
                 samples: 6,
                 p50: 60,
                 p95: 120,
             },
-            recoverable_reconnect: distribution(2_500, 5_000),
+            recoverable_reconnect: LatencyDistributionMillis {
+                samples: 2,
+                p50: 800,
+                p95: 800,
+            },
             artifact_sha256: digest('2'),
         },
         cost: CostEvidence {
@@ -472,16 +488,12 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
 }
 
 #[test]
-fn every_quality_threshold_fails_when_exceeded_by_one_millisecond() {
+fn text_quality_threshold_fails_when_exceeded_by_one_millisecond() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
     let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
     evidence.quality.text_first_meaningful_response.p50 = 1_001;
-    evidence.quality.first_meaningful_audio.p95 = 3_001;
-    evidence.quality.interruption_stop.p95 = 501;
-    evidence.quality.first_useful_video.p95 = 2_501;
-    evidence.quality.recoverable_reconnect.p95 = 5_001;
     let report = evaluate(
         &evidence,
         &golden,
@@ -491,8 +503,95 @@ fn every_quality_threshold_fails_when_exceeded_by_one_millisecond() {
         CANDIDATE,
     )
     .unwrap();
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::TextLatencyExceeded)
+    );
+    assert!(!report.ready);
+}
+
+fn session_snapshot_bytes_with_browser_timings(
+    role: ParticipantRole,
+    session_sequence: u64,
+    audio_millis: u64,
+    interruption_millis: u64,
+    video_millis: u64,
+    reconnect_millis: u64,
+) -> Vec<u8> {
+    let bytes =
+        session_snapshot_bytes_with_av_sync(role, session_sequence, [40, 60, 120]);
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    for event in snapshot["media_events"].as_array_mut().unwrap() {
+        let elapsed = match event["kind"].as_str().unwrap() {
+            "audio_started" => Some(audio_millis),
+            "interruption_stopped" => Some(interruption_millis),
+            "video_ready" => Some(video_millis),
+            "reconnect_restored" => Some(reconnect_millis),
+            _ => None,
+        };
+        if let Some(elapsed) = elapsed {
+            event["elapsed_millis"] = serde_json::json!(elapsed);
+        }
+    }
+    serde_json::to_vec(&snapshot).unwrap()
+}
+
+#[test]
+fn browser_quality_thresholds_are_evaluated_from_recomputed_sessions() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let owner_snapshot = session_snapshot_bytes_with_browser_timings(
+        ParticipantRole::Owner,
+        1,
+        3_001,
+        501,
+        2_501,
+        5_001,
+    );
+    let visitor_snapshot = session_snapshot_bytes_with_browser_timings(
+        ParticipantRole::Visitor,
+        2,
+        3_001,
+        501,
+        2_501,
+        5_001,
+    );
+    let bound = bind_owner_lab_session_evidence(
+        &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        &fixture.provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+    let bound_bytes = serde_json::to_vec(&bound).unwrap();
+    let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let probe = live_provider_probe(&fixture.provider_state_bytes);
+    let probe_bytes = serde_json::to_vec(&probe).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.bound_session_aggregate_sha256 = sha256_hex(&bound_bytes);
+    evidence.quality.first_meaningful_audio = bound.aggregate.first_meaningful_audio.unwrap();
+    evidence.quality.interruption_stop = bound.aggregate.interruption_stop.unwrap();
+    evidence.quality.first_useful_video = bound.aggregate.first_useful_video.unwrap();
+    evidence.quality.av_sync_absolute_offset = bound.aggregate.av_sync_absolute_offset.unwrap();
+    evidence.quality.recoverable_reconnect = bound.aggregate.recoverable_reconnect.unwrap();
+
+    let report = evaluate_with_runtime_snapshots(
+        &evidence,
+        (&golden, &golden_bytes),
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+        (&probe, &probe_bytes),
+        (
+            &conversation_attempt,
+            &bound,
+            &bound_bytes,
+            &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        ),
+    )
+    .unwrap();
     for required in [
-        Rt0ExitFailureCode::TextLatencyExceeded,
         Rt0ExitFailureCode::AudioLatencyExceeded,
         Rt0ExitFailureCode::InterruptionLatencyExceeded,
         Rt0ExitFailureCode::VideoLatencyExceeded,
@@ -553,23 +652,41 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
 }
 
 #[test]
-fn av_sync_quality_must_match_recomputed_session_distribution() {
+fn every_browser_quality_metric_must_match_recomputed_session_distribution() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    evidence.quality.av_sync_absolute_offset.p50 = 59;
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
-    );
+
+    let mut cases = Vec::new();
+    let mut audio = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    audio.quality.first_meaningful_audio.p50 += 1;
+    cases.push(audio);
+    let mut interruption = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    interruption.quality.interruption_stop.p50 += 1;
+    cases.push(interruption);
+    let mut video = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    video.quality.first_useful_video.p50 += 1;
+    cases.push(video);
+    let mut av_sync = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    av_sync.quality.av_sync_absolute_offset.p50 += 1;
+    cases.push(av_sync);
+    let mut reconnect = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    reconnect.quality.recoverable_reconnect.p50 += 1;
+    cases.push(reconnect);
+
+    for evidence in cases {
+        assert_eq!(
+            evaluate(
+                &evidence,
+                &golden,
+                &golden_bytes,
+                &fixture,
+                RELEASE_SPEC,
+                CANDIDATE,
+            ),
+            Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+        );
+    }
 }
 
 #[test]
