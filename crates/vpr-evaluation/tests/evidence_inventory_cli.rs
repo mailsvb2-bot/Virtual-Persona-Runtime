@@ -253,12 +253,21 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
             }));
         }
         json!({
-            "schema_version":"rt0-owner-lab-session-evidence-0.4",
+            "schema_version":"rt0-owner-lab-session-evidence-0.5",
             "scope":"browser_observed_media_plane_only",
             "session_sequence":session_sequence,
             "participant_role":role,
             "canonical_playback_proven":true,
             "av_sync_proven":false,
+            "text_attempts":[{
+                "request_sequence":1,
+                "canonical_turn_sequence":5 + session_sequence,
+                "status":"completed",
+                "failure_code":null,
+                "first_meaningful_response_millis":if role == "owner" { 900 } else { 2_400 },
+                "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
+                "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+            }],
             "voice_attempts":[{
                 "request_sequence":1,
                 "canonical_turn_sequence":10 + session_sequence,
