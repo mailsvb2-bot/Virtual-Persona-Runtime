@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LatencyDistributionMillis, ParticipantRole, sha256_hex};
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.4";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.4";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.5";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.5";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -87,6 +87,26 @@ pub struct LabVoiceAttemptEvidence {
     pub llm_usage: Option<SessionUsageEvidence>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LabTextAttemptStatus {
+    Pending,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LabTextAttemptEvidence {
+    pub request_sequence: u64,
+    pub canonical_turn_sequence: Option<u64>,
+    pub status: LabTextAttemptStatus,
+    pub failure_code: Option<String>,
+    pub first_meaningful_response_millis: Option<u64>,
+    pub server_total_millis: Option<u64>,
+    pub llm_usage: Option<SessionUsageEvidence>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LabMediaEvidence {
@@ -104,6 +124,7 @@ pub struct LabSessionEvidenceSnapshot {
     pub participant_role: ParticipantRole,
     pub canonical_playback_proven: bool,
     pub av_sync_proven: bool,
+    pub text_attempts: Vec<LabTextAttemptEvidence>,
     pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
     pub media_events: Vec<LabMediaEvidence>,
     pub av_sync_samples: Vec<LabAvSyncEvidence>,
@@ -115,10 +136,13 @@ pub struct LabSessionEvidenceAggregate {
     pub schema_version: String,
     pub source_schema_version: String,
     pub sessions: u32,
+    pub completed_text_attempts: u32,
+    pub failed_text_attempts: u32,
     pub completed_voice_attempts: u32,
     pub failed_voice_attempts: u32,
     pub canonical_playback_proven: bool,
     pub av_sync_proven: bool,
+    pub text_first_meaningful_response: Option<LatencyDistributionMillis>,
     pub av_sync_absolute_offset: Option<LatencyDistributionMillis>,
     pub stt_latency: Option<LatencyDistributionMillis>,
     pub llm_latency: Option<LatencyDistributionMillis>,
@@ -175,8 +199,11 @@ pub fn aggregate_owner_lab_session_evidence(
 
 #[derive(Default)]
 struct SessionAggregateAccumulator {
-    completed: u32,
-    failed: u32,
+    completed_text: u32,
+    failed_text: u32,
+    completed_voice: u32,
+    failed_voice: u32,
+    text_first_meaningful: Vec<u64>,
     playback_sessions: u32,
     av_sync_sessions: u32,
     av_sync: Vec<u64>,
@@ -198,6 +225,15 @@ impl SessionAggregateAccumulator {
         &mut self,
         snapshot: &LabSessionEvidenceSnapshot,
     ) -> Result<(), LabSessionAggregateError> {
+        let mut text_request_sequences = HashSet::new();
+        for attempt in &snapshot.text_attempts {
+            if attempt.request_sequence == 0 || !text_request_sequences.insert(attempt.request_sequence)
+            {
+                return Err(LabSessionAggregateError::InvalidSnapshot);
+            }
+            self.consume_text_attempt(attempt)?;
+        }
+
         let mut request_status = BTreeMap::new();
         for attempt in &snapshot.voice_attempts {
             if attempt.request_sequence == 0
@@ -268,6 +304,52 @@ impl SessionAggregateAccumulator {
         Ok(())
     }
 
+    fn consume_text_attempt(
+        &mut self,
+        attempt: &LabTextAttemptEvidence,
+    ) -> Result<(), LabSessionAggregateError> {
+        match attempt.status {
+            LabTextAttemptStatus::Pending => Err(LabSessionAggregateError::IncompleteAttempt),
+            LabTextAttemptStatus::Failed => {
+                if attempt
+                    .failure_code
+                    .as_deref()
+                    .is_none_or(|code| code.trim().is_empty())
+                    || attempt.canonical_turn_sequence.is_some()
+                    || attempt.first_meaningful_response_millis.is_some()
+                    || attempt.server_total_millis.is_some()
+                    || attempt.llm_usage.is_some()
+                {
+                    return Err(LabSessionAggregateError::InvalidSnapshot);
+                }
+                self.failed_text = self
+                    .failed_text
+                    .checked_add(1)
+                    .ok_or(LabSessionAggregateError::Overflow)?;
+                Ok(())
+            }
+            LabTextAttemptStatus::Completed => {
+                let (Some(turn), Some(first), Some(total), Some(llm_usage)) = (
+                    attempt.canonical_turn_sequence,
+                    attempt.first_meaningful_response_millis,
+                    attempt.server_total_millis,
+                    attempt.llm_usage.as_ref(),
+                ) else {
+                    return Err(LabSessionAggregateError::IncompleteAttempt);
+                };
+                if turn == 0 || first > total || attempt.failure_code.is_some() {
+                    return Err(LabSessionAggregateError::InvalidSnapshot);
+                }
+                self.completed_text = self
+                    .completed_text
+                    .checked_add(1)
+                    .ok_or(LabSessionAggregateError::Overflow)?;
+                self.text_first_meaningful.push(first);
+                self.add_single_usage_cost(llm_usage)
+            }
+        }
+    }
+
     fn consume_attempt(
         &mut self,
         attempt: &LabVoiceAttemptEvidence,
@@ -299,8 +381,8 @@ impl SessionAggregateAccumulator {
         {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
-        self.failed = self
-            .failed
+        self.failed_voice = self
+            .failed_voice
             .checked_add(1)
             .ok_or(LabSessionAggregateError::Overflow)?;
         Ok(())
@@ -335,8 +417,8 @@ impl SessionAggregateAccumulator {
         if turn == 0 || output == 0 || attempt.failure_code.is_some() {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
-        self.completed = self
-            .completed
+        self.completed_voice = self
+            .completed_voice
             .checked_add(1)
             .ok_or(LabSessionAggregateError::Overflow)?;
         self.stt.push(stt_ms);
@@ -344,6 +426,19 @@ impl SessionAggregateAccumulator {
         self.avatar.push(avatar_ms);
         self.server_total.push(total_ms);
         self.add_usage_costs(stt_usage, llm_usage)
+    }
+
+    fn add_single_usage_cost(
+        &mut self,
+        usage: &SessionUsageEvidence,
+    ) -> Result<(), LabSessionAggregateError> {
+        if !self.cost_initialized {
+            self.estimated_cost = Some(0);
+            self.provider_charge = Some(0);
+            self.cost_initialized = true;
+        }
+        add_cost(&mut self.estimated_cost, usage.estimated_cost_microunits)?;
+        add_cost(&mut self.provider_charge, usage.provider_charge_microunits)
     }
 
     fn add_usage_costs(
@@ -370,10 +465,13 @@ impl SessionAggregateAccumulator {
             schema_version: RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA.into(),
             source_schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             sessions,
-            completed_voice_attempts: self.completed,
-            failed_voice_attempts: self.failed,
-            canonical_playback_proven: self.completed > 0 && self.playback_sessions == sessions,
-            av_sync_proven: self.completed > 0 && self.av_sync_sessions == sessions,
+            completed_text_attempts: self.completed_text,
+            failed_text_attempts: self.failed_text,
+            completed_voice_attempts: self.completed_voice,
+            failed_voice_attempts: self.failed_voice,
+            canonical_playback_proven: self.completed_voice > 0 && self.playback_sessions == sessions,
+            av_sync_proven: self.completed_voice > 0 && self.av_sync_sessions == sessions,
+            text_first_meaningful_response: distribution(self.text_first_meaningful)?,
             av_sync_absolute_offset: distribution(self.av_sync)?,
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
