@@ -1,15 +1,20 @@
-use std::time::Duration;
+use std::collections::HashSet;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+const DID_DATA_CHANNEL_LABEL: &str = "JanusDataChannel";
+const MAX_PLAYBACK_ID_BYTES: usize = 512;
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -61,6 +66,7 @@ pub struct DidAgentStreamsAvatar {
     client: Client,
     config: DidAgentStreamsConfig,
     base_url: reqwest::Url,
+    client_interrupt_sessions: Mutex<HashSet<(String, String)>>,
 }
 
 impl DidAgentStreamsAvatar {
@@ -81,6 +87,7 @@ impl DidAgentStreamsAvatar {
             client,
             config,
             base_url,
+            client_interrupt_sessions: Mutex::new(HashSet::new()),
         })
     }
 
@@ -173,7 +180,19 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             .map_err(|error| map_transport_error(&error))?;
         let response = Self::expect_success(response)?;
         let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
-        body.try_into()
+        let client_interrupt = body.fluent && body.interrupt_enabled;
+        let session: RealtimeAvatarSession = body.try_into()?;
+        if client_interrupt {
+            let mut sessions = self
+                .client_interrupt_sessions
+                .lock()
+                .map_err(|_| invalid_response())?;
+            sessions.insert((
+                session.provider_stream_id.clone(),
+                session.provider_session_id.clone(),
+            ));
+        }
+        Ok(session)
     }
 
     fn submit_answer(
@@ -276,6 +295,66 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::expect_success(response).map(|_| ())
     }
 
+    fn client_control(
+        &self,
+        session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        Self::validate_session(session).ok()?;
+        let sessions = self.client_interrupt_sessions.lock().ok()?;
+        sessions
+            .contains(&(
+                session.provider_stream_id.clone(),
+                session.provider_session_id.clone(),
+            ))
+            .then(|| RealtimeAvatarClientControl {
+                data_channel_label: DID_DATA_CHANNEL_LABEL.to_owned(),
+                interrupt: true,
+            })
+    }
+
+    fn prepare_client_interrupt(
+        &self,
+        session: &RealtimeAvatarSession,
+        playback_id: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        let playback_id = playback_id.trim();
+        if playback_id.is_empty() || playback_id.len() > MAX_PLAYBACK_ID_BYTES {
+            return Err(invalid_response());
+        }
+        let supported = self
+            .client_interrupt_sessions
+            .lock()
+            .map_err(|_| invalid_response())?
+            .contains(&(
+                session.provider_stream_id.clone(),
+                session.provider_session_id.clone(),
+            ));
+        if !supported {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: false,
+            });
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| invalid_response())?
+            .as_millis();
+        let timestamp = u64::try_from(timestamp).map_err(|_| invalid_response())?;
+        let payload = serde_json::to_string(&StreamInterruptPayload {
+            kind: "stream/interrupt",
+            video_id: playback_id,
+            timestamp,
+        })
+        .map_err(|_| invalid_response())?;
+        Ok(RealtimeAvatarClientCommand {
+            data_channel_label: DID_DATA_CHANNEL_LABEL.to_owned(),
+            payload,
+        })
+    }
+
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
         let response = self
@@ -288,7 +367,15 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        Self::expect_success(response)?;
+        self.client_interrupt_sessions
+            .lock()
+            .map_err(|_| invalid_response())?
+            .remove(&(
+                session.provider_stream_id.clone(),
+                session.provider_session_id.clone(),
+            ));
+        Ok(())
     }
 }
 
@@ -304,6 +391,10 @@ struct CreateStreamResponse {
     offer: SessionDescriptionOwned,
     #[serde(default)]
     ice_servers: Vec<IceServerResponse>,
+    #[serde(default)]
+    fluent: bool,
+    #[serde(default)]
+    interrupt_enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -369,6 +460,15 @@ impl TryFrom<CreateStreamResponse> for RealtimeAvatarSession {
                 .collect(),
         })
     }
+}
+
+#[derive(Serialize)]
+struct StreamInterruptPayload<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(rename = "videoId")]
+    video_id: &'a str,
+    timestamp: u64,
 }
 
 #[derive(Serialize)]
