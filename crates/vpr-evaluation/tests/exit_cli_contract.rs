@@ -223,7 +223,7 @@ fn live_provider_probe(provider_state_sha256: &str) -> Value {
         "estimated_cost_microunits":1,"provider_charge_microunits":null
     });
     json!({
-        "schema_version":"rt0-live-provider-probe-0.1",
+        "schema_version":"rt0-live-provider-probe-0.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "input_audio_sha256":digest('7'),
@@ -232,7 +232,10 @@ fn live_provider_probe(provider_state_sha256: &str) -> Value {
         "conversation_evidence":false,
         "output_delivery_proven":false,
         "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
-        "llm":{"latency_millis":120,"output_chars":5,"usage":usage},
+        "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
+        "tts":{"provider":"fake-tts","model_or_representation":"fake-model/fake-voice",
+            "configuration_fingerprint_sha256":digest('e'),"latency_millis":80,
+            "audio_sha256":digest('a'),"audio_millis":200,"usage":usage},
         "avatar":{"open_millis":150,"close_millis":50}
     })
 }
