@@ -3,7 +3,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::exit_validation::{
-    validate_bound_session_aggregate, validate_rt0_conversation_attempt_artifact,
+    validate_bound_session_aggregate, validate_browser_quality_binding,
+    validate_rt0_conversation_attempt_artifact,
 };
 use crate::live_provider::validate_live_provider_probe;
 use crate::{
@@ -40,6 +41,7 @@ pub enum Rt0ExitAssemblyError {
     BoundSessionAggregateInvalid,
     SessionCandidateMismatch,
     SessionProviderStateMismatch,
+    BrowserQualityMismatch,
     SupportingProjectionInvalid,
 }
 
@@ -62,7 +64,7 @@ pub fn assemble_rt0_exit_evidence(
         inputs.exact_candidate_sha,
     )
     .map_err(|_| Rt0ExitAssemblyError::SupportingEvidenceInvalid)?;
-    validate_core_artifacts(&inputs, &supporting.provider_state_sha256)?;
+    let session = validate_core_artifacts(&inputs, &supporting.provider_state_sha256)?;
 
     let automated = AutomatedEvidence {
         ci: projected_claim(
@@ -89,7 +91,7 @@ pub fn assemble_rt0_exit_evidence(
         )?,
     };
 
-    Ok(Rt0ExitEvidence {
+    let evidence = Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
         candidate_sha: inputs.exact_candidate_sha.into(),
         release_spec_sha256: sha256_hex(inputs.release_spec_bytes),
@@ -129,13 +131,16 @@ pub fn assemble_rt0_exit_evidence(
             review_status: supporting.known_limitations_review_status,
             document_sha256: supporting.artifact_digests.known_limitations,
         },
-    })
+    };
+    validate_browser_quality_binding(&evidence, &session.aggregate)
+        .map_err(|_| Rt0ExitAssemblyError::BrowserQualityMismatch)?;
+    Ok(evidence)
 }
 
 fn validate_core_artifacts(
     inputs: &Rt0ExitAssemblyInputs<'_>,
     provider_state_sha256: &str,
-) -> Result<(), Rt0ExitAssemblyError> {
+) -> Result<BoundLabSessionEvidenceAggregate, Rt0ExitAssemblyError> {
     let provider_state: ProviderStateManifest = serde_json::from_slice(inputs.provider_state_bytes)
         .map_err(|_| Rt0ExitAssemblyError::GoldenProviderStateMismatch)?;
     let golden: BoundGoldenReport = serde_json::from_slice(inputs.bound_golden_report_bytes)
@@ -179,14 +184,15 @@ fn validate_core_artifacts(
             .map_err(|_| Rt0ExitAssemblyError::BoundSessionAggregateInvalid)?;
     validate_bound_session_aggregate(&session, inputs.exact_candidate_sha, provider_state_sha256)
         .map_err(|error| match error {
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
-                Rt0ExitAssemblyError::SessionCandidateMismatch
-            }
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
-                Rt0ExitAssemblyError::SessionProviderStateMismatch
-            }
-            _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
-        })
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+            Rt0ExitAssemblyError::SessionCandidateMismatch
+        }
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+            Rt0ExitAssemblyError::SessionProviderStateMismatch
+        }
+        _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
+    })?;
+    Ok(session)
 }
 
 #[derive(Debug, Clone, Copy)]

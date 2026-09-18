@@ -85,11 +85,11 @@ fn exit_evidence(
         "quality":{
             "origin":"real",
             "text_first_meaningful_response":distribution(900,2400),
-            "first_meaningful_audio":distribution(1400,2900),
-            "interruption_stop":distribution(250,450),
-            "first_useful_video":distribution(1200,2400),
+            "first_meaningful_audio":{"samples":2,"p50":500,"p95":500},
+            "interruption_stop":{"samples":1,"p50":250,"p95":250},
+            "first_useful_video":{"samples":2,"p50":700,"p95":700},
             "av_sync_absolute_offset":{"samples":6,"p50":50,"p95":110},
-            "recoverable_reconnect":distribution(2000,4900),
+            "recoverable_reconnect":{"samples":2,"p50":800,"p95":800},
             "artifact_sha256":supporting_artifact_sha256
         },
         "cost":{
@@ -694,6 +694,35 @@ fn cli_rejects_rehashed_supporting_artifact_with_detached_claim() {
         String::from_utf8(output.stderr)
             .unwrap()
             .contains("INVALID_ARTIFACT_DIGEST")
+    );
+}
+
+#[test]
+fn cli_rejects_rehashed_quality_claim_detached_from_raw_sessions() {
+    let paths = prepare(|_| {});
+    let quality_path = paths.supporting_artifacts.join("quality.json");
+    let mut quality: Value = serde_json::from_slice(&fs::read(&quality_path).unwrap()).unwrap();
+    quality["recoverable_reconnect"]["p50"] = json!(700);
+    quality["recoverable_reconnect"]["p95"] = json!(700);
+    let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
+    fs::write(&quality_path, &quality_bytes).unwrap();
+
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["quality"]["recoverable_reconnect"]["p50"] = json!(700);
+    evidence["quality"]["recoverable_reconnect"]["p95"] = json!(700);
+    evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
     );
 }
 
