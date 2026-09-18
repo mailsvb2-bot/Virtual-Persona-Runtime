@@ -658,19 +658,19 @@ fn every_browser_quality_metric_must_match_recomputed_session_distribution() {
 
     let mut cases = Vec::new();
     let mut audio = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    audio.quality.first_meaningful_audio.p50 += 1;
+    audio.quality.first_meaningful_audio.p95 += 1;
     cases.push(audio);
     let mut interruption = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    interruption.quality.interruption_stop.p50 += 1;
+    interruption.quality.interruption_stop.p95 += 1;
     cases.push(interruption);
     let mut video = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    video.quality.first_useful_video.p50 += 1;
+    video.quality.first_useful_video.p95 += 1;
     cases.push(video);
     let mut av_sync = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    av_sync.quality.av_sync_absolute_offset.p50 += 1;
+    av_sync.quality.av_sync_absolute_offset.p95 += 1;
     cases.push(av_sync);
     let mut reconnect = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    reconnect.quality.recoverable_reconnect.p50 += 1;
+    reconnect.quality.recoverable_reconnect.p95 += 1;
     cases.push(reconnect);
 
     for evidence in cases {
