@@ -24,7 +24,7 @@ pub use golden::{
 
 pub use live_provider::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
-    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, TtsProbeEvidence,
 };
 
 pub use exit::{
