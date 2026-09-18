@@ -9,6 +9,7 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
+    TtsProbeEvidence,
     bind_owner_lab_session_evidence, evaluate_bound_golden_suite, evaluate_rt0_exit_evidence,
     sha256_hex,
 };
@@ -115,6 +116,15 @@ fn live_provider_probe(provider_state_bytes: &[u8]) -> LiveProviderProbeReceipt 
         llm: LlmProbeEvidence {
             latency_millis: 120,
             output_chars: 5,
+            usage: probe_usage(),
+        },
+        tts: TtsProbeEvidence {
+            provider: "fake-tts".into(),
+            model_or_representation: "fake-model/fake-voice".into(),
+            configuration_fingerprint_sha256: digest('e'),
+            latency_millis: 80,
+            audio_sha256: digest('a'),
+            audio_millis: 200,
             usage: probe_usage(),
         },
         avatar: AvatarProbeEvidence {
@@ -735,6 +745,23 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
             RELEASE_SPEC,
             CANDIDATE,
             (&empty_output, &empty_output_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
+    );
+
+    let mut missing_tts = probe.clone();
+    missing_tts.tts.audio_millis = 0;
+    let missing_tts_bytes = serde_json::to_vec(&missing_tts).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&missing_tts_bytes);
+    assert_eq!(
+        evaluate_with_probe(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&missing_tts, &missing_tts_bytes),
         ),
         Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
     );
