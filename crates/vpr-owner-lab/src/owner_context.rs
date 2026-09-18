@@ -80,7 +80,7 @@ impl ReviewedOwnerContext {
             .map_err(|_| OwnerContextError::CorrectionRejected)
     }
 
-    pub(crate) fn voice_prompt(&self, utterance: &str) -> String {
+    pub(crate) fn conversation_prompt(&self, utterance: &str) -> String {
         let mut prompt = String::with_capacity(CONTEXT_HEADER.len() + utterance.len() + 256);
         prompt.push_str(CONTEXT_HEADER);
         prompt.push_str("\nBEGIN VERIFIED OWNER MATERIAL");
@@ -190,7 +190,7 @@ mod tests {
             )
             .unwrap();
 
-        let prompt = context.voice_prompt("Какой стиль работы тебе близок?");
+        let prompt = context.conversation_prompt("Какой стиль работы тебе близок?");
         assert!(prompt.contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки"));
         assert!(!prompt.contains("Люблю быстрые итерации"));
         assert!(prompt.contains("Какой стиль работы тебе близок?"));
