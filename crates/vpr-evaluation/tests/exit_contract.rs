@@ -303,7 +303,11 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
         },
         quality: QualityEvidence {
             origin: EvidenceOrigin::Real,
-            text_first_meaningful_response: distribution(1_000, 2_500),
+            text_first_meaningful_response: LatencyDistributionMillis {
+                samples: 2,
+                p50: 1_000,
+                p95: 2_500,
+            },
             first_meaningful_audio: LatencyDistributionMillis {
                 samples: 2,
                 p50: 500,
