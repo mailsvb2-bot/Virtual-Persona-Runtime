@@ -1,6 +1,7 @@
 mod http_avatar_input;
 mod http_client_control;
 mod http_evidence;
+mod http_json;
 mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
@@ -8,11 +9,12 @@ mod http_text;
 
 use std::env;
 use std::error::Error;
-use std::io::{Cursor, Read};
+use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use http_json::{parse_empty_json, parse_json, read_body};
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -267,16 +269,20 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
-        "/api/evidence/session/export" => http_evidence::export_terminal_snapshot(
-            &state.engine,
-            &state.evidence,
-            &state.evidence_export,
-        )
-        .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
-        .map_err(|error| error_response(error.status(), error.code())),
-        "/api/avatar/interrupt" => interrupt_active_turn(state),
-        "/api/session/revoke" => end_session(state, false),
-        "/api/session/close" => end_session(state, true),
+        "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
+            http_evidence::export_terminal_snapshot(
+                &state.engine,
+                &state.evidence,
+                &state.evidence_export,
+            )
+            .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
+            .map_err(|error| error_response(error.status(), error.code()))
+        }),
+        "/api/avatar/interrupt" => {
+            parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
+        }
+        "/api/session/revoke" => parse_empty_json(request).and_then(|()| end_session(state, false)),
+        "/api/session/close" => parse_empty_json(request).and_then(|()| end_session(state, true)),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
@@ -453,27 +459,6 @@ fn with_engine_result(
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
     operation(&mut engine).map_err(|error| lab_error_response(&error))
-}
-
-fn parse_json<T: for<'de> Deserialize<'de>>(request: &mut Request) -> Result<T, HttpResponse> {
-    if !is_json(request) {
-        return Err(error_response(415, "JSON_REQUIRED"));
-    }
-    let body = read_body(request, MAX_BODY_BYTES)?;
-    serde_json::from_slice(&body).map_err(|_| error_response(400, "INVALID_INPUT"))
-}
-
-fn read_body(request: &mut Request, limit: u64) -> Result<Vec<u8>, HttpResponse> {
-    let mut body = Vec::new();
-    request
-        .as_reader()
-        .take(limit + 1)
-        .read_to_end(&mut body)
-        .map_err(|_| error_response(400, "INVALID_INPUT"))?;
-    if body.len() as u64 > limit {
-        return Err(error_response(413, "BODY_TOO_LARGE"));
-    }
-    Ok(body)
 }
 
 fn valid_post_headers(request: &Request, csrf_token: &str, port: u16) -> bool {
