@@ -79,6 +79,40 @@ A successful report emits exact SHA-256 digests for all ten supporting artifacts
 acceptance/privacy/usability results into passes. The final exit gate remains responsible for the
 substantive RT0 thresholds and for binding these artifact bytes to `exit-evidence.json`.
 
+## RT0 exit-manifest assembler
+
+After the core and supporting artifacts have been captured, use the non-promoting assembler instead
+of manually copying statuses and SHA-256 values into `exit-evidence.json`:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
+  /secure/evidence/rt0-candidate/supporting \
+  /secure/evidence/rt0-candidate/bound-golden-report.json \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/provider-probe.json \
+  /secure/evidence/rt0-candidate/conversation-attempt.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  docs/releases/RT0_RELEASE_SPEC.md \
+  /secure/evidence/rt0-candidate/exit-evidence.json \
+  "$(git rev-parse HEAD)"
+```
+
+The assembler first runs the canonical supporting-evidence preflight, validates the bound Golden
+report against the exact candidate, ReleaseSpec bytes and provider state, validates the live-provider
+probe through the canonical probe validator, and reuses the canonical conversation-attempt and bound
+session-aggregate validators. It then projects the exact supporting JSON bytes into the canonical
+`Rt0ExitEvidence` claim types, computes every artifact digest itself, and derives the known-
+limitations review status from the exact Markdown marker.
+
+The assembler does **not** evaluate release readiness and has no `ready` output. Failed CI,
+acceptance, privacy, human-usability or limitations-review results remain failed in the assembled
+manifest. The output path must not already exist; the CLI writes a temporary sibling file and commits
+it by same-directory rename only after complete successful assembly, so a failed assembly does not
+publish a partial manifest.
+
+The generated manifest must still pass `vpr-rt0-exit-evidence`; assembly is only an integrity and
+operator-error reduction step, never RT0 exit evidence by itself.
+
 ## RT0 exit-evidence gate
 
 `vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as a successful bound Golden report. The exit checker also re-evaluates the archived private Golden evidence against the compiled mandatory RT0 minimum suite before trusting that report. It does not create evidence and cannot turn mock/synthetic results into real evidence.
