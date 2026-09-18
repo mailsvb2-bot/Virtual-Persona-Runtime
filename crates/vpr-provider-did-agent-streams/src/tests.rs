@@ -84,7 +84,7 @@ fn session() -> RealtimeAvatarSession {
 
 #[test]
 fn full_agents_streams_control_plane_matches_contract() {
-    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}]}"#;
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}],"fluent":true,"interrupt_enabled":true}"#;
     let (endpoint, captured) = serve(vec![
         ("201 Created", create_body.to_owned()),
         ("200 OK", "{}".to_owned()),
@@ -101,6 +101,42 @@ fn full_agents_streams_control_plane_matches_contract() {
     assert_eq!(live.provider_session_id, "session-1");
     assert_eq!(live.offer.kind, "offer");
     assert_eq!(live.ice_servers[0].urls.len(), 2);
+    let control = provider.client_control(&live).unwrap();
+    assert_eq!(control.data_channel_label, "JanusDataChannel");
+    assert!(control.interrupt);
+
+    let event = provider
+        .parse_client_event(
+            &live,
+            r#"stream/started:{"metadata":{"videoId":"video-7"}}"#,
+        )
+        .unwrap();
+    assert_eq!(
+        event,
+        Some(RealtimeAvatarClientEvent::PlaybackStarted {
+            playback_id: "video-7".to_owned(),
+        })
+    );
+    assert_eq!(
+        provider.parse_client_event(&live, "stream/done:{}").unwrap(),
+        Some(RealtimeAvatarClientEvent::PlaybackDone)
+    );
+    assert_eq!(
+        provider
+            .parse_client_event(&live, r#"chat/partial:{"value":"ignored"}"#)
+            .unwrap(),
+        None
+    );
+
+    let command = provider
+        .prepare_client_interrupt(&live, "video-7", &probe)
+        .unwrap();
+    assert_eq!(command.data_channel_label, "JanusDataChannel");
+    let payload: serde_json::Value = serde_json::from_str(&command.payload).unwrap();
+    assert_eq!(payload["type"], "stream/interrupt");
+    assert_eq!(payload["videoId"], "video-7");
+    assert!(payload["timestamp"].as_u64().is_some_and(|value| value > 0));
+    assert!(!format!("{command:?}").contains("video-7"));
 
     provider
         .submit_answer(
@@ -128,6 +164,7 @@ fn full_agents_streams_control_plane_matches_contract() {
         .speak_audio_url(&live, "https://cdn.example.com/voice.mp3", &probe)
         .unwrap();
     provider.close_session(&live).unwrap();
+    assert!(provider.client_control(&live).is_none());
 
     let requests: Vec<String> = (0..6).map(|_| captured.recv().unwrap()).collect();
     let lower = requests
@@ -153,6 +190,48 @@ fn full_agents_streams_control_plane_matches_contract() {
     assert!(requests[4].contains("\"type\":\"audio\""));
     assert!(requests[4].contains("\"audio_url\":\"https://cdn.example.com/voice.mp3\""));
     assert!(requests[5].starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+}
+
+#[test]
+fn legacy_or_non_interruptible_stream_never_advertises_client_interrupt() {
+    for create_body in [
+        r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":true}"#,
+        r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":true,"interrupt_enabled":false}"#,
+    ] {
+        let (endpoint, _) = serve(vec![("201 Created", create_body.to_owned())]);
+        let provider = adapter(endpoint);
+        let live = provider
+            .create_session(&Probe(AtomicBool::new(false)))
+            .unwrap();
+        assert!(provider.client_control(&live).is_none());
+        let error = provider
+            .prepare_client_interrupt(
+                &live,
+                "video-7",
+                &Probe(AtomicBool::new(false)),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    }
+}
+
+#[test]
+fn malformed_client_playback_event_fails_closed() {
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":true,"interrupt_enabled":true}"#;
+    let (endpoint, _) = serve(vec![("201 Created", create_body.to_owned())]);
+    let provider = adapter(endpoint);
+    let live = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap();
+
+    for message in [
+        "stream/started:{}",
+        r#"stream/started:{"metadata":{}}"#,
+        "stream/started:not-json",
+    ] {
+        let error = provider.parse_client_event(&live, message).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    }
 }
 
 #[test]
