@@ -60,7 +60,7 @@ pub enum Rt0SupportingPreflightError {
     ParticipantRoleMismatch,
     InvalidQuality,
     IncompleteHumanReview,
-    EmptyKnownLimitations,
+    InvalidKnownLimitations,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,11 +203,10 @@ pub fn preflight_rt0_supporting_artifacts(
         exact_candidate_sha,
         &provider_state_sha256,
     )?;
-    if String::from_utf8_lossy(artifacts.known_limitations)
-        .trim()
-        .is_empty()
-    {
-        return Err(Rt0SupportingPreflightError::EmptyKnownLimitations);
+    let known_limitations = std::str::from_utf8(artifacts.known_limitations)
+        .map_err(|_| Rt0SupportingPreflightError::InvalidKnownLimitations)?;
+    if known_limitations.trim().is_empty() {
+        return Err(Rt0SupportingPreflightError::InvalidKnownLimitations);
     }
 
     Ok(Rt0SupportingPreflightReport {
