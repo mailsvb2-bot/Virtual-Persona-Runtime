@@ -2,16 +2,17 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::exit_validation::{
+    validate_bound_session_aggregate, validate_rt0_conversation_attempt_artifact,
+};
 use crate::live_provider::validate_live_provider_probe;
 use crate::{
     AutomatedEvidence, BoundGoldenReport, BoundLabSessionEvidenceAggregate, ConversationPairEvidence,
     KnownLimitationsEvidence, LiveProviderProbeReceipt, ProviderStateManifest,
     RT0_EVIDENCE_BINDING_SCHEMA,
-    RT0_EXIT_EVIDENCE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, Rt0ExitEvidence,
+    RT0_EXIT_EVIDENCE_SCHEMA, Rt0ExitEvidence,
     Rt0SupportingPreflightArtifacts, preflight_rt0_supporting_artifacts, sha256_hex,
 };
-
-const RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rt0ExitAssemblyInputs<'a> {
@@ -94,26 +95,38 @@ pub fn assemble_rt0_exit_evidence(
     )
     .map_err(|_| Rt0ExitAssemblyError::LiveProviderProbeInvalid)?;
 
-    validate_conversation_attempt_binding(
+    validate_rt0_conversation_attempt_artifact(
         inputs.conversation_attempt_bytes,
         inputs.exact_candidate_sha,
         &provider_state_sha256,
-    )?;
+    )
+    .map_err(|error| match error {
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+            Rt0ExitAssemblyError::ConversationCandidateMismatch
+        }
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+            Rt0ExitAssemblyError::ConversationProviderStateMismatch
+        }
+        _ => Rt0ExitAssemblyError::ConversationAttemptInvalid,
+    })?;
 
     let session: BoundLabSessionEvidenceAggregate =
         serde_json::from_slice(inputs.bound_session_aggregate_bytes)
             .map_err(|_| Rt0ExitAssemblyError::BoundSessionAggregateInvalid)?;
-    if session.schema_version != RT0_OWNER_LAB_SESSION_BINDING_SCHEMA
-        || session.snapshot_sha256.is_empty()
-    {
-        return Err(Rt0ExitAssemblyError::BoundSessionAggregateInvalid);
-    }
-    if session.candidate_sha != inputs.exact_candidate_sha {
-        return Err(Rt0ExitAssemblyError::SessionCandidateMismatch);
-    }
-    if session.provider_state_sha256 != provider_state_sha256 {
-        return Err(Rt0ExitAssemblyError::SessionProviderStateMismatch);
-    }
+    validate_bound_session_aggregate(
+        &session,
+        inputs.exact_candidate_sha,
+        &provider_state_sha256,
+    )
+    .map_err(|error| match error {
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+            Rt0ExitAssemblyError::SessionCandidateMismatch
+        }
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+            Rt0ExitAssemblyError::SessionProviderStateMismatch
+        }
+        _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
+    })?;
 
     let automated = AutomatedEvidence {
         ci: projected_claim(
@@ -212,37 +225,4 @@ fn projected_claim<T: DeserializeOwned>(
         Value::String(artifact_sha256.to_owned()),
     );
     serde_json::from_value(value).map_err(|_| Rt0ExitAssemblyError::SupportingProjectionInvalid)
-}
-
-fn validate_conversation_attempt_binding(
-    bytes: &[u8],
-    exact_candidate_sha: &str,
-    provider_state_sha256: &str,
-) -> Result<(), Rt0ExitAssemblyError> {
-    let value: Value =
-        serde_json::from_slice(bytes).map_err(|_| Rt0ExitAssemblyError::ConversationAttemptInvalid)?;
-    if value.get("schema_version").and_then(Value::as_str)
-        != Some(RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA)
-        || value
-            .get("conversation_attempted")
-            .and_then(Value::as_bool)
-            != Some(true)
-        || value
-            .get("provider_output_submitted")
-            .and_then(Value::as_bool)
-            != Some(true)
-    {
-        return Err(Rt0ExitAssemblyError::ConversationAttemptInvalid);
-    }
-    if value.get("candidate_sha").and_then(Value::as_str) != Some(exact_candidate_sha) {
-        return Err(Rt0ExitAssemblyError::ConversationCandidateMismatch);
-    }
-    if value
-        .get("provider_state_sha256")
-        .and_then(Value::as_str)
-        != Some(provider_state_sha256)
-    {
-        return Err(Rt0ExitAssemblyError::ConversationProviderStateMismatch);
-    }
-    Ok(())
 }
