@@ -45,12 +45,21 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.4",
+        "schema_version":"rt0-owner-lab-session-evidence-0.5",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
         "canonical_playback_proven":true,
         "av_sync_proven":false,
+        "text_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":5 + session,
+            "status":"completed",
+            "failure_code":null,
+            "first_meaningful_response_millis":150,
+            "server_total_millis":200,
+            "llm_usage":{"input_units":8,"output_units":3,"estimated_cost_microunits":2,"provider_charge_microunits":3}
+        }],
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":10 + session,
@@ -95,7 +104,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["schema_version"],
-        "rt0-owner-lab-session-aggregate-binding-0.4"
+        "rt0-owner-lab-session-aggregate-binding-0.5"
     );
     assert_eq!(
         value["candidate_sha"],
