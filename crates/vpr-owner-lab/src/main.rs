@@ -1,3 +1,4 @@
+mod http_client_control;
 mod http_evidence;
 mod http_owner_capture;
 #[cfg(test)]
@@ -88,16 +89,6 @@ struct SpeakBody {
 #[derive(Deserialize)]
 struct AudioBody {
     audio_url: String,
-}
-
-#[derive(Deserialize)]
-struct ClientInterruptBody {
-    playback_id: String,
-}
-
-#[derive(Deserialize)]
-struct ClientEventBody {
-    message: String,
 }
 
 fn main() {
@@ -212,6 +203,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
+    if let Some(result) = http_client_control::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     match path {
         "/api/avatar/start" => http_evidence::ensure_previous_exported(
             &state.engine,
@@ -285,22 +279,6 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         )
         .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
         .map_err(|error| error_response(error.status(), error.code())),
-        "/api/avatar/client-event" => parse_json::<ClientEventBody>(request).and_then(|body| {
-            reject_if_session_ending(state)?;
-            with_engine_result(state, |engine| {
-                engine
-                    .parse_client_event(&body.message)
-                    .map(|event| json_response(200, &event))
-            })
-        }),
-        "/api/avatar/client-interrupt" => parse_json::<ClientInterruptBody>(request).and_then(|body| {
-            reject_if_session_ending(state)?;
-            with_engine_result(state, |engine| {
-                engine
-                    .prepare_client_interrupt(&body.playback_id)
-                    .map(|command| json_response(200, &command))
-            })
-        }),
         "/api/avatar/interrupt" => interrupt_active_turn(state),
         "/api/session/revoke" => end_session(state, false),
         "/api/session/close" => end_session(state, true),
