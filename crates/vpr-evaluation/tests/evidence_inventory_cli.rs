@@ -324,6 +324,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         report["bindings"]["probe_provider_state_matches"],
         json!(true)
     );
+    assert_eq!(report["bindings"]["probe_valid"], json!(true));
     assert_eq!(report["bindings"]["exit_candidate_matches"], json!(true));
     assert_eq!(
         report["bindings"]["exit_release_spec_matches_golden"],
@@ -378,7 +379,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.6")
+        json!("rt0-evidence-inventory-0.7")
     );
     assert_eq!(report["session_snapshots"]["expected"], json!(2));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
@@ -469,6 +470,35 @@ fn tampered_private_golden_bytes_keep_inventory_incomplete() {
         json!(false)
     );
     assert_eq!(report["bindings"]["golden_report_recomputed"], json!(false));
+}
+
+#[test]
+fn rehashed_semantically_invalid_probe_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+
+    let probe_path = dir.path().join("provider-probe.json");
+    let mut probe: Value = serde_json::from_slice(&fs::read(&probe_path).unwrap()).unwrap();
+    probe["conversation_evidence"] = json!(true);
+    let probe_bytes = serde_json::to_vec_pretty(&probe).unwrap();
+    fs::write(&probe_path, &probe_bytes).unwrap();
+
+    let exit_path = dir.path().join("exit-evidence.json");
+    let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
+    exit["live_provider_probe_sha256"] = json!(sha256_hex(&probe_bytes));
+    fs::write(&exit_path, serde_json::to_vec_pretty(&exit).unwrap()).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(report["bindings"]["exit_probe_digest_matches"], json!(true));
+    assert_eq!(report["bindings"]["probe_candidate_matches"], json!(true));
+    assert_eq!(
+        report["bindings"]["probe_provider_state_matches"],
+        json!(true)
+    );
+    assert_eq!(report["bindings"]["probe_valid"], json!(false));
 }
 
 #[test]

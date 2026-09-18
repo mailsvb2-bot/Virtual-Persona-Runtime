@@ -13,10 +13,10 @@ use vpr_evaluation::{
     GoldenEvidenceBundle, GoldenSuite, LiveProviderProbeReceipt, ProviderStateManifest,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite, sha256_hex,
-    validate_rt0_exit_supporting_artifacts,
+    validate_live_provider_probe, validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.6";
+const SCHEMA: &str = "rt0-evidence-inventory-0.7";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../../docs/evaluation/rt0_golden_minimum.json");
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
@@ -67,6 +67,7 @@ struct BindingChecks {
     golden_provider_state_matches: Option<bool>,
     probe_candidate_matches: Option<bool>,
     probe_provider_state_matches: Option<bool>,
+    probe_valid: Option<bool>,
     conversation_candidate_matches: Option<bool>,
     conversation_provider_state_matches: Option<bool>,
     session_candidate_matches: Option<bool>,
@@ -93,6 +94,7 @@ impl BindingChecks {
                 self.golden_provider_state_matches,
                 self.probe_candidate_matches,
                 self.probe_provider_state_matches,
+                self.probe_valid,
                 self.conversation_candidate_matches,
                 self.conversation_provider_state_matches,
                 self.session_candidate_matches,
@@ -123,6 +125,7 @@ struct ExternalBindingChecks {
     golden_provider_state: Option<bool>,
     probe_candidate: Option<bool>,
     probe_provider_state: Option<bool>,
+    probe_valid: Option<bool>,
     conversation_candidate: Option<bool>,
     conversation_provider_state: Option<bool>,
     session_candidate: Option<bool>,
@@ -297,6 +300,7 @@ fn inspect_binding_checks(
         golden_provider_state_matches: external.golden_provider_state,
         probe_candidate_matches: external.probe_candidate,
         probe_provider_state_matches: external.probe_provider_state,
+        probe_valid: external.probe_valid,
         conversation_candidate_matches: external.conversation_candidate,
         conversation_provider_state_matches: external.conversation_provider_state,
         session_candidate_matches: external.session_candidate,
@@ -421,6 +425,13 @@ fn inspect_external_binding_checks(
             .as_ref()
             .zip(provider_digest)
             .map(|(receipt, digest)| receipt.provider_state_sha256 == digest),
+        probe_valid: parsed
+            .probe
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(receipt, digest)| {
+                validate_live_provider_probe(receipt, candidate_sha, digest).is_ok()
+            }),
         conversation_candidate: parsed
             .conversation
             .as_ref()
