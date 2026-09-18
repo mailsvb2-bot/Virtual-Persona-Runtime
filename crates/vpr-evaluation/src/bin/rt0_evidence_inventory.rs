@@ -372,10 +372,7 @@ fn inspect_exit_binding_checks(
     }
 }
 
-fn recompute_golden_report(
-    parsed: &ParsedBindingArtifacts,
-    candidate_sha: &str,
-) -> Option<bool> {
+fn recompute_golden_report(parsed: &ParsedBindingArtifacts, candidate_sha: &str) -> Option<bool> {
     let report = parsed.golden.as_ref()?;
     let bundle = parsed.golden_evidence.as_ref()?;
     let provider_state = parsed.provider.as_ref()?;
