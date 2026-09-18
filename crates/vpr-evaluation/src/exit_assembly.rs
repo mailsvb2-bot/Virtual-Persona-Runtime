@@ -184,14 +184,14 @@ fn validate_core_artifacts(
             .map_err(|_| Rt0ExitAssemblyError::BoundSessionAggregateInvalid)?;
     validate_bound_session_aggregate(&session, inputs.exact_candidate_sha, provider_state_sha256)
         .map_err(|error| match error {
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
-                Rt0ExitAssemblyError::SessionCandidateMismatch
-            }
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
-                Rt0ExitAssemblyError::SessionProviderStateMismatch
-            }
-            _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
-        })?;
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+            Rt0ExitAssemblyError::SessionCandidateMismatch
+        }
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+            Rt0ExitAssemblyError::SessionProviderStateMismatch
+        }
+        _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
+    })?;
     Ok(session)
 }
 
