@@ -93,7 +93,14 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       send: (payload: string) => void;
       close: () => void;
     } | null = null;
-    (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
+    (window as unknown as {
+      __vprInterruptPayloads?: string[];
+      __vprBargeInOrder?: string[];
+      __vprMicStartedWhileRemoteSpeech?: boolean;
+    }).__vprInterruptPayloads = [];
+    (window as unknown as { __vprBargeInOrder?: string[] }).__vprBargeInOrder = [];
+    (window as unknown as { __vprMicStartedWhileRemoteSpeech?: boolean })
+      .__vprMicStartedWhileRemoteSpeech = false;
     const realFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -138,7 +145,17 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: async () => new FakeMediaStream([new FakeTrack()]) },
+      value: {
+        getUserMedia: async () => {
+          const state = window as unknown as {
+            __vprBargeInOrder: string[];
+            __vprMicStartedWhileRemoteSpeech: boolean;
+          };
+          state.__vprBargeInOrder.push("mic");
+          if (remoteSpeech) state.__vprMicStartedWhileRemoteSpeech = true;
+          return new FakeMediaStream([new FakeTrack()]);
+        },
+      },
     });
 
     class FakeAnalyser {
@@ -192,11 +209,16 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
           onclose: null as (() => void) | null,
           onmessage: null as ((event: { data: string }) => void) | null,
           send(payload: string): void {
-            (window as unknown as { __vprInterruptPayloads: string[] }).__vprInterruptPayloads.push(payload);
-            remoteSpeech = false;
-            queueMicrotask(() => channel.onmessage?.({
-              data: "stream/done:{}",
-            }));
+            const state = window as unknown as {
+              __vprInterruptPayloads: string[];
+              __vprBargeInOrder: string[];
+            };
+            state.__vprInterruptPayloads.push(payload);
+            state.__vprBargeInOrder.push("interrupt");
+            window.setTimeout(() => {
+              remoteSpeech = false;
+              channel.onmessage?.({ data: "stream/done:{}" });
+            }, 120);
           },
           close(): void {
             (channel as { readyState: "open" | "closed" }).readyState = "closed";
@@ -280,9 +302,10 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Привет из браузера",
     "Голосовой ответ владельцу",
   );
-  const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
-  await expect(interrupt).toBeEnabled();
-  await interrupt.click();
+  const voice = page.locator("#voice");
+  await expect(voice).toHaveText("Начать говорить");
+  await voice.click();
+  await expect(voice).toHaveText("Остановить и отправить");
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const snapshot = await evidence.json() as {
@@ -290,9 +313,21 @@ test("owner and visitor voice turns cross the real backend with different contex
     };
     return snapshot.media_events.some((event) => event.kind === "interruption_stopped");
   }).toBeTruthy();
-  const interruptPayloads = await page.evaluate(
-    () => (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads ?? [],
-  );
+  const bargeInState = await page.evaluate(() => {
+    const state = window as unknown as {
+      __vprInterruptPayloads?: string[];
+      __vprBargeInOrder?: string[];
+      __vprMicStartedWhileRemoteSpeech?: boolean;
+    };
+    return {
+      interruptPayloads: state.__vprInterruptPayloads ?? [],
+      order: state.__vprBargeInOrder ?? [],
+      micStartedWhileRemoteSpeech: state.__vprMicStartedWhileRemoteSpeech ?? true,
+    };
+  });
+  expect(bargeInState.micStartedWhileRemoteSpeech).toBeFalsy();
+  expect(bargeInState.order).toEqual(["interrupt", "mic"]);
+  const interruptPayloads = bargeInState.interruptPayloads;
   expect(interruptPayloads).toHaveLength(1);
   expect(JSON.parse(interruptPayloads[0] ?? "{}")).toMatchObject({
     type: "stream/interrupt",
