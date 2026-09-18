@@ -509,8 +509,7 @@ fn session_snapshot_bytes_with_text_timing(
     let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     snapshot["text_attempts"][0]["first_meaningful_response_millis"] =
         serde_json::json!(text_millis);
-    snapshot["text_attempts"][0]["server_total_millis"] =
-        serde_json::json!(text_millis + 100);
+    snapshot["text_attempts"][0]["server_total_millis"] = serde_json::json!(text_millis + 100);
     serde_json::to_vec(&snapshot).unwrap()
 }
 
@@ -519,8 +518,7 @@ fn text_quality_threshold_is_evaluated_from_recomputed_sessions() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let owner_snapshot =
-        session_snapshot_bytes_with_text_timing(ParticipantRole::Owner, 1, 1_001);
+    let owner_snapshot = session_snapshot_bytes_with_text_timing(ParticipantRole::Owner, 1, 1_001);
     let visitor_snapshot =
         session_snapshot_bytes_with_text_timing(ParticipantRole::Visitor, 2, 1_001);
     let bound = bind_owner_lab_session_evidence(
