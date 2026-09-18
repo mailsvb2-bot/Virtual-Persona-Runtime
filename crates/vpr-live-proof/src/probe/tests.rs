@@ -4,16 +4,20 @@ use vpr_evaluation::{
     ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
-    ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
+    PcmSampleFormat, ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
+    RealtimeAvatarSession, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    UsageUnit,
     WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
-use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe};
-use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
+use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_with_tts};
+use crate::{
+    LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA,
+    tts::PreparedTtsProbe,
+};
 
 #[derive(Default)]
 struct AvatarStats {
@@ -83,6 +87,47 @@ impl LlmPort for FakeLlm {
             estimated_cost_microunits: Some(7),
             provider_charge_microunits: None,
         })
+    }
+}
+
+struct FakeTts;
+
+impl TtsPort for FakeTts {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor {
+            provider: "fake-tts".into(),
+            model: "fake-tts-v1".into(),
+            representation: Some("fake-voice".into()),
+        }
+    }
+
+    fn synthesize(
+        &self,
+        request: &TtsRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        assert_eq!(request.text, "Готов.");
+        assert_eq!(request.locale_hint.as_deref(), Some("ru-RU"));
+        sink.push_generated_audio(&vec![3_u8; 6_400], 16_000, 1, PcmSampleFormat::S16Le)?;
+        Ok(UsageEvidence {
+            input_units: Some(6),
+            input_unit: Some(UsageUnit::TextCharacter),
+            output_units: Some(200),
+            output_unit: Some(UsageUnit::AudioMillisecond),
+            estimated_cost_microunits: Some(5),
+            provider_charge_microunits: None,
+        })
+    }
+}
+
+fn tts_probe() -> PreparedTtsProbe {
+    PreparedTtsProbe {
+        provider: Box::new(FakeTts),
+        provider_name: "fake-tts".into(),
+        model_or_representation: "fake-tts-v1/fake-voice".into(),
+        configuration_fingerprint_sha256: "e".repeat(64),
     }
 }
 
@@ -222,7 +267,12 @@ fn state_binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> Provide
 #[test]
 fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     let stats = Arc::new(Mutex::new(AvatarStats::default()));
-    let receipt = run_provider_probe(prepared(Arc::clone(&stats)), vec![0; 3_200]).unwrap();
+    let receipt = run_provider_probe_with_tts(
+        prepared(Arc::clone(&stats)),
+        vec![0; 3_200],
+        tts_probe(),
+    )
+    .unwrap();
     assert_eq!(receipt.schema_version, RT0_LIVE_PROVIDER_PROBE_SCHEMA);
     assert!(!receipt.conversation_evidence);
     assert!(!receipt.output_delivery_proven);
@@ -230,6 +280,11 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     assert_eq!(receipt.input_audio_sha256.len(), 64);
     assert!(receipt.stt.transcript_chars > 0);
     assert!(receipt.llm.output_chars > 0);
+    assert_eq!(receipt.tts.provider, "fake-tts");
+    assert_eq!(receipt.tts.model_or_representation, "fake-tts-v1/fake-voice");
+    assert_eq!(receipt.tts.configuration_fingerprint_sha256.len(), 64);
+    assert_eq!(receipt.tts.audio_millis, 200);
+    assert_eq!(receipt.tts.audio_sha256.len(), 64);
     let json = serde_json::to_string(&receipt).unwrap();
     for secret in [
         "Секретная тестовая транскрипция",
@@ -249,7 +304,7 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
 fn invalid_audio_fails_before_any_provider_is_used() {
     let stats = Arc::new(Mutex::new(AvatarStats::default()));
     assert_eq!(
-        run_provider_probe(prepared(Arc::clone(&stats)), vec![0; 3]),
+        run_provider_probe_with_tts(prepared(Arc::clone(&stats)), vec![0; 3], tts_probe()),
         Err(LiveProviderProbeError::InvalidAudio)
     );
     let stats = stats.lock().unwrap();
@@ -264,7 +319,11 @@ fn avatar_close_failure_attempts_revoke_cleanup_and_remains_failure() {
         ..AvatarStats::default()
     }));
     assert_eq!(
-        run_provider_probe(prepared(Arc::clone(&stats)), vec![0; 3_200]),
+        run_provider_probe_with_tts(
+            prepared(Arc::clone(&stats)),
+            vec![0; 3_200],
+            tts_probe(),
+        ),
         Err(LiveProviderProbeError::AvatarCleanup(
             vpr_domain::Rt0ReasonCode::ProviderUnavailable
         ))
