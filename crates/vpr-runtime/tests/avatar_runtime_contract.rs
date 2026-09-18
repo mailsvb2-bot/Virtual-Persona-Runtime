@@ -131,9 +131,11 @@ impl RealtimeAvatarPort for RecordingAvatar {
         _session: &RealtimeAvatarSession,
         message: &str,
     ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
-        Ok((message == "started").then(|| RealtimeAvatarClientEvent::PlaybackStarted {
-            playback_id: "playback-1".into(),
-        }))
+        Ok(
+            (message == "started").then(|| RealtimeAvatarClientEvent::PlaybackStarted {
+                playback_id: "playback-1".into(),
+            }),
+        )
     }
 
     fn prepare_client_interrupt(
