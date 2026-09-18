@@ -195,7 +195,10 @@ fn terminalize_avatar_output_error(
     }
 }
 
-pub(super) fn terminalize_provider_error(turn: &ActiveTurn, error: ProviderExecutionError) -> LabError {
+pub(super) fn terminalize_provider_error(
+    turn: &ActiveTurn,
+    error: ProviderExecutionError,
+) -> LabError {
     let mapped = map_provider_execution(error);
     terminalize_failed_turn(turn, mapped)
 }
