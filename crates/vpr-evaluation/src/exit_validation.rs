@@ -84,7 +84,7 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
-    validate_av_sync_quality_binding(evidence, &recomputed.aggregate)
+    validate_rt0_quality_evidence_binding(evidence, &recomputed.aggregate)
 }
 
 /// Validates that real-conversation claims are derived from the credentialed conversation receipt
@@ -274,14 +274,42 @@ fn is_russian_locale(locale: &str) -> bool {
     normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
-fn validate_av_sync_quality_binding(
+/// Validates browser-derived quality claims against the recomputed raw-session aggregate.
+///
+/// Text first-meaningful-response latency is intentionally excluded because the current raw session
+/// evidence schema does not expose an equivalent measurement. Cost evidence is also separate.
+///
+/// # Errors
+/// Returns a runtime-evidence error when a required browser-derived measurement is absent, partial,
+/// or detached from the exact recomputed session evidence.
+pub fn validate_rt0_quality_evidence_binding(
     evidence: &Rt0ExitEvidence,
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
-    let Some(av_sync) = aggregate.av_sync_absolute_offset else {
+    let (
+        Some(first_audio),
+        Some(interruption_stop),
+        Some(first_video),
+        Some(av_sync),
+        Some(reconnect),
+    ) = (
+        aggregate.first_meaningful_audio,
+        aggregate.interruption_stop,
+        aggregate.first_useful_video,
+        aggregate.av_sync_absolute_offset,
+        aggregate.recoverable_reconnect,
+    )
+    else {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     };
-    if !aggregate.av_sync_proven || av_sync != evidence.quality.av_sync_absolute_offset {
+    if !aggregate.canonical_playback_proven
+        || !aggregate.av_sync_proven
+        || first_audio != evidence.quality.first_meaningful_audio
+        || interruption_stop != evidence.quality.interruption_stop
+        || first_video != evidence.quality.first_useful_video
+        || av_sync != evidence.quality.av_sync_absolute_offset
+        || reconnect != evidence.quality.recoverable_reconnect
+    {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
     Ok(())
