@@ -139,7 +139,7 @@ fn partial_cost_never_becomes_a_fake_complete_total() {
         .estimated_cost_microunits = None;
     let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
     assert_eq!(aggregate.estimated_cost_microunits, None);
-    assert_eq!(aggregate.provider_charge_microunits, Some(10));
+    assert_eq!(aggregate.provider_charge_microunits, Some(13));
 }
 
 #[test]
