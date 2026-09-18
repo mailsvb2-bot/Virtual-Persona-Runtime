@@ -120,6 +120,26 @@ impl LiveConversationAttemptError {
     }
 }
 
+/// Validates private profile and owner/visitor PCM inputs without constructing or calling providers.
+///
+/// This is used by the atomic live-candidate CLI path so malformed private inputs fail before
+/// any credentialed egress or provider charge can occur.
+///
+/// # Errors
+/// Returns the same input/profile validation errors used by the live conversation attempt.
+pub fn validate_live_conversation_inputs(
+    profile_input_bytes: &[u8],
+    owner_audio: &[u8],
+    visitor_audio: &[u8],
+) -> Result<(), LiveConversationAttemptError> {
+    validate_audio(owner_audio)?;
+    validate_audio(visitor_audio)?;
+    let input: LiveConversationProfileInput = serde_json::from_slice(profile_input_bytes)
+        .map_err(|_| LiveConversationAttemptError::InvalidProfile)?;
+    reviewed_profile(&input)?;
+    Ok(())
+}
+
 /// Runs one credentialed owner turn followed by one visitor-scoped turn through the canonical
 /// Owner Lab engine and returns only sanitized attempt evidence.
 ///
