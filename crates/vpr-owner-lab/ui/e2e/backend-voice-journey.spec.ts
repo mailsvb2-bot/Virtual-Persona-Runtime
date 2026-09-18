@@ -403,6 +403,35 @@ test("owner and visitor voice turns cross the real backend with different contex
     elapsed_millis: expect.any(Number),
   });
 
+  await page.getByLabel("Текстовый разговор").fill("Спровоцируй отказ провайдера");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(page.locator("#status")).toContainText("PROVIDER_UNAVAILABLE");
+  await expect(page.locator("#persona-progress")).toContainText("версия 2");
+
+  await recordTextTurn(
+    page,
+    "Восстановление после отказа",
+    "Ответ после восстановления",
+  );
+  await expect(page.locator("#persona-progress")).toContainText("версия 2");
+
+  const recoveredEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(recoveredEvidence.ok()).toBeTruthy();
+  const recoveredEvidenceJson = await recoveredEvidence.json() as {
+    participant_role: "owner" | "visitor";
+    text_attempts: Array<{
+      request_sequence: number;
+      status: string;
+      failure_code: string | null;
+    }>;
+  };
+  expect(recoveredEvidenceJson.participant_role).toBe("owner");
+  expect(recoveredEvidenceJson.text_attempts).toMatchObject([
+    { request_sequence: 1, status: "completed", failure_code: null },
+    { request_sequence: 2, status: "failed", failure_code: "PROVIDER_UNAVAILABLE" },
+    { request_sequence: 3, status: "completed", failure_code: null },
+  ]);
+
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
   const ownerEvidenceDownloadPromise = page.waitForEvent("download");
@@ -501,7 +530,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
   expect(stt).toHaveLength(2);
-  expect(llm).toHaveLength(4);
+  expect(llm).toHaveLength(6);
   expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
@@ -510,18 +539,30 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(stt.every((entry) => entry.contentType?.startsWith("multipart/form-data"))).toBeTruthy();
   expect(stt.every((entry) => entry.bodyLength > 3_000)).toBeTruthy();
   expect(llm.every((entry) => entry.authorization === "Bearer voice-llm-e2e-secret")).toBeTruthy();
-  expect(llm[0]?.bodyText).toContain("Текстовый вопрос владельца");
-  expect(llm[1]?.bodyText).toContain("Привет из браузера");
+  const ownerTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос владельца"));
+  const ownerVoiceLlm = llm.find((entry) => entry.bodyText.includes("Привет из браузера"));
+  const failedOwnerLlm = llm.find((entry) => entry.bodyText.includes("Спровоцируй отказ провайдера"));
+  const recoveredOwnerLlm = llm.find((entry) => entry.bodyText.includes("Восстановление после отказа"));
+  const visitorTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос visitor"));
+  const visitorVoiceLlm = llm.find((entry) => entry.bodyText.includes("Что думает владелец?"));
+
+  expect(ownerTextLlm).toBeDefined();
+  expect(ownerVoiceLlm).toBeDefined();
+  expect(failedOwnerLlm).toBeDefined();
+  expect(recoveredOwnerLlm).toBeDefined();
+  expect(visitorTextLlm).toBeDefined();
+  expect(visitorVoiceLlm).toBeDefined();
+
   for (const ownerAnswer of ownerAnswers) {
-    expect(llm[0]?.bodyText).toContain(ownerAnswer);
-    expect(llm[1]?.bodyText).toContain(ownerAnswer);
-    expect(llm[2]?.bodyText).not.toContain(ownerAnswer);
-    expect(llm[3]?.bodyText).not.toContain(ownerAnswer);
+    expect(ownerTextLlm?.bodyText).toContain(ownerAnswer);
+    expect(ownerVoiceLlm?.bodyText).toContain(ownerAnswer);
+    expect(failedOwnerLlm?.bodyText).toContain(ownerAnswer);
+    expect(recoveredOwnerLlm?.bodyText).toContain(ownerAnswer);
+    expect(visitorTextLlm?.bodyText).not.toContain(ownerAnswer);
+    expect(visitorVoiceLlm?.bodyText).not.toContain(ownerAnswer);
   }
-  expect(llm[2]?.bodyText).toContain("Текстовый вопрос visitor");
-  expect(llm[3]?.bodyText).toContain("Что думает владелец?");
-  expect(llm[2]?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
-  expect(llm[3]?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
+  expect(visitorTextLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
+  expect(visitorVoiceLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
 
   expect(avatar.every((entry) => entry.authorization === "Basic voice-avatar-e2e-secret")).toBeTruthy();
   const ownerSpeech = avatar.find((entry) =>
