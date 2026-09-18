@@ -33,9 +33,9 @@ impl Fixture {
         let provider = sha256_hex(&provider_state);
         let distribution = json!({"samples":3,"p50":100,"p95":200});
         Self {
-            ci: bytes(json!({"status":"passed","candidate_sha":candidate})),
-            e2e: bytes(json!({"status":"passed","candidate_sha":candidate})),
-            owner: bytes(json!({
+            ci: bytes(&json!({"status":"passed","candidate_sha":candidate})),
+            e2e: bytes(&json!({"status":"passed","candidate_sha":candidate})),
+            owner: bytes(&json!({
                 "origin":"real",
                 "role":"owner",
                 "russian":"passed",
@@ -46,7 +46,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            visitor: bytes(json!({
+            visitor: bytes(&json!({
                 "origin":"real",
                 "role":"visitor",
                 "russian":"passed",
@@ -57,7 +57,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            acceptance: bytes(json!({
+            acceptance: bytes(&json!({
                 "origin":"real",
                 "owner_happy_path":"passed",
                 "visitor_happy_path":"passed",
@@ -67,7 +67,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            quality: bytes(json!({
+            quality: bytes(&json!({
                 "origin":"real",
                 "text_first_meaningful_response":distribution,
                 "first_meaningful_audio":distribution,
@@ -78,7 +78,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            cost: bytes(json!({
+            cost: bytes(&json!({
                 "origin":"real",
                 "measured_duration_millis":60000,
                 "measured_cost_microunits":null,
@@ -86,7 +86,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            privacy: bytes(json!({
+            privacy: bytes(&json!({
                 "origin":"real",
                 "permission_suite":"failed",
                 "accepted_private_context_leakage":1,
@@ -96,7 +96,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            human: bytes(json!({
+            human: bytes(&json!({
                 "origin":"real",
                 "rubric_version":"rt0-human-rubric-1",
                 "reviewer_count":1,
@@ -132,7 +132,7 @@ impl Fixture {
     }
 }
 
-fn bytes(value: Value) -> Vec<u8> {
+fn bytes(value: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(&value).unwrap()
 }
 
