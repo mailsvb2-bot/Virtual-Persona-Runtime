@@ -49,6 +49,17 @@ struct RoleConversationProof {
     interruption_exercised: bool,
 }
 
+pub(crate) fn validate_rt0_conversation_attempt_artifact(
+    conversation_attempt_bytes: &[u8],
+    exact_candidate_sha: &str,
+    provider_state_digest: &str,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let conversation: ConversationAttemptBinding =
+        serde_json::from_slice(conversation_attempt_bytes)
+            .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    validate_conversation_attempt_binding(&conversation, exact_candidate_sha, provider_state_digest)
+}
+
 pub(crate) fn validate_runtime_evidence(
     evidence: &Rt0ExitEvidence,
     context: Rt0ExitVerificationContext<'_>,
@@ -287,7 +298,7 @@ fn validate_av_sync_quality_binding(
     Ok(())
 }
 
-fn validate_bound_session_aggregate(
+pub(crate) fn validate_bound_session_aggregate(
     bound: &BoundLabSessionEvidenceAggregate,
     exact_candidate_sha: &str,
     provider_state_digest: &str,
