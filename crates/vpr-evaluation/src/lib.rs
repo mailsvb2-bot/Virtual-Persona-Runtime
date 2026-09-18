@@ -56,7 +56,6 @@ pub use session_evidence::{
 };
 
 pub use supporting_preflight::{
-    RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests,
-    Rt0SupportingPreflightArtifacts, Rt0SupportingPreflightError, Rt0SupportingPreflightReport,
-    preflight_rt0_supporting_artifacts,
+    RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,
+    Rt0SupportingPreflightError, Rt0SupportingPreflightReport, preflight_rt0_supporting_artifacts,
 };
