@@ -529,6 +529,7 @@ if "OWNER_CAPTURE_JS" not in owner_lab_main or '"/owner-capture.js"' not in owne
     raise SystemExit("Owner Lab backend must serve the versioned owner-capture browser module")
 
 owner_lab_text = (owner_lab_src / "state" / "text.rs").read_text(encoding="utf-8")
+owner_lab_http_text = (owner_lab_src / "http_text.rs").read_text(encoding="utf-8")
 for required_text_runtime in (
     "execute_llm",
     "TimedGeneratedTextBuffer",
@@ -538,12 +539,15 @@ for required_text_runtime in (
 ):
     if required_text_runtime not in owner_lab_text:
         raise SystemExit(f"Owner Lab text path must remain canonical: {required_text_runtime}")
+if "/api/text/turn" not in owner_lab_main:
+    raise SystemExit("Owner Lab text route must remain same-origin backend-owned")
 for required_text_http in (
-    "/api/text/turn",
     "begin_text_request",
     "complete_text_request",
+    "request_sequence",
+    "active_voice_interrupt",
 ):
-    if required_text_http not in owner_lab_main:
+    if required_text_http not in owner_lab_http_text:
         raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
 
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
