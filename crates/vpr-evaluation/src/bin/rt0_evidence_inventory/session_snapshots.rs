@@ -8,6 +8,7 @@ use serde::Serialize;
 use vpr_evaluation::{
     BoundLabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, Rt0ExitEvidence,
     bind_owner_lab_session_evidence, sha256_hex, validate_rt0_conversation_evidence_binding,
+    validate_rt0_quality_evidence_binding,
 };
 
 #[derive(Serialize)]
@@ -31,6 +32,7 @@ pub(super) struct SessionSnapshotChecks {
     #[serde(flatten)]
     integrity: SessionSnapshotIntegrity,
     conversation_claims_bound: bool,
+    quality_claims_bound: bool,
     files: Vec<SessionSnapshotItem>,
 }
 
@@ -41,6 +43,7 @@ impl SessionSnapshotChecks {
             && self.integrity.no_unbound_snapshots
             && self.integrity.binding_recomputed
             && self.conversation_claims_bound
+            && self.quality_claims_bound
     }
 }
 
@@ -71,6 +74,7 @@ pub(super) fn collect_session_snapshot_checks(
         candidate_sha,
         binding_recomputed,
     );
+    let quality_claims_bound = validate_quality_claims(root, bound, binding_recomputed);
     let expected_set: HashSet<&str> = expected.iter().map(String::as_str).collect();
     let files = discovered
         .into_iter()
@@ -89,6 +93,7 @@ pub(super) fn collect_session_snapshot_checks(
             binding_recomputed,
         },
         conversation_claims_bound,
+        quality_claims_bound,
         files,
     }
 }
@@ -200,4 +205,24 @@ fn validate_conversation_claims(
         &sha256_hex(provider_state_bytes),
     )
     .is_ok()
+}
+
+fn validate_quality_claims(
+    root: &Path,
+    bound: Option<&BoundLabSessionEvidenceAggregate>,
+    binding_recomputed: bool,
+) -> bool {
+    if !binding_recomputed {
+        return false;
+    }
+    let Some(bound) = bound else {
+        return false;
+    };
+    let Ok(exit_bytes) = fs::read(root.join("exit-evidence.json")) else {
+        return false;
+    };
+    let Ok(exit) = serde_json::from_slice::<Rt0ExitEvidence>(&exit_bytes) else {
+        return false;
+    };
+    validate_rt0_quality_evidence_binding(&exit, &bound.aggregate).is_ok()
 }
