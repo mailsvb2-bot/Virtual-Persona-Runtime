@@ -479,7 +479,9 @@ fn signal_bundle(
     .filter(|(capability, _)| provider_capabilities.supports(*capability))
     .map(|(_, name)| name.to_owned())
     .collect();
-    if client_control.as_ref().is_some_and(|control| control.interrupt)
+    if client_control
+        .as_ref()
+        .is_some_and(|control| control.interrupt)
         && !capabilities.iter().any(|name| name == "interrupt")
     {
         capabilities.push("interrupt".to_owned());
