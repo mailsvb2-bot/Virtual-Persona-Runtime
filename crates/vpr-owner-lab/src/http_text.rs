@@ -39,7 +39,7 @@ pub(super) fn text_turn_response(
                 .fail_text_request(request_sequence, "INTERNAL_ERROR");
             return Err(error_response(500, "INTERNAL_ERROR"));
         };
-        let result = engine.text_turn(body.text, |handle| {
+        let result = engine.text_turn(&body.text, |handle| {
             *state.active_voice_interrupt.lock() = Some(handle.clone());
             if state.voice_cancel_requested.load(Ordering::Acquire) {
                 let _ = handle.interrupt();
