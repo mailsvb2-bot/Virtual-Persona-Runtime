@@ -147,7 +147,10 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), i32> {
     if path.exists() {
         return fail("OUTPUT_EXISTS");
     }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     if !parent.is_dir() {
         return fail("OUTPUT_PATH_INVALID");
     }
@@ -189,4 +192,62 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
         serde_json::to_string(&CliError { ok: false, code }).map_err(|_| 2)?
     );
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::write_new_atomic;
+
+    static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "vpr-exit-assemble-{}-{nanos}-{sequence}",
+                std::process::id()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn atomic_writer_commits_exact_bytes_without_temp_artifact() {
+        let dir = TempDir::new();
+        let output = dir.0.join("exit-evidence.json");
+        write_new_atomic(&output, b"exact manifest bytes").unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), b"exact manifest bytes");
+        assert!(!dir.0.join(".exit-evidence.json.tmp").exists());
+    }
+
+    #[test]
+    fn atomic_writer_never_overwrites_existing_manifest() {
+        let dir = TempDir::new();
+        let output = dir.0.join("exit-evidence.json");
+        fs::write(&output, b"existing").unwrap();
+
+        assert_eq!(write_new_atomic(&output, b"replacement"), Err(2));
+        assert_eq!(fs::read(&output).unwrap(), b"existing");
+        assert!(!dir.0.join(".exit-evidence.json.tmp").exists());
+    }
 }
