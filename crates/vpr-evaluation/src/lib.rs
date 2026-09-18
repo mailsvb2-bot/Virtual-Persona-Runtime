@@ -52,8 +52,9 @@ pub use session_binding::{
 pub use session_evidence::{
     LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
     LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionAggregateError,
-    LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
-    LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabTextAttemptEvidence,
+    LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
+    RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
     SessionUsageEvidence, aggregate_owner_lab_session_evidence,
 };
