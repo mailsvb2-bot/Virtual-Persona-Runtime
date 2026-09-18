@@ -440,7 +440,6 @@ fn conversation_mode_rejects_malformed_profile_without_provider_calls_or_writes(
     remove_inputs(&[profile, owner_audio, visitor_audio]);
 }
 
-
 fn candidate_command(
     repo: &TempRepo,
     probe_audio: &Path,
