@@ -111,9 +111,8 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            limitations:
-                b"RT0-Review-Status: failed\n\nReviewed limitations for this candidate.\n"
-                    .to_vec(),
+            limitations: b"RT0-Review-Status: failed\n\nReviewed limitations for this candidate.\n"
+                .to_vec(),
         }
     }
 
@@ -156,10 +155,7 @@ fn exact_bound_real_supporting_bundle_is_preflight_complete_without_release_read
             .unwrap();
 
     assert!(report.preflight_complete);
-    assert_eq!(
-        report.known_limitations_review_status,
-        CheckStatus::Failed
-    );
+    assert_eq!(report.known_limitations_review_status, CheckStatus::Failed);
     assert_eq!(report.provider_state_sha256, sha256_hex(&provider_state));
     assert_eq!(
         report.artifact_digests.human_evaluation,
