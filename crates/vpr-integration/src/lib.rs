@@ -115,7 +115,6 @@ impl GeneratedTextSink for TimedGeneratedTextBuffer {
     }
 }
 
-
 impl GeneratedTextBuffer {
     #[must_use]
     pub fn as_str(&self) -> &str {
