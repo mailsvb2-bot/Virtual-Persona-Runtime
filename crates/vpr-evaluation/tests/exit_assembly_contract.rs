@@ -138,110 +138,16 @@ struct AssemblyFixture {
 impl AssemblyFixture {
     fn new() -> Self {
         let golden_fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
+        assert_eq!(golden_fixture.provider_state.providers.len(), 3);
+        assert_eq!(golden_fixture.bundle.binding.candidate_sha, CANDIDATE);
+        assert!(!golden_fixture.bundle_bytes.is_empty());
+
         let provider_state = golden_fixture.provider_state_bytes;
         let provider_digest = sha256_hex(&provider_state);
         let golden = serde_json::to_vec_pretty(&golden_fixture.report).unwrap();
-        let usage = json!({
-            "input_units":1,
-            "input_unit":"token",
-            "output_units":1,
-            "output_unit":"token",
-            "estimated_cost_microunits":1,
-            "provider_charge_microunits":null
-        });
-        let probe = bytes(&json!({
-            "schema_version":"rt0-live-provider-probe-0.2",
-            "candidate_sha":CANDIDATE,
-            "provider_state_sha256":provider_digest,
-            "input_audio_sha256":"7".repeat(64),
-            "input_audio_millis":1000,
-            "scope":"credentialed_provider_reachability_only",
-            "conversation_evidence":false,
-            "output_delivery_proven":false,
-            "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
-            "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
-            "tts":{
-                "provider":"fake-tts",
-                "model_or_representation":"fake-model/fake-voice",
-                "configuration_fingerprint_sha256":"e".repeat(64),
-                "latency_millis":80,
-                "audio_sha256":"a".repeat(64),
-                "audio_millis":200,
-                "usage":usage
-            },
-            "avatar":{"open_millis":150,"close_millis":50}
-        }));
-        let conversation = bytes(&json!({
-            "schema_version":"rt0-live-conversation-attempt-0.1",
-            "candidate_sha":CANDIDATE,
-            "provider_state_sha256":provider_digest,
-            "profile_input_sha256":"3".repeat(64),
-            "persona_id_sha256":"4".repeat(64),
-            "persona_version":2,
-            "reviewed_claims":1,
-            "owner":{
-                "audience":"owner",
-                "input_audio_sha256":"5".repeat(64),
-                "transcript_sha256":"6".repeat(64),
-                "transcript_chars":12,
-                "reply_sha256":"7".repeat(64),
-                "reply_chars":18,
-                "locale":"ru"
-            },
-            "visitor":{
-                "audience":"visitor",
-                "input_audio_sha256":"8".repeat(64),
-                "transcript_sha256":"9".repeat(64),
-                "transcript_chars":10,
-                "reply_sha256":"a".repeat(64),
-                "reply_chars":16,
-                "locale":"ru-RU"
-            },
-            "conversation_attempted":true,
-            "provider_output_submitted":true
-        }));
-        let snapshot = bytes(&json!({
-            "schema_version":"rt0-owner-lab-session-evidence-0.4",
-            "scope":"browser_observed_media_plane_only",
-            "session_sequence":1,
-            "participant_role":"owner",
-            "canonical_playback_proven":true,
-            "av_sync_proven":false,
-            "voice_attempts":[{
-                "request_sequence":1,
-                "canonical_turn_sequence":11,
-                "canonical_output_sequence":21,
-                "canonical_playback_confirmed":true,
-                "status":"completed",
-                "failure_code":null,
-                "stt_millis":100,
-                "llm_millis":120,
-                "avatar_millis":150,
-                "server_total_millis":370,
-                "stt_usage":{
-                    "input_units":1,
-                    "output_units":0,
-                    "estimated_cost_microunits":1,
-                    "provider_charge_microunits":null
-                },
-                "llm_usage":{
-                    "input_units":1,
-                    "output_units":1,
-                    "estimated_cost_microunits":1,
-                    "provider_charge_microunits":null
-                }
-            }],
-            "media_events":[
-                {"request_sequence":1,"kind":"audio_started","elapsed_millis":500},
-                {"request_sequence":null,"kind":"video_ready","elapsed_millis":700},
-                {"request_sequence":1,"kind":"interruption_stopped","elapsed_millis":250}
-            ],
-            "av_sync_samples":[]
-        }));
-        let bound =
-            bind_owner_lab_session_evidence(&[snapshot.as_slice()], &provider_state, CANDIDATE)
-                .unwrap();
-        let session = serde_json::to_vec_pretty(&bound).unwrap();
+        let probe = probe_bytes(&provider_digest);
+        let conversation = conversation_bytes(&provider_digest);
+        let session = session_bytes(&provider_state);
         let supporting = SupportingFixture::new(&provider_digest);
         Self {
             golden,
@@ -270,6 +176,116 @@ impl AssemblyFixture {
 fn bytes(value: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(value).unwrap()
 }
+
+fn probe_bytes(provider_digest: &str) -> Vec<u8> {
+    let usage = json!({
+        "input_units":1,
+        "input_unit":"token",
+        "output_units":1,
+        "output_unit":"token",
+        "estimated_cost_microunits":1,
+        "provider_charge_microunits":null
+    });
+    bytes(&json!({
+        "schema_version":"rt0-live-provider-probe-0.2",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_digest,
+        "input_audio_sha256":"7".repeat(64),
+        "input_audio_millis":1000,
+        "scope":"credentialed_provider_reachability_only",
+        "conversation_evidence":false,
+        "output_delivery_proven":false,
+        "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
+        "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
+        "tts":{
+            "provider":"fake-tts",
+            "model_or_representation":"fake-model/fake-voice",
+            "configuration_fingerprint_sha256":"e".repeat(64),
+            "latency_millis":80,
+            "audio_sha256":"a".repeat(64),
+            "audio_millis":200,
+            "usage":usage
+        },
+        "avatar":{"open_millis":150,"close_millis":50}
+    }))
+}
+
+fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
+    bytes(&json!({
+        "schema_version":"rt0-live-conversation-attempt-0.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_digest,
+        "profile_input_sha256":"3".repeat(64),
+        "persona_id_sha256":"4".repeat(64),
+        "persona_version":2,
+        "reviewed_claims":1,
+        "owner":{
+            "audience":"owner",
+            "input_audio_sha256":"5".repeat(64),
+            "transcript_sha256":"6".repeat(64),
+            "transcript_chars":12,
+            "reply_sha256":"7".repeat(64),
+            "reply_chars":18,
+            "locale":"ru"
+        },
+        "visitor":{
+            "audience":"visitor",
+            "input_audio_sha256":"8".repeat(64),
+            "transcript_sha256":"9".repeat(64),
+            "transcript_chars":10,
+            "reply_sha256":"a".repeat(64),
+            "reply_chars":16,
+            "locale":"ru-RU"
+        },
+        "conversation_attempted":true,
+        "provider_output_submitted":true
+    }))
+}
+
+fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
+    let snapshot = bytes(&json!({
+        "schema_version":"rt0-owner-lab-session-evidence-0.4",
+        "scope":"browser_observed_media_plane_only",
+        "session_sequence":1,
+        "participant_role":"owner",
+        "canonical_playback_proven":true,
+        "av_sync_proven":false,
+        "voice_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":11,
+            "canonical_output_sequence":21,
+            "canonical_playback_confirmed":true,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":100,
+            "llm_millis":120,
+            "avatar_millis":150,
+            "server_total_millis":370,
+            "stt_usage":{
+                "input_units":1,
+                "output_units":0,
+                "estimated_cost_microunits":1,
+                "provider_charge_microunits":null
+            },
+            "llm_usage":{
+                "input_units":1,
+                "output_units":1,
+                "estimated_cost_microunits":1,
+                "provider_charge_microunits":null
+            }
+        }],
+        "media_events":[
+            {"request_sequence":1,"kind":"audio_started","elapsed_millis":500},
+            {"request_sequence":null,"kind":"video_ready","elapsed_millis":700},
+            {"request_sequence":1,"kind":"interruption_stopped","elapsed_millis":250}
+        ],
+        "av_sync_samples":[]
+    }));
+    let bound = bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state, CANDIDATE)
+        .unwrap();
+    serde_json::to_vec_pretty(&bound).unwrap()
+}
+
 
 #[test]
 fn assembler_preserves_failed_real_evidence_without_claiming_readiness() {
