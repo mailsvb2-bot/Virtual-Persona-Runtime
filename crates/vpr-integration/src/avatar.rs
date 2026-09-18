@@ -90,6 +90,12 @@ pub struct RealtimeAvatarClientControl {
     pub interrupt: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RealtimeAvatarClientEvent {
+    PlaybackStarted { playback_id: String },
+    PlaybackDone,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct RealtimeAvatarClientCommand {
     pub data_channel_label: String,
@@ -210,6 +216,20 @@ pub trait RealtimeAvatarPort: Send + Sync {
         _session: &RealtimeAvatarSession,
     ) -> Option<RealtimeAvatarClientControl> {
         None
+    }
+
+    /// Parses one browser-received provider data-channel message into a normalized event.
+    ///
+    /// Raw provider payloads are transient inputs only and should not be logged or persisted.
+    ///
+    /// # Errors
+    /// Returns a typed provider error when a recognized message is malformed.
+    fn parse_client_event(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+        Ok(None)
     }
 
     /// Builds one provider-specific browser data-channel interrupt command after canonical runtime
