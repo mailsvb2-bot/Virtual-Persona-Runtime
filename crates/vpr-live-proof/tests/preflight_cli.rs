@@ -440,27 +440,28 @@ fn conversation_mode_rejects_malformed_profile_without_provider_calls_or_writes(
     remove_inputs(&[profile, owner_audio, visitor_audio]);
 }
 
-fn candidate_command(
-    repo: &TempRepo,
-    probe_audio: &Path,
-    profile: &Path,
-    owner_audio: &Path,
-    visitor_audio: &Path,
-    provider: &Path,
-    probe: &Path,
-    receipt: &Path,
-) -> Command {
+struct CandidateCommandPaths<'a> {
+    probe_audio: &'a Path,
+    profile: &'a Path,
+    owner_audio: &'a Path,
+    visitor_audio: &'a Path,
+    provider: &'a Path,
+    probe: &'a Path,
+    receipt: &'a Path,
+}
+
+fn candidate_command(repo: &TempRepo, paths: CandidateCommandPaths<'_>) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
     command
         .current_dir(repo.path())
         .arg("candidate")
-        .arg(probe_audio)
-        .arg(profile)
-        .arg(owner_audio)
-        .arg(visitor_audio)
-        .arg(provider)
-        .arg(probe)
-        .arg(receipt)
+        .arg(paths.probe_audio)
+        .arg(paths.profile)
+        .arg(paths.owner_audio)
+        .arg(paths.visitor_audio)
+        .arg(paths.provider)
+        .arg(paths.probe)
+        .arg(paths.receipt)
         .env_clear();
     for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
         if let Some(value) = std::env::var_os(key) {
@@ -482,13 +483,15 @@ fn candidate_mode_rejects_invalid_probe_audio_before_egress_and_writes_nothing()
 
     let output = candidate_command(
         &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
-        &provider,
-        &probe,
-        &receipt,
+        CandidateCommandPaths {
+            probe_audio: &probe_audio,
+            profile: &profile,
+            owner_audio: &owner_audio,
+            visitor_audio: &visitor_audio,
+            provider: &provider,
+            probe: &probe,
+            receipt: &receipt,
+        },
     )
     .output()
     .unwrap();
@@ -516,13 +519,15 @@ fn candidate_mode_rejects_malformed_profile_before_egress_and_writes_nothing() {
 
     let output = candidate_command(
         &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
-        &provider,
-        &probe,
-        &receipt,
+        CandidateCommandPaths {
+            probe_audio: &probe_audio,
+            profile: &profile,
+            owner_audio: &owner_audio,
+            visitor_audio: &visitor_audio,
+            provider: &provider,
+            probe: &probe,
+            receipt: &receipt,
+        },
     )
     .output()
     .unwrap();
@@ -548,13 +553,15 @@ fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
 
     let output = candidate_command(
         &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
-        &shared_output,
-        &shared_output,
-        &receipt,
+        CandidateCommandPaths {
+            probe_audio: &probe_audio,
+            profile: &profile,
+            owner_audio: &owner_audio,
+            visitor_audio: &visitor_audio,
+            provider: &shared_output,
+            probe: &shared_output,
+            receipt: &receipt,
+        },
     )
     .output()
     .unwrap();
