@@ -19,6 +19,7 @@ fn completed_text(request: u64, base: u64) -> LabTextAttemptEvidence {
     LabTextAttemptEvidence {
         request_sequence: request,
         canonical_turn_sequence: Some(request + 50),
+        canonical_output_sequence: Some(request + 60),
         status: LabTextAttemptStatus::Completed,
         failure_code: None,
         first_meaningful_response_millis: Some(base + 50),
@@ -162,6 +163,7 @@ fn text_attempts_are_exact_and_fail_closed() {
     failed.text_attempts[0] = LabTextAttemptEvidence {
         request_sequence: 1,
         canonical_turn_sequence: None,
+        canonical_output_sequence: None,
         status: LabTextAttemptStatus::Failed,
         failure_code: Some("PROVIDER_TIMEOUT".into()),
         first_meaningful_response_millis: None,
