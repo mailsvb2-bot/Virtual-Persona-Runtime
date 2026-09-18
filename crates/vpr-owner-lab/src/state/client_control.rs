@@ -74,11 +74,7 @@ impl OwnerLabEngine {
         let turn = self.new_turn()?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
         let command: RealtimeAvatarClientCommand = turn
-            .prepare_realtime_avatar_client_interrupt(
-                self.provider.as_ref(),
-                handle,
-                playback_id,
-            )
+            .prepare_realtime_avatar_client_interrupt(self.provider.as_ref(), handle, playback_id)
             .map_err(map_provider_execution)?;
         Ok(LabClientCommand {
             data_channel_label: command.data_channel_label,
