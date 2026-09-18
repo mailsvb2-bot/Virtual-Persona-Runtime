@@ -92,10 +92,7 @@ fn assert_client_interrupt_contract(
     assert!(control.interrupt);
 
     let event = provider
-        .parse_client_event(
-            live,
-            r#"stream/started:{"metadata":{"videoId":"video-7"}}"#,
-        )
+        .parse_client_event(live, r#"stream/started:{"metadata":{"videoId":"video-7"}}"#)
         .unwrap();
     assert_eq!(
         event,
