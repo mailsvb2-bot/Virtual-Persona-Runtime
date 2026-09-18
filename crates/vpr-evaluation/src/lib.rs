@@ -38,9 +38,7 @@ pub use exit::{
     RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitReport,
     evaluate_rt0_exit_evidence,
 };
-pub use exit_assembly::{
-    Rt0ExitAssemblyError, Rt0ExitAssemblyInputs, assemble_rt0_exit_evidence,
-};
+pub use exit_assembly::{Rt0ExitAssemblyError, Rt0ExitAssemblyInputs, assemble_rt0_exit_evidence};
 pub use exit_context::Rt0ExitVerificationContext;
 pub use exit_support::{
     Rt0ExitSupportingArtifacts, evaluate_verified_rt0_exit_evidence,
