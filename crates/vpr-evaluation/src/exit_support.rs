@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::binding::valid_sha256;
+use crate::known_limitations::parse_known_limitations_review_status;
 use crate::{
     BoundGoldenReport, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitReport,
     Rt0ExitVerificationContext, evaluate_rt0_exit_evidence, sha256_hex,
@@ -151,13 +152,17 @@ fn validate_supporting_claims(
             )?,
         ),
     ];
-    if claims.into_iter().all(|(bytes, expected)| {
+    if !claims.into_iter().all(|(bytes, expected)| {
         serde_json::from_slice::<Value>(bytes).is_ok_and(|actual| actual == expected)
     }) {
-        Ok(())
-    } else {
-        Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
     }
+    let review_status = parse_known_limitations_review_status(artifacts.known_limitations)
+        .map_err(|()| Rt0ExitEvidenceError::InvalidArtifactDigest)?;
+    if review_status != evidence.known_limitations.review_status {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    }
+    Ok(())
 }
 
 fn claim_without_digest<T: Serialize>(claim: &T) -> Result<Value, Rt0ExitEvidenceError> {
