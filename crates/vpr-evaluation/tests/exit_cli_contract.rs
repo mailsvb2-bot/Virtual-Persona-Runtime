@@ -53,7 +53,7 @@ fn exit_evidence(
     bound_session_aggregate_sha256: &str,
     supporting_artifact_sha256: &str,
 ) -> Value {
-    let distribution = |p50, p95| json!({"samples":10,"p50":p50,"p95":p95});
+    let distribution = |p50, p95| json!({"samples":2,"p50":p50,"p95":p95});
     let conversation = |role: &str, interruption: &str| {
         json!({
             "origin":"real","role":role,"russian":"passed","voice":"passed","video":"passed",
