@@ -14,9 +14,7 @@ pub use conversation::{
     RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA, RT0_LIVE_CONVERSATION_PROFILE_SCHEMA,
     run_live_conversation_attempt, validate_live_conversation_inputs,
 };
-pub use probe::{
-    LiveProviderProbeError, run_provider_probe, validate_provider_probe_audio,
-};
+pub use probe::{LiveProviderProbeError, run_provider_probe, validate_provider_probe_audio};
 pub use vpr_evaluation::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
     RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence, TtsProbeEvidence,
