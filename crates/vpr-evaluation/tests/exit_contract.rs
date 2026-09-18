@@ -500,20 +500,57 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
     assert_eq!(report.golden_report_sha256, sha256_hex(&golden_bytes));
 }
 
+fn session_snapshot_bytes_with_text_timing(
+    role: ParticipantRole,
+    session_sequence: u64,
+    text_millis: u64,
+) -> Vec<u8> {
+    let bytes = session_snapshot_bytes_with_av_sync(role, session_sequence, [40, 60, 120]);
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    snapshot["text_attempts"][0]["first_meaningful_response_millis"] =
+        serde_json::json!(text_millis);
+    snapshot["text_attempts"][0]["server_total_millis"] =
+        serde_json::json!(text_millis + 100);
+    serde_json::to_vec(&snapshot).unwrap()
+}
+
 #[test]
-fn text_quality_threshold_fails_when_exceeded_by_one_millisecond() {
+fn text_quality_threshold_is_evaluated_from_recomputed_sessions() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let owner_snapshot =
+        session_snapshot_bytes_with_text_timing(ParticipantRole::Owner, 1, 1_001);
+    let visitor_snapshot =
+        session_snapshot_bytes_with_text_timing(ParticipantRole::Visitor, 2, 1_001);
+    let bound = bind_owner_lab_session_evidence(
+        &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        &fixture.provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+    let bound_bytes = serde_json::to_vec(&bound).unwrap();
+    let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let probe = live_provider_probe(&fixture.provider_state_bytes);
+    let probe_bytes = serde_json::to_vec(&probe).unwrap();
     let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    evidence.quality.text_first_meaningful_response.p50 = 1_001;
-    let report = evaluate(
+    evidence.bound_session_aggregate_sha256 = sha256_hex(&bound_bytes);
+    evidence.quality.text_first_meaningful_response =
+        bound.aggregate.text_first_meaningful_response.unwrap();
+
+    let report = evaluate_with_runtime_snapshots(
         &evidence,
-        &golden,
-        &golden_bytes,
+        (&golden, &golden_bytes),
         &fixture,
         RELEASE_SPEC,
         CANDIDATE,
+        (&probe, &probe_bytes),
+        (
+            &conversation_attempt,
+            &bound,
+            &bound_bytes,
+            &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        ),
     )
     .unwrap();
     assert!(
@@ -664,12 +701,15 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
 }
 
 #[test]
-fn every_browser_quality_metric_must_match_recomputed_session_distribution() {
+fn every_session_quality_metric_must_match_recomputed_session_distribution() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
 
     let mut cases = Vec::new();
+    let mut text_quality = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    text_quality.quality.text_first_meaningful_response.p95 += 1;
+    cases.push(text_quality);
     let mut audio = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
     audio.quality.first_meaningful_audio.p95 += 1;
     cases.push(audio);
