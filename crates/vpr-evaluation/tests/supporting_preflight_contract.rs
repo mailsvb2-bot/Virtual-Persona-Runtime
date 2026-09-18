@@ -297,6 +297,6 @@ fn empty_known_limitations_is_rejected() {
             &provider_state(),
             &candidate()
         ),
-        Err(Rt0SupportingPreflightError::EmptyKnownLimitations)
+        Err(Rt0SupportingPreflightError::InvalidKnownLimitations)
     );
 }
