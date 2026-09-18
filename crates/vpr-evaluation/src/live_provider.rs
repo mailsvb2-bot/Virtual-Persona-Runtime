@@ -74,6 +74,13 @@ pub enum LiveProviderProbeValidationError {
     ProviderStateMismatch,
 }
 
+/// Validates one sanitized credentialed live-provider probe against its exact candidate and
+/// provider-state binding.
+///
+/// # Errors
+/// Returns a stable validation error when the receipt is structurally invalid, claims unsupported
+/// conversation/output proof, carries malformed or empty evidence, or is stale for the exact
+/// candidate/provider state.
 pub fn validate_live_provider_probe(
     probe: &LiveProviderProbeReceipt,
     exact_candidate_sha: &str,
