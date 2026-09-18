@@ -6,7 +6,8 @@ use vpr_domain::{
 };
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
     WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
@@ -19,6 +20,7 @@ struct RecordingAvatar {
     creates: AtomicUsize,
     speaks: AtomicUsize,
     closes: AtomicUsize,
+    client_interrupts: AtomicUsize,
 }
 
 impl RecordingAvatar {
@@ -114,6 +116,40 @@ impl RealtimeAvatarPort for RecordingAvatar {
         Ok(())
     }
 
+    fn client_control(
+        &self,
+        _session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        Some(RealtimeAvatarClientControl {
+            data_channel_label: "test-channel".into(),
+            interrupt: true,
+        })
+    }
+
+    fn parse_client_event(
+        &self,
+        _session: &RealtimeAvatarSession,
+        message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+        Ok((message == "started").then(|| RealtimeAvatarClientEvent::PlaybackStarted {
+            playback_id: "playback-1".into(),
+        }))
+    }
+
+    fn prepare_client_interrupt(
+        &self,
+        _session: &RealtimeAvatarSession,
+        playback_id: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        self.client_interrupts.fetch_add(1, Ordering::SeqCst);
+        Ok(RealtimeAvatarClientCommand {
+            data_channel_label: "test-channel".into(),
+            payload: format!("interrupt:{playback_id}"),
+        })
+    }
+
     fn close_session(&self, _session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         self.closes.fetch_add(1, Ordering::SeqCst);
         Ok(())
@@ -172,6 +208,57 @@ fn avatar_handle_is_session_scoped_and_survives_turn_boundary() {
 
     assert_eq!(provider.creates.load(Ordering::SeqCst), 1);
     assert_eq!(provider.speaks.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn client_interrupt_command_is_exact_handle_and_authority_bound() {
+    let persona = persona("client-control");
+    let session = active_session("client-control", &persona);
+    let opening = turn("client-open", &persona, &session);
+    let provider = RecordingAvatar::default();
+    let handle = opening.open_realtime_avatar(&provider).unwrap();
+    assert_eq!(
+        handle.client_control().unwrap().data_channel_label,
+        "test-channel"
+    );
+
+    let control_turn = turn("client-control", &persona, &session);
+    let event = control_turn
+        .parse_realtime_avatar_client_event(&provider, &handle, "started")
+        .unwrap();
+    assert_eq!(
+        event,
+        Some(RealtimeAvatarClientEvent::PlaybackStarted {
+            playback_id: "playback-1".into(),
+        })
+    );
+    let command = control_turn
+        .prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1")
+        .unwrap();
+    assert_eq!(command.data_channel_label, "test-channel");
+    assert_eq!(command.payload, "interrupt:playback-1");
+    assert_eq!(provider.client_interrupts.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn client_interrupt_command_rejects_cross_session_handle_before_provider() {
+    let persona_a = persona("client-a");
+    let session_a = active_session("client-a", &persona_a);
+    let turn_a = turn("client-a", &persona_a, &session_a);
+    let provider = RecordingAvatar::default();
+    let handle = turn_a.open_realtime_avatar(&provider).unwrap();
+
+    let persona_b = persona("client-b");
+    let session_b = active_session("client-b", &persona_b);
+    let turn_b = turn("client-b", &persona_b, &session_b);
+    let error = turn_b
+        .prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1")
+        .unwrap_err();
+    assert_eq!(
+        error,
+        ProviderExecutionError::Denied(RuntimeDenyReason::InvalidTurnState)
+    );
+    assert_eq!(provider.client_interrupts.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -236,6 +323,10 @@ fn revoke_blocks_new_avatar_input_but_cleanup_remains_available() {
     session.revoke().unwrap();
     assert!(matches!(
         turn.speak_realtime_avatar_text(&provider, &handle, "blocked"),
+        Err(ProviderExecutionError::Denied(_))
+    ));
+    assert!(matches!(
+        turn.prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1"),
         Err(ProviderExecutionError::Denied(_))
     ));
     assert_eq!(provider.speaks.load(Ordering::SeqCst), 0);
