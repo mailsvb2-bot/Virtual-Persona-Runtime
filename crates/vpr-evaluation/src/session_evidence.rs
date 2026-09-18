@@ -201,7 +201,8 @@ impl SessionAggregateAccumulator {
     ) -> Result<(), LabSessionAggregateError> {
         let mut text_request_sequences = HashSet::new();
         for attempt in &snapshot.text_attempts {
-            if attempt.request_sequence == 0 || !text_request_sequences.insert(attempt.request_sequence)
+            if attempt.request_sequence == 0
+                || !text_request_sequences.insert(attempt.request_sequence)
             {
                 return Err(LabSessionAggregateError::InvalidSnapshot);
             }
@@ -304,13 +305,7 @@ impl SessionAggregateAccumulator {
                 Ok(())
             }
             LabTextAttemptStatus::Completed => {
-                let (
-                    Some(turn),
-                    Some(output),
-                    Some(first),
-                    Some(total),
-                    Some(llm_usage),
-                ) = (
+                let (Some(turn), Some(output), Some(first), Some(total), Some(llm_usage)) = (
                     attempt.canonical_turn_sequence,
                     attempt.canonical_output_sequence,
                     attempt.first_meaningful_response_millis,
@@ -451,7 +446,8 @@ impl SessionAggregateAccumulator {
             failed_text_attempts: self.failed_text,
             completed_voice_attempts: self.completed_voice,
             failed_voice_attempts: self.failed_voice,
-            canonical_playback_proven: self.completed_voice > 0 && self.playback_sessions == sessions,
+            canonical_playback_proven: self.completed_voice > 0
+                && self.playback_sessions == sessions,
             av_sync_proven: self.completed_voice > 0 && self.av_sync_sessions == sessions,
             text_first_meaningful_response: distribution(self.text_first_meaningful)?,
             av_sync_absolute_offset: distribution(self.av_sync)?,
