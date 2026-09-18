@@ -4,12 +4,11 @@ use vpr_evaluation::{
     ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
-    PcmSampleFormat, ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat,
+    ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
     RealtimeAvatarSession, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
-    UsageUnit,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{PreparedTtsProbe, ProviderBundle, ProviderDescriptor};
 
@@ -266,12 +265,9 @@ fn state_binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> Provide
 #[test]
 fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     let stats = Arc::new(Mutex::new(AvatarStats::default()));
-    let receipt = run_provider_probe_with_tts(
-        prepared(Arc::clone(&stats)),
-        vec![0; 3_200],
-        tts_probe(),
-    )
-    .unwrap();
+    let receipt =
+        run_provider_probe_with_tts(prepared(Arc::clone(&stats)), vec![0; 3_200], tts_probe())
+            .unwrap();
     assert_eq!(receipt.schema_version, RT0_LIVE_PROVIDER_PROBE_SCHEMA);
     assert!(!receipt.conversation_evidence);
     assert!(!receipt.output_delivery_proven);
@@ -280,7 +276,10 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     assert!(receipt.stt.transcript_chars > 0);
     assert!(receipt.llm.output_chars > 0);
     assert_eq!(receipt.tts.provider, "fake-tts");
-    assert_eq!(receipt.tts.model_or_representation, "fake-tts-v1/fake-voice");
+    assert_eq!(
+        receipt.tts.model_or_representation,
+        "fake-tts-v1/fake-voice"
+    );
     assert_eq!(receipt.tts.configuration_fingerprint_sha256.len(), 64);
     assert_eq!(receipt.tts.audio_millis, 200);
     assert_eq!(receipt.tts.audio_sha256.len(), 64);
@@ -318,11 +317,7 @@ fn avatar_close_failure_attempts_revoke_cleanup_and_remains_failure() {
         ..AvatarStats::default()
     }));
     assert_eq!(
-        run_provider_probe_with_tts(
-            prepared(Arc::clone(&stats)),
-            vec![0; 3_200],
-            tts_probe(),
-        ),
+        run_provider_probe_with_tts(prepared(Arc::clone(&stats)), vec![0; 3_200], tts_probe(),),
         Err(LiveProviderProbeError::AvatarCleanup(
             vpr_domain::Rt0ReasonCode::ProviderUnavailable
         ))
