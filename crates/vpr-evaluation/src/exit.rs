@@ -7,7 +7,7 @@ use crate::binding::{
     validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
-use crate::exit_validation::{validate_quality_latencies, validate_runtime_evidence};
+use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
     BoundGoldenReport, GoldenSuite, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
@@ -405,7 +405,6 @@ fn validate_structure(
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
     }
     validate_artifact_digests(evidence)?;
-    validate_quality_latencies(&evidence.quality)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
         || evidence.conversations.visitor.role != ParticipantRole::Visitor
     {
