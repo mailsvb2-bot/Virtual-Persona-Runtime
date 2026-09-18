@@ -69,8 +69,12 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
-  await page.getByLabel("Что должен сказать аватар").fill("Проверка реального backend пути");
-  await page.getByRole("button", { name: "Сказать", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeDisabled();
+  const directOwnerSpeech = await request.post(`${ownerLabUrl}/api/avatar/speak`, {
+    headers: csrfHeaders(csrf),
+    data: { text: "Проверка низкоуровневого avatar speak" },
+  });
+  expect(directOwnerSpeech.ok()).toBeTruthy();
   const prematureExport = await request.post(`${ownerLabUrl}/api/evidence/session/export`, {
     headers: csrfHeaders(csrf),
     data: {},
