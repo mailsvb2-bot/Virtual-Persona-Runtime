@@ -1,6 +1,5 @@
 mod conversation;
 mod probe;
-mod tts;
 
 use serde::Serialize;
 use vpr_evaluation::{
