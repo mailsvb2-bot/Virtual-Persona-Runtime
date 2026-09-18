@@ -274,7 +274,8 @@ fn run_candidate(
     let provider_state_sha256 = prepared_probe.receipt().provider_state_sha256.clone();
     let provider_state =
         serde_json::to_vec_pretty(&prepared_probe.receipt().provider_state).map_err(|_| 2)?;
-    let probe = run_provider_probe(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
+    let probe =
+        run_provider_probe(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
 
     let prepared_conversation =
         prepare(&snapshot.candidate, worktree_clean()?, egress_authorized())
