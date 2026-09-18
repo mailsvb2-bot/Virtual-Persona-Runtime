@@ -68,6 +68,7 @@ let recording = false;
 let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let bargeInPending = false;
 let evidenceSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
@@ -374,9 +375,12 @@ const updateControls = (): void => {
   const textReady = backendStatus.conversation_readiness !== "none";
   const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
   const clientInterruptReady = clientInterruptAvailable();
-  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
-  interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
-  voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
+  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || bargeInPending;
+  interruptButton.disabled = bargeInPending
+    || (!textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady);
+  voiceButton.disabled = recording
+    ? false
+    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || bargeInPending;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
@@ -764,21 +768,28 @@ const cancelBargeInSilenceWait = (): void => {
 
 const prepareMicrophoneBargeIn = async (): Promise<boolean> => {
   if (!clientInterruptAvailable()) return true;
-  if (!remoteAudioAnalyser) {
+  if (!remoteAudioAnalyser || bargeInPending) {
     setStatus("Не удалось подтвердить остановку Persona — запись не начата", "error");
     return false;
   }
+  bargeInPending = true;
+  updateControls();
   setStatus("Останавливаю ответ Persona перед записью…");
-  const silence = waitForRemoteSilence();
-  if (!(await interruptAvatar())) {
-    cancelBargeInSilenceWait();
-    return false;
+  try {
+    const silence = waitForRemoteSilence();
+    if (!(await interruptAvatar())) {
+      cancelBargeInSilenceWait();
+      return false;
+    }
+    if (!(await silence)) {
+      setStatus("Persona не остановилась вовремя — запись не начата", "error");
+      return false;
+    }
+    return true;
+  } finally {
+    bargeInPending = false;
+    updateControls();
   }
-  if (!(await silence)) {
-    setStatus("Persona не остановилась вовремя — запись не начата", "error");
-    return false;
-  }
-  return true;
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
