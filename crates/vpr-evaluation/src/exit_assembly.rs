@@ -62,61 +62,7 @@ pub fn assemble_rt0_exit_evidence(
         inputs.exact_candidate_sha,
     )
     .map_err(|_| Rt0ExitAssemblyError::SupportingEvidenceInvalid)?;
-
-    let provider_state: ProviderStateManifest = serde_json::from_slice(inputs.provider_state_bytes)
-        .map_err(|_| Rt0ExitAssemblyError::GoldenProviderStateMismatch)?;
-    let provider_state_sha256 = supporting.provider_state_sha256.clone();
-
-    let golden: BoundGoldenReport = serde_json::from_slice(inputs.bound_golden_report_bytes)
-        .map_err(|_| Rt0ExitAssemblyError::GoldenReportInvalid)?;
-    if golden.binding.schema_version != RT0_EVIDENCE_BINDING_SCHEMA {
-        return Err(Rt0ExitAssemblyError::GoldenReportInvalid);
-    }
-    if golden.binding.candidate_sha != inputs.exact_candidate_sha {
-        return Err(Rt0ExitAssemblyError::GoldenCandidateMismatch);
-    }
-    if golden.binding.release_spec_sha256 != sha256_hex(inputs.release_spec_bytes) {
-        return Err(Rt0ExitAssemblyError::GoldenReleaseSpecMismatch);
-    }
-    if golden.binding.provider_state_sha256 != provider_state_sha256
-        || golden.provider_state != provider_state
-    {
-        return Err(Rt0ExitAssemblyError::GoldenProviderStateMismatch);
-    }
-
-    let probe: LiveProviderProbeReceipt = serde_json::from_slice(inputs.live_provider_probe_bytes)
-        .map_err(|_| Rt0ExitAssemblyError::LiveProviderProbeInvalid)?;
-    validate_live_provider_probe(&probe, inputs.exact_candidate_sha, &provider_state_sha256)
-        .map_err(|_| Rt0ExitAssemblyError::LiveProviderProbeInvalid)?;
-
-    validate_rt0_conversation_attempt_artifact(
-        inputs.conversation_attempt_bytes,
-        inputs.exact_candidate_sha,
-        &provider_state_sha256,
-    )
-    .map_err(|error| match error {
-        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
-            Rt0ExitAssemblyError::ConversationCandidateMismatch
-        }
-        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
-            Rt0ExitAssemblyError::ConversationProviderStateMismatch
-        }
-        _ => Rt0ExitAssemblyError::ConversationAttemptInvalid,
-    })?;
-
-    let session: BoundLabSessionEvidenceAggregate =
-        serde_json::from_slice(inputs.bound_session_aggregate_bytes)
-            .map_err(|_| Rt0ExitAssemblyError::BoundSessionAggregateInvalid)?;
-    validate_bound_session_aggregate(&session, inputs.exact_candidate_sha, &provider_state_sha256)
-        .map_err(|error| match error {
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
-                Rt0ExitAssemblyError::SessionCandidateMismatch
-            }
-            crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
-                Rt0ExitAssemblyError::SessionProviderStateMismatch
-            }
-            _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
-        })?;
+    validate_core_artifacts(&inputs, &supporting.provider_state_sha256)?;
 
     let automated = AutomatedEvidence {
         ci: projected_claim(
@@ -148,7 +94,7 @@ pub fn assemble_rt0_exit_evidence(
         candidate_sha: inputs.exact_candidate_sha.into(),
         release_spec_sha256: sha256_hex(inputs.release_spec_bytes),
         golden_report_sha256: sha256_hex(inputs.bound_golden_report_bytes),
-        provider_state_sha256,
+        provider_state_sha256: supporting.provider_state_sha256,
         live_provider_probe_sha256: sha256_hex(inputs.live_provider_probe_bytes),
         conversation_attempt_sha256: sha256_hex(inputs.conversation_attempt_bytes),
         bound_session_aggregate_sha256: sha256_hex(inputs.bound_session_aggregate_bytes),
@@ -184,6 +130,63 @@ pub fn assemble_rt0_exit_evidence(
             document_sha256: supporting.artifact_digests.known_limitations,
         },
     })
+}
+
+fn validate_core_artifacts(
+    inputs: &Rt0ExitAssemblyInputs<'_>,
+    provider_state_sha256: &str,
+) -> Result<(), Rt0ExitAssemblyError> {
+    let provider_state: ProviderStateManifest = serde_json::from_slice(inputs.provider_state_bytes)
+        .map_err(|_| Rt0ExitAssemblyError::GoldenProviderStateMismatch)?;
+    let golden: BoundGoldenReport = serde_json::from_slice(inputs.bound_golden_report_bytes)
+        .map_err(|_| Rt0ExitAssemblyError::GoldenReportInvalid)?;
+    if golden.binding.schema_version != RT0_EVIDENCE_BINDING_SCHEMA {
+        return Err(Rt0ExitAssemblyError::GoldenReportInvalid);
+    }
+    if golden.binding.candidate_sha != inputs.exact_candidate_sha {
+        return Err(Rt0ExitAssemblyError::GoldenCandidateMismatch);
+    }
+    if golden.binding.release_spec_sha256 != sha256_hex(inputs.release_spec_bytes) {
+        return Err(Rt0ExitAssemblyError::GoldenReleaseSpecMismatch);
+    }
+    if golden.binding.provider_state_sha256 != provider_state_sha256
+        || golden.provider_state != provider_state
+    {
+        return Err(Rt0ExitAssemblyError::GoldenProviderStateMismatch);
+    }
+
+    let probe: LiveProviderProbeReceipt = serde_json::from_slice(inputs.live_provider_probe_bytes)
+        .map_err(|_| Rt0ExitAssemblyError::LiveProviderProbeInvalid)?;
+    validate_live_provider_probe(&probe, inputs.exact_candidate_sha, provider_state_sha256)
+        .map_err(|_| Rt0ExitAssemblyError::LiveProviderProbeInvalid)?;
+    validate_rt0_conversation_attempt_artifact(
+        inputs.conversation_attempt_bytes,
+        inputs.exact_candidate_sha,
+        provider_state_sha256,
+    )
+    .map_err(|error| match error {
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+            Rt0ExitAssemblyError::ConversationCandidateMismatch
+        }
+        crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+            Rt0ExitAssemblyError::ConversationProviderStateMismatch
+        }
+        _ => Rt0ExitAssemblyError::ConversationAttemptInvalid,
+    })?;
+
+    let session: BoundLabSessionEvidenceAggregate =
+        serde_json::from_slice(inputs.bound_session_aggregate_bytes)
+            .map_err(|_| Rt0ExitAssemblyError::BoundSessionAggregateInvalid)?;
+    validate_bound_session_aggregate(&session, inputs.exact_candidate_sha, provider_state_sha256)
+        .map_err(|error| match error {
+            crate::Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch => {
+                Rt0ExitAssemblyError::SessionCandidateMismatch
+            }
+            crate::Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch => {
+                Rt0ExitAssemblyError::SessionProviderStateMismatch
+            }
+            _ => Rt0ExitAssemblyError::BoundSessionAggregateInvalid,
+        })
 }
 
 #[derive(Debug, Clone, Copy)]
