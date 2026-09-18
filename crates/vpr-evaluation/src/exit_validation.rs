@@ -285,7 +285,7 @@ fn is_russian_locale(locale: &str) -> bool {
     normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
-fn validate_browser_quality_binding(
+pub(crate) fn validate_browser_quality_binding(
     evidence: &Rt0ExitEvidence,
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
