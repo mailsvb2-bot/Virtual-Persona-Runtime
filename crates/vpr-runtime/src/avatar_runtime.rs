@@ -3,8 +3,8 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer,
-    WebRtcSessionDescription,
+    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -228,18 +228,16 @@ impl ActiveTurn {
             .as_ref()
             .is_some_and(|control| control.interrupt)
         {
-            return Err(ProviderExecutionError::Provider(vpr_integration::ProviderError {
-                kind: vpr_integration::ProviderErrorKind::Unavailable,
-                retryable: false,
-            }));
+            return Err(ProviderExecutionError::Provider(
+                vpr_integration::ProviderError {
+                    kind: vpr_integration::ProviderErrorKind::Unavailable,
+                    retryable: false,
+                },
+            ));
         }
         let permit = self.avatar_permit()?;
-        port.prepare_client_interrupt(
-            &handle.provider_session,
-            playback_id,
-            &permit.cancellation,
-        )
-        .map_err(ProviderExecutionError::from)
+        port.prepare_client_interrupt(&handle.provider_session, playback_id, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
     }
 
     /// Requests provider-side interruption using this turn's current authorization.
