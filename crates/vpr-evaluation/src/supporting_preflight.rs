@@ -147,6 +147,15 @@ struct HumanSupportingClaim {
     provider_state_sha256: String,
 }
 
+/// Performs a non-promoting structural and binding preflight over the ten RT0 supporting artifacts.
+///
+/// The report intentionally contains no release-ready decision. Substantive pass/fail outcomes are
+/// preserved for the canonical RT0 exit gate.
+///
+/// # Errors
+/// Returns a stable preflight error when the candidate/provider binding is stale, JSON is malformed,
+/// a real-evidence slot is not real, owner/visitor roles drift, quality distributions are invalid,
+/// mandatory human-review records are incomplete, or known-limitations evidence is invalid.
 pub fn preflight_rt0_supporting_artifacts(
     artifacts: Rt0SupportingPreflightArtifacts<'_>,
     provider_state_bytes: &[u8],
