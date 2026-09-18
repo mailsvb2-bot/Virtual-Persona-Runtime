@@ -299,6 +299,7 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
         "text_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":5 + session_sequence,
+            "canonical_output_sequence":15 + session_sequence,
             "status":"completed",
             "failure_code":null,
             "first_meaningful_response_millis":if role == "owner" { 900 } else { 2_400 },
