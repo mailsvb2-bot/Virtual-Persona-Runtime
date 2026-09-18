@@ -42,6 +42,7 @@ fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
         "text_attempts":[{
             "request_sequence":request,
             "canonical_turn_sequence":request + 50,
+            "canonical_output_sequence":request + 60,
             "status":"completed",
             "failure_code":null,
             "first_meaningful_response_millis":elapsed - 250,
