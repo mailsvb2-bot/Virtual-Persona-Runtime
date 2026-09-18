@@ -1,8 +1,8 @@
 mod http_evidence;
 mod http_owner_capture;
-mod http_text;
 #[cfg(test)]
 mod http_security_tests;
+mod http_text;
 
 use std::env;
 use std::error::Error;
