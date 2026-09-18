@@ -85,11 +85,11 @@ fn exit_evidence(
         "quality":{
             "origin":"real",
             "text_first_meaningful_response":distribution(900,2400),
-            "first_meaningful_audio":distribution(1400,2900),
-            "interruption_stop":distribution(250,450),
-            "first_useful_video":distribution(1200,2400),
+            "first_meaningful_audio":{"samples":2,"p50":500,"p95":500},
+            "interruption_stop":{"samples":1,"p50":250,"p95":250},
+            "first_useful_video":{"samples":2,"p50":700,"p95":700},
             "av_sync_absolute_offset":{"samples":6,"p50":50,"p95":110},
-            "recoverable_reconnect":distribution(2000,4900),
+            "recoverable_reconnect":{"samples":2,"p50":800,"p95":800},
             "artifact_sha256":supporting_artifact_sha256
         },
         "cost":{
