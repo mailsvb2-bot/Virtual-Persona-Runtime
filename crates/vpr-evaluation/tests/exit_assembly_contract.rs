@@ -24,7 +24,7 @@ struct SupportingFixture {
 
 impl SupportingFixture {
     fn new(provider_state_sha256: &str) -> Self {
-        let text_distribution = json!({"samples": 3, "p50": 100, "p95": 200});
+        let text_distribution = json!({"samples": 1, "p50": 100, "p95": 100});
         Self {
             ci: bytes(&json!({"status":"failed","candidate_sha":CANDIDATE})),
             e2e: bytes(&json!({"status":"passed","candidate_sha":CANDIDATE})),
@@ -244,12 +244,26 @@ fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
 
 fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
     let snapshot = bytes(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.4",
+        "schema_version":"rt0-owner-lab-session-evidence-0.5",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":1,
         "participant_role":"owner",
         "canonical_playback_proven":true,
         "av_sync_proven":true,
+        "text_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":6,
+            "status":"completed",
+            "failure_code":null,
+            "first_meaningful_response_millis":100,
+            "server_total_millis":150,
+            "llm_usage":{
+                "input_units":1,
+                "output_units":1,
+                "estimated_cost_microunits":1,
+                "provider_charge_microunits":null
+            }
+        }],
         "voice_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":11,
