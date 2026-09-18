@@ -276,18 +276,13 @@ fn real_claim_binding_rejects_stale_candidate_or_provider_after_rehash() {
     }
 }
 
-
 #[test]
 fn limitations_review_status_is_bound_to_exact_artifact_bytes() {
     let mut evidence = evidence();
     let mut fixture = SupportingFixture::bind(&mut evidence);
     fixture.limitations =
         b"RT0-Review-Status: failed\n\nReviewed RT0 limitations for this candidate.\n".to_vec();
-    set_digest(
-        &mut evidence,
-        9,
-        sha256_hex(&fixture.limitations),
-    );
+    set_digest(&mut evidence, 9, sha256_hex(&fixture.limitations));
 
     assert_eq!(
         validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
@@ -305,11 +300,7 @@ fn limitations_artifact_requires_review_marker_and_body() {
         let mut evidence = evidence();
         let mut fixture = SupportingFixture::bind(&mut evidence);
         fixture.limitations = bytes.to_vec();
-        set_digest(
-            &mut evidence,
-            9,
-            sha256_hex(&fixture.limitations),
-        );
+        set_digest(&mut evidence, 9, sha256_hex(&fixture.limitations));
         assert_eq!(
             validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
             Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
