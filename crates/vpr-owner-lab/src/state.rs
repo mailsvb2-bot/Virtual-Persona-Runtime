@@ -70,13 +70,20 @@ pub enum OwnerContextState {
     Reviewed,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ConversationReadiness {
+    None,
+    Text,
+    TextAndVoice,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabStatus {
     pub session_state: String,
     pub avatar_open: bool,
     pub egress_enabled: bool,
-    pub text_ready: bool,
-    pub voice_ready: bool,
+    pub conversation_readiness: ConversationReadiness,
     pub session_audience: Option<LabSessionAudience>,
     pub owner_context_state: OwnerContextState,
     pub persona_version: u64,
@@ -228,8 +235,11 @@ impl OwnerLabEngine {
                 .as_ref()
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
-            text_ready: self.llm.is_some(),
-            voice_ready: self.stt.is_some() && self.llm.is_some(),
+            conversation_readiness: match (self.llm.is_some(), self.stt.is_some()) {
+                (true, true) => ConversationReadiness::TextAndVoice,
+                (true, false) => ConversationReadiness::Text,
+                (false, _) => ConversationReadiness::None,
+            },
             session_audience: self.session_audience,
             owner_context_state: if self.reviewed_owner_context.is_some() {
                 OwnerContextState::Reviewed
