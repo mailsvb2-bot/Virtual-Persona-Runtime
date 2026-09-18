@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use parking_lot::Mutex as ParkingMutex;
 use http_json::{parse_empty_json, parse_json, read_body};
+use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
