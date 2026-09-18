@@ -4,10 +4,9 @@ use serde_json::Value;
 
 use crate::live_provider::validate_live_provider_probe;
 use crate::{
-    AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, BoundGoldenReport,
-    BoundLabSessionEvidenceAggregate, ConversationEvidence, ConversationPairEvidence, CostEvidence,
-    HumanEvaluationEvidence, KnownLimitationsEvidence, LiveProviderProbeReceipt,
-    PrivacyPermissionEvidence, ProviderStateManifest, QualityEvidence, RT0_EVIDENCE_BINDING_SCHEMA,
+    AutomatedEvidence, BoundGoldenReport, BoundLabSessionEvidenceAggregate, ConversationPairEvidence,
+    KnownLimitationsEvidence, LiveProviderProbeReceipt, ProviderStateManifest,
+    RT0_EVIDENCE_BINDING_SCHEMA,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, Rt0ExitEvidence,
     Rt0SupportingPreflightArtifacts, preflight_rt0_supporting_artifacts, sha256_hex,
 };
@@ -246,18 +245,4 @@ fn validate_conversation_attempt_binding(
         return Err(Rt0ExitAssemblyError::ConversationProviderStateMismatch);
     }
     Ok(())
-}
-
-// Keep canonical target types explicit at this boundary so schema changes cannot silently turn
-// assembler output into generic JSON.
-#[allow(dead_code)]
-fn _canonical_projection_types(
-    _: ArtifactCheckEvidence,
-    _: ConversationEvidence,
-    _: AcceptanceEvidence,
-    _: QualityEvidence,
-    _: CostEvidence,
-    _: PrivacyPermissionEvidence,
-    _: HumanEvaluationEvidence,
-) {
 }
