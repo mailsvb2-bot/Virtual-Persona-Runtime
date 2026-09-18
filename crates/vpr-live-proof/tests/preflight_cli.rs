@@ -450,7 +450,7 @@ struct CandidateCommandPaths<'a> {
     receipt: &'a Path,
 }
 
-fn candidate_command(repo: &TempRepo, paths: CandidateCommandPaths<'_>) -> Command {
+fn candidate_command(repo: &TempRepo, paths: &CandidateCommandPaths<'_>) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
     command
         .current_dir(repo.path())
@@ -483,7 +483,7 @@ fn candidate_mode_rejects_invalid_probe_audio_before_egress_and_writes_nothing()
 
     let output = candidate_command(
         &repo,
-        CandidateCommandPaths {
+        &CandidateCommandPaths {
             probe_audio: &probe_audio,
             profile: &profile,
             owner_audio: &owner_audio,
@@ -519,7 +519,7 @@ fn candidate_mode_rejects_malformed_profile_before_egress_and_writes_nothing() {
 
     let output = candidate_command(
         &repo,
-        CandidateCommandPaths {
+        &CandidateCommandPaths {
             probe_audio: &probe_audio,
             profile: &profile,
             owner_audio: &owner_audio,
@@ -553,7 +553,7 @@ fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
 
     let output = candidate_command(
         &repo,
-        CandidateCommandPaths {
+        &CandidateCommandPaths {
             probe_audio: &probe_audio,
             profile: &profile,
             owner_audio: &owner_audio,
