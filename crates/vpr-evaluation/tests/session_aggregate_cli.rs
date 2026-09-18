@@ -43,6 +43,7 @@ fn snapshot(session: u64, elapsed: u64) -> Value {
         "text_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":5 + session,
+            "canonical_output_sequence":15 + session,
             "status":"completed",
             "failure_code":null,
             "first_meaningful_response_millis":elapsed - 250,
