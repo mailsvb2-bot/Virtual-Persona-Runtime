@@ -33,12 +33,21 @@ fn provider_state() -> Vec<u8> {
 
 fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.4",
+        "schema_version":"rt0-owner-lab-session-evidence-0.5",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
         "canonical_playback_proven":true,
         "av_sync_proven":false,
+        "text_attempts":[{
+            "request_sequence":request,
+            "canonical_turn_sequence":request + 50,
+            "status":"completed",
+            "failure_code":null,
+            "first_meaningful_response_millis":elapsed - 250,
+            "server_total_millis":elapsed - 200,
+            "llm_usage":{"input_units":8,"output_units":3,"estimated_cost_microunits":2,"provider_charge_microunits":3}
+        }],
         "voice_attempts":[{
             "request_sequence":request,
             "canonical_turn_sequence":request + 100,
@@ -85,6 +94,10 @@ fn binding_covers_exact_candidate_provider_state_and_raw_snapshot_bytes() {
         vec![sha256_hex(&one), sha256_hex(&two)]
     );
     assert_eq!(bound.aggregate.sessions, 2);
+    assert_eq!(
+        bound.aggregate.text_first_meaningful_response.unwrap().p95,
+        350
+    );
     assert_eq!(bound.aggregate.first_meaningful_audio.unwrap().p95, 600);
     assert!(bound.aggregate.canonical_playback_proven);
     assert!(!bound.aggregate.av_sync_proven);
