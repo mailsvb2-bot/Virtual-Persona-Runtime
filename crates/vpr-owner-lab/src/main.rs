@@ -87,6 +87,10 @@ struct SpeakBody {
     text: String,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyJsonBody {}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -267,16 +271,20 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
-        "/api/evidence/session/export" => http_evidence::export_terminal_snapshot(
-            &state.engine,
-            &state.evidence,
-            &state.evidence_export,
-        )
-        .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
-        .map_err(|error| error_response(error.status(), error.code())),
-        "/api/avatar/interrupt" => interrupt_active_turn(state),
-        "/api/session/revoke" => end_session(state, false),
-        "/api/session/close" => end_session(state, true),
+        "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
+            http_evidence::export_terminal_snapshot(
+                &state.engine,
+                &state.evidence,
+                &state.evidence_export,
+            )
+            .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
+            .map_err(|error| error_response(error.status(), error.code()))
+        }),
+        "/api/avatar/interrupt" => {
+            parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
+        }
+        "/api/session/revoke" => parse_empty_json(request).and_then(|()| end_session(state, false)),
+        "/api/session/close" => parse_empty_json(request).and_then(|()| end_session(state, true)),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
@@ -461,6 +469,10 @@ fn parse_json<T: for<'de> Deserialize<'de>>(request: &mut Request) -> Result<T, 
     }
     let body = read_body(request, MAX_BODY_BYTES)?;
     serde_json::from_slice(&body).map_err(|_| error_response(400, "INVALID_INPUT"))
+}
+
+pub(crate) fn parse_empty_json(request: &mut Request) -> Result<(), HttpResponse> {
+    parse_json::<EmptyJsonBody>(request).map(|_| ())
 }
 
 fn read_body(request: &mut Request, limit: u64) -> Result<Vec<u8>, HttpResponse> {
