@@ -100,9 +100,11 @@ cargo run -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
 The assembler first runs the canonical supporting-evidence preflight, validates the bound Golden
 report against the exact candidate, ReleaseSpec bytes and provider state, validates the live-provider
 probe through the canonical probe validator, and reuses the canonical conversation-attempt and bound
-session-aggregate validators. It then projects the exact supporting JSON bytes into the canonical
-`Rt0ExitEvidence` claim types, computes every artifact digest itself, and derives the known-
-limitations review status from the exact Markdown marker.
+session-aggregate validators. It also reuses the canonical browser-quality binding, so the presented
+quality claim must already match the bound aggregate for first audio, interruption stop, first video,
+A/V sync and reconnect before a manifest is emitted. It then projects the exact supporting JSON bytes
+into the canonical `Rt0ExitEvidence` claim types, computes every artifact digest itself, and derives
+the known-limitations review status from the exact Markdown marker.
 
 The assembler does **not** evaluate release readiness and has no `ready` output. Failed CI,
 acceptance, privacy, human-usability or limitations-review results remain failed in the assembled
