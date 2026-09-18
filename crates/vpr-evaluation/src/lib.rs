@@ -5,6 +5,7 @@ mod exit_support;
 mod exit_validation;
 mod golden;
 mod live_provider;
+mod known_limitations;
 mod session_binding;
 mod session_evidence;
 mod supporting_preflight;
