@@ -173,40 +173,7 @@ pub(crate) fn run_provider_probe_with_tts(
     }
     let output_chars = count_chars(generated.as_str());
 
-    let tts_started = Instant::now();
-    let mut synthesized = GeneratedAudioBuffer::default();
-    let tts_usage = turn
-        .execute_tts(
-            tts.provider.as_ref(),
-            &TtsRequest {
-                text: TTS_PROBE_TEXT.into(),
-                locale_hint: Some("ru-RU".into()),
-            },
-            &mut synthesized,
-        )
-        .map_err(|error| {
-            terminalize_failed_probe_turn(&turn, LiveProviderProbeError::Tts(error.reason_code()))
-        })?;
-    let tts_millis = elapsed_millis(tts_started);
-    let tts_audio_millis = synthesized.duration_millis().ok_or_else(|| {
-        terminalize_failed_probe_turn(&turn, LiveProviderProbeError::InvalidTtsOutput)
-    })?;
-    if synthesized.pcm().is_empty() || tts_audio_millis == 0 || tts_audio_millis > MAX_AUDIO_MILLIS
-    {
-        return Err(terminalize_failed_probe_turn(
-            &turn,
-            LiveProviderProbeError::InvalidTtsOutput,
-        ));
-    }
-    let tts_evidence = TtsProbeEvidence {
-        provider: tts.descriptor.provider,
-        model_or_representation: tts.descriptor.model_or_representation,
-        configuration_fingerprint_sha256: tts.descriptor.configuration_fingerprint_sha256,
-        latency_millis: tts_millis,
-        audio_sha256: sha256_hex(synthesized.pcm()),
-        audio_millis: tts_audio_millis,
-        usage: map_usage(&tts_usage),
-    };
+    let tts_evidence = run_tts_probe(&turn, tts)?;
 
     turn.begin_output()
         .map_err(LiveProviderProbeError::Runtime)?;
@@ -235,6 +202,44 @@ pub(crate) fn run_provider_probe_with_tts(
         },
         tts: tts_evidence,
         avatar: avatar_evidence,
+    })
+}
+
+fn run_tts_probe(
+    turn: &ActiveTurn,
+    tts: PreparedTtsProbe,
+) -> Result<TtsProbeEvidence, LiveProviderProbeError> {
+    let started = Instant::now();
+    let mut synthesized = GeneratedAudioBuffer::default();
+    let usage = turn
+        .execute_tts(
+            tts.provider.as_ref(),
+            &TtsRequest {
+                text: TTS_PROBE_TEXT.into(),
+                locale_hint: Some("ru-RU".into()),
+            },
+            &mut synthesized,
+        )
+        .map_err(|error| {
+            terminalize_failed_probe_turn(turn, LiveProviderProbeError::Tts(error.reason_code()))
+        })?;
+    let audio_millis = synthesized.duration_millis().ok_or_else(|| {
+        terminalize_failed_probe_turn(turn, LiveProviderProbeError::InvalidTtsOutput)
+    })?;
+    if synthesized.pcm().is_empty() || audio_millis == 0 || audio_millis > MAX_AUDIO_MILLIS {
+        return Err(terminalize_failed_probe_turn(
+            turn,
+            LiveProviderProbeError::InvalidTtsOutput,
+        ));
+    }
+    Ok(TtsProbeEvidence {
+        provider: tts.descriptor.provider,
+        model_or_representation: tts.descriptor.model_or_representation,
+        configuration_fingerprint_sha256: tts.descriptor.configuration_fingerprint_sha256,
+        latency_millis: elapsed_millis(started),
+        audio_sha256: sha256_hex(synthesized.pcm()),
+        audio_millis,
+        usage: map_usage(&usage),
     })
 }
 
