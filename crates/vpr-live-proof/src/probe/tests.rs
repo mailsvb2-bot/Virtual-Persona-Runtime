@@ -11,13 +11,10 @@ use vpr_integration::{
     UsageUnit,
     WebRtcIceCandidate, WebRtcSessionDescription,
 };
-use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
+use vpr_owner_lab::{PreparedTtsProbe, ProviderBundle, ProviderDescriptor};
 
 use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_with_tts};
-use crate::{
-    LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA,
-    tts::PreparedTtsProbe,
-};
+use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
 
 #[derive(Default)]
 struct AvatarStats {
@@ -125,9 +122,11 @@ impl TtsPort for FakeTts {
 fn tts_probe() -> PreparedTtsProbe {
     PreparedTtsProbe {
         provider: Box::new(FakeTts),
-        provider_name: "fake-tts".into(),
-        model_or_representation: "fake-tts-v1/fake-voice".into(),
-        configuration_fingerprint_sha256: "e".repeat(64),
+        descriptor: ProviderDescriptor {
+            provider: "fake-tts".into(),
+            model_or_representation: "fake-tts-v1/fake-voice".into(),
+            configuration_fingerprint_sha256: "e".repeat(64),
+        },
     }
 }
 
