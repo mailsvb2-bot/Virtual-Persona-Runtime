@@ -170,6 +170,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   expect(requests.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
   expect(requests.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
   const speech = requests.find((entry) => entry.method === "POST" && entry.path.endsWith("/stream-1"));
-  expect(speech?.body).toContain("Проверка реального backend пути");
+  expect(speech?.body).toContain("Проверка низкоуровневого avatar speak");
   expect(requests.every((entry) => entry.authorization === "Basic backend-e2e-secret")).toBeTruthy();
 });
