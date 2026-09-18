@@ -100,6 +100,7 @@ pub enum LabTextAttemptStatus {
 pub struct LabTextAttemptEvidence {
     pub request_sequence: u64,
     pub canonical_turn_sequence: Option<u64>,
+    pub canonical_output_sequence: Option<u64>,
     pub status: LabTextAttemptStatus,
     pub failure_code: Option<String>,
     pub first_meaningful_response_millis: Option<u64>,
@@ -316,6 +317,7 @@ impl SessionAggregateAccumulator {
                     .as_deref()
                     .is_none_or(|code| code.trim().is_empty())
                     || attempt.canonical_turn_sequence.is_some()
+                    || attempt.canonical_output_sequence.is_some()
                     || attempt.first_meaningful_response_millis.is_some()
                     || attempt.server_total_millis.is_some()
                     || attempt.llm_usage.is_some()
@@ -329,15 +331,22 @@ impl SessionAggregateAccumulator {
                 Ok(())
             }
             LabTextAttemptStatus::Completed => {
-                let (Some(turn), Some(first), Some(total), Some(llm_usage)) = (
+                let (
+                    Some(turn),
+                    Some(output),
+                    Some(first),
+                    Some(total),
+                    Some(llm_usage),
+                ) = (
                     attempt.canonical_turn_sequence,
+                    attempt.canonical_output_sequence,
                     attempt.first_meaningful_response_millis,
                     attempt.server_total_millis,
                     attempt.llm_usage.as_ref(),
                 ) else {
                     return Err(LabSessionAggregateError::IncompleteAttempt);
                 };
-                if turn == 0 || first > total || attempt.failure_code.is_some() {
+                if turn == 0 || output == 0 || first > total || attempt.failure_code.is_some() {
                     return Err(LabSessionAggregateError::InvalidSnapshot);
                 }
                 self.completed_text = self
