@@ -95,6 +95,11 @@ struct ClientInterruptBody {
     playback_id: String,
 }
 
+#[derive(Deserialize)]
+struct ClientEventBody {
+    message: String,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -280,6 +285,14 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         )
         .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
         .map_err(|error| error_response(error.status(), error.code())),
+        "/api/avatar/client-event" => parse_json::<ClientEventBody>(request).and_then(|body| {
+            reject_if_session_ending(state)?;
+            with_engine_result(state, |engine| {
+                engine
+                    .parse_client_event(&body.message)
+                    .map(|event| json_response(200, &event))
+            })
+        }),
         "/api/avatar/client-interrupt" => parse_json::<ClientInterruptBody>(request).and_then(|body| {
             reject_if_session_ending(state)?;
             with_engine_result(state, |engine| {
