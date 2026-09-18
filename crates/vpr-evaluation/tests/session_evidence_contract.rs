@@ -108,14 +108,8 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.completed_text_attempts, 2);
     assert_eq!(aggregate.failed_text_attempts, 0);
     assert_eq!(aggregate.completed_voice_attempts, 2);
-    assert_eq!(
-        aggregate.text_first_meaningful_response.unwrap().p50,
-        150
-    );
-    assert_eq!(
-        aggregate.text_first_meaningful_response.unwrap().p95,
-        350
-    );
+    assert_eq!(aggregate.text_first_meaningful_response.unwrap().p50, 150);
+    assert_eq!(aggregate.text_first_meaningful_response.unwrap().p95, 350);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
     assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
