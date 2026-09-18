@@ -3,9 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::binding::{valid_git_sha, validate_provider_state};
 use crate::exit_validation::validate_quality_latencies;
 use crate::{
-    AcceptanceEvidence, CheckStatus, ConversationEvidence, CostEvidence, EvidenceOrigin,
-    HumanDimensions, HumanEvaluationEvidence, ParticipantRole, PrivacyPermissionEvidence,
-    ProviderStateManifest, QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
+    CheckStatus, EvidenceOrigin, HumanDimensions, ParticipantRole, ProviderStateManifest,
+    QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
 };
 
 pub const RT0_SUPPORTING_PREFLIGHT_SCHEMA: &str = "rt0-supporting-evidence-preflight-0.1";
@@ -431,14 +430,4 @@ fn human_dimensions_complete(dimensions: &HumanDimensions) -> bool {
     ]
     .into_iter()
     .all(|status| status == RecordStatus::Recorded)
-}
-
-#[allow(dead_code)]
-fn _type_contracts(
-    _conversation: ConversationEvidence,
-    _acceptance: AcceptanceEvidence,
-    _cost: CostEvidence,
-    _privacy: PrivacyPermissionEvidence,
-    _human: HumanEvaluationEvidence,
-) {
 }
