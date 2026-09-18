@@ -57,11 +57,7 @@ pub(crate) fn validate_rt0_conversation_attempt_artifact(
     let conversation: ConversationAttemptBinding =
         serde_json::from_slice(conversation_attempt_bytes)
             .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
-    validate_conversation_attempt_binding(
-        &conversation,
-        exact_candidate_sha,
-        provider_state_digest,
-    )
+    validate_conversation_attempt_binding(&conversation, exact_candidate_sha, provider_state_digest)
 }
 
 pub(crate) fn validate_runtime_evidence(
