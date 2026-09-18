@@ -281,11 +281,10 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
         ],
         "av_sync_samples":[]
     }));
-    let bound = bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state, CANDIDATE)
-        .unwrap();
+    let bound =
+        bind_owner_lab_session_evidence(&[snapshot.as_slice()], provider_state, CANDIDATE).unwrap();
     serde_json::to_vec_pretty(&bound).unwrap()
 }
-
 
 #[test]
 fn assembler_preserves_failed_real_evidence_without_claiming_readiness() {
