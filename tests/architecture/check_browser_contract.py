@@ -90,6 +90,10 @@ for required in (
     "stream/interrupt",
     "videoId",
     "interruption_stopped",
+    "__vprSetPeerConnectionState",
+    "reconnect_restored",
+    '"disconnected"',
+    '"connected"',
     'getByRole("button", { name: "Прервать", exact: true })',
 ):
     if required not in voice_e2e:
