@@ -1,7 +1,8 @@
 use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncReference, LabMediaEvidence, LabMediaEvidenceKind,
-    LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
-    LabVoiceAttemptStatus, ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabSessionAggregateError, LabSessionEvidenceSnapshot, LabTextAttemptEvidence,
+    LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
     aggregate_owner_lab_session_evidence,
 };
