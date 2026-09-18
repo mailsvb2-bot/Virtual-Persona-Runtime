@@ -84,6 +84,28 @@ pub enum RealtimeAvatarCapability {
     Interrupt,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealtimeAvatarClientControl {
+    pub data_channel_label: String,
+    pub interrupt: bool,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct RealtimeAvatarClientCommand {
+    pub data_channel_label: String,
+    pub payload: String,
+}
+
+impl Debug for RealtimeAvatarClientCommand {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        formatter
+            .debug_struct("RealtimeAvatarClientCommand")
+            .field("data_channel_label", &self.data_channel_label)
+            .field("payload_bytes", &self.payload.len())
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RealtimeAvatarCapabilities {
     supported: Vec<RealtimeAvatarCapability>,
@@ -173,6 +195,35 @@ pub trait RealtimeAvatarPort: Send + Sync {
         _session: &RealtimeAvatarSession,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
+    /// Returns browser-side realtime control metadata for this exact provider session.
+    ///
+    /// This is intentionally session-scoped because capabilities such as Fluent interruption may
+    /// depend on the provider's create-session response rather than static adapter support.
+    fn client_control(
+        &self,
+        _session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        None
+    }
+
+    /// Builds one provider-specific browser data-channel interrupt command after canonical runtime
+    /// authorization. The returned payload is opaque to the browser and must not be logged.
+    ///
+    /// # Errors
+    /// The default returns a non-retryable unavailable error for providers without client-side
+    /// interruption.
+    fn prepare_client_interrupt(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _playback_id: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Err(ProviderError {
             kind: ProviderErrorKind::Unavailable,
             retryable: false,
