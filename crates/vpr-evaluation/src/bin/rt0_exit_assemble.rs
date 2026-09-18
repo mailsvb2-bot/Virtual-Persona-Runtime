@@ -194,7 +194,6 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::fs;
