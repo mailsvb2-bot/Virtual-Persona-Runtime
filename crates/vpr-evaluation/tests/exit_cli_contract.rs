@@ -698,6 +698,35 @@ fn cli_rejects_rehashed_supporting_artifact_with_detached_claim() {
 }
 
 #[test]
+fn cli_rejects_rehashed_quality_claim_detached_from_raw_sessions() {
+    let paths = prepare(|_| {});
+    let quality_path = paths.supporting_artifacts.join("quality.json");
+    let mut quality: Value = serde_json::from_slice(&fs::read(&quality_path).unwrap()).unwrap();
+    quality["recoverable_reconnect"]["p50"] = json!(700);
+    quality["recoverable_reconnect"]["p95"] = json!(700);
+    let quality_bytes = serde_json::to_vec_pretty(&quality).unwrap();
+    fs::write(&quality_path, &quality_bytes).unwrap();
+
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["quality"]["recoverable_reconnect"]["p50"] = json!(700);
+    evidence["quality"]["recoverable_reconnect"]["p95"] = json!(700);
+    evidence["quality"]["artifact_sha256"] = json!(sha256_hex(&quality_bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("RUNTIME_EVIDENCE_INVALID")
+    );
+}
+
+#[test]
 fn cli_rejects_rehashed_automated_artifact_from_another_candidate() {
     let paths = prepare(|_| {});
     let ci_path = paths.supporting_artifacts.join("ci-evidence.json");
