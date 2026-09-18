@@ -3,9 +3,8 @@ use std::collections::BTreeMap;
 pub use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
     LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
-    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence,
-    LabVoiceAttemptStatus, ParticipantRole,
-    RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
+    ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
