@@ -519,8 +519,7 @@ fn session_snapshot_bytes_with_browser_timings(
     video_millis: u64,
     reconnect_millis: u64,
 ) -> Vec<u8> {
-    let bytes =
-        session_snapshot_bytes_with_av_sync(role, session_sequence, [40, 60, 120]);
+    let bytes = session_snapshot_bytes_with_av_sync(role, session_sequence, [40, 60, 120]);
     let mut snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     for event in snapshot["media_events"].as_array_mut().unwrap() {
         let elapsed = match event["kind"].as_str().unwrap() {
