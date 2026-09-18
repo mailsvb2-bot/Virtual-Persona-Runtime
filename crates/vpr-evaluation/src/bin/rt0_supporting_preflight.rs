@@ -1,10 +1,7 @@
 use std::{env, fs, path::Path};
 
 use serde::Serialize;
-use vpr_evaluation::{
-    Rt0SupportingPreflightArtifacts, Rt0SupportingPreflightError,
-    preflight_rt0_supporting_artifacts,
-};
+use vpr_evaluation::{Rt0SupportingPreflightArtifacts, preflight_rt0_supporting_artifacts};
 
 #[derive(Serialize)]
 struct CliError<T: Serialize> {
@@ -111,6 +108,3 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
     );
     Ok(())
 }
-
-#[allow(dead_code)]
-fn _error_contract(_: Rt0SupportingPreflightError) {}
