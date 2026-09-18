@@ -380,6 +380,7 @@ const connectAvatar = async (): Promise<void> => {
   videoEvidencePosted = false;
   reconnectStartedAt = null;
   evidenceSessionSequence = 0;
+  nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
   remoteEvidenceAudioContext = new AudioContext();
   void remoteEvidenceAudioContext.resume();
