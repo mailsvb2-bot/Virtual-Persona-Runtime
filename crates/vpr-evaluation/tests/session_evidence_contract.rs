@@ -2,9 +2,8 @@ use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncReference, LabMediaEvidence, LabMediaEvidenceKind,
     LabSessionAggregateError, LabSessionEvidenceSnapshot, LabTextAttemptEvidence,
     LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
-    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
-    aggregate_owner_lab_session_evidence,
+    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    SessionUsageEvidence, aggregate_owner_lab_session_evidence,
 };
 
 fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
