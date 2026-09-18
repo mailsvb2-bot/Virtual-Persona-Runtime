@@ -94,6 +94,10 @@ for required in (
     "reconnect_restored",
     '"disconnected"',
     '"connected"',
+    "PROVIDER_UNAVAILABLE",
+    "Спровоцируй отказ провайдера",
+    "Восстановление после отказа",
+    'failure_code: "PROVIDER_UNAVAILABLE"',
     'getByRole("button", { name: "Прервать", exact: true })',
 ):
     if required not in voice_e2e:
