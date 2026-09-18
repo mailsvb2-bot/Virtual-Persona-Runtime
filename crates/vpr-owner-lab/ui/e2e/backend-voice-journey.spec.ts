@@ -84,6 +84,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
+    let activePeer: {
+      connectionState: string;
+      onconnectionstatechange: (() => void) | null;
+    } | null = null;
     let providerDataChannel: {
       label: string;
       readyState: "open" | "closed";
@@ -182,6 +186,9 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     class FakePeerConnection {
       connectionState = "new";
       ontrack: ((event: { track: FakeTrack }) => void) | null = null;
+      constructor() {
+        activePeer = this;
+      }
       onconnectionstatechange: (() => void) | null = null;
       onicecandidate: ((event: unknown) => void) | null = null;
       createDataChannel(label: string) {
@@ -213,7 +220,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
       }
-      async setLocalDescription(): Promise<void> {}
+      async setLocalDescription(): Promise<void> {
+        this.connectionState = "connected";
+        queueMicrotask(() => this.onconnectionstatechange?.());
+      }
       async getStats(): Promise<Map<string, object>> {
         return new Map([
           ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
@@ -222,6 +232,14 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       }
       close(): void { this.connectionState = "closed"; }
     }
+
+    (window as unknown as {
+      __vprSetPeerConnectionState?: (state: "connected" | "disconnected" | "failed") => void;
+    }).__vprSetPeerConnectionState = (state) => {
+      if (!activePeer) throw new Error("NO_ACTIVE_PEER");
+      activePeer.connectionState = state;
+      activePeer.onconnectionstatechange?.();
+    };
 
     Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
     Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
@@ -300,6 +318,26 @@ test("owner and visitor voice turns cross the real backend with different contex
   });
   expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
 
+  await page.evaluate(() => {
+    (window as unknown as {
+      __vprSetPeerConnectionState: (state: "disconnected") => void;
+    }).__vprSetPeerConnectionState("disconnected");
+  });
+  await page.waitForTimeout(25);
+  await page.evaluate(() => {
+    (window as unknown as {
+      __vprSetPeerConnectionState: (state: "connected") => void;
+    }).__vprSetPeerConnectionState("connected");
+  });
+  await expect.poll(async () => {
+    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    const snapshot = await evidence.json() as {
+      media_events: Array<{ kind: string; elapsed_millis: number }>;
+    };
+    return snapshot.media_events.find((event) => event.kind === "reconnect_restored")
+      ?.elapsed_millis ?? 0;
+  }).toBeGreaterThan(0);
+
   const ownerEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(ownerEvidence.ok()).toBeTruthy();
   const ownerEvidenceJson = await ownerEvidence.json() as {
@@ -357,6 +395,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(ownerEvidenceJson.media_events).toContainEqual({
     request_sequence: 1,
     kind: "interruption_stopped",
+    elapsed_millis: expect.any(Number),
+  });
+  expect(ownerEvidenceJson.media_events).toContainEqual({
+    request_sequence: null,
+    kind: "reconnect_restored",
     elapsed_millis: expect.any(Number),
   });
 
