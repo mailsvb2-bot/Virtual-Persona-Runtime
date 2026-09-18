@@ -12,11 +12,13 @@ use vpr_integration::{
     AudioInput, GeneratedAudioBuffer, GeneratedTextBuffer, LlmRequest, PcmSampleFormat,
     RealtimeAvatarPort, SttRequest, TtsRequest, UsageEvidence, UsageUnit,
 };
-use vpr_owner_lab::{LabError, OwnerLabEngine, OwnerLabStartRequest};
+use vpr_owner_lab::{
+    LabError, OwnerLabEngine, OwnerLabStartRequest, PreparedTtsProbe, build_tts_probe_from_env,
+};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{ActiveSession, ActiveTurn, SessionSecurityConfig};
 
-use crate::{PreparedLiveProof, tts::{PreparedTtsProbe, build_tts_probe_from_env}};
+use crate::PreparedLiveProof;
 
 const MAX_AUDIO_MILLIS: u64 = 30_000;
 const SAMPLE_RATE_HZ: u32 = 16_000;
@@ -197,9 +199,9 @@ pub(crate) fn run_provider_probe_with_tts(
         ));
     }
     let tts_evidence = TtsProbeEvidence {
-        provider: tts.provider_name,
-        model_or_representation: tts.model_or_representation,
-        configuration_fingerprint_sha256: tts.configuration_fingerprint_sha256,
+        provider: tts.descriptor.provider,
+        model_or_representation: tts.descriptor.model_or_representation,
+        configuration_fingerprint_sha256: tts.descriptor.configuration_fingerprint_sha256,
         latency_millis: tts_millis,
         audio_sha256: sha256_hex(synthesized.pcm()),
         audio_millis: tts_audio_millis,
