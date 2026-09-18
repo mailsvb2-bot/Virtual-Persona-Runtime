@@ -86,6 +86,11 @@ for required in (
     "av_sync_proven",
     "web_rtc_estimated_playout_timestamp",
     "absolute_offset_millis",
+    "stream/started",
+    "stream/interrupt",
+    "videoId",
+    "interruption_stopped",
+    'getByRole("button", { name: "Прервать", exact: true })',
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
@@ -151,6 +156,8 @@ for required in (
     "/v1/chat/completions",
     "text/event-stream",
     "/agents/",
+    "fluent: true",
+    "interrupt_enabled: true",
 ):
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")

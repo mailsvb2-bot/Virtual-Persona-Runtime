@@ -5,11 +5,16 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
     RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+mod client_control;
+
+use client_control::DidClientControlRegistry;
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -61,6 +66,7 @@ pub struct DidAgentStreamsAvatar {
     client: Client,
     config: DidAgentStreamsConfig,
     base_url: reqwest::Url,
+    client_control: DidClientControlRegistry,
 }
 
 impl DidAgentStreamsAvatar {
@@ -81,6 +87,7 @@ impl DidAgentStreamsAvatar {
             client,
             config,
             base_url,
+            client_control: DidClientControlRegistry::default(),
         })
     }
 
@@ -173,7 +180,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             .map_err(|error| map_transport_error(&error))?;
         let response = Self::expect_success(response)?;
         let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
-        body.try_into()
+        let client_interrupt = body.fluent && body.interrupt_enabled;
+        let session: RealtimeAvatarSession = body.try_into()?;
+        if client_interrupt {
+            self.client_control.register_interrupt(&session)?;
+        }
+        Ok(session)
     }
 
     fn submit_answer(
@@ -276,6 +288,34 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::expect_success(response).map(|_| ())
     }
 
+    fn client_control(
+        &self,
+        session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        Self::validate_session(session).ok()?;
+        self.client_control.control(session)
+    }
+
+    fn parse_client_event(
+        &self,
+        session: &RealtimeAvatarSession,
+        message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+        Self::validate_session(session)?;
+        self.client_control.parse_event(session, message)
+    }
+
+    fn prepare_client_interrupt(
+        &self,
+        session: &RealtimeAvatarSession,
+        playback_id: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        self.client_control.prepare_interrupt(session, playback_id)
+    }
+
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
         let response = self
@@ -288,7 +328,8 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        Self::expect_success(response)?;
+        self.client_control.forget(session)
     }
 }
 
@@ -304,6 +345,10 @@ struct CreateStreamResponse {
     offer: SessionDescriptionOwned,
     #[serde(default)]
     ice_servers: Vec<IceServerResponse>,
+    #[serde(default)]
+    fluent: bool,
+    #[serde(default)]
+    interrupt_enabled: bool,
 }
 
 #[derive(Deserialize)]

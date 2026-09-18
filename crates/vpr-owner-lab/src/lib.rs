@@ -19,9 +19,10 @@ pub use owner_capture::{
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
 
 pub use state::{
-    ConversationReadiness, LabError, LabProviderUsage, LabSessionAudience, LabSignalBundle,
-    LabStatus, LabTextResult, LabVoiceResult, LabVoiceUsage, OwnerContextState, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput,
+    ConversationReadiness, LabClientCommand, LabClientControl, LabClientEvent, LabError,
+    LabProviderUsage, LabSessionAudience, LabSignalBundle, LabStatus, LabTextResult,
+    LabVoiceResult, LabVoiceUsage, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
 };
 
 pub use providers::{

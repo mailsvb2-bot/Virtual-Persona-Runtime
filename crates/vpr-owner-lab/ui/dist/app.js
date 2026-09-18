@@ -25,6 +25,8 @@ let egressEnabled = false;
 let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer = null;
+let providerDataChannel = null;
+let providerPlaybackId = null;
 let answerSubmitted = false;
 let pendingIce = [];
 let capabilities = new Set();
@@ -312,8 +314,9 @@ const updateControls = () => {
     const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
     const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+    const clientInterruptReady = providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
     speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
-    interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight;
+    interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
     voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
@@ -335,6 +338,9 @@ const ownerCapture = mountOwnerCapture({
 const closePeerTransport = () => {
     stopMicrophoneCapture();
     stopRemoteEvidence();
+    providerDataChannel?.close();
+    providerDataChannel = null;
+    providerPlaybackId = null;
     peer?.close();
     peer = null;
     video.srcObject = null;
@@ -373,6 +379,31 @@ const connectAvatar = async () => {
                 ...(server.credential ? { credential: server.credential } : {}),
             })),
         });
+        if (start.client_control?.interrupt) {
+            const channel = peer.createDataChannel(start.client_control.data_channel_label);
+            providerDataChannel = channel;
+            channel.onopen = () => updateControls();
+            channel.onclose = () => {
+                providerPlaybackId = null;
+                updateControls();
+            };
+            channel.onmessage = (event) => {
+                const raw = typeof event.data === "string" ? event.data : "";
+                if (!raw)
+                    return;
+                void api("/api/avatar/client-event", { message: raw })
+                    .then((normalized) => {
+                    if (normalized?.kind === "playback_started") {
+                        providerPlaybackId = normalized.playback_id;
+                    }
+                    else if (normalized?.kind === "playback_done") {
+                        providerPlaybackId = null;
+                    }
+                    updateControls();
+                })
+                    .catch(() => undefined);
+            };
+        }
         peer.ontrack = (event) => {
             remoteMediaStream ??= new MediaStream();
             if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
@@ -612,6 +643,44 @@ const speak = async () => {
         updateControls();
     }
 };
+const interruptAvatar = async () => {
+    const voice = activeVoiceEvidence;
+    if (voice?.audioStarted) {
+        interruptEvidenceWatch = {
+            requestSequence: voice.requestSequence,
+            startedAt: performance.now(),
+            silentFrames: 0,
+        };
+    }
+    const channel = providerDataChannel;
+    const playbackId = providerPlaybackId;
+    const clientReady = !textRequestInFlight
+        && !voiceRequestInFlight
+        && channel?.readyState === "open"
+        && playbackId !== null;
+    try {
+        if (clientReady && channel && playbackId) {
+            const command = await api("/api/avatar/client-interrupt", {
+                playback_id: playbackId,
+            });
+            if (channel.readyState !== "open" || channel.label !== command.data_channel_label) {
+                throw new Error("CLIENT_INTERRUPT_CHANNEL_MISMATCH");
+            }
+            channel.send(command.payload);
+            providerPlaybackId = null;
+            updateControls();
+            await refreshSessionEvidence();
+            return;
+        }
+        await api("/api/avatar/interrupt", {});
+        await refreshSessionEvidence();
+    }
+    catch (error) {
+        interruptEvidenceWatch = null;
+        setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
+        updateControls();
+    }
+};
 const endSession = async (kind) => {
     closePeerTransport();
     try {
@@ -655,18 +724,7 @@ audienceSelect.addEventListener("change", () => {
 });
 connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
-interruptButton.addEventListener("click", () => {
-    const voice = activeVoiceEvidence;
-    if (voice?.audioStarted) {
-        interruptEvidenceWatch = { requestSequence: voice.requestSequence, startedAt: performance.now(), silentFrames: 0 };
-    }
-    void api("/api/avatar/interrupt", {})
-        .then(() => refreshSessionEvidence())
-        .catch((error) => {
-        interruptEvidenceWatch = null;
-        setStatus(String(error), "error");
-    });
-});
+interruptButton.addEventListener("click", () => void interruptAvatar());
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());

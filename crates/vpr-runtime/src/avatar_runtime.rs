@@ -2,7 +2,8 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    ProviderDescriptor, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
@@ -30,6 +31,7 @@ pub struct RealtimeAvatarHandle {
     session_id: SessionId,
     provider: ProviderDescriptor,
     provider_session: RealtimeAvatarSession,
+    client_control: Option<RealtimeAvatarClientControl>,
     closed: bool,
 }
 
@@ -58,6 +60,11 @@ impl RealtimeAvatarHandle {
     pub const fn is_closed(&self) -> bool {
         self.closed
     }
+
+    #[must_use]
+    pub fn client_control(&self) -> Option<&RealtimeAvatarClientControl> {
+        self.client_control.as_ref()
+    }
 }
 
 impl ActiveTurn {
@@ -82,10 +89,12 @@ impl ActiveTurn {
                 RuntimeDenyReason::TurnCancelled,
             ));
         }
+        let client_control = port.client_control(&provider_session);
         Ok(RealtimeAvatarHandle {
             session_id: self.session_id.clone(),
             provider: port.descriptor(),
             provider_session,
+            client_control,
             closed: false,
         })
     }
@@ -181,6 +190,53 @@ impl ActiveTurn {
         self.validate_avatar_handle(port, handle)?;
         let permit = self.avatar_permit()?;
         port.speak_audio_url(&handle.provider_session, audio_url, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Normalizes one provider data-channel message against this exact avatar handle.
+    ///
+    /// # Errors
+    /// Returns a denial for a stale/cross-session handle or a typed provider parse failure.
+    pub fn parse_realtime_avatar_client_event(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        port.parse_client_event(&handle.provider_session, message)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Authorizes and prepares a provider-specific browser data-channel interruption command.
+    ///
+    /// Provider protocol details remain inside the adapter. Runtime only releases the opaque
+    /// command after validating the exact avatar handle and current authority/egress policy.
+    ///
+    /// # Errors
+    /// Returns a denial for stale/cancelled authority or a typed provider failure when client-side
+    /// interruption is unavailable or malformed.
+    pub fn prepare_realtime_avatar_client_interrupt(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        playback_id: &str,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        if !handle
+            .client_control
+            .as_ref()
+            .is_some_and(|control| control.interrupt)
+        {
+            return Err(ProviderExecutionError::Provider(
+                vpr_integration::ProviderError {
+                    kind: vpr_integration::ProviderErrorKind::Unavailable,
+                    retryable: false,
+                },
+            ));
+        }
+        let permit = self.avatar_permit()?;
+        port.prepare_client_interrupt(&handle.provider_session, playback_id, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
     }
 

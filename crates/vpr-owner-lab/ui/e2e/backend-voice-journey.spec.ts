@@ -83,12 +83,27 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     let remoteSpeech = false;
     let trackSequence = 0;
+    let playbackSequence = 0;
+    let providerDataChannel: {
+      label: string;
+      readyState: "open" | "closed";
+      onopen: (() => void) | null;
+      onclose: (() => void) | null;
+      onmessage: ((event: { data: string }) => void) | null;
+      send: (payload: string) => void;
+      close: () => void;
+    } | null = null;
+    (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
     const realFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
       if (!target.endsWith("/api/voice/turn")) return realFetch(input, init);
       remoteSpeech = true;
+      playbackSequence += 1;
+      providerDataChannel?.onmessage?.({
+        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
+      });
       const response = await realFetch(input, init);
       await new Promise((resolve) => window.setTimeout(resolve, 80));
       return response;
@@ -169,6 +184,29 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       ontrack: ((event: { track: FakeTrack }) => void) | null = null;
       onconnectionstatechange: (() => void) | null = null;
       onicecandidate: ((event: unknown) => void) | null = null;
+      createDataChannel(label: string) {
+        const channel = {
+          label,
+          readyState: "open" as const,
+          onopen: null as (() => void) | null,
+          onclose: null as (() => void) | null,
+          onmessage: null as ((event: { data: string }) => void) | null,
+          send(payload: string): void {
+            (window as unknown as { __vprInterruptPayloads: string[] }).__vprInterruptPayloads.push(payload);
+            remoteSpeech = false;
+            queueMicrotask(() => channel.onmessage?.({
+              data: "stream/done:{}",
+            }));
+          },
+          close(): void {
+            (channel as { readyState: "open" | "closed" }).readyState = "closed";
+            channel.onclose?.();
+          },
+        };
+        providerDataChannel = channel;
+        queueMicrotask(() => channel.onopen?.());
+        return channel as unknown as RTCDataChannel;
+      }
       async setRemoteDescription(): Promise<void> {
         queueMicrotask(() => this.ontrack?.({ track: new FakeTrack("audio") }));
       }
@@ -242,6 +280,26 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Привет из браузера",
     "Голосовой ответ владельцу",
   );
+  const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
+  await expect(interrupt).toBeEnabled();
+  await interrupt.click();
+  await expect.poll(async () => {
+    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    const snapshot = await evidence.json() as {
+      media_events: Array<{ kind: string }>;
+    };
+    return snapshot.media_events.some((event) => event.kind === "interruption_stopped");
+  }).toBeTruthy();
+  const interruptPayloads = await page.evaluate(
+    () => (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads ?? [],
+  );
+  expect(interruptPayloads).toHaveLength(1);
+  expect(JSON.parse(interruptPayloads[0] ?? "{}")).toMatchObject({
+    type: "stream/interrupt",
+    videoId: "video-1",
+  });
+  expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
+
   const ownerEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(ownerEvidence.ok()).toBeTruthy();
   const ownerEvidenceJson = await ownerEvidence.json() as {
@@ -294,6 +352,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(ownerEvidenceJson.media_events).toContainEqual({
     request_sequence: 1,
     kind: "audio_started",
+    elapsed_millis: expect.any(Number),
+  });
+  expect(ownerEvidenceJson.media_events).toContainEqual({
+    request_sequence: 1,
+    kind: "interruption_stopped",
     elapsed_millis: expect.any(Number),
   });
 

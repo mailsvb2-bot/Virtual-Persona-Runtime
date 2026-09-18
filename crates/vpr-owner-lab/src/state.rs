@@ -48,6 +48,7 @@ pub struct LabSignalBundle {
     pub offer: LabSessionDescription,
     pub ice_servers: Vec<LabIceServer>,
     pub capabilities: Vec<String>,
+    pub client_control: Option<LabClientControl>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -465,7 +466,11 @@ fn signal_bundle(
     evidence_session_sequence: u64,
 ) -> LabSignalBundle {
     let provider_capabilities = port.capabilities();
-    let capabilities = [
+    let client_control = handle.client_control().map(|control| LabClientControl {
+        data_channel_label: control.data_channel_label.clone(),
+        interrupt: control.interrupt,
+    });
+    let mut capabilities: Vec<String> = [
         (RealtimeAvatarCapability::TextInput, "text"),
         (RealtimeAvatarCapability::AudioUrlInput, "audio_url"),
         (RealtimeAvatarCapability::Interrupt, "interrupt"),
@@ -474,6 +479,13 @@ fn signal_bundle(
     .filter(|(capability, _)| provider_capabilities.supports(*capability))
     .map(|(_, name)| name.to_owned())
     .collect();
+    if client_control
+        .as_ref()
+        .is_some_and(|control| control.interrupt)
+        && !capabilities.iter().any(|name| name == "interrupt")
+    {
+        capabilities.push("interrupt".to_owned());
+    }
     LabSignalBundle {
         evidence_session_sequence,
         offer: LabSessionDescription {
@@ -482,6 +494,7 @@ fn signal_bundle(
         },
         ice_servers: handle.ice_servers().iter().map(map_ice_server).collect(),
         capabilities,
+        client_control,
     }
 }
 
@@ -527,8 +540,10 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
     }
 }
 
+mod client_control;
 mod text;
 mod voice;
+pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent};
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceUsage};
 

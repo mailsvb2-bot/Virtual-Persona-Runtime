@@ -2,7 +2,8 @@ mod avatar;
 mod transport;
 
 pub use avatar::{
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
     RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 pub use transport::{

@@ -1,3 +1,5 @@
+mod http_avatar_input;
+mod http_client_control;
 mod http_evidence;
 mod http_owner_capture;
 #[cfg(test)]
@@ -83,11 +85,6 @@ struct IceBody {
 #[derive(Deserialize)]
 struct SpeakBody {
     text: String,
-}
-
-#[derive(Deserialize)]
-struct AudioBody {
-    audio_url: String,
 }
 
 fn main() {
@@ -202,6 +199,12 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
+    if let Some(result) = http_client_control::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
+    if let Some(result) = http_avatar_input::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     match path {
         "/api/avatar/start" => http_evidence::ensure_previous_exported(
             &state.engine,
@@ -254,10 +257,6 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             )
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
-        "/api/avatar/speak" => parse_json::<SpeakBody>(request)
-            .and_then(|body| apply_input(state, OwnerLabTurnInput::Text(body.text))),
-        "/api/avatar/audio" => parse_json::<AudioBody>(request)
-            .and_then(|body| apply_input(state, OwnerLabTurnInput::AudioUrl(body.audio_url))),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
             http_evidence::record_media(&state.engine, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))

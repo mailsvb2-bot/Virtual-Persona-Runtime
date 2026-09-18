@@ -95,6 +95,8 @@ const server = http.createServer(async (request, response) => {
       session_id: `session-${streamSequence}`,
       offer: { type: "offer", sdp: `v=0 voice-e2e-${streamSequence}` },
       ice_servers: [],
+      fluent: true,
+      interrupt_enabled: true,
     });
   }
   const streamMatch = url.pathname.match(
