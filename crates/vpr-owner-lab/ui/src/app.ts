@@ -2,7 +2,8 @@ import { mountOwnerCapture } from "./owner-capture.js";
 
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; text_ready: boolean; voice_ready: boolean; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
+type ConversationReadiness = "none" | "text" | "text_and_voice";
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; conversation_readiness: ConversationReadiness; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
@@ -40,7 +41,7 @@ const evidenceNode = byId<HTMLElement>("evidence");
 
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, text_ready: false, voice_ready: false, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
 let answerSubmitted = false;
@@ -336,9 +337,11 @@ const updateAudienceMode = (): void => {
 
 const updateControls = (): void => {
   const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
-  speakButton.disabled = !transportReady || !backendStatus.text_ready || textRequestInFlight || voiceRequestInFlight;
+  const textReady = backendStatus.conversation_readiness !== "none";
+  const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
   interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight;
-  voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || textRequestInFlight || voiceRequestInFlight;
+  voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
