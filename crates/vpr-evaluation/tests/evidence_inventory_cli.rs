@@ -68,6 +68,7 @@ fn empty_directory_reports_missing_evidence_without_claiming_readiness() {
 }
 
 fn seed_complete_inventory(dir: &Path) {
+    fs::write(dir.join("release-spec.md"), RELEASE_SPEC).unwrap();
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
     assert_eq!(fixture.provider_state.providers.len(), 3);
     assert_eq!(fixture.bundle.binding.candidate_sha, CANDIDATE);
@@ -329,6 +330,14 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         json!(true)
     );
     assert_eq!(
+        report["bindings"]["release_spec_digest_matches_exit"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["release_spec_digest_matches_golden"],
+        json!(true)
+    );
+    assert_eq!(
         report["bindings"]["exit_golden_report_digest_matches"],
         json!(true)
     );
@@ -364,7 +373,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.4")
+        json!("rt0-evidence-inventory-0.5")
     );
     assert_eq!(report["session_snapshots"]["expected"], json!(2));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
@@ -383,6 +392,57 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     assert_eq!(
         report["session_snapshots"]["conversation_claims_bound"],
         json!(true)
+    );
+}
+
+#[test]
+fn missing_release_spec_keeps_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    fs::remove_file(dir.path().join("release-spec.md")).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert!(
+        report["missing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "release-spec.md")
+    );
+    assert_eq!(
+        report["bindings"]["release_spec_digest_matches_exit"],
+        Value::Null
+    );
+    assert_eq!(
+        report["bindings"]["release_spec_digest_matches_golden"],
+        Value::Null
+    );
+}
+
+#[test]
+fn tampered_release_spec_keeps_inventory_incomplete_even_when_declared_digests_agree() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    fs::write(dir.path().join("release-spec.md"), b"tampered release spec").unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["exit_release_spec_matches_golden"],
+        json!(true)
+    );
+    assert_eq!(
+        report["bindings"]["release_spec_digest_matches_exit"],
+        json!(false)
+    );
+    assert_eq!(
+        report["bindings"]["release_spec_digest_matches_golden"],
+        json!(false)
     );
 }
 
