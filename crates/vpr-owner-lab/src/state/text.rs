@@ -39,8 +39,11 @@ impl OwnerLabEngine {
         register_interrupt: impl FnOnce(TurnInterruptHandle),
     ) -> Result<LabTextResult, LabError> {
         let input = input.trim();
-        if input.is_empty() || input.chars().count() > MAX_TEXT_CHARS || self.llm.is_none() {
+        if input.is_empty() || input.chars().count() > MAX_TEXT_CHARS {
             return Err(LabError::InvalidInput);
+        }
+        if self.llm.is_none() {
+            return Err(LabError::InvalidState);
         }
 
         let total_started = Instant::now();
