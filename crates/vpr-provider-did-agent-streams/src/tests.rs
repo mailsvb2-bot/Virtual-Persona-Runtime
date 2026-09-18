@@ -118,7 +118,9 @@ fn full_agents_streams_control_plane_matches_contract() {
         })
     );
     assert_eq!(
-        provider.parse_client_event(&live, "stream/done:{}").unwrap(),
+        provider
+            .parse_client_event(&live, "stream/done:{}")
+            .unwrap(),
         Some(RealtimeAvatarClientEvent::PlaybackDone)
     );
     assert_eq!(
@@ -205,11 +207,7 @@ fn legacy_or_non_interruptible_stream_never_advertises_client_interrupt() {
             .unwrap();
         assert!(provider.client_control(&live).is_none());
         let error = provider
-            .prepare_client_interrupt(
-                &live,
-                "video-7",
-                &Probe(AtomicBool::new(false)),
-            )
+            .prepare_client_interrupt(&live, "video-7", &Probe(AtomicBool::new(false)))
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     }
