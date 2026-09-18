@@ -8,13 +8,15 @@ use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
+    RealtimeAvatarSession, WebRtcIceCandidate,
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 const DID_DATA_CHANNEL_LABEL: &str = "JanusDataChannel";
 const MAX_PLAYBACK_ID_BYTES: usize = 512;
+const MAX_CLIENT_EVENT_BYTES: usize = 64 * 1024;
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -312,6 +314,38 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
     }
 
+    fn parse_client_event(
+        &self,
+        session: &RealtimeAvatarSession,
+        message: &str,
+    ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+        Self::validate_session(session)?;
+        if message.len() > MAX_CLIENT_EVENT_BYTES {
+            return Err(invalid_response());
+        }
+        let Some((subject, raw_payload)) = message.split_once(':') else {
+            return Ok(None);
+        };
+        match subject {
+            "stream/started" => {
+                let payload: StreamStartedPayload =
+                    serde_json::from_str(raw_payload).map_err(|_| invalid_response())?;
+                let playback_id = payload
+                    .metadata
+                    .and_then(|metadata| metadata.video_id)
+                    .ok_or_else(invalid_response)?;
+                if playback_id.trim().is_empty() || playback_id.len() > MAX_PLAYBACK_ID_BYTES {
+                    return Err(invalid_response());
+                }
+                Ok(Some(RealtimeAvatarClientEvent::PlaybackStarted {
+                    playback_id,
+                }))
+            }
+            "stream/done" => Ok(Some(RealtimeAvatarClientEvent::PlaybackDone)),
+            _ => Ok(None),
+        }
+    }
+
     fn prepare_client_interrupt(
         &self,
         session: &RealtimeAvatarSession,
@@ -460,6 +494,17 @@ impl TryFrom<CreateStreamResponse> for RealtimeAvatarSession {
                 .collect(),
         })
     }
+}
+
+#[derive(Deserialize)]
+struct StreamStartedPayload {
+    metadata: Option<StreamStartedMetadata>,
+}
+
+#[derive(Deserialize)]
+struct StreamStartedMetadata {
+    #[serde(rename = "videoId")]
+    video_id: Option<String>,
 }
 
 #[derive(Serialize)]
