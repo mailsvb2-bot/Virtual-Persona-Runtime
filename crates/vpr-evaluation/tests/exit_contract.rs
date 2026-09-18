@@ -215,6 +215,7 @@ fn session_snapshot_bytes_with_av_sync(
         "text_attempts":[{
             "request_sequence":1,
             "canonical_turn_sequence":5 + session_sequence,
+            "canonical_output_sequence":15 + session_sequence,
             "status":"completed",
             "failure_code":null,
             "first_meaningful_response_millis":if role == ParticipantRole::Owner { 1_000 } else { 2_500 },
