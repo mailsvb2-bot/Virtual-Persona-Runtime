@@ -9,13 +9,16 @@ use serde::{Deserialize, Serialize};
 use session_snapshots::{SessionSnapshotChecks, collect_session_snapshot_checks};
 use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
-    BoundGoldenReport, BoundLabSessionEvidenceAggregate, LiveProviderProbeReceipt,
-    ProviderStateManifest, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, sha256_hex,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, EvidenceVerificationContext,
+    GoldenEvidenceBundle, GoldenSuite, LiveProviderProbeReceipt, ProviderStateManifest,
+    RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite, sha256_hex,
     validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.5";
+const SCHEMA: &str = "rt0-evidence-inventory-0.6";
+const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
+    include_bytes!("../../../../docs/evaluation/rt0_golden_minimum.json");
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
 const REQUIRED: &[&str] = &[
     "provider-state.json",
@@ -52,6 +55,8 @@ struct BindingChecks {
     exit_release_spec_matches_golden: Option<bool>,
     release_spec_digest_matches_exit: Option<bool>,
     release_spec_digest_matches_golden: Option<bool>,
+    golden_evidence_digest_matches_report: Option<bool>,
+    golden_report_recomputed: Option<bool>,
     exit_golden_report_digest_matches: Option<bool>,
     exit_provider_state_matches: Option<bool>,
     exit_probe_digest_matches: Option<bool>,
@@ -76,6 +81,8 @@ impl BindingChecks {
                 self.exit_release_spec_matches_golden,
                 self.release_spec_digest_matches_exit,
                 self.release_spec_digest_matches_golden,
+                self.golden_evidence_digest_matches_report,
+                self.golden_report_recomputed,
                 self.exit_golden_report_digest_matches,
                 self.exit_provider_state_matches,
                 self.exit_probe_digest_matches,
@@ -101,6 +108,8 @@ struct ExitBindingChecks {
     release_spec_matches_golden: Option<bool>,
     release_spec_digest_matches_exit: Option<bool>,
     release_spec_digest_matches_golden: Option<bool>,
+    golden_evidence_digest_matches_report: Option<bool>,
+    golden_report_recomputed: Option<bool>,
     golden_report_digest_matches: Option<bool>,
     provider_state_matches: Option<bool>,
     probe_digest_matches: Option<bool>,
@@ -130,12 +139,15 @@ struct ExternalBindingView {
 struct ParsedBindingArtifacts {
     provider: Option<ProviderStateManifest>,
     golden: Option<BoundGoldenReport>,
+    golden_evidence: Option<GoldenEvidenceBundle>,
     probe: Option<LiveProviderProbeReceipt>,
     conversation: Option<ExternalBindingView>,
     session: Option<BoundLabSessionEvidenceAggregate>,
     exit: Option<Rt0ExitEvidence>,
     supporting: Option<SupportingArtifactBytes>,
     provider_state_bytes: Option<Vec<u8>>,
+    golden_evidence_bytes: Option<Vec<u8>>,
+    release_spec_bytes: Option<Vec<u8>>,
 }
 
 impl ParsedBindingArtifacts {
@@ -143,12 +155,15 @@ impl ParsedBindingArtifacts {
         Self {
             provider: parse_optional(&root.join("provider-state.json")),
             golden: parse_optional(&root.join("bound-golden-report.json")),
+            golden_evidence: parse_optional(&root.join("private-golden-evidence.json")),
             probe: parse_optional(&root.join("provider-probe.json")),
             conversation: parse_optional(&root.join("conversation-attempt.json")),
             session: parse_optional(&root.join("bound-session-aggregate.json")),
             exit: parse_optional(&root.join("exit-evidence.json")),
             supporting: SupportingArtifactBytes::read(root),
             provider_state_bytes: fs::read(root.join("provider-state.json")).ok(),
+            golden_evidence_bytes: fs::read(root.join("private-golden-evidence.json")).ok(),
+            release_spec_bytes: fs::read(root.join("release-spec.md")).ok(),
         }
     }
 
@@ -270,6 +285,8 @@ fn inspect_binding_checks(
         exit_release_spec_matches_golden: exit.release_spec_matches_golden,
         release_spec_digest_matches_exit: exit.release_spec_digest_matches_exit,
         release_spec_digest_matches_golden: exit.release_spec_digest_matches_golden,
+        golden_evidence_digest_matches_report: exit.golden_evidence_digest_matches_report,
+        golden_report_recomputed: exit.golden_report_recomputed,
         exit_golden_report_digest_matches: exit.golden_report_digest_matches,
         exit_provider_state_matches: exit.provider_state_matches,
         exit_probe_digest_matches: exit.probe_digest_matches,
@@ -311,6 +328,12 @@ fn inspect_exit_binding_checks(
             .as_ref()
             .zip(file_digest(root, "release-spec.md"))
             .map(|(report, digest)| report.binding.release_spec_sha256 == digest),
+        golden_evidence_digest_matches_report: parsed
+            .golden
+            .as_ref()
+            .zip(parsed.golden_evidence_bytes.as_ref())
+            .map(|(report, bytes)| report.evidence_input_sha256 == sha256_hex(bytes)),
+        golden_report_recomputed: recompute_golden_report(parsed, candidate_sha),
         golden_report_digest_matches: exit_digest_matches(
             parsed.exit.as_ref(),
             root,
@@ -347,6 +370,34 @@ fn inspect_exit_binding_checks(
             },
         ),
     }
+}
+
+fn recompute_golden_report(
+    parsed: &ParsedBindingArtifacts,
+    candidate_sha: &str,
+) -> Option<bool> {
+    let report = parsed.golden.as_ref()?;
+    let bundle = parsed.golden_evidence.as_ref()?;
+    let provider_state = parsed.provider.as_ref()?;
+    let provider_state_bytes = parsed.provider_state_bytes.as_deref()?;
+    let golden_evidence_bytes = parsed.golden_evidence_bytes.as_deref()?;
+    let release_spec_bytes = parsed.release_spec_bytes.as_deref()?;
+    let suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES).ok()?;
+    Some(
+        evaluate_bound_golden_suite(
+            &suite,
+            bundle,
+            EvidenceVerificationContext {
+                suite_bytes: RT0_REQUIRED_GOLDEN_SUITE_BYTES,
+                release_spec_bytes,
+                provider_state,
+                provider_state_bytes,
+                evidence_bytes: golden_evidence_bytes,
+                exact_candidate_sha: candidate_sha,
+            },
+        )
+        .is_ok_and(|recomputed| recomputed == *report),
+    )
 }
 
 fn inspect_external_binding_checks(
