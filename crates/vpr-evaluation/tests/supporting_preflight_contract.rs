@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use vpr_evaluation::{
-    Rt0SupportingPreflightArtifacts, Rt0SupportingPreflightError,
+    CheckStatus, Rt0SupportingPreflightArtifacts, Rt0SupportingPreflightError,
     preflight_rt0_supporting_artifacts, sha256_hex,
 };
 
@@ -111,7 +111,7 @@ impl Fixture {
                 "candidate_sha":candidate,
                 "provider_state_sha256":provider
             })),
-            limitations: b"# Known limitations\n\nReviewed limitations for this candidate.\n"
+            limitations: b"RT0-Review-Status: failed\n\nReviewed limitations for this candidate.\n"
                 .to_vec(),
         }
     }
@@ -155,6 +155,7 @@ fn exact_bound_real_supporting_bundle_is_preflight_complete_without_release_read
             .unwrap();
 
     assert!(report.preflight_complete);
+    assert_eq!(report.known_limitations_review_status, CheckStatus::Failed);
     assert_eq!(report.provider_state_sha256, sha256_hex(&provider_state));
     assert_eq!(
         report.artifact_digests.human_evaluation,
@@ -263,11 +264,22 @@ fn incomplete_human_review_is_rejected_without_inventing_a_review() {
 }
 
 #[test]
-fn empty_known_limitations_is_rejected() {
-    let mut fixture = Fixture::valid();
-    fixture.limitations = b" \n\t".to_vec();
-    assert_eq!(
-        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate()),
-        Err(Rt0SupportingPreflightError::InvalidKnownLimitations)
-    );
+fn malformed_known_limitations_review_evidence_is_rejected() {
+    for bytes in [
+        b" \n\t".as_slice(),
+        b"# Known limitations\n\nReviewed limitations.\n".as_slice(),
+        b"RT0-Review-Status: passed\n".as_slice(),
+        b"RT0-Review-Status: unknown\n\nReviewed limitations.\n".as_slice(),
+    ] {
+        let mut fixture = Fixture::valid();
+        fixture.limitations = bytes.to_vec();
+        assert_eq!(
+            preflight_rt0_supporting_artifacts(
+                fixture.as_preflight(),
+                &provider_state(),
+                &candidate()
+            ),
+            Err(Rt0SupportingPreflightError::InvalidKnownLimitations)
+        );
+    }
 }

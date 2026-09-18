@@ -4,6 +4,7 @@ mod exit_context;
 mod exit_support;
 mod exit_validation;
 mod golden;
+mod known_limitations;
 mod live_provider;
 mod session_binding;
 mod session_evidence;

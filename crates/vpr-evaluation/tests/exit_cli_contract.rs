@@ -212,7 +212,8 @@ fn bind_supporting_artifacts(root: &Path, evidence: &mut Value) {
         &provider_state_sha256,
         &mut evidence["human_evaluation"],
     );
-    let limitations = b"reviewed RT0 limitations\n";
+    let limitations =
+        b"RT0-Review-Status: passed\n\nReviewed RT0 limitations for this candidate.\n";
     fs::write(root.join("known-limitations.md"), limitations).unwrap();
     evidence["known_limitations"]["document_sha256"] = json!(sha256_hex(limitations));
 }

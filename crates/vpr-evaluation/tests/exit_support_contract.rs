@@ -59,7 +59,9 @@ impl SupportingFixture {
                 &evidence.candidate_sha,
                 &evidence.provider_state_sha256,
             ),
-            limitations: b"reviewed RT0 limitations\n".to_vec(),
+            limitations:
+                b"RT0-Review-Status: passed\n\nReviewed RT0 limitations for this candidate.\n"
+                    .to_vec(),
         };
         for index in 0..10 {
             set_digest(evidence, index, sha256_hex(fixture.bytes(index)));
@@ -271,5 +273,37 @@ fn real_claim_binding_rejects_stale_candidate_or_provider_after_rehash() {
                 "real supporting claim {index} accepted stale {field}",
             );
         }
+    }
+}
+
+#[test]
+fn limitations_review_status_is_bound_to_exact_artifact_bytes() {
+    let mut evidence = evidence();
+    let mut fixture = SupportingFixture::bind(&mut evidence);
+    fixture.limitations =
+        b"RT0-Review-Status: failed\n\nReviewed RT0 limitations for this candidate.\n".to_vec();
+    set_digest(&mut evidence, 9, sha256_hex(&fixture.limitations));
+
+    assert_eq!(
+        validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
+        Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
+    );
+}
+
+#[test]
+fn limitations_artifact_requires_review_marker_and_body() {
+    for bytes in [
+        b"# Known limitations\n\nReviewed limitations.\n".as_slice(),
+        b"RT0-Review-Status: passed\n".as_slice(),
+        b"RT0-Review-Status: unknown\n\nReviewed limitations.\n".as_slice(),
+    ] {
+        let mut evidence = evidence();
+        let mut fixture = SupportingFixture::bind(&mut evidence);
+        fixture.limitations = bytes.to_vec();
+        set_digest(&mut evidence, 9, sha256_hex(&fixture.limitations));
+        assert_eq!(
+            validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
+            Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
+        );
     }
 }

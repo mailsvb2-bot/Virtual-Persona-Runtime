@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::binding::{valid_git_sha, validate_provider_state};
 use crate::exit_validation::validate_quality_latencies;
+use crate::known_limitations::parse_known_limitations_review_status;
 use crate::{
     CheckStatus, EvidenceOrigin, HumanDimensions, ParticipantRole, ProviderStateManifest,
     QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
@@ -44,6 +45,7 @@ pub struct Rt0SupportingPreflightReport {
     pub schema_version: String,
     pub candidate_sha: String,
     pub provider_state_sha256: String,
+    pub known_limitations_review_status: CheckStatus,
     pub preflight_complete: bool,
     pub artifact_digests: Rt0SupportingArtifactDigests,
 }
@@ -208,16 +210,15 @@ pub fn preflight_rt0_supporting_artifacts(
         exact_candidate_sha,
         &provider_state_sha256,
     )?;
-    let known_limitations = std::str::from_utf8(artifacts.known_limitations)
-        .map_err(|_| Rt0SupportingPreflightError::InvalidKnownLimitations)?;
-    if known_limitations.trim().is_empty() {
-        return Err(Rt0SupportingPreflightError::InvalidKnownLimitations);
-    }
+    let known_limitations_review_status =
+        parse_known_limitations_review_status(artifacts.known_limitations)
+            .map_err(|()| Rt0SupportingPreflightError::InvalidKnownLimitations)?;
 
     Ok(Rt0SupportingPreflightReport {
         schema_version: RT0_SUPPORTING_PREFLIGHT_SCHEMA.into(),
         candidate_sha: exact_candidate_sha.into(),
         provider_state_sha256,
+        known_limitations_review_status,
         preflight_complete: true,
         artifact_digests: Rt0SupportingArtifactDigests {
             ci: sha256_hex(artifacts.ci),
