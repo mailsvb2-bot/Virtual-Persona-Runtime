@@ -289,6 +289,7 @@ pub(crate) fn validate_browser_quality_binding(
     evidence: &Rt0ExitEvidence,
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
+    validate_quality_latencies(&evidence.quality)?;
     let (
         Some(first_audio),
         Some(interruption_stop),
