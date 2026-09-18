@@ -312,6 +312,20 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
         .status,
         200
     );
+    let invalid_close = post(
+        port,
+        host,
+        csrf,
+        "/api/session/close",
+        r#"{"unexpected":true}"#,
+    );
+    assert_eq!(invalid_close.status, 400);
+    assert!(invalid_close.body.contains("INVALID_INPUT"));
+    let still_active = http(port, "GET", "/api/status", host, &[], "");
+    let still_active_json: Value = serde_json::from_str(&still_active.body).unwrap();
+    assert_eq!(still_active_json["session_state"], "active");
+    assert_eq!(still_active_json["avatar_open"], true);
+
     assert_eq!(
         post(port, host, csrf, "/api/session/revoke", "{}").status,
         200
