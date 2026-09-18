@@ -147,6 +147,28 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   expect(await injectedSpeech.json()).toMatchObject({ code: "AUTH_SCOPE_DENIED" });
   await page.getByRole("button", { name: "Отозвать доступ" }).click();
   await expect(page.locator("#status")).toContainText("Доступ отозван");
+
+  const providerBeforeRevokedCall = await request.get(`${providerUrl}/__state`);
+  expect(providerBeforeRevokedCall.ok()).toBeTruthy();
+  const providerBeforeRevokedJson = await providerBeforeRevokedCall.json() as {
+    requests: Array<{ method: string; path: string; authorization: string | null; body: string }>;
+  };
+  const revokedAnswer = await request.post(`${ownerLabUrl}/api/avatar/answer`, {
+    headers: csrfHeaders(csrf),
+    data: { kind: "answer", sdp: "v=0 revoked-must-not-egress" },
+  });
+  expect(revokedAnswer.status()).toBe(409);
+  expect(await revokedAnswer.json()).toMatchObject({ code: "INVALID_STATE_TRANSITION" });
+  const providerAfterRevokedCall = await request.get(`${providerUrl}/__state`);
+  expect(providerAfterRevokedCall.ok()).toBeTruthy();
+  const providerAfterRevokedJson = await providerAfterRevokedCall.json() as {
+    requests: Array<{ method: string; path: string; authorization: string | null; body: string }>;
+  };
+  expect(providerAfterRevokedJson.requests).toHaveLength(providerBeforeRevokedJson.requests.length);
+  expect(providerAfterRevokedJson.requests.some((entry) =>
+    entry.body.includes("revoked-must-not-egress")
+  )).toBeFalsy();
+
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
   const visitorEvidenceDownloadPromise = page.waitForEvent("download");
