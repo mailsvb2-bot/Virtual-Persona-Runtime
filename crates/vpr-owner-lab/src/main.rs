@@ -82,6 +82,11 @@ struct IceBody {
     sdp_mline_index: Option<u16>,
 }
 
+#[derive(Deserialize)]
+struct SpeakBody {
+    text: String,
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
