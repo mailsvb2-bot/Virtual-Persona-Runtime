@@ -270,7 +270,8 @@ const monitorRemoteAudio = () => {
             bargeInSilenceWait.silentFrames = level < silenceThreshold
                 ? bargeInSilenceWait.silentFrames + 1
                 : 0;
-            if (bargeInSilenceWait.silentFrames >= BARGE_IN_SILENCE_FRAMES) {
+            if (bargeInSilenceWait.silentFrames >= BARGE_IN_SILENCE_FRAMES
+                && providerPlaybackId === null) {
                 const wait = bargeInSilenceWait;
                 bargeInSilenceWait = null;
                 window.clearTimeout(wait.timer);
@@ -695,7 +696,6 @@ const interruptAvatar = async () => {
                 throw new Error("CLIENT_INTERRUPT_CHANNEL_MISMATCH");
             }
             channel.send(command.payload);
-            providerPlaybackId = null;
             updateControls();
             await refreshSessionEvidence();
             return true;
