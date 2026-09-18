@@ -7,7 +7,8 @@ mod state;
 pub use evidence::{
     LabAvSyncEvidenceInput, LabAvSyncReference, LabEvidenceError, LabMediaEvidenceInput,
     LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence,
+    LabVoiceAttemptStatus, ParticipantRole,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
@@ -19,8 +20,9 @@ pub use owner_capture::{
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
 
 pub use state::{
-    LabError, LabSessionAudience, LabSignalBundle, LabStatus, LabVoiceResult, LabVoiceUsage,
-    OwnerContextState, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
+    LabError, LabProviderUsage, LabSessionAudience, LabSignalBundle, LabStatus, LabTextResult,
+    LabVoiceResult, LabVoiceUsage, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
 };
 
 pub use providers::{
