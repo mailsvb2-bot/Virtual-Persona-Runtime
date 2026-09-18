@@ -338,6 +338,11 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
         json!(true)
     );
     assert_eq!(
+        report["bindings"]["golden_evidence_digest_matches_report"],
+        json!(true)
+    );
+    assert_eq!(report["bindings"]["golden_report_recomputed"], json!(true));
+    assert_eq!(
         report["bindings"]["exit_golden_report_digest_matches"],
         json!(true)
     );
@@ -373,7 +378,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.5")
+        json!("rt0-evidence-inventory-0.6")
     );
     assert_eq!(report["session_snapshots"]["expected"], json!(2));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
@@ -444,6 +449,26 @@ fn tampered_release_spec_keeps_inventory_incomplete_even_when_declared_digests_a
         report["bindings"]["release_spec_digest_matches_golden"],
         json!(false)
     );
+}
+
+#[test]
+fn tampered_private_golden_bytes_keep_inventory_incomplete() {
+    let dir = TempDir::new();
+    seed_complete_inventory(dir.path());
+    let path = dir.path().join("private-golden-evidence.json");
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(b"\n");
+    fs::write(&path, bytes).unwrap();
+
+    let output = run(dir.path(), CANDIDATE);
+    assert_eq!(output.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["inventory_complete"], json!(false));
+    assert_eq!(
+        report["bindings"]["golden_evidence_digest_matches_report"],
+        json!(false)
+    );
+    assert_eq!(report["bindings"]["golden_report_recomputed"], json!(false));
 }
 
 #[test]
