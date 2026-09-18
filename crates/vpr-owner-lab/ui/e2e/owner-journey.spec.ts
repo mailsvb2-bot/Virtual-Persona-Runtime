@@ -28,6 +28,7 @@ type FixtureState = {
   avatarOpen: boolean;
   startAudiences: string[];
   directSpeech: string[];
+  textMessages: string[];
   apiPaths: string[];
 };
 
@@ -76,6 +77,7 @@ const statusSnapshot = (state: FixtureState) => ({
   session_state: state.sessionState,
   avatar_open: state.avatarOpen,
   egress_enabled: true,
+  text_ready: true,
   voice_ready: true,
   session_audience: state.sessionAudience,
   owner_context_state: state.ownerReviewed ? "reviewed" : "missing",
@@ -210,6 +212,21 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
     if (path === "/api/avatar/answer" || path === "/api/avatar/ice") {
       return json(route, { ok: true });
     }
+    if (path === "/api/text/turn") {
+      expect(Number(request.headers()["x-vpr-evidence-request"])).toBeGreaterThan(0);
+      const text = String(body.text);
+      state.textMessages.push(`${state.sessionAudience}:${text}`);
+      return json(route, {
+        reply: state.sessionAudience === "visitor"
+          ? "Visitor scoped text reply"
+          : "Owner scoped text reply",
+        locale: "ru-RU",
+        evidence_turn_sequence: state.textMessages.length,
+        evidence_output_sequence: state.textMessages.length,
+        first_meaningful_response_millis: 100,
+        total_millis: 150,
+      });
+    }
     if (path === "/api/avatar/speak") {
       if (state.sessionAudience === "visitor") {
         return json(route, { ok: false, code: "AUTH_SCOPE_DENIED" }, 403);
@@ -244,6 +261,7 @@ const initialState = (): FixtureState => ({
   avatarOpen: false,
   startAudiences: [],
   directSpeech: [],
+  textMessages: [],
   apiPaths: [],
 });
 
@@ -277,9 +295,10 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
-  await page.getByLabel("Что должен сказать аватар").fill("Проверка owner scope");
-  await page.getByRole("button", { name: "Сказать", exact: true }).click();
-  await expect.poll(() => state.directSpeech).toEqual(["Проверка owner scope"]);
+  await page.getByLabel("Текстовый разговор").fill("Проверка owner scope");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(page.locator("#status")).toContainText("Owner scoped text reply");
+  await expect.poll(() => state.textMessages).toEqual(["owner:Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
@@ -291,16 +310,22 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
 
   await page.getByLabel("Режим тестовой сессии").selectOption("visitor");
   await expect(page.locator("#persona-panel")).toBeHidden();
-  await expect(page.getByLabel("Что должен сказать аватар")).toBeDisabled();
+  await expect(page.getByLabel("Текстовый разговор")).toBeEnabled();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("Visitor-сессия WebRTC согласована");
-  await expect(page.getByRole("button", { name: "Сказать", exact: true })).toBeDisabled();
+  await page.getByLabel("Текстовый разговор").fill("Проверка visitor scope");
+  await page.getByRole("button", { name: "Отправить", exact: true }).click();
+  await expect(page.locator("#status")).toContainText("Visitor scoped text reply");
   await page.getByRole("button", { name: "Отозвать доступ" }).click();
   await expect(page.locator("#status")).toContainText("Доступ отозван");
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
   expect(state.startAudiences).toEqual(["owner", "visitor"]);
+  expect(state.textMessages).toEqual([
+    "owner:Проверка owner scope",
+    "visitor:Проверка visitor scope",
+  ]);
   expect(state.personaVersion).toBe(3);
   expect(state.claims[0]?.revision).toBe(2);
   expect(state.apiPaths).toContain("POST /api/session/revoke");
