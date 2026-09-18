@@ -2,7 +2,8 @@ import { mountOwnerCapture } from "./owner-capture.js";
 
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; voice_ready: boolean; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; text_ready: boolean; voice_ready: boolean; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
+type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
@@ -39,7 +40,7 @@ const evidenceNode = byId<HTMLElement>("evidence");
 
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, voice_ready: false, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, text_ready: false, voice_ready: false, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
 let answerSubmitted = false;
@@ -52,8 +53,10 @@ let micWorklet: AudioWorkletNode | null = null;
 let micChunks: Float32Array[] = [];
 let recording = false;
 let recordingTimer: number | null = null;
+let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
 let videoEvidencePosted = false;
@@ -96,6 +99,26 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
         cache: "no-store",
       };
   const response = await fetch(path, init);
+  const payload = await response.json() as T | ErrorPayload;
+  if (!response.ok) {
+    const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
+    throw new Error(code);
+  }
+  return payload as T;
+};
+
+const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: number): Promise<T> => {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-VPR-CSRF": csrfToken,
+      "X-VPR-Evidence-Request": String(requestSequence),
+    },
+    body: JSON.stringify(body),
+    credentials: "same-origin",
+    cache: "no-store",
+  });
   const payload = await response.json() as T | ErrorPayload;
   if (!response.ok) {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
@@ -308,18 +331,14 @@ const backendSessionPresent = (): boolean => !["none", "closed"].includes(backen
 const selectedAudience = (): SessionAudience => backendStatus.session_audience ?? (audienceSelect.value as SessionAudience);
 
 const updateAudienceMode = (): void => {
-  const visitor = selectedAudience() === "visitor";
-  personaPanel.hidden = visitor;
-  message.disabled = visitor;
-  if (visitor) message.value = "";
+  personaPanel.hidden = selectedAudience() === "visitor";
 };
 
 const updateControls = (): void => {
   const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
-  const visitor = selectedAudience() === "visitor";
-  speakButton.disabled = visitor || !transportReady || !capabilities.has("text");
-  interruptButton.disabled = !voiceRequestInFlight && (!transportReady || !capabilities.has("interrupt"));
-  voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || voiceRequestInFlight;
+  speakButton.disabled = !transportReady || !backendStatus.text_ready || textRequestInFlight || voiceRequestInFlight;
+  interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight;
+  voiceButton.disabled = recording ? false : !transportReady || !backendStatus.voice_ready || textRequestInFlight || voiceRequestInFlight;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
@@ -593,13 +612,18 @@ const toggleVoice = async (): Promise<void> => {
 const speak = async (): Promise<void> => {
   const text = message.value.trim();
   if (!text) return;
-  speakButton.disabled = true;
+  const requestSequence = ++nextTextRequestSequence;
+  textRequestInFlight = true;
+  updateControls();
   try {
-    await api<{ ok: true }>("/api/avatar/speak", { text });
-    setStatus("Фраза отправлена", "ready");
+    const result = await apiEvidenceJson<TextResult>("/api/text/turn", { text }, requestSequence);
+    setStatus(`Ответ: ${result.reply}`, "ready");
+    message.value = "";
+    await refreshSessionEvidence();
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Ошибка отправки", "error");
+    setStatus(error instanceof Error ? error.message : "Ошибка текстового разговора", "error");
   } finally {
+    textRequestInFlight = false;
     updateControls();
   }
 };
