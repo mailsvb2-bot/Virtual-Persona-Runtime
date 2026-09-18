@@ -1211,14 +1211,11 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "sha2",
  "vpr-domain",
  "vpr-evaluation",
  "vpr-integration",
  "vpr-owner-lab",
  "vpr-policy",
- "vpr-provider-elevenlabs-tts",
- "vpr-provider-openai-speech",
  "vpr-runtime",
 ]
 
@@ -1239,8 +1236,10 @@ dependencies = [
  "vpr-provider-anthropic",
  "vpr-provider-deepgram-stt",
  "vpr-provider-did-agent-streams",
+ "vpr-provider-elevenlabs-tts",
  "vpr-provider-gemini",
  "vpr-provider-openai-compatible",
+ "vpr-provider-openai-speech",
  "vpr-provider-openai-transcription",
  "vpr-runtime",
 ]
