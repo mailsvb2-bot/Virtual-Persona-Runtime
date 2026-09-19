@@ -19,10 +19,8 @@ vpr-policy = { path = "../vpr-policy" }
 vpr-provider-did-agent-streams = { path = "../vpr-provider-did-agent-streams" }
 vpr-provider-anthropic = { path = "../vpr-provider-anthropic" }
 vpr-provider-deepgram-stt = { path = "../vpr-provider-deepgram-stt" }
-vpr-provider-elevenlabs-tts = { path = "../vpr-provider-elevenlabs-tts" }
 vpr-provider-gemini = { path = "../vpr-provider-gemini" }
 vpr-provider-openai-compatible = { path = "../vpr-provider-openai-compatible" }
-vpr-provider-openai-speech = { path = "../vpr-provider-openai-speech" }
 vpr-provider-openai-transcription = { path = "../vpr-provider-openai-transcription" }
 vpr-runtime = { path = "../vpr-runtime" }
 
