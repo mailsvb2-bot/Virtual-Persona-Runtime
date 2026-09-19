@@ -260,11 +260,6 @@ for required_probe_boundary in (
     "execute_llm(",
     "OwnerLabEngine::new",
     ".start(OwnerLabStartRequest { consent: true })",
-    "OwnerLabTurnInput::Text",
-    "AVATAR_SPEECH_PROBE_TEXT",
-    "AvatarOutput",
-    "spoken_text_submitted",
-    "spoken_text_submit_millis",
     ".close()",
     "conversation_evidence: false",
     "output_delivery_proven: false",
@@ -278,6 +273,18 @@ for required_probe_boundary in (
         raise SystemExit(
             f"RT0 live-provider probe missing canonical/evidence boundary {required_probe_boundary}"
         )
+for forbidden_standalone_tts_probe in (
+    "execute_tts(",
+    "TtsProbeEvidence",
+    "build_tts_probe_from_env",
+    "VPR_OWNER_LAB_TTS_",
+):
+    if forbidden_standalone_tts_probe in probe_source:
+        raise SystemExit(
+            "RT0 live-provider probe must leave audible voice proof to browser media evidence: "
+            + forbidden_standalone_tts_probe
+        )
+
 for forbidden_probe_call in (".transcribe(", ".stream(", ".create_session("):
     if forbidden_probe_call in probe_source:
         raise SystemExit(
