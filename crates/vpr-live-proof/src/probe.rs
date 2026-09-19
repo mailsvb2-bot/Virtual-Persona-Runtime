@@ -12,7 +12,7 @@ use vpr_integration::{
     AudioInput, GeneratedTextBuffer, LlmRequest, PcmSampleFormat, RealtimeAvatarPort, SttRequest,
     UsageEvidence, UsageUnit,
 };
-use vpr_owner_lab::{LabError, OwnerLabEngine, OwnerLabStartRequest};
+use vpr_owner_lab::{LabError, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{ActiveSession, ActiveTurn, SessionSecurityConfig};
 
@@ -23,6 +23,7 @@ const SAMPLE_RATE_HZ: u32 = 16_000;
 const CHANNELS: u16 = 1;
 const PROVIDER_SCOPE: &str = "provider.egress";
 const LLM_PROBE_PROMPT: &str = "Ответь одним коротким словом на русском языке: готов.";
+const AVATAR_SPEECH_PROBE_TEXT: &str = "Готов.";
 const MAX_PCM_BYTES: usize = 960_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,7 @@ pub enum LiveProviderProbeError {
     Llm(Rt0ReasonCode),
     InvalidLlmOutput,
     Avatar(Rt0ReasonCode),
+    AvatarOutput(Rt0ReasonCode),
     AvatarCleanup(Rt0ReasonCode),
     Internal,
 }
@@ -47,6 +49,7 @@ impl LiveProviderProbeError {
             Self::Stt(_) | Self::InvalidSttOutput => "stt",
             Self::Llm(_) | Self::InvalidLlmOutput => "llm",
             Self::Avatar(_) => "avatar_open",
+            Self::AvatarOutput(_) => "avatar_spoken_output",
             Self::AvatarCleanup(_) => "avatar_cleanup",
         }
     }
@@ -59,8 +62,9 @@ impl LiveProviderProbeError {
             | Self::Stt(reason)
             | Self::Llm(reason)
             | Self::Avatar(reason)
+            | Self::AvatarOutput(reason)
             | Self::AvatarCleanup(reason) => reason.as_str(),
-            Self::InvalidSttOutput | Self::InvalidLlmOutput => "PROVIDER_INVALID_RESPONSE",
+            Self::InvalidSttOutput | Self::InvalidLlmOutput => "PROVIDER_INVALID_RESPONSE"
             Self::Internal => "INTERNAL_ERROR",
         }
     }
@@ -82,7 +86,7 @@ pub fn validate_provider_probe_audio(
     Ok(())
 }
 
-/// Probes credentialed STT, LLM, and realtime-avatar control-plane reachability through canonical runtime paths.
+/// Probes credentialed STT, LLM, and realtime-avatar spoken-output reachability through canonical runtime paths.
 ///
 /// The returned receipt intentionally contains no transcript, generated reply, raw audio, WebRTC signaling,
 /// provider session identifiers, or credentials. It is reachability evidence only, not conversation evidence.
@@ -211,6 +215,14 @@ fn run_avatar_probe(
         .map_err(|error| LiveProviderProbeError::Avatar(lab_reason(&error)))?;
     let open_millis = elapsed_millis(avatar_started);
 
+    let spoken_output_started = Instant::now();
+    if let Err(error) = avatar.apply(OwnerLabTurnInput::Text(AVATAR_SPEECH_PROBE_TEXT.into())) {
+        let reason = lab_reason(&error);
+        let _ = avatar.revoke();
+        return Err(LiveProviderProbeError::AvatarOutput(reason));
+    }
+    let spoken_text_submit_millis = elapsed_millis(spoken_output_started);
+
     let close_started = Instant::now();
     if let Err(error) = avatar.close() {
         let reason = lab_reason(&error);
@@ -219,6 +231,8 @@ fn run_avatar_probe(
     }
     Ok(AvatarProbeEvidence {
         open_millis,
+        spoken_text_submitted: true,
+        spoken_text_submit_millis,
         close_millis: elapsed_millis(close_started),
     })
 }
