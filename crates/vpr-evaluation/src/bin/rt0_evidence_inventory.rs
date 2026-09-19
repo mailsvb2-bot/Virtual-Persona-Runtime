@@ -11,35 +11,16 @@ use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, LiveProviderProbeReceipt, ProviderStateManifest,
-    RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite, sha256_hex,
-    validate_live_provider_probe, validate_rt0_exit_supporting_artifacts,
+    RT0_EVIDENCE_REQUIRED_FILES, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence,
+    evaluate_bound_golden_suite, sha256_hex, validate_live_provider_probe,
+    validate_rt0_exit_supporting_artifacts,
 };
 
 const SCHEMA: &str = "rt0-evidence-inventory-0.7";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../../docs/evaluation/rt0_golden_minimum.json");
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
-const REQUIRED: &[&str] = &[
-    "provider-state.json",
-    "provider-probe.json",
-    "conversation-attempt.json",
-    "bound-session-aggregate.json",
-    "bound-golden-report.json",
-    "private-golden-evidence.json",
-    "exit-evidence.json",
-    "release-spec.md",
-    "ci-evidence.json",
-    "e2e-evidence.json",
-    "owner-conversation.json",
-    "visitor-conversation.json",
-    "acceptance.json",
-    "quality.json",
-    "cost.json",
-    "privacy-permissions.json",
-    "human-evaluation.json",
-    "known-limitations.md",
-];
 
 #[derive(Serialize)]
 struct InventoryItem {
@@ -470,10 +451,10 @@ fn file_digest(root: &Path, name: &str) -> Option<String> {
 }
 
 fn collect_inventory_items(root: &Path) -> (Vec<InventoryItem>, Vec<&'static str>, bool) {
-    let mut items = Vec::with_capacity(REQUIRED.len());
+    let mut items = Vec::with_capacity(RT0_EVIDENCE_REQUIRED_FILES.len());
     let mut missing = Vec::new();
     let mut all_syntax_valid = true;
-    for &name in REQUIRED {
+    for &name in RT0_EVIDENCE_REQUIRED_FILES {
         let path = root.join(name);
         if let Ok(bytes) = fs::read(&path) {
             let syntax_valid = artifact_syntax_valid(name, &bytes);
