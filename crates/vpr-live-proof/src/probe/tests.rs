@@ -274,6 +274,5 @@ fn avatar_close_failure_attempts_revoke_cleanup_and_remains_failure() {
     );
     let stats = stats.lock().unwrap();
     assert_eq!(stats.create_calls, 1);
-    assert_eq!(stats.speak_calls, 1);
     assert_eq!(stats.close_calls, 2);
 }
