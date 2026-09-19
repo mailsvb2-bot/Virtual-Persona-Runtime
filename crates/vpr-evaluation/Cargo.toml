@@ -32,3 +32,7 @@ path = "src/bin/rt0_supporting_preflight.rs"
 [[bin]]
 name = "vpr-rt0-exit-assemble"
 path = "src/bin/rt0_exit_assemble.rs"
+
+[[bin]]
+name = "vpr-rt0-evidence-prepare"
+path = "src/bin/rt0_evidence_prepare.rs"
