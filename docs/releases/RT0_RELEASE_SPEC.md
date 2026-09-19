@@ -1,6 +1,6 @@
 # RT0 ReleaseSpec — Feasibility & Wow Proof
 
-**Spec version:** `RT0-0.1.1`
+**Spec version:** `RT0-0.1.2`
 **Status:** ACTIVE  
 **Normative parent:** `docs/CANON.md` v3.4  
 **Maturity ceiling during RT0:** `EXPERIMENTAL` until the RT0 exit gate is evidenced.
@@ -25,7 +25,7 @@ RT0 is a feasibility and quality proof. It is not the first production release a
 3. Owner connects or records the minimum voice/appearance references required by the chosen RT0 providers.
 4. Preparation reports independent readiness for text, voice and video; a failed video preparation MUST NOT destroy Persona state.
 5. Owner starts a test session and speaks in Russian.
-6. Microphone input is transcribed, the canonical runtime authorizes the turn, a real LLM produces a response, TTS produces speech, and the chosen avatar path produces visual output.
+6. Microphone input is transcribed, the canonical runtime authorizes the turn, a real LLM produces a response, and the selected spoken-output path produces audible speech plus the chosen avatar visual output. A provider with integrated text-to-speech inside its realtime avatar path may satisfy both speech and avatar realization without a second standalone TTS provider.
 7. Owner can interrupt speech; cancellation propagates through the active turn path and unplayed tail content is not recorded as spoken.
 8. Owner sees measured latency and estimated/observed provider cost for the test session.
 9. Owner can correct a captured owner claim; the next test turn uses the corrected reviewed state.
@@ -94,6 +94,8 @@ RT0 defines canonical ports for:
 - `LlmPort`
 - `TtsPort`
 - `AvatarPort`
+
+`TtsPort` remains the provider-neutral contract for standalone speech synthesis. It is not mandatory in the selected RT0 provider composition when the chosen `AvatarPort` accepts text and performs speech synthesis as part of one realtime spoken-avatar output path. In that integrated case, release evidence MUST prove the actual user-heard audio in the browser, bind it to the canonical turn/output and avatar provider state, and still satisfy first-audio, interruption, A/V-sync and human voice-review requirements.
 
 Vendor SDK types MUST NOT cross into `vpr-domain`. Adapters declare provider/model/representation versions and return structured provider evidence, measured usage/cost inputs and typed failures.
 
@@ -167,13 +169,13 @@ Unknown failures fail closed when they touch sensitive identity, biometric use o
 
 ## 12. Failure and recovery
 
-- LLM/TTS/STT/avatar provider failure must surface a typed reason and preserve the session where safe.
+- LLM/STT/spoken-output/avatar provider failure must surface a typed reason and preserve the session where safe; for integrated spoken-avatar providers one provider failure may affect both speech and video and must be represented without inventing a separate TTS provider failure.
 - Video failure may degrade to voice/text only when policy permits and the user is informed.
 - Lost provider acknowledgement that could have produced a side effect/charge is represented as uncertain evidence and reconciled before blind retry.
 - Reconnect must not create a new Persona identity or silently widen authority.
 - Owner corrections and revocations must win over stale/cached state.
 
-## 13. QualityContract RT0-0.1.1
+## 13. QualityContract RT0-0.1.2
 
 Provisional engineering targets from the Canon are adopted unchanged:
 
@@ -192,7 +194,7 @@ For the RT0 browser WebRTC path, the A/V synchronization reference is the W3C We
 
 ## 14. Telemetry and cost
 
-Each material turn gets a correlation ID. Trace evidence must distinguish, when present: VAD, STT, context assembly, LLM TTFT, TTS first audio, renderer first frame, transport and interruption.
+Each material turn gets a correlation ID. Trace evidence must distinguish, when present: VAD, STT, context assembly, LLM TTFT, spoken-output first audio (standalone TTS or integrated avatar speech), renderer first frame, transport and interruption.
 
 Raw secrets, private documents, raw prompts, raw audio/video and biometric material are not logged by default.
 

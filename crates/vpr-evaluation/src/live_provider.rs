@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::binding::valid_sha256;
 
-pub const RT0_LIVE_PROVIDER_PROBE_SCHEMA: &str = "rt0-live-provider-probe-0.2";
+pub const RT0_LIVE_PROVIDER_PROBE_SCHEMA: &str = "rt0-live-provider-probe-0.3";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -33,18 +33,6 @@ pub struct LlmProbeEvidence {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct TtsProbeEvidence {
-    pub provider: String,
-    pub model_or_representation: String,
-    pub configuration_fingerprint_sha256: String,
-    pub latency_millis: u64,
-    pub audio_sha256: String,
-    pub audio_millis: u64,
-    pub usage: ProbeUsage,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct AvatarProbeEvidence {
     pub open_millis: u64,
     pub close_millis: u64,
@@ -63,7 +51,6 @@ pub struct LiveProviderProbeReceipt {
     pub output_delivery_proven: bool,
     pub stt: SttProbeEvidence,
     pub llm: LlmProbeEvidence,
-    pub tts: TtsProbeEvidence,
     pub avatar: AvatarProbeEvidence,
 }
 
@@ -95,12 +82,6 @@ pub fn validate_live_provider_probe(
         || probe.input_audio_millis > 30_000
         || probe.stt.transcript_chars == 0
         || probe.llm.output_chars == 0
-        || probe.tts.provider.trim().is_empty()
-        || probe.tts.model_or_representation.trim().is_empty()
-        || !valid_sha256(&probe.tts.configuration_fingerprint_sha256)
-        || !valid_sha256(&probe.tts.audio_sha256)
-        || probe.tts.audio_millis == 0
-        || probe.tts.audio_millis > 30_000
     {
         return Err(LiveProviderProbeValidationError::Invalid);
     }

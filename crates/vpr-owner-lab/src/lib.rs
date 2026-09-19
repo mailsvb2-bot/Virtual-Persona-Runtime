@@ -25,6 +25,4 @@ pub use state::{
     OwnerLabTurnInput,
 };
 
-pub use providers::{
-    PreparedTtsProbe, ProviderBundle, ProviderDescriptor, build_tts_probe_from_env,
-};
+pub use providers::{ProviderBundle, ProviderDescriptor};

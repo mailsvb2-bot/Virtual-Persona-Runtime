@@ -1,14 +1,12 @@
 use std::env;
 
 use sha2::{Digest, Sha256};
-use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
+use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
-use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
-use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,11 +14,6 @@ pub struct ProviderDescriptor {
     pub provider: String,
     pub model_or_representation: String,
     pub configuration_fingerprint_sha256: String,
-}
-
-pub struct PreparedTtsProbe {
-    pub provider: Box<dyn TtsPort>,
-    pub descriptor: ProviderDescriptor,
 }
 
 pub struct ProviderBundle {
@@ -174,61 +167,6 @@ fn openai_compatible_provider_name(name: &str) -> Option<&'static str> {
         "deepseek" => Some("deepseek"),
         _ => None,
     }
-}
-
-/// Builds the dedicated credentialed TTS provider used only by the RT0 reachability probe.
-///
-/// This does not modify the Owner Lab conversation provider bundle. API keys are consumed by
-/// concrete adapters but are never retained in the returned sanitized descriptor.
-///
-/// # Errors
-/// Returns a redacted configuration error when required TTS settings are missing or rejected.
-pub fn build_tts_probe_from_env() -> Result<PreparedTtsProbe, String> {
-    let name = required_env("VPR_OWNER_LAB_TTS_PROVIDER")?
-        .trim()
-        .to_ascii_lowercase();
-    let endpoint = required_env("VPR_OWNER_LAB_TTS_ENDPOINT")?;
-    let api_key = required_env("VPR_OWNER_LAB_TTS_API_KEY")?;
-    let model = required_env("VPR_OWNER_LAB_TTS_MODEL")?;
-    let voice = required_env("VPR_OWNER_LAB_TTS_VOICE")?;
-
-    let (canonical, provider): (&str, Box<dyn TtsPort>) = match name.as_str() {
-        "openai" | "openai-speech" => (
-            "openai-speech",
-            Box::new(
-                OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
-                    endpoint.clone(),
-                    api_key,
-                    model.clone(),
-                    voice.clone(),
-                ))
-                .map_err(|_| "TTS provider configuration rejected")?,
-            ),
-        ),
-        "elevenlabs" => (
-            "elevenlabs",
-            Box::new(
-                ElevenLabsTts::new(ElevenLabsTtsConfig::new(
-                    endpoint.clone(),
-                    api_key,
-                    model.clone(),
-                    voice.clone(),
-                ))
-                .map_err(|_| "TTS provider configuration rejected")?,
-            ),
-        ),
-        _ => return Err(format!("unsupported TTS provider: {name}")),
-    };
-
-    Ok(PreparedTtsProbe {
-        provider,
-        descriptor: descriptor(
-            "tts",
-            canonical,
-            &format!("{model}/{voice}"),
-            &[&endpoint, &model, &voice],
-        ),
-    })
 }
 
 fn descriptor(

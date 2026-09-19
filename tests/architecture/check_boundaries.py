@@ -258,11 +258,6 @@ probe_source = (live_proof_src / "probe.rs").read_text(encoding="utf-8")
 for required_probe_boundary in (
     "execute_stt(",
     "execute_llm(",
-    "execute_tts(",
-    "TtsProbeEvidence",
-    "configuration_fingerprint_sha256",
-    "audio_sha256",
-    "audio_millis",
     "OwnerLabEngine::new",
     ".start(OwnerLabStartRequest { consent: true })",
     ".close()",
@@ -278,6 +273,18 @@ for required_probe_boundary in (
         raise SystemExit(
             f"RT0 live-provider probe missing canonical/evidence boundary {required_probe_boundary}"
         )
+for forbidden_standalone_tts_probe in (
+    "execute_tts(",
+    "TtsProbeEvidence",
+    "build_tts_probe_from_env",
+    "VPR_OWNER_LAB_TTS_",
+):
+    if forbidden_standalone_tts_probe in probe_source:
+        raise SystemExit(
+            "RT0 live-provider probe must leave audible voice proof to browser media evidence: "
+            + forbidden_standalone_tts_probe
+        )
+
 for forbidden_probe_call in (".transcribe(", ".stream(", ".create_session("):
     if forbidden_probe_call in probe_source:
         raise SystemExit(
@@ -499,8 +506,6 @@ for required_provider_boundary in (
     "VPR_DID_API_KEY",
     "VPR_OWNER_LAB_STT_API_KEY",
     "VPR_OWNER_LAB_LLM_API_KEY",
-    "VPR_OWNER_LAB_TTS_API_KEY",
-    "build_tts_probe_from_env",
     "ProviderBundle",
     "configuration_fingerprint_sha256",
 ):
