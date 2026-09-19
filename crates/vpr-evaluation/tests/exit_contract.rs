@@ -119,8 +119,6 @@ fn live_provider_probe(provider_state_bytes: &[u8]) -> LiveProviderProbeReceipt 
         },
         avatar: AvatarProbeEvidence {
             open_millis: 150,
-            spoken_text_submitted: true,
-            spoken_text_submit_millis: 80,
             close_millis: 50,
         },
     }
@@ -912,10 +910,10 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
         Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
     );
 
-    let mut missing_spoken_output = probe.clone();
-    missing_spoken_output.avatar.spoken_text_submitted = false;
-    let missing_spoken_output_bytes = serde_json::to_vec(&missing_spoken_output).unwrap();
-    evidence.live_provider_probe_sha256 = sha256_hex(&missing_spoken_output_bytes);
+    let mut forged_delivery = probe.clone();
+    forged_delivery.output_delivery_proven = true;
+    let forged_delivery_bytes = serde_json::to_vec(&forged_delivery).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&forged_delivery_bytes);
     assert_eq!(
         evaluate_with_probe(
             &evidence,
@@ -924,7 +922,7 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
             &fixture,
             RELEASE_SPEC,
             CANDIDATE,
-            (&missing_spoken_output, &missing_spoken_output_bytes),
+            (&forged_delivery, &forged_delivery_bytes),
         ),
         Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
     );
