@@ -128,42 +128,56 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
     let endpoint = required_env("VPR_OWNER_LAB_LLM_ENDPOINT")?;
     let api_key = required_env("VPR_OWNER_LAB_LLM_API_KEY")?;
     let model = required_env("VPR_OWNER_LAB_LLM_MODEL")?;
-    let (canonical, provider): (&str, Box<dyn LlmPort>) = match name {
-        "openai" | "openai-compatible" => (
-            "openai-compatible",
-            Box::new(
-                OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
-                    endpoint.clone(),
-                    api_key,
-                    model.clone(),
-                ))
-                .map_err(|_| "LLM provider configuration rejected")?,
-            ),
-        ),
-        "anthropic" => (
-            "anthropic",
-            Box::new(
-                AnthropicLlm::new(AnthropicConfig::new(
-                    endpoint.clone(),
-                    api_key,
-                    model.clone(),
-                ))
-                .map_err(|_| "LLM provider configuration rejected")?,
-            ),
-        ),
-        "gemini" => (
-            "gemini",
-            Box::new(
-                GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()))
-                    .map_err(|_| "LLM provider configuration rejected")?,
-            ),
-        ),
-        _ => return Err(format!("unsupported LLM provider: {name}")),
-    };
+    let (canonical, provider): (&str, Box<dyn LlmPort>) =
+        if let Some(canonical) = openai_compatible_provider_name(name) {
+            let config = OpenAiCompatibleConfig::new(
+                endpoint.clone(),
+                api_key,
+                model.clone(),
+            )
+            .with_provider_name(canonical);
+            (
+                canonical,
+                Box::new(
+                    OpenAiCompatibleLlm::new(config)
+                        .map_err(|_| "LLM provider configuration rejected")?,
+                ),
+            )
+        } else {
+            match name {
+                "anthropic" => (
+                    "anthropic",
+                    Box::new(
+                        AnthropicLlm::new(AnthropicConfig::new(
+                            endpoint.clone(),
+                            api_key,
+                            model.clone(),
+                        ))
+                        .map_err(|_| "LLM provider configuration rejected")?,
+                    ),
+                ),
+                "gemini" => (
+                    "gemini",
+                    Box::new(
+                        GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()))
+                            .map_err(|_| "LLM provider configuration rejected")?,
+                    ),
+                ),
+                _ => return Err(format!("unsupported LLM provider: {name}")),
+            }
+        };
     Ok((
         provider,
         descriptor("llm", canonical, &model, &[&endpoint, &model]),
     ))
+}
+
+fn openai_compatible_provider_name(name: &str) -> Option<&'static str> {
+    match name {
+        "openai" | "openai-compatible" => Some("openai-compatible"),
+        "deepseek" => Some("deepseek"),
+        _ => None,
+    }
 }
 
 /// Builds the dedicated credentialed TTS provider used only by the RT0 reachability probe.
@@ -255,4 +269,22 @@ fn required_env(name: &'static str) -> Result<String, String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("required environment variable {name} is not set"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::openai_compatible_provider_name;
+
+    #[test]
+    fn deepseek_keeps_its_provider_identity_over_openai_compatible_transport() {
+        assert_eq!(
+            openai_compatible_provider_name("deepseek"),
+            Some("deepseek")
+        );
+        assert_eq!(
+            openai_compatible_provider_name("openai"),
+            Some("openai-compatible")
+        );
+        assert_eq!(openai_compatible_provider_name("anthropic"), None);
+    }
 }
