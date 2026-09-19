@@ -12,12 +12,15 @@ use vpr_integration::{
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
-use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_prepared};
+use super::{
+    LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_prepared,
+};
 use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
 
 #[derive(Default)]
 struct AvatarStats {
     create_calls: usize,
+    speak_calls: usize,
     close_calls: usize,
     fail_first_close: bool,
 }
@@ -144,9 +147,11 @@ impl RealtimeAvatarPort for FakeAvatar {
     fn speak_text(
         &self,
         _session: &RealtimeAvatarSession,
-        _text: &str,
+        text: &str,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        assert_eq!(text, "Готов.");
+        self.stats.lock().unwrap().speak_calls += 1;
         Ok(())
     }
 
@@ -231,6 +236,8 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     assert_eq!(receipt.input_audio_sha256.len(), 64);
     assert!(receipt.stt.transcript_chars > 0);
     assert!(receipt.llm.output_chars > 0);
+    assert!(receipt.avatar.spoken_text_submitted);
+    assert!(receipt.avatar.spoken_text_submit_millis <= 30_000);
     let json = serde_json::to_string(&receipt).unwrap();
     for secret in [
         "Секретная тестовая транскрипция",
@@ -243,6 +250,7 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     }
     let stats = stats.lock().unwrap();
     assert_eq!(stats.create_calls, 1);
+    assert_eq!(stats.speak_calls, 1);
     assert_eq!(stats.close_calls, 1);
 }
 
@@ -272,5 +280,6 @@ fn avatar_close_failure_attempts_revoke_cleanup_and_remains_failure() {
     );
     let stats = stats.lock().unwrap();
     assert_eq!(stats.create_calls, 1);
+    assert_eq!(stats.speak_calls, 1);
     assert_eq!(stats.close_calls, 2);
 }
