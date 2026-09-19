@@ -45,6 +45,21 @@ A preflight PASS proves only that an exact clean candidate has a complete local 
 
 Live-proof preflight output must use an absolute path outside the canonical Git worktree; evidence generation must not dirty the candidate it claims to describe.
 
+### DeepSeek LLM configuration
+
+Owner Lab and `vpr-live-proof` accept `VPR_OWNER_LAB_LLM_PROVIDER=deepseek` through the existing OpenAI-compatible transport while preserving `deepseek` as the runtime and sanitized evidence provider identity. The endpoint variable is the full Chat Completions endpoint used by the adapter, not an SDK base URL.
+
+For the current DeepSeek public API:
+
+```text
+VPR_OWNER_LAB_LLM_PROVIDER=deepseek
+VPR_OWNER_LAB_LLM_ENDPOINT=https://api.deepseek.com/chat/completions
+VPR_OWNER_LAB_LLM_MODEL=deepseek-flash
+VPR_OWNER_LAB_LLM_API_KEY=<secret set outside the repository>
+```
+
+Provider keys must remain outside the repository and are never serialized into provider-state or live-proof receipts. If a different DeepSeek model or endpoint is used, that exact model/endpoint participates in the configuration fingerprint and therefore produces a different evidence-bound provider state.
+
 ## Credentialed live-provider probe
 
 After preflight, `vpr-live-proof probe` can test real provider reachability for the exact clean candidate:
