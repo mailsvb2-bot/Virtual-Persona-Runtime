@@ -130,12 +130,8 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
     let model = required_env("VPR_OWNER_LAB_LLM_MODEL")?;
     let (canonical, provider): (&str, Box<dyn LlmPort>) =
         if let Some(canonical) = openai_compatible_provider_name(name) {
-            let config = OpenAiCompatibleConfig::new(
-                endpoint.clone(),
-                api_key,
-                model.clone(),
-            )
-            .with_provider_name(canonical);
+            let config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
+                .with_provider_name(canonical);
             (
                 canonical,
                 Box::new(
