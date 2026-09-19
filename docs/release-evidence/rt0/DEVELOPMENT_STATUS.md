@@ -8,7 +8,7 @@ This file records development evidence only. It is **not** RT0 exit evidence.
 - authority intersection, egress policy, authorization epoch invalidation and session-scoped policy enforcement;
 - linearized provider execution permits and revoke/replace/policy-change cancellation propagation;
 - realtime session/turn lifecycle with explicit denied/failed/cancelled terminal paths;
-- provider-neutral STT/LLM/TTS/avatar ports plus OpenAI-compatible, Anthropic, Gemini, OpenAI Transcription, Deepgram, OpenAI Speech, ElevenLabs and D-ID adapter contracts;
+- provider-neutral STT/LLM/TTS/avatar ports plus OpenAI-compatible, explicit DeepSeek-over-OpenAI-compatible provider identity, Anthropic, Gemini, OpenAI Transcription, Deepgram, OpenAI Speech, ElevenLabs and D-ID adapter contracts;
 - guided owner interview and modality-readiness foundations;
 - loopback Owner Lab API for minimal Persona creation, guided capture, explicit claim approval/correction and initial review completion, backed by the canonical `vpr-capture` state machine;
 - single-owner transfer of the reviewed `PersonaProfile` from capture into the Owner Lab runtime rather than a second copied Persona state;
