@@ -104,7 +104,7 @@ fn seed_complete_inventory(dir: &Path) {
         "output_delivery_proven":false,
         "stt":{"latency_millis":100,"transcript_chars":6,"usage":usage.clone()},
         "llm":{"latency_millis":120,"output_chars":5,"usage":usage.clone()},
-        "avatar":{"open_millis":150,"spoken_text_submitted":true,"spoken_text_submit_millis":80,"close_millis":50}
+        "avatar":{"open_millis":150,"close_millis":50}
     });
     fs::write(
         dir.join("provider-probe.json"),
