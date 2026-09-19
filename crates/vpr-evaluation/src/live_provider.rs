@@ -35,6 +35,8 @@ pub struct LlmProbeEvidence {
 #[serde(deny_unknown_fields)]
 pub struct AvatarProbeEvidence {
     pub open_millis: u64,
+    pub spoken_text_submitted: bool,
+    pub spoken_text_submit_millis: u64,
     pub close_millis: u64,
 }
 
@@ -82,6 +84,8 @@ pub fn validate_live_provider_probe(
         || probe.input_audio_millis > 30_000
         || probe.stt.transcript_chars == 0
         || probe.llm.output_chars == 0
+        || !probe.avatar.spoken_text_submitted
+        || probe.avatar.spoken_text_submit_millis > 30_000
     {
         return Err(LiveProviderProbeValidationError::Invalid);
     }
