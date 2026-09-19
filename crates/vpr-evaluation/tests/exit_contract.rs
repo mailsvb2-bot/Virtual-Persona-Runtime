@@ -9,7 +9,7 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
-    TtsProbeEvidence, bind_owner_lab_session_evidence, evaluate_bound_golden_suite,
+    bind_owner_lab_session_evidence, evaluate_bound_golden_suite,
     evaluate_rt0_exit_evidence, sha256_hex,
 };
 
@@ -117,17 +117,10 @@ fn live_provider_probe(provider_state_bytes: &[u8]) -> LiveProviderProbeReceipt 
             output_chars: 5,
             usage: probe_usage(),
         },
-        tts: TtsProbeEvidence {
-            provider: "fake-tts".into(),
-            model_or_representation: "fake-model/fake-voice".into(),
-            configuration_fingerprint_sha256: digest('e'),
-            latency_millis: 80,
-            audio_sha256: digest('a'),
-            audio_millis: 200,
-            usage: probe_usage(),
-        },
         avatar: AvatarProbeEvidence {
             open_millis: 150,
+            spoken_text_submitted: true,
+            spoken_text_submit_millis: 80,
             close_millis: 50,
         },
     }
