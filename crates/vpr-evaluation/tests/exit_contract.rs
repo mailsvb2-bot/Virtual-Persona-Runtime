@@ -912,10 +912,10 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
         Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
     );
 
-    let mut missing_tts = probe.clone();
-    missing_tts.tts.audio_millis = 0;
-    let missing_tts_bytes = serde_json::to_vec(&missing_tts).unwrap();
-    evidence.live_provider_probe_sha256 = sha256_hex(&missing_tts_bytes);
+    let mut missing_spoken_output = probe.clone();
+    missing_spoken_output.avatar.spoken_text_submitted = false;
+    let missing_spoken_output_bytes = serde_json::to_vec(&missing_spoken_output).unwrap();
+    evidence.live_provider_probe_sha256 = sha256_hex(&missing_spoken_output_bytes);
     assert_eq!(
         evaluate_with_probe(
             &evidence,
@@ -924,7 +924,7 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
             &fixture,
             RELEASE_SPEC,
             CANDIDATE,
-            (&missing_tts, &missing_tts_bytes),
+            (&missing_spoken_output, &missing_spoken_output_bytes),
         ),
         Err(Rt0ExitEvidenceError::LiveProviderProbeInvalid)
     );
