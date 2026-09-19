@@ -12,9 +12,7 @@ use vpr_integration::{
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
-use super::{
-    LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_prepared,
-};
+use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_prepared};
 use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
 
 #[derive(Default)]
