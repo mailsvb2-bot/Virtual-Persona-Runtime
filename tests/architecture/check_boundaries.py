@@ -506,8 +506,6 @@ for required_provider_boundary in (
     "VPR_DID_API_KEY",
     "VPR_OWNER_LAB_STT_API_KEY",
     "VPR_OWNER_LAB_LLM_API_KEY",
-    "VPR_OWNER_LAB_TTS_API_KEY",
-    "build_tts_probe_from_env",
     "ProviderBundle",
     "configuration_fingerprint_sha256",
 ):
