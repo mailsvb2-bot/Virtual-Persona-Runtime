@@ -64,7 +64,8 @@ fn transcribes_raw_linear16_and_reports_duration() {
     assert!(http.contains("sample_rate=16000"));
     assert!(http.contains("channels=1"));
     assert!(http.contains("model=nova-test"));
-    assert!(http.contains("language=ru-ru"));
+    assert!(http.contains("language=ru"));
+    assert!(!http.contains("language=ru-ru"));
     assert!(http.contains("authorization: token secret"));
 }
 

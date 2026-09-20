@@ -115,6 +115,7 @@ impl SttPort for DeepgramStt {
                 .locale_hint
                 .as_deref()
                 .filter(|value| !value.is_empty())
+                .map(normalize_deepgram_language)
             {
                 query.append_pair("language", locale);
             }
@@ -183,6 +184,14 @@ struct DeepgramAlternative {
     transcript: String,
     #[serde(default)]
     languages: Vec<String>,
+}
+
+fn normalize_deepgram_language(locale: &str) -> &str {
+    if locale.eq_ignore_ascii_case("ru-RU") {
+        "ru"
+    } else {
+        locale
+    }
 }
 
 fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
