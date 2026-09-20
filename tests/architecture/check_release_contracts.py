@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CATALOGUE = ROOT / "docs" / "capabilities" / "RT0.json"
 SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
+RT1_SPEC = ROOT / "docs" / "releases" / "RT1_RELEASE_SPEC.md"
 REASON_SOURCE = ROOT / "crates" / "vpr-domain" / "src" / "reason.rs"
 
 ALLOWED_MATURITY = {
@@ -36,6 +37,7 @@ REQUIRED_REASON_CODES = {
 
 catalogue = json.loads(CATALOGUE.read_text(encoding="utf-8"))
 spec_text = SPEC.read_text(encoding="utf-8")
+rt1_spec_text = RT1_SPEC.read_text(encoding="utf-8")
 ceiling_match = re.search(r"Maturity ceiling during RT0:\*\* `([A-Z_]+)`", spec_text)
 if ceiling_match is None:
     raise SystemExit("RT0 ReleaseSpec is missing a parseable maturity ceiling")
@@ -86,6 +88,39 @@ for capability in capabilities:
 if len(ids) != len(set(ids)):
     raise SystemExit("RT0 capability catalogue contains duplicate capability ids")
 
+
+
+rt1_status_match = re.search(r"Status:\*\* \`([A-Z0-9_]+)\`", rt1_spec_text)
+if rt1_status_match is None or rt1_status_match.group(1) != "BLOCKED_ON_RT0_EXIT":
+    raise SystemExit("RT1 ReleaseSpec must remain BLOCKED_ON_RT0_EXIT until RT0 exact-candidate exit passes")
+rt1_pre_entry_match = re.search(
+    r"Allowed pre-entry work:\*\* \`([A-Z0-9_]+)\`",
+    rt1_spec_text,
+)
+if rt1_pre_entry_match is None or rt1_pre_entry_match.group(1) != "BOUNDED_FEASIBILITY_SPIKE_ONLY":
+    raise SystemExit("RT1 pre-entry work must remain bounded feasibility only while RT0 is open")
+rt1_ceiling_match = re.search(
+    r"Maturity ceiling before RT0 exit:\*\* \`([A-Z_]+)\`",
+    rt1_spec_text,
+)
+if rt1_ceiling_match is None or rt1_ceiling_match.group(1) != "RESEARCH_REQUIRED":
+    raise SystemExit("RT1 pre-entry maturity ceiling must remain RESEARCH_REQUIRED")
+
+for required_rt1_contract in (
+    "Create -> Capture -> Prepare -> Review -> Correct -> Preview -> Publish -> Visitor talks -> Pause / Unpublish",
+    "Owner Control Center",
+    "What my Persona knows and says about me",
+    "VoiceIdentity and AppearanceIdentity",
+    "public link or equivalent first publication mechanism",
+    "Persona pause/kill switch",
+    "basic Answer Evidence Card",
+    "text, voice and video",
+    "Full RT1 implementation may begin only after",
+    "release.rt0_exit_gate",
+    "must remain non-production, non-public and non-promoting",
+):
+    if required_rt1_contract not in rt1_spec_text:
+        raise SystemExit(f"RT1 ReleaseSpec is missing required contract marker: {required_rt1_contract}")
 
 capability_by_id = {capability["id"]: capability for capability in capabilities}
 required_capability_states = {
@@ -174,6 +209,6 @@ for code in sorted(REQUIRED_REASON_CODES):
         raise SystemExit(f"runtime reason-code source is missing {code}")
 
 print(
-    f"release-contracts: PASS ({len(capabilities)} capabilities, "
-    f"{len(REQUIRED_REASON_CODES)} reason codes)"
+    f"release-contracts: PASS ({len(capabilities)} RT0 capabilities, "
+    f"{len(REQUIRED_REASON_CODES)} reason codes, RT1 pre-entry contract locked)"
 )
