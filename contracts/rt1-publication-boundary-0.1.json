@@ -1,0 +1,89 @@
+{
+  "schema": "rt1-publication-boundary-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "public_endpoint_exposed": false,
+  "durable_state_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "publication_identity": {
+    "fields": [
+      "publication_id",
+      "persona_id",
+      "persona_version"
+    ],
+    "canonical_persona_reference": [
+      "PersonaId",
+      "PersonaVersion"
+    ],
+    "copies_persona_truth": false,
+    "contains_provider_identity": false
+  },
+  "forbidden_identity_fields": [
+    "provider_id",
+    "provider_model",
+    "representation_id",
+    "provider_session_id",
+    "voice_provider_id",
+    "avatar_provider_id"
+  ],
+  "states": [
+    "PRIVATE",
+    "PREVIEWABLE",
+    "PUBLISHED",
+    "PAUSED",
+    "UNPUBLISHED"
+  ],
+  "transitions": [
+    ["PRIVATE", "PREVIEWABLE"],
+    ["PREVIEWABLE", "PUBLISHED"],
+    ["PUBLISHED", "PAUSED"],
+    ["PAUSED", "PUBLISHED"],
+    ["PUBLISHED", "UNPUBLISHED"],
+    ["PAUSED", "UNPUBLISHED"]
+  ],
+  "bootstrap": {
+    "preview": {
+      "scope": "OWNER_PREVIEW",
+      "allowed_states": [
+        "PREVIEWABLE",
+        "PUBLISHED",
+        "PAUSED"
+      ],
+      "requires_owner_authority": true,
+      "grants_public_authority": false
+    },
+    "public_visitor": {
+      "scope": "PUBLIC_VISITOR",
+      "allowed_states": [
+        "PUBLISHED"
+      ],
+      "requires_exact_persona_version": true,
+      "deny_on_stale_persona_version": true,
+      "deny_on_ambiguous_state": true
+    }
+  },
+  "fail_closed_examples": [
+    {
+      "state": "PAUSED",
+      "scope": "PUBLIC_VISITOR",
+      "decision": "DENY"
+    },
+    {
+      "state": "UNPUBLISHED",
+      "scope": "PUBLIC_VISITOR",
+      "decision": "DENY"
+    },
+    {
+      "state": "PUBLISHED",
+      "scope": "PUBLIC_VISITOR",
+      "persona_version_match": false,
+      "decision": "DENY"
+    },
+    {
+      "state": "PUBLISHED",
+      "scope": "PUBLIC_VISITOR",
+      "persona_version_match": true,
+      "decision": "ALLOW"
+    }
+  ]
+}
