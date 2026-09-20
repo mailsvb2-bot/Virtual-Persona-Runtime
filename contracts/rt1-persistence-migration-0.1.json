@@ -1,0 +1,71 @@
+{
+  "schema": "rt1-persistence-migration-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "durable_database_implemented": false,
+  "migration_executed": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "current_rt0_reality": {
+    "durable_application_store_present": false,
+    "owner_lab_state": "IN_PROCESS_ONLY",
+    "automatic_rt0_to_rt1_migration_possible": false
+  },
+  "migration_policy": {
+    "automatic_forward_migration": false,
+    "owner_reviewed_material": "EXPLICIT_OWNER_CONTROLLED_BOOTSTRAP_ONLY",
+    "release_evidence": "ARCHIVE_AS_EVIDENCE_ONLY",
+    "unknown_or_ambiguous_state": "DISCARD_FROM_PRODUCT_STATE_FAIL_CLOSED"
+  },
+  "never_promote_to_canonical_rt1_state": [
+    "rt0_session_id",
+    "rt0_turn_id",
+    "provider_session_id",
+    "provider_stream_id",
+    "webrtc_sdp",
+    "webrtc_ice_credentials",
+    "ephemeral_consent",
+    "ephemeral_authority",
+    "rt0_preparation_job_id",
+    "rt0_provider_reachability_receipt",
+    "rt0_browser_test_fixture",
+    "rt0_release_evidence_artifact"
+  ],
+  "future_durable_concepts": [
+    "workspace_tenant_scope",
+    "persona",
+    "persona_version",
+    "reviewed_owner_claim",
+    "claim_revision_history",
+    "voice_identity",
+    "appearance_identity",
+    "provider_neutral_representation_binding",
+    "preparation_job",
+    "publication_state",
+    "consent_rights_state",
+    "audit_record"
+  ],
+  "identity_invariants": {
+    "persona_identity": [
+      "PersonaId",
+      "PersonaVersion"
+    ],
+    "provider_identity_is_representation_only": true,
+    "provider_replacement_is_not_persona_migration": true,
+    "claim_history_must_not_be_squashed": true,
+    "publication_points_to_exact_persona_version": true
+  },
+  "mutation_invariants": {
+    "single_canonical_durable_commit_path": true,
+    "auditable": true,
+    "idempotent_when_retried": true,
+    "persona_correction_advances_version_atomically_with_claim_revision": true,
+    "stale_preparation_or_publication_projection_must_fail_closed": true,
+    "pause_or_unpublish_does_not_delete_private_persona": true
+  },
+  "rollback_invariants": {
+    "no_identity_duplication": true,
+    "reviewed_claim_history_preserved": true,
+    "ambiguous_publication_state_defaults_private": true,
+    "safe_roll_forward_allowed_when_reverse_migration_is_unsafe": true
+  }
+}
