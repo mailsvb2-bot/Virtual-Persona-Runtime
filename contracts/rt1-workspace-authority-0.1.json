@@ -1,0 +1,73 @@
+{
+  "schema": "rt1-workspace-authority-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "workspace_identity_implemented": false,
+  "account_system_implemented": false,
+  "public_auth_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "first_rt1_tenant_model": {
+    "tenant_boundary": "WORKSPACE",
+    "future_identity": "WorkspaceId",
+    "persona_belongs_to_exactly_one_workspace": true,
+    "workspace_identity_distinct_from_persona_identity": true,
+    "workspace_identity_distinct_from_provider_identity": true,
+    "workspace_identity_not_derived_from_publication_token": true
+  },
+  "authorization_model": {
+    "canonical_permission_composition": "EffectiveAuthority::compose",
+    "workspace_match_is_resource_boundary": true,
+    "workspace_id_must_not_be_encoded_into_authority_scope": true,
+    "explicit_deny_wins": true,
+    "revoked_or_expired_authority_fails_closed": true,
+    "workspace_match_cannot_widen_authority": true,
+    "egress_policy_remains_additional_required_gate": true
+  },
+  "principal_scopes": {
+    "owner": {
+      "authenticated": true,
+      "matching_workspace_required": true,
+      "may_use_owner_routes": true,
+      "may_preview": true,
+      "may_publish_control": true
+    },
+    "public_visitor": {
+      "authenticated_workspace_member": false,
+      "matching_workspace_membership_required": false,
+      "publication_bound": true,
+      "may_use_owner_routes": false,
+      "may_read_owner_private_material": false,
+      "may_mutate_persona": false
+    }
+  },
+  "public_link_invariants": {
+    "is_owner_credential": false,
+    "grants_workspace_membership": false,
+    "grants_owner_authority": false,
+    "resolves_only_publication_boundary": true,
+    "cannot_override_pause_or_unpublish": true,
+    "cannot_override_stale_persona_version": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "OWNER_WRONG_WORKSPACE",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "VISITOR_CALLS_OWNER_ROUTE",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "PUBLIC_LINK_ON_PAUSED_PUBLICATION",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "OWNER_MATCHING_WORKSPACE_BUT_SCOPE_DENIED",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "OWNER_MATCHING_WORKSPACE_AND_SCOPE_ALLOWED",
+      "decision": "CONTINUE_TO_NORMAL_POLICY_CONSENT_EGRESS_GATES"
+    }
+  ]
+}
