@@ -132,7 +132,10 @@ fn http_bytes(
             {
                 break;
             }
-            Err(error) => panic!("HTTP {method} {path} response read failed before a complete response ({} bytes): {error}", response.len()),
+            Err(error) => panic!(
+                "HTTP {method} {path} response read failed before a complete response ({} bytes): {error}",
+                response.len()
+            ),
         }
     }
     let marker = response
