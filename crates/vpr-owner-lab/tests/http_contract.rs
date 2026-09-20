@@ -2,11 +2,19 @@ use std::fmt::Write as FmtWrite;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+static HTTP_CONTRACT_SERIAL: Mutex<()> = Mutex::new(());
+
+fn serialize_owner_lab_http_contract() -> MutexGuard<'static, ()> {
+    HTTP_CONTRACT_SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 struct ChildGuard(Child);
 
@@ -124,7 +132,7 @@ fn http_bytes(
             {
                 break;
             }
-            Err(error) => panic!("HTTP response read failed before a complete response: {error}"),
+            Err(error) => panic!("HTTP {method} {path} response read failed before a complete response ({} bytes): {error}", response.len()),
         }
     }
     let marker = response
@@ -378,6 +386,7 @@ fn http_response_completion_requires_full_declared_body() {
 
 #[test]
 fn loopback_owner_lab_drives_runtime_and_did_control_plane_fail_closed() {
+    let _serial = serialize_owner_lab_http_contract();
     let (did_endpoint, captured) = mock_did();
     let port = free_port();
     let host = format!("127.0.0.1:{port}");
@@ -463,6 +472,7 @@ fn launch_owner_lab_voice(
 
 #[test]
 fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
+    let _serial = serialize_owner_lab_http_contract();
     let (did_endpoint, did_captured) = mock_did_voice();
     let (stt_base, stt_captured) = mock_once(
         "application/json",
@@ -722,6 +732,7 @@ fn mock_heartbeat_llm() -> (String, mpsc::Receiver<String>, mpsc::Receiver<()>) 
 
 #[test]
 fn revoke_preempts_active_voice_before_any_avatar_output() {
+    let _serial = serialize_owner_lab_http_contract();
     let (did_endpoint, did_captured) = mock_did_revoke_during_voice();
     let (stt_base, _) = mock_once(
         "application/json",
@@ -791,6 +802,7 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
 
 #[test]
 fn close_preempts_active_voice_before_any_avatar_output() {
+    let _serial = serialize_owner_lab_http_contract();
     let (did_endpoint, did_captured) = mock_did_revoke_during_voice();
     let (stt_base, _) = mock_once(
         "application/json",
