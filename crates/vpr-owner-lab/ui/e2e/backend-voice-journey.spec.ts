@@ -224,7 +224,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
         this.connectionState = "connected";
         queueMicrotask(() => this.onconnectionstatechange?.());
       }
+      statsAttemptSequence = 0;
       async getStats(): Promise<Map<string, object>> {
+        this.statsAttemptSequence += 1;
+        if (this.statsAttemptSequence <= 2) return new Map();
         return new Map([
           ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
           ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
@@ -366,6 +369,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_proven).toBeTruthy();
   expect(ownerEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(ownerEvidenceJson.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(ownerEvidenceJson.text_attempts).toMatchObject([{
     request_sequence: 1,
     status: "completed",
@@ -481,6 +485,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_proven).toBeTruthy();
   expect(visitorEvidenceJson.av_sync_samples).toHaveLength(3);
+  expect(visitorEvidenceJson.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(visitorEvidenceJson.text_attempts).toMatchObject([{
     request_sequence: 1,
     status: "completed",

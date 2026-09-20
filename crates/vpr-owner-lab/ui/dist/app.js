@@ -59,6 +59,7 @@ const AUTO_STOP_MILLIS = 29_500;
 const AV_SYNC_REFERENCE = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
+const AV_SYNC_MAX_ATTEMPTS = 12;
 const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
@@ -170,24 +171,26 @@ const readAvSyncOffsetMillis = async () => {
     return Math.round(Math.abs(audioTimestamp - videoTimestamp));
 };
 const collectAvSyncEvidence = async (requestSequence) => {
-    let recorded = false;
-    for (let index = 0; index < AV_SYNC_SAMPLE_COUNT; index += 1) {
+    let sampleSequence = 1;
+    let attempts = 0;
+    while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
+        attempts += 1;
         const absoluteOffsetMillis = await readAvSyncOffsetMillis();
         if (absoluteOffsetMillis !== null) {
             await api("/api/evidence/av-sync", {
                 session_sequence: evidenceSessionSequence,
                 request_sequence: requestSequence,
-                sample_sequence: index + 1,
+                sample_sequence: sampleSequence,
                 reference: AV_SYNC_REFERENCE,
                 absolute_offset_millis: absoluteOffsetMillis,
             });
-            recorded = true;
+            sampleSequence += 1;
         }
-        if (index + 1 < AV_SYNC_SAMPLE_COUNT) {
+        if (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
             await new Promise((resolve) => window.setTimeout(resolve, AV_SYNC_SAMPLE_INTERVAL_MILLIS));
         }
     }
-    if (recorded)
+    if (sampleSequence > 1)
         await refreshSessionEvidence();
 };
 const rms = (samples) => {
