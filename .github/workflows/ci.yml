@@ -26,6 +26,8 @@ jobs:
         run: python3 tests/architecture/check_rt1_publication_spike.py
       - name: RT1 persistence pre-entry spike
         run: python3 tests/architecture/check_rt1_persistence_spike.py
+      - name: RT1 workspace authority pre-entry spike
+        run: python3 tests/architecture/check_rt1_workspace_authority_spike.py
       - name: Owner Lab browser contract guard
         run: python3 tests/architecture/check_browser_contract.py
       - name: Format
