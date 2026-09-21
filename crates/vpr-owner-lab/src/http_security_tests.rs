@@ -1,4 +1,4 @@
-use super::{valid_host_value, valid_origin_value};
+use super::{CONTENT_SECURITY_POLICY, valid_host_value, valid_origin_value};
 
 #[test]
 fn host_validation_rejects_dns_rebinding_shapes() {
@@ -52,4 +52,11 @@ fn post_origin_must_match_the_loopback_host_exactly() {
         "http://localhost.evil.test",
         8787
     ));
+}
+
+
+#[test]
+fn csp_allows_provider_neutral_secure_realtime_signal_fallbacks() {
+    assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self' https: wss:"));
+    assert!(!CONTENT_SECURITY_POLICY.contains("connect-src 'self' http:"));
 }
