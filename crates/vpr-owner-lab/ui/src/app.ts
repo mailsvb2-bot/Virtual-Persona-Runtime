@@ -795,6 +795,13 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       silentFrames: 0,
     };
     const result = await apiBinary<VoiceResult>("/api/voice/turn", pcm, requestSequence);
+    if (result.client_command) {
+      await dispatchClientCommand(result.client_command);
+      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+        evidence_turn_sequence: result.evidence_turn_sequence,
+        evidence_output_sequence: result.evidence_output_sequence,
+      });
+    }
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
@@ -854,21 +861,21 @@ const interruptAvatar = async (): Promise<void> => {
     };
   }
 
-  const channel = providerDataChannel;
   const playbackId = providerPlaybackId;
+  const playbackReady = activeClientControl?.interrupt_requires_playback_id
+    ? playbackId !== null
+    : true;
   const clientReady = !textRequestInFlight
     && !voiceRequestInFlight
-    && channel?.readyState === "open"
-    && playbackId !== null;
+    && realtimeTransportReady
+    && activeClientControl?.interrupt === true
+    && playbackReady;
   try {
-    if (clientReady && channel && playbackId) {
+    if (clientReady) {
       const command = await api<ClientCommand>("/api/avatar/client-interrupt", {
         playback_id: playbackId,
       });
-      if (channel.readyState !== "open" || channel.label !== command.data_channel_label) {
-        throw new Error("CLIENT_INTERRUPT_CHANNEL_MISMATCH");
-      }
-      channel.send(command.payload);
+      await dispatchClientCommand(command);
       providerPlaybackId = null;
       updateControls();
       await refreshSessionEvidence();
