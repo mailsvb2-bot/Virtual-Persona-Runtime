@@ -132,11 +132,13 @@ impl RealtimeAvatarPort for FakeAvatar {
         Ok(RealtimeAvatarSession {
             provider_resource_id: "secret-stream-id".into(),
             provider_session_id: "secret-session-id".into(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".into(),
-                sdp: "secret-sdp-material".into(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".into(),
+                    sdp: "secret-sdp-material".into(),
+                },
+                ice_servers: Vec::new(),
             },
-            ice_servers: Vec::new(),
         })
     }
 
