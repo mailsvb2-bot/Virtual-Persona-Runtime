@@ -6,8 +6,9 @@ use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
-    RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -35,7 +36,7 @@ impl DidAgentStreamsConfig {
             endpoint: endpoint.into(),
             api_key: api_key.into(),
             agent_id: agent_id.into(),
-            fluent: true,
+            fluent: false,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -91,12 +92,30 @@ impl DidAgentStreamsAvatar {
         })
     }
 
-    fn streams_url(&self) -> Result<reqwest::Url, ProviderError> {
+    fn agent_url(&self) -> Result<reqwest::Url, ProviderError> {
         let mut url = self.base_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
             segments.pop_if_empty();
-            segments.extend(["agents", self.config.agent_id.as_str(), "streams"]);
+            segments.extend(["agents", self.config.agent_id.as_str()]);
+        }
+        Ok(url)
+    }
+
+    fn streams_url(&self) -> Result<reqwest::Url, ProviderError> {
+        let mut url = self.agent_url()?;
+        url.path_segments_mut()
+            .map_err(|()| invalid_response())?
+            .push("streams");
+        Ok(url)
+    }
+
+    fn v2_sessions_url(&self) -> Result<reqwest::Url, ProviderError> {
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
+            segments.pop_if_empty();
+            segments.extend(["v2", "agents", self.config.agent_id.as_str(), "sessions"]);
         }
         Ok(url)
     }
@@ -122,13 +141,64 @@ impl DidAgentStreamsAvatar {
     }
 
     fn validate_session(session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
-        if session.provider_stream_id.trim().is_empty()
+        if session.provider_resource_id.trim().is_empty()
             || session.provider_session_id.trim().is_empty()
         {
             Err(invalid_response())
         } else {
             Ok(())
         }
+    }
+
+    fn presenter_type(&self) -> Result<String, ProviderError> {
+        let response = self
+            .authorized(self.client.get(self.agent_url()?))
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: AgentResponse = response.json().map_err(|_| invalid_response())?;
+        let presenter_type = body.presenter.kind.trim().to_ascii_lowercase();
+        if presenter_type.is_empty() {
+            Err(invalid_response())
+        } else {
+            Ok(presenter_type)
+        }
+    }
+
+    fn create_webrtc_session(
+        &self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        let response = self
+            .authorized(self.client.post(self.streams_url()?))
+            .json(&CreateStreamRequest {
+                fluent: self.config.fluent,
+            })
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
+        let client_interrupt = body.fluent && body.interrupt_enabled;
+        let session: RealtimeAvatarSession = body.try_into()?;
+        if client_interrupt {
+            self.client_control.register_interrupt(&session)?;
+        }
+        Ok(session)
+    }
+
+    fn create_livekit_session(
+        &self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        let response = self
+            .authorized(self.client.post(self.v2_sessions_url()?))
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: CreateV2SessionResponse = response.json().map_err(|_| invalid_response())?;
+        body.try_into()
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
@@ -171,21 +241,11 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
-        let response = self
-            .authorized(self.client.post(self.streams_url()?))
-            .json(&CreateStreamRequest {
-                fluent: self.config.fluent,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
-        let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
-        let client_interrupt = body.fluent && body.interrupt_enabled;
-        let session: RealtimeAvatarSession = body.try_into()?;
-        if client_interrupt {
-            self.client_control.register_interrupt(&session)?;
+        if self.presenter_type()? == "expressive" {
+            self.create_livekit_session(cancellation)
+        } else {
+            self.create_webrtc_session(cancellation)
         }
-        Ok(session)
     }
 
     fn submit_answer(
