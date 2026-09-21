@@ -130,6 +130,9 @@ for required in (
     "#avatar",
     "width:100% !important",
     "max-width:100% !important",
+    "object-fit:contain",
+    ".shell > *",
+    "min-width:0",
     "overflow-x:hidden",
 ):
     if required not in styles:
