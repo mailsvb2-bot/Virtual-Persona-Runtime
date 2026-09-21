@@ -33,6 +33,54 @@ type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; es
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
+type LiveKitTrack = {
+  kind: string;
+  mediaStreamTrack?: MediaStreamTrack;
+  attach: (element: HTMLMediaElement) => HTMLMediaElement;
+};
+type LiveKitParticipant = {
+  sendText: (text: string, options: { topic: string }) => Promise<void>;
+};
+type LiveKitRoom = {
+  localParticipant: LiveKitParticipant;
+  connect: (url: string, token: string) => Promise<void>;
+  disconnect: () => Promise<void>;
+  on: (event: string, listener: (...args: unknown[]) => void) => LiveKitRoom;
+};
+type LiveKitSdk = {
+  Room: new () => LiveKitRoom;
+  RoomEvent: {
+    TrackSubscribed: string;
+    DataReceived: string;
+    Reconnecting: string;
+    Reconnected: string;
+    Disconnected: string;
+  };
+};
+
+const LIVEKIT_CLIENT_URL =
+  "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
+let liveKitLoader: Promise<LiveKitSdk> | null = null;
+
+const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
+  const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
+  if (existing) return existing;
+  liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = LIVEKIT_CLIENT_URL;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.onload = () => {
+      const sdk = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
+      if (sdk) resolve(sdk);
+      else reject(new Error("LIVEKIT_CLIENT_UNAVAILABLE"));
+    };
+    script.onerror = () => reject(new Error("LIVEKIT_CLIENT_LOAD_FAILED"));
+    document.head.append(script);
+  });
+  return liveKitLoader;
+};
+
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
   if (!element) throw new Error(`missing element ${id}`);
@@ -40,6 +88,7 @@ const byId = <T extends HTMLElement>(id: string): T => {
 };
 
 const video = byId<HTMLVideoElement>("avatar");
+const avatarAudio = byId<HTMLAudioElement>("avatar-audio");
 const stage = document.querySelector<HTMLElement>(".stage");
 const personaPanel = byId<HTMLElement>("persona-panel");
 const audienceSelect = byId<HTMLSelectElement>("session-audience");
@@ -60,7 +109,10 @@ let egressEnabled = false;
 let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
+let liveKitRoom: LiveKitRoom | null = null;
+let realtimeTransportReady = false;
 let providerDataChannel: RTCDataChannel | null = null;
+let activeClientControl: ClientControl | null = null;
 let providerPlaybackId: string | null = null;
 let answerSubmitted = false;
 let pendingIce: IceCandidatePayload[] = [];
