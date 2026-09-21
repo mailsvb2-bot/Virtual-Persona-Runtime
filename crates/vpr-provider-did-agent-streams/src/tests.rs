@@ -283,6 +283,63 @@ fn malformed_client_playback_event_fails_closed() {
 }
 
 #[test]
+fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        (
+            "201 Created",
+            r#"{"id":"live-session-1","session_url":"wss://livekit.example.test","session_token":"private-livekit-token"}"#.to_owned(),
+        ),
+    ]);
+    let provider = adapter(endpoint);
+    let probe = Probe(AtomicBool::new(false));
+
+    let live = provider.create_session(&probe).unwrap();
+    assert_eq!(live.provider_resource_id, "live-session-1");
+    let RealtimeAvatarTransport::LiveKit { server_url, token } = &live.transport else {
+        panic!("expected LiveKit transport");
+    };
+    assert_eq!(server_url, "wss://livekit.example.test");
+    assert_eq!(token, "private-livekit-token");
+
+    let control = provider.client_control(&live).unwrap();
+    assert!(control.interrupt);
+    assert!(!control.interrupt_requires_playback_id);
+    assert!(control.text_input);
+
+    let text = provider
+        .prepare_client_text(&live, "Привет", &probe)
+        .unwrap();
+    assert_eq!(
+        text.route,
+        RealtimeAvatarClientRoute::LiveKitTextTopic {
+            topic: "did.speak".to_owned(),
+        }
+    );
+    let text_payload: serde_json::Value = serde_json::from_str(&text.payload).unwrap();
+    assert_eq!(text_payload["script"]["type"], "text");
+    assert_eq!(text_payload["script"]["input"], "Привет");
+
+    let interrupt = provider
+        .prepare_client_interrupt(&live, None, &probe)
+        .unwrap();
+    assert_eq!(
+        interrupt.route,
+        RealtimeAvatarClientRoute::LiveKitTextTopic {
+            topic: "did.interrupt".to_owned(),
+        }
+    );
+
+    provider.close_session(&live).unwrap();
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /v2/agents/agent-7/sessions "));
+    let debug = format!("{live:?} {text:?} {interrupt:?}");
+    assert!(!debug.contains("private-livekit-token"));
+    assert!(!debug.contains("Привет"));
+}
+
+#[test]
 fn pre_cancelled_session_creation_never_starts_network_work() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let error = provider
