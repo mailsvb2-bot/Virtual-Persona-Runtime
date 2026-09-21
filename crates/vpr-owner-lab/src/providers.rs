@@ -42,19 +42,19 @@ impl ProviderBundle {
         let did_agent_id = required_env("VPR_DID_AGENT_ID")?;
         let did_fluent = bool_env("VPR_DID_FLUENT", false)?;
         let avatar = DidAgentStreamsAvatar::new(
-            DidAgentStreamsConfig::new(
-                did_endpoint.clone(),
-                did_api_key,
-                did_agent_id.clone(),
-            )
-            .with_fluent(did_fluent),
+            DidAgentStreamsConfig::new(did_endpoint.clone(), did_api_key, did_agent_id.clone())
+                .with_fluent(did_fluent),
         )
         .map_err(|_| "D-ID provider configuration rejected".to_string())?;
         let avatar_descriptor = descriptor(
             "avatar",
             "did-agent-streams",
             "configured-agent",
-            &[&did_endpoint, &did_agent_id, if did_fluent { "fluent" } else { "legacy" }],
+            &[
+                &did_endpoint,
+                &did_agent_id,
+                if did_fluent { "fluent" } else { "legacy" },
+            ],
         );
 
         let stt_name = optional_env("VPR_OWNER_LAB_STT_PROVIDER");
