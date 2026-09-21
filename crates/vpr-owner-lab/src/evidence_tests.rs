@@ -41,6 +41,7 @@ fn voice_result() -> LabVoiceResult {
             estimated_cost_microunits: Some(5),
             provider_charge_microunits: Some(6),
         },
+        client_command: None,
     }
 }
 
