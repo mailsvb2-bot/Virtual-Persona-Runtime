@@ -561,7 +561,7 @@ fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
         ("X-Frame-Options", "DENY"),
         (
             "Content-Security-Policy",
-            "default-src 'self'; connect-src 'self'; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            "default-src 'self'; connect-src 'self' wss:; media-src 'self' blob:; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
         ),
     ] {
         if let Ok(header) = Header::from_bytes(name, value) {
