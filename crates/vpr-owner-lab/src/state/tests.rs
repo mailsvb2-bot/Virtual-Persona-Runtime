@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer,
-    WebRtcSessionDescription,
+    RealtimeAvatarCapabilities, RealtimeAvatarSession, RealtimeAvatarTransport,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::*;
@@ -51,17 +51,19 @@ impl RealtimeAvatarPort for FakeAvatar {
             });
         }
         Ok(RealtimeAvatarSession {
-            provider_stream_id: "stream-secret".into(),
+            provider_resource_id: "stream-secret".into(),
             provider_session_id: "session-secret".into(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".into(),
-                sdp: "v=0\r\n".into(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".into(),
+                    sdp: "v=0\r\n".into(),
+                },
+                ice_servers: vec![WebRtcIceServer {
+                    urls: vec!["stun:example.test".into()],
+                    username: None,
+                    credential: None,
+                }],
             },
-            ice_servers: vec![WebRtcIceServer {
-                urls: vec!["stun:example.test".into()],
-                username: None,
-                credential: None,
-            }],
         })
     }
 
@@ -174,7 +176,10 @@ fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
     let bundle = engine
         .start(OwnerLabStartRequest { consent: true })
         .unwrap();
-    assert_eq!(bundle.offer.kind, "offer");
+    let LabRealtimeTransport::WebRtc { offer, .. } = bundle.transport else {
+        panic!("expected WebRTC transport");
+    };
+    assert_eq!(offer.kind, "offer");
     assert_eq!(bundle.capabilities, vec!["text"]);
 
     engine
