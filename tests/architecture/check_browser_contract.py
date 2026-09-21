@@ -10,6 +10,7 @@ BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 APP = UI / "src" / "app.ts"
+STYLES = UI / "styles.css"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
 EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
 VOICE_CONFIG = UI / "playwright.voice.config.ts"
@@ -27,6 +28,7 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+styles = STYLES.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
 evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
 voice_config = VOICE_CONFIG.read_text(encoding="utf-8")
@@ -115,6 +117,24 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
+
+for required in (
+    "handleUnexpectedLiveKitDisconnect",
+    '"/api/session/close"',
+    "clearRealtimeMedia",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
+
+for required in (
+    "#avatar",
+    "width:100% !important",
+    "max-width:100% !important",
+    "overflow-x:hidden",
+):
+    if required not in styles:
+        raise SystemExit(f"Owner Lab realtime media containment missing: {required}")
+
 
 for required in ('id="export-evidence"', "Скачать evidence snapshot"):
     if required not in index_html:
