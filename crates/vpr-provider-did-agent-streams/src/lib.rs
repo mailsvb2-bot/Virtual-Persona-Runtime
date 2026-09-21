@@ -17,9 +17,9 @@ mod protocol;
 
 use client_control::DidClientControlRegistry;
 use protocol::{
-    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse, CreateV2SessionResponse,
-    IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest, SessionDescriptionRef,
-    SpeakRequest, SpeakScript, parse_livekit_event,
+    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
+    CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
+    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
 };
 
 pub struct DidAgentStreamsConfig {
@@ -389,7 +389,9 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session)?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => parse_livekit_event(message),
-            RealtimeAvatarTransport::WebRtc { .. } => self.client_control.parse_event(session, message),
+            RealtimeAvatarTransport::WebRtc { .. } => {
+                self.client_control.parse_event(session, message)
+            }
         }
     }
 
