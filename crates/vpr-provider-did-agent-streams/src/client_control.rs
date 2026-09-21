@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     ProviderError, ProviderErrorKind, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarSession,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarSession,
 };
 
 use super::invalid_response;
@@ -40,8 +40,11 @@ impl DidClientControlRegistry {
             .ok()?
             .contains(&session_key(session))
             .then(|| RealtimeAvatarClientControl {
-                data_channel_label: DID_DATA_CHANNEL_LABEL.to_owned(),
+                event_route: Some(RealtimeAvatarClientRoute::WebRtcDataChannel {
+                    label: DID_DATA_CHANNEL_LABEL.to_owned(),
+                }),
                 interrupt: true,
+                text_input: false,
             })
     }
 
@@ -119,7 +122,9 @@ impl DidClientControlRegistry {
         })
         .map_err(|_| invalid_response())?;
         Ok(RealtimeAvatarClientCommand {
-            data_channel_label: DID_DATA_CHANNEL_LABEL.to_owned(),
+            route: RealtimeAvatarClientRoute::WebRtcDataChannel {
+                label: DID_DATA_CHANNEL_LABEL.to_owned(),
+            },
             payload,
         })
     }
@@ -135,7 +140,7 @@ impl DidClientControlRegistry {
 
 fn session_key(session: &RealtimeAvatarSession) -> (String, String) {
     (
-        session.provider_stream_id.clone(),
+        session.provider_resource_id.clone(),
         session.provider_session_id.clone(),
     )
 }
