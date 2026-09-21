@@ -32,7 +32,7 @@ VPR_OWNER_LAB_ALLOW_EGRESS=true \
 cargo run -p vpr-owner-lab
 ```
 
-Then open `http://127.0.0.1:8787`. `VPR_DID_ENDPOINT` and `VPR_OWNER_LAB_PORT` are optional overrides. Provider credentials remain in the Rust process; the browser receives only the signaling material needed for its local `RTCPeerConnection`.
+Then open `http://127.0.0.1:8787`. `VPR_DID_ENDPOINT` and `VPR_OWNER_LAB_PORT` are optional overrides. `VPR_DID_FLUENT=true` may be set explicitly for D-ID agents whose presenter supports Fluent streaming; Owner Lab otherwise requests the broadly compatible non-Fluent stream mode. Provider credentials remain in the Rust process; the browser receives only the signaling material needed for its local `RTCPeerConnection`.
 
 
 Optional push-to-talk voice conversation can be enabled without changing the avatar-only path. Configure one STT provider and one LLM provider together:
