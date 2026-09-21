@@ -311,6 +311,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
     use std::thread;
     use vpr_integration::GeneratedTextBuffer;
 
@@ -338,6 +339,27 @@ mod tests {
         format!("http://{address}/v1/chat/completions")
     }
 
+    fn serve_once_capture(
+        status: &str,
+        body: &'static str,
+    ) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8192];
+            let read = stream.read(&mut request).unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&request[..read]).into_owned());
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{address}/v1/chat/completions"), rx)
+    }
+
     fn adapter(endpoint: String) -> OpenAiCompatibleLlm {
         OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
             endpoint,
@@ -345,6 +367,31 @@ mod tests {
             "test-model",
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn optional_realtime_generation_controls_are_sent_only_when_configured() {
+        let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\n\n");
+        let provider = OpenAiCompatibleLlm::new(
+            OpenAiCompatibleConfig::new(endpoint, "secret", "test-model")
+                .with_reasoning_effort("none")
+                .with_max_tokens(160),
+        )
+        .unwrap();
+        let probe = Probe(AtomicBool::new(false));
+        provider
+            .stream(
+                &LlmRequest {
+                    locale: "ru-RU".into(),
+                    context: "Коротко".into(),
+                },
+                &probe,
+                &mut GeneratedTextBuffer::default(),
+            )
+            .unwrap();
+        let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.contains("\"max_tokens\":160"));
+        assert!(request.contains("\"reasoning_effort\":\"none\""));
     }
 
     #[test]
