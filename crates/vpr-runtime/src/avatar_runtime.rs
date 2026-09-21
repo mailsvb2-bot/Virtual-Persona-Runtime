@@ -246,7 +246,8 @@ impl ActiveTurn {
         port: &dyn RealtimeAvatarPort,
         handle: &RealtimeAvatarHandle,
         text: &str,
-    ) -> Result<(OutputDeliveryHandle, RealtimeAvatarClientCommand), RealtimeAvatarOutputError> {
+    ) -> Result<(OutputDeliveryHandle, RealtimeAvatarClientCommand), RealtimeAvatarOutputError>
+    {
         self.validate_avatar_handle(port, handle)
             .map_err(RealtimeAvatarOutputError::Provider)?;
         let permit = self
