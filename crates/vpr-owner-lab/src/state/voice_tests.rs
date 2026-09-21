@@ -11,8 +11,8 @@ use vpr_domain::{
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
     ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript,
-    UsageEvidence, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::{
