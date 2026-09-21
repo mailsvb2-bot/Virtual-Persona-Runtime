@@ -40,17 +40,21 @@ impl ProviderBundle {
             .unwrap_or_else(|| "https://api.d-id.com".into());
         let did_api_key = required_env("VPR_DID_API_KEY")?;
         let did_agent_id = required_env("VPR_DID_AGENT_ID")?;
-        let avatar = DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(
-            did_endpoint.clone(),
-            did_api_key,
-            did_agent_id.clone(),
-        ))
+        let did_fluent = bool_env("VPR_DID_FLUENT", false)?;
+        let avatar = DidAgentStreamsAvatar::new(
+            DidAgentStreamsConfig::new(
+                did_endpoint.clone(),
+                did_api_key,
+                did_agent_id.clone(),
+            )
+            .with_fluent(did_fluent),
+        )
         .map_err(|_| "D-ID provider configuration rejected".to_string())?;
         let avatar_descriptor = descriptor(
             "avatar",
             "did-agent-streams",
             "configured-agent",
-            &[&did_endpoint, &did_agent_id],
+            &[&did_endpoint, &did_agent_id, if did_fluent { "fluent" } else { "legacy" }],
         );
 
         let stt_name = optional_env("VPR_OWNER_LAB_STT_PROVIDER");
@@ -207,6 +211,21 @@ fn required_env(name: &'static str) -> Result<String, String> {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("required environment variable {name} is not set"))
+}
+
+fn bool_env(name: &'static str, default: bool) -> Result<bool, String> {
+    let Some(value) = env::var(name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(default);
+    };
+    match value.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("environment variable {name} must be true or false")),
+    }
 }
 
 #[cfg(test)]
