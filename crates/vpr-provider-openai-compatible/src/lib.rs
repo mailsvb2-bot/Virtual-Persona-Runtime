@@ -17,6 +17,8 @@ pub struct OpenAiCompatibleConfig {
     api_key: String,
     model: String,
     timeout: Duration,
+    max_tokens: Option<u32>,
+    reasoning_effort: Option<String>,
 }
 
 impl OpenAiCompatibleConfig {
@@ -32,6 +34,8 @@ impl OpenAiCompatibleConfig {
             api_key: api_key.into(),
             model: model.into(),
             timeout: DEFAULT_TIMEOUT,
+            max_tokens: None,
+            reasoning_effort: None,
         }
     }
 
@@ -49,6 +53,24 @@ impl OpenAiCompatibleConfig {
         self.timeout = timeout;
         self
     }
+
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        if max_tokens > 0 {
+            self.max_tokens = Some(max_tokens);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
+        let reasoning_effort = reasoning_effort.into();
+        if !reasoning_effort.trim().is_empty() {
+            self.reasoning_effort = Some(reasoning_effort);
+        }
+        self
+    }
+
 
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
@@ -98,6 +120,8 @@ impl OpenAiCompatibleLlm {
             stream_options: StreamOptions {
                 include_usage: true,
             },
+            max_tokens: self.config.max_tokens,
+            reasoning_effort: self.config.reasoning_effort.as_deref(),
         };
         let response = self
             .client
@@ -175,6 +199,10 @@ struct ChatRequest<'a> {
     messages: [ChatMessage<'a>; 1],
     stream: bool,
     stream_options: StreamOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Serialize)]
