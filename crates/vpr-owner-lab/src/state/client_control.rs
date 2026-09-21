@@ -1,12 +1,48 @@
 use serde::Serialize;
-use vpr_integration::{RealtimeAvatarClientCommand, RealtimeAvatarClientEvent};
+use vpr_integration::{
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
+    RealtimeAvatarClientRoute,
+};
 
 use super::{LabError, OwnerLabEngine, map_provider_execution};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabClientControl {
-    pub data_channel_label: String,
+    pub event_route: Option<LabClientRoute>,
     pub interrupt: bool,
+    pub interrupt_requires_playback_id: bool,
+    pub text_input: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LabClientRoute {
+    WebRtcDataChannel { label: String },
+    LiveKitTextTopic { topic: String },
+}
+
+impl From<&RealtimeAvatarClientControl> for LabClientControl {
+    fn from(value: &RealtimeAvatarClientControl) -> Self {
+        Self {
+            event_route: value.event_route.as_ref().map(LabClientRoute::from),
+            interrupt: value.interrupt,
+            interrupt_requires_playback_id: value.interrupt_requires_playback_id,
+            text_input: value.text_input,
+        }
+    }
+}
+
+impl From<&RealtimeAvatarClientRoute> for LabClientRoute {
+    fn from(value: &RealtimeAvatarClientRoute) -> Self {
+        match value {
+            RealtimeAvatarClientRoute::WebRtcDataChannel { label } => Self::WebRtcDataChannel {
+                label: label.clone(),
+            },
+            RealtimeAvatarClientRoute::LiveKitTextTopic { topic } => Self::LiveKitTextTopic {
+                topic: topic.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -18,15 +54,24 @@ pub enum LabClientEvent {
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
 pub struct LabClientCommand {
-    pub data_channel_label: String,
+    pub route: LabClientRoute,
     pub payload: String,
+}
+
+impl From<RealtimeAvatarClientCommand> for LabClientCommand {
+    fn from(value: RealtimeAvatarClientCommand) -> Self {
+        Self {
+            route: LabClientRoute::from(&value.route),
+            payload: value.payload,
+        }
+    }
 }
 
 impl std::fmt::Debug for LabClientCommand {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("LabClientCommand")
-            .field("data_channel_label", &self.data_channel_label)
+            .field("route", &self.route)
             .field("payload_bytes", &self.payload.len())
             .finish()
     }
@@ -66,19 +111,18 @@ impl OwnerLabEngine {
     /// identifier is malformed, or current authority/egress policy denies the operation.
     pub fn prepare_client_interrupt(
         &mut self,
-        playback_id: &str,
+        playback_id: Option<&str>,
     ) -> Result<LabClientCommand, LabError> {
-        if playback_id.trim().is_empty() {
-            return Err(LabError::InvalidInput);
-        }
+        let playback_id = playback_id.map(str::trim).filter(|value| !value.is_empty());
         let turn = self.new_turn()?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
-        let command: RealtimeAvatarClientCommand = turn
+        let control = handle.client_control().ok_or(LabError::InvalidState)?;
+        if control.interrupt_requires_playback_id && playback_id.is_none() {
+            return Err(LabError::InvalidInput);
+        }
+        let command = turn
             .prepare_realtime_avatar_client_interrupt(self.provider.as_ref(), handle, playback_id)
             .map_err(map_provider_execution)?;
-        Ok(LabClientCommand {
-            data_channel_label: command.data_channel_label,
-            payload: command.payload,
-        })
+        Ok(command.into())
     }
 }

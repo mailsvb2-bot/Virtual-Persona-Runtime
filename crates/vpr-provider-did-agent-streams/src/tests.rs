@@ -27,13 +27,16 @@ fn read_request(stream: &mut std::net::TcpStream) -> String {
             && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
         {
             let headers = String::from_utf8_lossy(&request[..header_end]);
-            let content_length = headers.lines().find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().ok())
-                    .flatten()
-            });
-            total = content_length.map(|length| header_end + 4 + length);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            total = Some(header_end + 4 + content_length);
         }
         if total.is_some_and(|expected| request.len() >= expected) {
             break;
@@ -70,15 +73,32 @@ fn adapter(endpoint: String) -> DidAgentStreamsAvatar {
     .unwrap()
 }
 
+fn fluent_adapter(endpoint: String) -> DidAgentStreamsAvatar {
+    DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7").with_fluent(true),
+    )
+    .unwrap()
+}
+
+fn legacy_agent_body() -> String {
+    r#"{"presenter":{"type":"clip"}}"#.to_owned()
+}
+
+fn expressive_agent_body() -> String {
+    r#"{"presenter":{"type":"expressive"}}"#.to_owned()
+}
+
 fn session() -> RealtimeAvatarSession {
     RealtimeAvatarSession {
-        provider_stream_id: "stream-1".to_owned(),
+        provider_resource_id: "stream-1".to_owned(),
         provider_session_id: "session-1".to_owned(),
-        offer: WebRtcSessionDescription {
-            kind: "offer".to_owned(),
-            sdp: "offer-sdp".to_owned(),
+        transport: RealtimeAvatarTransport::WebRtc {
+            offer: WebRtcSessionDescription {
+                kind: "offer".to_owned(),
+                sdp: "offer-sdp".to_owned(),
+            },
+            ice_servers: Vec::new(),
         },
-        ice_servers: Vec::new(),
     }
 }
 
@@ -88,8 +108,15 @@ fn assert_client_interrupt_contract(
     probe: &Probe,
 ) {
     let control = provider.client_control(live).unwrap();
-    assert_eq!(control.data_channel_label, "JanusDataChannel");
+    assert_eq!(
+        control.event_route,
+        Some(RealtimeAvatarClientRoute::WebRtcDataChannel {
+            label: "JanusDataChannel".to_owned(),
+        })
+    );
     assert!(control.interrupt);
+    assert!(control.interrupt_requires_playback_id);
+    assert!(!control.text_input);
 
     let event = provider
         .parse_client_event(live, r#"stream/started:{"metadata":{"videoId":"video-7"}}"#)
@@ -112,9 +139,14 @@ fn assert_client_interrupt_contract(
     );
 
     let command = provider
-        .prepare_client_interrupt(live, "video-7", probe)
+        .prepare_client_interrupt(live, Some("video-7"), probe)
         .unwrap();
-    assert_eq!(command.data_channel_label, "JanusDataChannel");
+    assert_eq!(
+        command.route,
+        RealtimeAvatarClientRoute::WebRtcDataChannel {
+            label: "JanusDataChannel".to_owned(),
+        }
+    );
     let payload: serde_json::Value = serde_json::from_str(&command.payload).unwrap();
     assert_eq!(payload["type"], "stream/interrupt");
     assert_eq!(payload["videoId"], "video-7");
@@ -126,6 +158,7 @@ fn assert_client_interrupt_contract(
 fn full_agents_streams_control_plane_matches_contract() {
     let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}],"fluent":true,"interrupt_enabled":true}"#;
     let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
         ("201 Created", create_body.to_owned()),
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
@@ -133,14 +166,17 @@ fn full_agents_streams_control_plane_matches_contract() {
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
     ]);
-    let provider = adapter(endpoint);
+    let provider = fluent_adapter(endpoint);
     let probe = Probe(AtomicBool::new(false));
 
     let live = provider.create_session(&probe).unwrap();
-    assert_eq!(live.provider_stream_id, "stream-1");
+    assert_eq!(live.provider_resource_id, "stream-1");
     assert_eq!(live.provider_session_id, "session-1");
-    assert_eq!(live.offer.kind, "offer");
-    assert_eq!(live.ice_servers[0].urls.len(), 2);
+    let RealtimeAvatarTransport::WebRtc { offer, ice_servers } = &live.transport else {
+        panic!("expected WebRTC transport");
+    };
+    assert_eq!(offer.kind, "offer");
+    assert_eq!(ice_servers[0].urls.len(), 2);
     assert_client_interrupt_contract(&provider, &live, &probe);
 
     provider
@@ -171,7 +207,7 @@ fn full_agents_streams_control_plane_matches_contract() {
     provider.close_session(&live).unwrap();
     assert!(provider.client_control(&live).is_none());
 
-    let requests: Vec<String> = (0..6).map(|_| captured.recv().unwrap()).collect();
+    let requests: Vec<String> = (0..7).map(|_| captured.recv().unwrap()).collect();
     let lower = requests
         .iter()
         .map(|value| value.to_ascii_lowercase())
@@ -181,20 +217,21 @@ fn full_agents_streams_control_plane_matches_contract() {
             .iter()
             .all(|request| request.contains("authorization: basic secret-key"))
     );
-    assert!(requests[0].starts_with("POST /agents/agent-7/streams "));
-    assert!(requests[0].contains("\"fluent\":true"));
-    assert!(requests[1].starts_with("POST /agents/agent-7/streams/stream-1/sdp "));
-    assert!(requests[1].contains("\"session_id\":\"session-1\""));
-    assert!(requests[1].contains("\"type\":\"answer\""));
-    assert!(requests[2].starts_with("POST /agents/agent-7/streams/stream-1/ice "));
-    assert!(requests[2].contains("\"candidate\":\"candidate-x\""));
-    assert!(requests[3].starts_with("POST /agents/agent-7/streams/stream-1 "));
-    assert!(requests[3].contains("\"type\":\"text\""));
-    assert!(requests[3].contains("Привет"));
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+    assert!(requests[1].contains("\"fluent\":true"));
+    assert!(requests[2].starts_with("POST /agents/agent-7/streams/stream-1/sdp "));
+    assert!(requests[2].contains("\"session_id\":\"session-1\""));
+    assert!(requests[2].contains("\"type\":\"answer\""));
+    assert!(requests[3].starts_with("POST /agents/agent-7/streams/stream-1/ice "));
+    assert!(requests[3].contains("\"candidate\":\"candidate-x\""));
     assert!(requests[4].starts_with("POST /agents/agent-7/streams/stream-1 "));
-    assert!(requests[4].contains("\"type\":\"audio\""));
-    assert!(requests[4].contains("\"audio_url\":\"https://cdn.example.com/voice.mp3\""));
-    assert!(requests[5].starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+    assert!(requests[4].contains("\"type\":\"text\""));
+    assert!(requests[4].contains("Привет"));
+    assert!(requests[5].starts_with("POST /agents/agent-7/streams/stream-1 "));
+    assert!(requests[5].contains("\"type\":\"audio\""));
+    assert!(requests[5].contains("\"audio_url\":\"https://cdn.example.com/voice.mp3\""));
+    assert!(requests[6].starts_with("DELETE /agents/agent-7/streams/stream-1 "));
 }
 
 #[test]
@@ -203,7 +240,10 @@ fn legacy_or_non_interruptible_stream_never_advertises_client_interrupt() {
         r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":true}"#,
         r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":true,"interrupt_enabled":false}"#,
     ] {
-        let (endpoint, _) = serve(vec![("201 Created", create_body.to_owned())]);
+        let (endpoint, _) = serve(vec![
+            ("200 OK", legacy_agent_body()),
+            ("201 Created", create_body.to_owned()),
+        ]);
         let provider = adapter(endpoint);
         let live = provider
             .create_session(&Probe(AtomicBool::new(false)))
@@ -217,7 +257,7 @@ fn legacy_or_non_interruptible_stream_never_advertises_client_interrupt() {
             .unwrap_err();
         assert_eq!(event_error.kind, ProviderErrorKind::Unavailable);
         let error = provider
-            .prepare_client_interrupt(&live, "video-7", &Probe(AtomicBool::new(false)))
+            .prepare_client_interrupt(&live, Some("video-7"), &Probe(AtomicBool::new(false)))
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     }
@@ -226,7 +266,10 @@ fn legacy_or_non_interruptible_stream_never_advertises_client_interrupt() {
 #[test]
 fn malformed_client_playback_event_fails_closed() {
     let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":true,"interrupt_enabled":true}"#;
-    let (endpoint, _) = serve(vec![("201 Created", create_body.to_owned())]);
+    let (endpoint, _) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", create_body.to_owned()),
+    ]);
     let provider = adapter(endpoint);
     let live = provider
         .create_session(&Probe(AtomicBool::new(false)))
@@ -240,6 +283,63 @@ fn malformed_client_playback_event_fails_closed() {
         let error = provider.parse_client_event(&live, message).unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     }
+}
+
+#[test]
+fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        (
+            "201 Created",
+            r#"{"id":"live-session-1","session_url":"wss://livekit.example.test","session_token":"private-livekit-token"}"#.to_owned(),
+        ),
+    ]);
+    let provider = adapter(endpoint);
+    let probe = Probe(AtomicBool::new(false));
+
+    let live = provider.create_session(&probe).unwrap();
+    assert_eq!(live.provider_resource_id, "live-session-1");
+    let RealtimeAvatarTransport::LiveKit { server_url, token } = &live.transport else {
+        panic!("expected LiveKit transport");
+    };
+    assert_eq!(server_url, "wss://livekit.example.test");
+    assert_eq!(token, "private-livekit-token");
+
+    let control = provider.client_control(&live).unwrap();
+    assert!(control.interrupt);
+    assert!(!control.interrupt_requires_playback_id);
+    assert!(control.text_input);
+
+    let text = provider
+        .prepare_client_text(&live, "Привет", &probe)
+        .unwrap();
+    assert_eq!(
+        text.route,
+        RealtimeAvatarClientRoute::LiveKitTextTopic {
+            topic: "did.speak".to_owned(),
+        }
+    );
+    let text_payload: serde_json::Value = serde_json::from_str(&text.payload).unwrap();
+    assert_eq!(text_payload["script"]["type"], "text");
+    assert_eq!(text_payload["script"]["input"], "Привет");
+
+    let interrupt = provider
+        .prepare_client_interrupt(&live, None, &probe)
+        .unwrap();
+    assert_eq!(
+        interrupt.route,
+        RealtimeAvatarClientRoute::LiveKitTextTopic {
+            topic: "did.interrupt".to_owned(),
+        }
+    );
+
+    provider.close_session(&live).unwrap();
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /v2/agents/agent-7/sessions "));
+    let debug = format!("{live:?} {text:?} {interrupt:?}");
+    assert!(!debug.contains("private-livekit-token"));
+    assert!(!debug.contains("Привет"));
 }
 
 #[test]
@@ -284,7 +384,10 @@ fn rejects_external_plain_http() {
 
 #[test]
 fn malformed_create_session_response_is_rejected() {
-    let (endpoint, _) = serve(vec![("201 Created", "{}".to_owned())]);
+    let (endpoint, _) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", "{}".to_owned()),
+    ]);
     let error = adapter(endpoint)
         .create_session(&Probe(AtomicBool::new(false)))
         .unwrap_err();
@@ -332,7 +435,7 @@ fn path_identifiers_are_percent_encoded_instead_of_becoming_routes() {
     ))
     .unwrap();
     let mut live = session();
-    live.provider_stream_id = "stream/1?delete=true".to_owned();
+    live.provider_resource_id = "stream/1?delete=true".to_owned();
 
     provider
         .speak_text(&live, "Привет", &Probe(AtomicBool::new(false)))
@@ -348,7 +451,7 @@ fn path_identifiers_are_percent_encoded_instead_of_becoming_routes() {
 fn invalid_session_is_rejected_before_network() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let mut invalid = session();
-    invalid.provider_stream_id.clear();
+    invalid.provider_resource_id.clear();
     let error = provider
         .speak_text(&invalid, "Привет", &Probe(AtomicBool::new(false)))
         .unwrap_err();

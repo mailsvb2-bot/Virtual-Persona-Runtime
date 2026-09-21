@@ -53,13 +53,16 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
         {
             let headers = String::from_utf8_lossy(&request[..header_end]);
-            let length = headers.lines().find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse::<usize>().ok())
-                    .flatten()
-            });
-            total = length.map(|length| header_end + 4 + length);
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            total = Some(header_end + 4 + length);
         }
         if total.is_some_and(|expected| request.len() >= expected) {
             break;
@@ -74,6 +77,7 @@ fn mock_did() -> (String, mpsc::Receiver<String>) {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let responses = [
+            ("200 OK", r#"{"presenter":{"type":"clip"}}"#),
             (
                 "201 Created",
                 r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"v=0 mock-offer"},"ice_servers":[{"urls":["stun:127.0.0.1"],"username":"u","credential":"c"}]}"#,
@@ -358,15 +362,16 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
 }
 
 fn assert_provider_sequence(captured: &mpsc::Receiver<String>) {
-    let provider_requests: Vec<String> = (0..5)
+    let provider_requests: Vec<String> = (0..6)
         .map(|_| captured.recv_timeout(Duration::from_secs(2)).unwrap())
         .collect();
-    assert!(provider_requests[0].starts_with("POST /agents/agent-1/streams "));
-    assert!(provider_requests[1].starts_with("POST /agents/agent-1/streams/stream-1/sdp "));
-    assert!(provider_requests[2].starts_with("POST /agents/agent-1/streams/stream-1/ice "));
-    assert!(provider_requests[3].starts_with("POST /agents/agent-1/streams/stream-1 "));
-    assert!(provider_requests[3].contains("Привет"));
-    assert!(provider_requests[4].starts_with("DELETE /agents/agent-1/streams/stream-1 "));
+    assert!(provider_requests[0].starts_with("GET /agents/agent-1 "));
+    assert!(provider_requests[1].starts_with("POST /agents/agent-1/streams "));
+    assert!(provider_requests[2].starts_with("POST /agents/agent-1/streams/stream-1/sdp "));
+    assert!(provider_requests[3].starts_with("POST /agents/agent-1/streams/stream-1/ice "));
+    assert!(provider_requests[4].starts_with("POST /agents/agent-1/streams/stream-1 "));
+    assert!(provider_requests[4].contains("Привет"));
+    assert!(provider_requests[5].starts_with("DELETE /agents/agent-1/streams/stream-1 "));
     assert!(provider_requests.iter().all(|request| {
         request
             .to_ascii_lowercase()
@@ -423,6 +428,7 @@ fn mock_did_voice() -> (String, mpsc::Receiver<String>) {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let responses = [
+            ("200 OK", r#"{"presenter":{"type":"clip"}}"#),
             (
                 "201 Created",
                 r#"{"id":"stream-voice","session_id":"session-voice","offer":{"type":"offer","sdp":"v=0 voice-offer"},"ice_servers":[{"urls":["stun:127.0.0.1"]}]}"#,
@@ -573,14 +579,15 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert!(llm_request.contains("Привет"));
     assert!(llm_request.contains("verified owner data is not available"));
 
-    let did_requests: Vec<String> = (0..4)
+    let did_requests: Vec<String> = (0..5)
         .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
         .collect();
-    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
-    assert!(did_requests[1].starts_with("POST /agents/agent-voice/streams/stream-voice/sdp "));
-    assert!(did_requests[2].starts_with("POST /agents/agent-voice/streams/stream-voice "));
-    assert!(did_requests[2].contains("Здравствуйте"));
-    assert!(did_requests[3].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
+    assert!(did_requests[0].starts_with("GET /agents/agent-voice "));
+    assert!(did_requests[1].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[2].starts_with("POST /agents/agent-voice/streams/stream-voice/sdp "));
+    assert!(did_requests[3].starts_with("POST /agents/agent-voice/streams/stream-voice "));
+    assert!(did_requests[3].contains("Здравствуйте"));
+    assert!(did_requests[4].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
 }
 
 fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_session: u64) {
@@ -679,6 +686,7 @@ fn mock_did_revoke_during_voice() -> (String, mpsc::Receiver<String>) {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let responses = [
+            ("200 OK", r#"{"presenter":{"type":"clip"}}"#),
             (
                 "201 Created",
                 r#"{"id":"stream-revoke","session_id":"session-revoke","offer":{"type":"offer","sdp":"v=0 revoke-offer"},"ice_servers":[]}"#,
@@ -791,11 +799,12 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
 
     let llm_request = llm_captured.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(llm_request.contains("Отмени ответ"));
-    let did_requests: Vec<String> = (0..2)
+    let did_requests: Vec<String> = (0..3)
         .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
         .collect();
-    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
-    assert!(did_requests[1].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
+    assert!(did_requests[0].starts_with("GET /agents/agent-voice "));
+    assert!(did_requests[1].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[2].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
     assert!(
         did_captured
             .recv_timeout(Duration::from_millis(100))
@@ -862,11 +871,12 @@ fn close_preempts_active_voice_before_any_avatar_output() {
 
     let llm_request = llm_captured.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(llm_request.contains("Закрой сессию"));
-    let did_requests: Vec<String> = (0..2)
+    let did_requests: Vec<String> = (0..3)
         .map(|_| did_captured.recv_timeout(Duration::from_secs(2)).unwrap())
         .collect();
-    assert!(did_requests[0].starts_with("POST /agents/agent-voice/streams "));
-    assert!(did_requests[1].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
+    assert!(did_requests[0].starts_with("GET /agents/agent-voice "));
+    assert!(did_requests[1].starts_with("POST /agents/agent-voice/streams "));
+    assert!(did_requests[2].starts_with("DELETE /agents/agent-voice/streams/stream-revoke "));
     assert!(
         did_captured
             .recv_timeout(Duration::from_millis(100))

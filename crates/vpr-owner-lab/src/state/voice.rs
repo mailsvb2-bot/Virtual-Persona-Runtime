@@ -13,7 +13,7 @@ use vpr_runtime::{
     TurnInterruptHandle,
 };
 
-use super::{LabError, OwnerLabEngine, map_provider_execution};
+use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
@@ -37,6 +37,7 @@ pub struct LabVoiceResult {
     pub total_millis: u64,
     pub stt_usage: LabVoiceUsage,
     pub llm_usage: LabVoiceUsage,
+    pub client_command: Option<LabClientCommand>,
 }
 
 impl OwnerLabEngine {
@@ -122,9 +123,20 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        let delivery = turn
-            .deliver_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
-            .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
+        let client_text = handle
+            .client_control()
+            .is_some_and(|control| control.text_input);
+        let (delivery, client_command) = if client_text {
+            let (delivery, command) = turn
+                .prepare_realtime_avatar_client_text(self.provider.as_ref(), handle, &reply)
+                .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
+            (delivery, Some(command.into()))
+        } else {
+            let delivery = turn
+                .deliver_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
+                .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
+            (delivery, None)
+        };
         let avatar_millis = elapsed_millis(avatar_started);
         let evidence_output_sequence = delivery.sequence();
         turn.complete().map_err(LabError::Runtime)?;
@@ -145,11 +157,34 @@ impl OwnerLabEngine {
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&llm_usage),
+            client_command,
         })
     }
 }
 
 impl OwnerLabEngine {
+    /// Reconciles a browser-confirmed client-transport send with the exact canonical output.
+    ///
+    /// # Errors
+    /// Returns `INVALID_STATE_TRANSITION` for stale or mismatched evidence identifiers.
+    pub fn acknowledge_voice_delivery_sent(
+        &mut self,
+        evidence_turn_sequence: u64,
+        evidence_output_sequence: u64,
+    ) -> Result<(), LabError> {
+        let pending = self
+            .pending_voice_playback
+            .get(&evidence_turn_sequence)
+            .ok_or(LabError::InvalidState)?;
+        if pending.delivery.sequence() != evidence_output_sequence {
+            return Err(LabError::InvalidState);
+        }
+        pending
+            .turn
+            .acknowledge_output_sent(&pending.delivery)
+            .map_err(LabError::Runtime)
+    }
+
     /// Reconciles a browser-observed remote-audio start with the exact canonical voice turn.
     /// Duplicate acknowledgements are idempotent; stale or unknown turn sequences fail closed.
     ///

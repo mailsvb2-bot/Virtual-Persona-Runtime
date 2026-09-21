@@ -203,9 +203,13 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       state.avatarOpen = true;
       return json(route, {
         evidence_session_sequence: state.startAudiences.length,
-        offer: { kind: "offer", sdp: "v=0" },
-        ice_servers: [],
+        transport: {
+          kind: "web_rtc",
+          offer: { kind: "offer", sdp: "v=0" },
+          ice_servers: [],
+        },
         capabilities: ["text", "interrupt"],
+        client_control: null,
       });
     }
     if (path === "/api/avatar/answer" || path === "/api/avatar/ice") {

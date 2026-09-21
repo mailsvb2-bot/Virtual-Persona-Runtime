@@ -30,6 +30,16 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { requests });
   }
 
+  if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
+    requests.push({
+      method: request.method,
+      path: url.pathname,
+      authorization: request.headers.authorization ?? null,
+      body: "",
+    });
+    return sendJson(response, 200, { presenter: { type: "clip" } });
+  }
+
   const body = await readBody(request);
   requests.push({
     method: request.method,

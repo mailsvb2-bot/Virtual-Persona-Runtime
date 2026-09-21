@@ -8,8 +8,8 @@ use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
     ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
+    UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
@@ -130,13 +130,15 @@ impl RealtimeAvatarPort for FakeAvatar {
         assert!(!cancellation.is_cancelled());
         self.stats.lock().unwrap().create_calls += 1;
         Ok(RealtimeAvatarSession {
-            provider_stream_id: "secret-stream-id".into(),
+            provider_resource_id: "secret-stream-id".into(),
             provider_session_id: "secret-session-id".into(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".into(),
-                sdp: "secret-sdp-material".into(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".into(),
+                    sdp: "secret-sdp-material".into(),
+                },
+                ice_servers: Vec::new(),
             },
-            ice_servers: Vec::new(),
         })
     }
 

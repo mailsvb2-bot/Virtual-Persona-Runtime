@@ -58,21 +58,48 @@ impl Debug for WebRtcIceCandidate {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub enum RealtimeAvatarTransport {
+    WebRtc {
+        offer: WebRtcSessionDescription,
+        ice_servers: Vec<WebRtcIceServer>,
+    },
+    LiveKit {
+        server_url: String,
+        token: String,
+    },
+}
+
+impl Debug for RealtimeAvatarTransport {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            Self::WebRtc { offer, ice_servers } => formatter
+                .debug_struct("WebRtc")
+                .field("offer", offer)
+                .field("ice_server_count", &ice_servers.len())
+                .finish(),
+            Self::LiveKit { server_url, token } => formatter
+                .debug_struct("LiveKit")
+                .field("server_url_bytes", &server_url.len())
+                .field("token_bytes", &token.len())
+                .finish(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub struct RealtimeAvatarSession {
-    pub provider_stream_id: String,
+    pub provider_resource_id: String,
     pub provider_session_id: String,
-    pub offer: WebRtcSessionDescription,
-    pub ice_servers: Vec<WebRtcIceServer>,
+    pub transport: RealtimeAvatarTransport,
 }
 
 impl Debug for RealtimeAvatarSession {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter
             .debug_struct("RealtimeAvatarSession")
-            .field("stream_id_bytes", &self.provider_stream_id.len())
+            .field("resource_id_bytes", &self.provider_resource_id.len())
             .field("session_id_bytes", &self.provider_session_id.len())
-            .field("offer", &self.offer)
-            .field("ice_server_count", &self.ice_servers.len())
+            .field("transport", &self.transport)
             .finish()
     }
 }
@@ -86,8 +113,10 @@ pub enum RealtimeAvatarCapability {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RealtimeAvatarClientControl {
-    pub data_channel_label: String,
+    pub event_route: Option<RealtimeAvatarClientRoute>,
     pub interrupt: bool,
+    pub interrupt_requires_playback_id: bool,
+    pub text_input: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,9 +125,15 @@ pub enum RealtimeAvatarClientEvent {
     PlaybackDone,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RealtimeAvatarClientRoute {
+    WebRtcDataChannel { label: String },
+    LiveKitTextTopic { topic: String },
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct RealtimeAvatarClientCommand {
-    pub data_channel_label: String,
+    pub route: RealtimeAvatarClientRoute,
     pub payload: String,
 }
 
@@ -106,7 +141,7 @@ impl Debug for RealtimeAvatarClientCommand {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter
             .debug_struct("RealtimeAvatarClientCommand")
-            .field("data_channel_label", &self.data_channel_label)
+            .field("route", &self.route)
             .field("payload_bytes", &self.payload.len())
             .finish()
     }
@@ -232,6 +267,24 @@ pub trait RealtimeAvatarPort: Send + Sync {
         Ok(None)
     }
 
+    /// Builds one provider-specific browser-side text command after canonical runtime
+    /// authorization. Providers whose realtime transport is controlled entirely server-side may
+    /// leave the default unavailable result.
+    ///
+    /// # Errors
+    /// The default returns a non-retryable unavailable error.
+    fn prepare_client_text(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
     /// Builds one provider-specific browser data-channel interrupt command after canonical runtime
     /// authorization. The returned payload is opaque to the browser and must not be logged.
     ///
@@ -241,7 +294,7 @@ pub trait RealtimeAvatarPort: Send + Sync {
     fn prepare_client_interrupt(
         &self,
         _session: &RealtimeAvatarSession,
-        _playback_id: &str,
+        _playback_id: Option<&str>,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Err(ProviderError {
@@ -265,17 +318,19 @@ mod tests {
     #[test]
     fn webrtc_debug_redacts_signaling_and_turn_secrets() {
         let session = RealtimeAvatarSession {
-            provider_stream_id: "stream-secret-123".to_owned(),
+            provider_resource_id: "stream-secret-123".to_owned(),
             provider_session_id: "session-secret-456".to_owned(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".to_owned(),
-                sdp: "v=0 PRIVATE-SDP 10.0.0.7".to_owned(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".to_owned(),
+                    sdp: "v=0 PRIVATE-SDP 10.0.0.7".to_owned(),
+                },
+                ice_servers: vec![WebRtcIceServer {
+                    urls: vec!["turn:private.example:3478?transport=tcp".to_owned()],
+                    username: Some("turn-user-secret".to_owned()),
+                    credential: Some("turn-password-secret".to_owned()),
+                }],
             },
-            ice_servers: vec![WebRtcIceServer {
-                urls: vec!["turn:private.example:3478?transport=tcp".to_owned()],
-                username: Some("turn-user-secret".to_owned()),
-                credential: Some("turn-password-secret".to_owned()),
-            }],
         };
         let candidate = WebRtcIceCandidate {
             candidate: Some("candidate:1 1 UDP 1 10.0.0.8 55555 typ host".to_owned()),
@@ -283,7 +338,11 @@ mod tests {
             sdp_mline_index: Some(0),
         };
 
-        let debug = format!("{session:?} {candidate:?} {:?}", session.ice_servers[0]);
+        let ice_server = match &session.transport {
+            RealtimeAvatarTransport::WebRtc { ice_servers, .. } => &ice_servers[0],
+            RealtimeAvatarTransport::LiveKit { .. } => unreachable!(),
+        };
+        let debug = format!("{session:?} {candidate:?} {ice_server:?}");
         for secret in [
             "stream-secret-123",
             "session-secret-456",

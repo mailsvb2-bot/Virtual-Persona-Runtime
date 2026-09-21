@@ -2,19 +2,25 @@ use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
-    RealtimeAvatarSession, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod client_control;
+mod protocol;
 
 use client_control::DidClientControlRegistry;
+use protocol::{
+    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
+    CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
+    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+};
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -35,7 +41,7 @@ impl DidAgentStreamsConfig {
             endpoint: endpoint.into(),
             api_key: api_key.into(),
             agent_id: agent_id.into(),
-            fluent: true,
+            fluent: false,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -91,12 +97,30 @@ impl DidAgentStreamsAvatar {
         })
     }
 
-    fn streams_url(&self) -> Result<reqwest::Url, ProviderError> {
+    fn agent_url(&self) -> Result<reqwest::Url, ProviderError> {
         let mut url = self.base_url.clone();
         {
             let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
             segments.pop_if_empty();
-            segments.extend(["agents", self.config.agent_id.as_str(), "streams"]);
+            segments.extend(["agents", self.config.agent_id.as_str()]);
+        }
+        Ok(url)
+    }
+
+    fn streams_url(&self) -> Result<reqwest::Url, ProviderError> {
+        let mut url = self.agent_url()?;
+        url.path_segments_mut()
+            .map_err(|()| invalid_response())?
+            .push("streams");
+        Ok(url)
+    }
+
+    fn v2_sessions_url(&self) -> Result<reqwest::Url, ProviderError> {
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
+            segments.pop_if_empty();
+            segments.extend(["v2", "agents", self.config.agent_id.as_str(), "sessions"]);
         }
         Ok(url)
     }
@@ -122,13 +146,64 @@ impl DidAgentStreamsAvatar {
     }
 
     fn validate_session(session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
-        if session.provider_stream_id.trim().is_empty()
+        if session.provider_resource_id.trim().is_empty()
             || session.provider_session_id.trim().is_empty()
         {
             Err(invalid_response())
         } else {
             Ok(())
         }
+    }
+
+    fn presenter_type(&self) -> Result<String, ProviderError> {
+        let response = self
+            .authorized(self.client.get(self.agent_url()?))
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: AgentResponse = response.json().map_err(|_| invalid_response())?;
+        let presenter_type = body.presenter.kind.trim().to_ascii_lowercase();
+        if presenter_type.is_empty() {
+            Err(invalid_response())
+        } else {
+            Ok(presenter_type)
+        }
+    }
+
+    fn create_webrtc_session(
+        &self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        let response = self
+            .authorized(self.client.post(self.streams_url()?))
+            .json(&CreateStreamRequest {
+                fluent: self.config.fluent,
+            })
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
+        let client_interrupt = body.fluent && body.interrupt_enabled;
+        let session: RealtimeAvatarSession = body.try_into()?;
+        if client_interrupt {
+            self.client_control.register_interrupt(&session)?;
+        }
+        Ok(session)
+    }
+
+    fn create_livekit_session(
+        &self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        let response = self
+            .authorized(self.client.post(self.v2_sessions_url()?))
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = Self::expect_success(response)?;
+        let body: CreateV2SessionResponse = response.json().map_err(|_| invalid_response())?;
+        body.try_into()
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
@@ -171,21 +246,11 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
-        let response = self
-            .authorized(self.client.post(self.streams_url()?))
-            .json(&CreateStreamRequest {
-                fluent: self.config.fluent,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
-        let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
-        let client_interrupt = body.fluent && body.interrupt_enabled;
-        let session: RealtimeAvatarSession = body.try_into()?;
-        if client_interrupt {
-            self.client_control.register_interrupt(&session)?;
+        if self.presenter_type()? == "expressive" {
+            self.create_livekit_session(cancellation)
+        } else {
+            self.create_webrtc_session(cancellation)
         }
-        Ok(session)
     }
 
     fn submit_answer(
@@ -196,13 +261,16 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<(), ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         if answer.kind.trim().is_empty() || answer.sdp.trim().is_empty() {
             return Err(invalid_response());
         }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_subresource_url(&session.provider_stream_id, "sdp")?),
+                    .post(self.stream_subresource_url(&session.provider_resource_id, "sdp")?),
             )
             .json(&SdpRequest {
                 session_id: &session.provider_session_id,
@@ -224,10 +292,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<(), ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_subresource_url(&session.provider_stream_id, "ice")?),
+                    .post(self.stream_subresource_url(&session.provider_resource_id, "ice")?),
             )
             .json(&IceRequest {
                 session_id: &session.provider_session_id,
@@ -251,10 +322,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         if text.trim().is_empty() {
             return Err(invalid_response());
         }
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_url(&session.provider_stream_id)?),
+                    .post(self.stream_url(&session.provider_resource_id)?),
             )
             .json(&SpeakRequest {
                 session_id: &session.provider_session_id,
@@ -274,10 +348,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
         validate_audio_url(audio_url)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_url(&session.provider_stream_id)?),
+                    .post(self.stream_url(&session.provider_resource_id)?),
             )
             .json(&SpeakRequest {
                 session_id: &session.provider_session_id,
@@ -293,7 +370,15 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         session: &RealtimeAvatarSession,
     ) -> Option<RealtimeAvatarClientControl> {
         Self::validate_session(session).ok()?;
-        self.client_control.control(session)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => Some(RealtimeAvatarClientControl {
+                event_route: None,
+                interrupt: true,
+                interrupt_requires_playback_id: false,
+                text_input: true,
+            }),
+            RealtimeAvatarTransport::WebRtc { .. } => self.client_control.control(session),
+        }
     }
 
     fn parse_client_event(
@@ -302,161 +387,89 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         message: &str,
     ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
         Self::validate_session(session)?;
-        self.client_control.parse_event(session, message)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => parse_livekit_event(message),
+            RealtimeAvatarTransport::WebRtc { .. } => {
+                self.client_control.parse_event(session, message)
+            }
+        }
+    }
+
+    fn prepare_client_text(
+        &self,
+        session: &RealtimeAvatarSession,
+        text: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(invalid_response());
+        }
+        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. }) {
+            return Err(unavailable());
+        }
+        let payload = serde_json::to_string(&LiveKitSpeakRequest {
+            script: LiveKitSpeakScript {
+                kind: "text",
+                input: text,
+            },
+        })
+        .map_err(|_| invalid_response())?;
+        Ok(RealtimeAvatarClientCommand {
+            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                topic: "did.speak".to_owned(),
+            },
+            payload,
+        })
     }
 
     fn prepare_client_interrupt(
         &self,
         session: &RealtimeAvatarSession,
-        playback_id: &str,
+        playback_id: Option<&str>,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
-        self.client_control.prepare_interrupt(session, playback_id)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => Ok(RealtimeAvatarClientCommand {
+                route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                    topic: "did.interrupt".to_owned(),
+                },
+                payload: "{}".to_owned(),
+            }),
+            RealtimeAvatarTransport::WebRtc { .. } => self
+                .client_control
+                .prepare_interrupt(session, playback_id.ok_or_else(invalid_response)?),
+        }
     }
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
-        let response = self
-            .authorized(
-                self.client
-                    .delete(self.stream_url(&session.provider_stream_id)?),
-            )
-            .json(&CloseRequest {
-                session_id: &session.provider_session_id,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response)?;
-        self.client_control.forget(session)
-    }
-}
-
-#[derive(Serialize)]
-struct CreateStreamRequest {
-    fluent: bool,
-}
-
-#[derive(Deserialize)]
-struct CreateStreamResponse {
-    id: String,
-    session_id: String,
-    offer: SessionDescriptionOwned,
-    #[serde(default)]
-    ice_servers: Vec<IceServerResponse>,
-    #[serde(default)]
-    fluent: bool,
-    #[serde(default)]
-    interrupt_enabled: bool,
-}
-
-#[derive(Deserialize)]
-struct SessionDescriptionOwned {
-    #[serde(rename = "type")]
-    kind: String,
-    sdp: String,
-}
-
-#[derive(Deserialize)]
-struct IceServerResponse {
-    #[serde(default)]
-    urls: OneOrMany,
-    username: Option<String>,
-    credential: Option<String>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(untagged)]
-enum OneOrMany {
-    One(String),
-    Many(Vec<String>),
-    #[default]
-    Missing,
-}
-
-impl OneOrMany {
-    fn into_vec(self) -> Vec<String> {
-        match self {
-            Self::One(value) => vec![value],
-            Self::Many(values) => values,
-            Self::Missing => Vec::new(),
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => {
+                // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
+                // from the room and D-ID closes the unused session after its inactivity timeout.
+                Ok(())
+            }
+            RealtimeAvatarTransport::WebRtc { .. } => {
+                let response = self
+                    .authorized(
+                        self.client
+                            .delete(self.stream_url(&session.provider_resource_id)?),
+                    )
+                    .json(&CloseRequest {
+                        session_id: &session.provider_session_id,
+                    })
+                    .send()
+                    .map_err(|error| map_transport_error(&error))?;
+                Self::expect_success(response)?;
+                self.client_control.forget(session)
+            }
         }
     }
-}
-
-impl TryFrom<CreateStreamResponse> for RealtimeAvatarSession {
-    type Error = ProviderError;
-
-    fn try_from(value: CreateStreamResponse) -> Result<Self, Self::Error> {
-        if value.id.trim().is_empty()
-            || value.session_id.trim().is_empty()
-            || value.offer.kind.trim().is_empty()
-            || value.offer.sdp.trim().is_empty()
-        {
-            return Err(invalid_response());
-        }
-        Ok(Self {
-            provider_stream_id: value.id,
-            provider_session_id: value.session_id,
-            offer: WebRtcSessionDescription {
-                kind: value.offer.kind,
-                sdp: value.offer.sdp,
-            },
-            ice_servers: value
-                .ice_servers
-                .into_iter()
-                .map(|server| WebRtcIceServer {
-                    urls: server.urls.into_vec(),
-                    username: server.username,
-                    credential: server.credential,
-                })
-                .collect(),
-        })
-    }
-}
-
-#[derive(Serialize)]
-struct SdpRequest<'a> {
-    session_id: &'a str,
-    answer: SessionDescriptionRef<'a>,
-}
-
-#[derive(Serialize)]
-struct SessionDescriptionRef<'a> {
-    #[serde(rename = "type")]
-    kind: &'a str,
-    sdp: &'a str,
-}
-
-#[derive(Serialize)]
-struct IceRequest<'a> {
-    session_id: &'a str,
-    candidate: Option<&'a str>,
-    #[serde(rename = "sdpMid")]
-    sdp_mid: Option<&'a str>,
-    #[serde(rename = "sdpMLineIndex")]
-    sdp_mline_index: Option<u16>,
-}
-
-#[derive(Serialize)]
-struct SpeakRequest<'a> {
-    session_id: &'a str,
-    script: SpeakScript<'a>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type")]
-enum SpeakScript<'a> {
-    #[serde(rename = "text")]
-    Text { input: &'a str },
-    #[serde(rename = "audio")]
-    Audio { audio_url: &'a str },
-}
-
-#[derive(Serialize)]
-struct CloseRequest<'a> {
-    session_id: &'a str,
 }
 
 fn validate_audio_url(audio_url: &str) -> Result<(), ProviderError> {
@@ -537,6 +550,13 @@ const fn cancelled() -> ProviderError {
 const fn invalid_response() -> ProviderError {
     ProviderError {
         kind: ProviderErrorKind::InvalidResponse,
+        retryable: false,
+    }
+}
+
+const fn unavailable() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Unavailable,
         retryable: false,
     }
 }

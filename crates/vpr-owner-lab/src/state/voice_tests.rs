@@ -11,8 +11,8 @@ use vpr_domain::{
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
     ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, SttPort, SttRequest, Transcript, UsageEvidence, WebRtcIceServer,
-    WebRtcSessionDescription,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::{
@@ -46,17 +46,19 @@ impl RealtimeAvatarPort for VoiceAvatar {
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Ok(RealtimeAvatarSession {
-            provider_stream_id: "stream".into(),
+            provider_resource_id: "stream".into(),
             provider_session_id: "session".into(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".into(),
-                sdp: "v=0".into(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".into(),
+                    sdp: "v=0".into(),
+                },
+                ice_servers: vec![WebRtcIceServer {
+                    urls: vec!["stun:example.test".into()],
+                    username: None,
+                    credential: None,
+                }],
             },
-            ice_servers: vec![WebRtcIceServer {
-                urls: vec!["stun:example.test".into()],
-                username: None,
-                credential: None,
-            }],
         })
     }
 
@@ -297,6 +299,7 @@ fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
     assert_eq!(result.reply, "Всё хорошо.");
     assert!(result.evidence_turn_sequence > 0);
     assert!(result.evidence_output_sequence > 0);
+    assert!(result.client_command.is_none());
     assert_eq!(
         engine.acknowledge_voice_playback(
             result.evidence_turn_sequence,
