@@ -44,6 +44,7 @@ impl DidClientControlRegistry {
                     label: DID_DATA_CHANNEL_LABEL.to_owned(),
                 }),
                 interrupt: true,
+                interrupt_requires_playback_id: true,
                 text_input: false,
             })
     }
