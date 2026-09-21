@@ -54,7 +54,6 @@ fn post_origin_must_match_the_loopback_host_exactly() {
     ));
 }
 
-
 #[test]
 fn csp_allows_provider_neutral_secure_realtime_signal_fallbacks() {
     assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self' https: wss:"));
