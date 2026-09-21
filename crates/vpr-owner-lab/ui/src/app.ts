@@ -5,15 +5,26 @@ type SessionAudience = "owner" | "visitor";
 type ConversationReadiness = "none" | "text" | "text_and_voice";
 type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; conversation_readiness: ConversationReadiness; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
-type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number };
+type ClientRoute =
+  | { kind: "web_rtc_data_channel"; label: string }
+  | { kind: "live_kit_text_topic"; topic: string };
+type ClientCommand = { route: ClientRoute; payload: string };
+type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
-type ClientControl = { data_channel_label: string; interrupt: boolean };
-type ClientCommand = { data_channel_label: string; payload: string };
+type RealtimeTransport =
+  | { kind: "web_rtc"; offer: SessionDescription; ice_servers: IceServer[] }
+  | { kind: "live_kit"; server_url: string; token: string };
+type ClientControl = {
+  event_route: ClientRoute | null;
+  interrupt: boolean;
+  interrupt_requires_playback_id: boolean;
+  text_input: boolean;
+};
 type ClientEvent =
   | { kind: "playback_started"; playback_id: string }
   | { kind: "playback_done" };
-type StartResponse = { evidence_session_sequence: number; offer: SessionDescription; ice_servers: IceServer[]; capabilities: string[]; client_control: ClientControl | null };
+type StartResponse = { evidence_session_sequence: number; transport: RealtimeTransport; capabilities: string[]; client_control: ClientControl | null };
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
