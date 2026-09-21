@@ -8,8 +8,8 @@ use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
     ProviderDescriptor as PortDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
+    UsageUnit, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
