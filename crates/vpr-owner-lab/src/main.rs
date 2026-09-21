@@ -30,6 +30,7 @@ const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
 const DEFAULT_PORT: u16 = 8787;
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
@@ -559,10 +560,7 @@ fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
         ("Cross-Origin-Opener-Policy", "same-origin"),
         ("Cross-Origin-Resource-Policy", "same-origin"),
         ("X-Frame-Options", "DENY"),
-        (
-            "Content-Security-Policy",
-            "default-src 'self'; connect-src 'self' wss:; media-src 'self' blob:; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-        ),
+        ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
     ] {
         if let Ok(header) = Header::from_bytes(name, value) {
             response.add_header(header);
