@@ -3,8 +3,8 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -47,13 +47,8 @@ impl Debug for RealtimeAvatarHandle {
 
 impl RealtimeAvatarHandle {
     #[must_use]
-    pub fn offer(&self) -> &WebRtcSessionDescription {
-        &self.provider_session.offer
-    }
-
-    #[must_use]
-    pub fn ice_servers(&self) -> &[WebRtcIceServer] {
-        &self.provider_session.ice_servers
+    pub const fn transport(&self) -> &RealtimeAvatarTransport {
+        &self.provider_session.transport
     }
 
     #[must_use]
@@ -220,7 +215,7 @@ impl ActiveTurn {
         &self,
         port: &dyn RealtimeAvatarPort,
         handle: &RealtimeAvatarHandle,
-        playback_id: &str,
+        playback_id: Option<&str>,
     ) -> Result<RealtimeAvatarClientCommand, ProviderExecutionError> {
         self.validate_avatar_handle(port, handle)?;
         if !handle
@@ -238,6 +233,34 @@ impl ActiveTurn {
         let permit = self.avatar_permit()?;
         port.prepare_client_interrupt(&handle.provider_session, playback_id, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
+    }
+
+    /// Prepares browser-side text delivery for transports whose authenticated realtime connection
+    /// lives in the browser. The generated output segment remains unsent until the browser reports
+    /// that the transport accepted the command.
+    ///
+    /// # Errors
+    /// Returns a denial for stale authority/handles or a typed provider failure.
+    pub fn prepare_realtime_avatar_client_text(
+        &self,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<(OutputDeliveryHandle, RealtimeAvatarClientCommand), RealtimeAvatarOutputError> {
+        self.validate_avatar_handle(port, handle)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
+        let command = port
+            .prepare_client_text(&handle.provider_session, text, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        Ok((delivery, command))
     }
 
     /// Requests provider-side interruption using this turn's current authorization.
