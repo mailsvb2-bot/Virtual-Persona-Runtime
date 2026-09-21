@@ -256,13 +256,16 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<(), ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         if answer.kind.trim().is_empty() || answer.sdp.trim().is_empty() {
             return Err(invalid_response());
         }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_subresource_url(&session.provider_stream_id, "sdp")?),
+                    .post(self.stream_subresource_url(&session.provider_resource_id, "sdp")?),
             )
             .json(&SdpRequest {
                 session_id: &session.provider_session_id,
@@ -284,10 +287,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<(), ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_subresource_url(&session.provider_stream_id, "ice")?),
+                    .post(self.stream_subresource_url(&session.provider_resource_id, "ice")?),
             )
             .json(&IceRequest {
                 session_id: &session.provider_session_id,
@@ -311,10 +317,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         if text.trim().is_empty() {
             return Err(invalid_response());
         }
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_url(&session.provider_stream_id)?),
+                    .post(self.stream_url(&session.provider_resource_id)?),
             )
             .json(&SpeakRequest {
                 session_id: &session.provider_session_id,
@@ -334,10 +343,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
         validate_audio_url(audio_url)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
+            return Err(unavailable());
+        }
         let response = self
             .authorized(
                 self.client
-                    .post(self.stream_url(&session.provider_stream_id)?),
+                    .post(self.stream_url(&session.provider_resource_id)?),
             )
             .json(&SpeakRequest {
                 session_id: &session.provider_session_id,
@@ -381,7 +393,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         let response = self
             .authorized(
                 self.client
-                    .delete(self.stream_url(&session.provider_stream_id)?),
+                    .delete(self.stream_url(&session.provider_resource_id)?),
             )
             .json(&CloseRequest {
                 session_id: &session.provider_session_id,
