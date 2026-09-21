@@ -1229,6 +1229,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tiny_http",
+ "vpr-capture",
  "vpr-domain",
  "vpr-evaluation",
  "vpr-integration",
@@ -1274,6 +1275,7 @@ version = "0.1.0"
 dependencies = [
  "reqwest",
  "serde",
+ "serde_json",
  "vpr-integration",
 ]
 

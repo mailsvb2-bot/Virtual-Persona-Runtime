@@ -30,12 +30,14 @@ jobs:
         run: python3 tests/architecture/check_rt1_workspace_authority_spike.py
       - name: Owner Lab browser contract guard
         run: python3 tests/architecture/check_browser_contract.py
+      - name: Lockfile consistency
+        run: cargo check --workspace --all-targets --locked
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --locked --workspace --all-targets
 
   owner-lab-ui:
     runs-on: ubuntu-latest

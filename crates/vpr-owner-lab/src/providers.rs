@@ -33,8 +33,11 @@ impl ProviderBundle {
     /// # Errors
     /// Returns a redacted configuration error when required settings are missing or rejected.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
-        let did_endpoint =
-            env::var("VPR_DID_ENDPOINT").unwrap_or_else(|_| "https://api.d-id.com".into());
+        let did_endpoint = env::var("VPR_DID_ENDPOINT")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://api.d-id.com".into());
         let did_api_key = required_env("VPR_DID_API_KEY")?;
         let did_agent_id = required_env("VPR_DID_AGENT_ID")?;
         let avatar = DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(
@@ -201,7 +204,8 @@ fn optional_env(name: &'static str) -> Option<String> {
 fn required_env(name: &'static str) -> Result<String, String> {
     env::var(name)
         .ok()
-        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| format!("required environment variable {name} is not set"))
 }
 
