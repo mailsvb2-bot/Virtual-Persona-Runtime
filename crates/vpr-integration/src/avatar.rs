@@ -115,6 +115,7 @@ pub enum RealtimeAvatarCapability {
 pub struct RealtimeAvatarClientControl {
     pub event_route: Option<RealtimeAvatarClientRoute>,
     pub interrupt: bool,
+    pub interrupt_requires_playback_id: bool,
     pub text_input: bool,
 }
 
@@ -293,7 +294,7 @@ pub trait RealtimeAvatarPort: Send + Sync {
     fn prepare_client_interrupt(
         &self,
         _session: &RealtimeAvatarSession,
-        _playback_id: &str,
+        _playback_id: Option<&str>,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Err(ProviderError {
