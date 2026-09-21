@@ -375,7 +375,7 @@ mod tests {
         let provider = OpenAiCompatibleLlm::new(
             OpenAiCompatibleConfig::new(endpoint, "secret", "test-model")
                 .with_reasoning_effort("none")
-                .with_max_tokens(160),
+                .with_max_tokens(96),
         )
         .unwrap();
         let probe = Probe(AtomicBool::new(false));
