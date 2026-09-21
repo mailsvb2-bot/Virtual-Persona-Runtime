@@ -58,6 +58,11 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { requests });
   }
 
+  if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
+    record("avatar", request, url, Buffer.alloc(0));
+    return sendJson(response, 200, { presenter: { type: "clip" } });
+  }
+
   const body = await readBody(request);
   if (request.method === "POST" && url.pathname === "/v1/audio/transcriptions") {
     sttSequence += 1;
