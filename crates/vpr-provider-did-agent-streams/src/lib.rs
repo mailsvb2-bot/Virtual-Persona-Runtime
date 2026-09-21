@@ -365,7 +365,15 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         session: &RealtimeAvatarSession,
     ) -> Option<RealtimeAvatarClientControl> {
         Self::validate_session(session).ok()?;
-        self.client_control.control(session)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => Some(RealtimeAvatarClientControl {
+                event_route: None,
+                interrupt: true,
+                interrupt_requires_playback_id: false,
+                text_input: true,
+            }),
+            RealtimeAvatarTransport::WebRtc { .. } => self.client_control.control(session),
+        }
     }
 
     fn parse_client_event(
@@ -374,34 +382,86 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         message: &str,
     ) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
         Self::validate_session(session)?;
-        self.client_control.parse_event(session, message)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => parse_livekit_event(message),
+            RealtimeAvatarTransport::WebRtc { .. } => self.client_control.parse_event(session, message),
+        }
+    }
+
+    fn prepare_client_text(
+        &self,
+        session: &RealtimeAvatarSession,
+        text: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(invalid_response());
+        }
+        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. }) {
+            return Err(unavailable());
+        }
+        let payload = serde_json::to_string(&LiveKitSpeakRequest {
+            script: LiveKitSpeakScript {
+                kind: "text",
+                input: text,
+            },
+        })
+        .map_err(|_| invalid_response())?;
+        Ok(RealtimeAvatarClientCommand {
+            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                topic: "did.speak".to_owned(),
+            },
+            payload,
+        })
     }
 
     fn prepare_client_interrupt(
         &self,
         session: &RealtimeAvatarSession,
-        playback_id: &str,
+        playback_id: Option<&str>,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
-        self.client_control.prepare_interrupt(session, playback_id)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => Ok(RealtimeAvatarClientCommand {
+                route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                    topic: "did.interrupt".to_owned(),
+                },
+                payload: "{}".to_owned(),
+            }),
+            RealtimeAvatarTransport::WebRtc { .. } => self
+                .client_control
+                .prepare_interrupt(session, playback_id.ok_or_else(invalid_response)?),
+        }
     }
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Self::validate_session(session)?;
-        let response = self
-            .authorized(
-                self.client
-                    .delete(self.stream_url(&session.provider_resource_id)?),
-            )
-            .json(&CloseRequest {
-                session_id: &session.provider_session_id,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response)?;
-        self.client_control.forget(session)
+        match session.transport {
+            RealtimeAvatarTransport::LiveKit { .. } => {
+                // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
+                // from the room and D-ID closes the unused session after its inactivity timeout.
+                Ok(())
+            }
+            RealtimeAvatarTransport::WebRtc { .. } => {
+                let response = self
+                    .authorized(
+                        self.client
+                            .delete(self.stream_url(&session.provider_resource_id)?),
+                    )
+                    .json(&CloseRequest {
+                        session_id: &session.provider_session_id,
+                    })
+                    .send()
+                    .map_err(|error| map_transport_error(&error))?;
+                Self::expect_success(response)?;
+                self.client_control.forget(session)
+            }
+        }
     }
 }
 
