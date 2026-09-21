@@ -6,8 +6,8 @@ use vpr_domain::{
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
-    LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, SttPort, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -45,10 +45,22 @@ pub enum OwnerLabTurnInput {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabSignalBundle {
     pub evidence_session_sequence: u64,
-    pub offer: LabSessionDescription,
-    pub ice_servers: Vec<LabIceServer>,
+    pub transport: LabRealtimeTransport,
     pub capabilities: Vec<String>,
     pub client_control: Option<LabClientControl>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LabRealtimeTransport {
+    WebRtc {
+        offer: LabSessionDescription,
+        ice_servers: Vec<LabIceServer>,
+    },
+    LiveKit {
+        server_url: String,
+        token: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -466,10 +478,7 @@ fn signal_bundle(
     evidence_session_sequence: u64,
 ) -> LabSignalBundle {
     let provider_capabilities = port.capabilities();
-    let client_control = handle.client_control().map(|control| LabClientControl {
-        data_channel_label: control.data_channel_label.clone(),
-        interrupt: control.interrupt,
-    });
+    let client_control = handle.client_control().map(LabClientControl::from);
     let mut capabilities: Vec<String> = [
         (RealtimeAvatarCapability::TextInput, "text"),
         (RealtimeAvatarCapability::AudioUrlInput, "audio_url"),
@@ -486,13 +495,22 @@ fn signal_bundle(
     {
         capabilities.push("interrupt".to_owned());
     }
+    let transport = match handle.transport() {
+        RealtimeAvatarTransport::WebRtc { offer, ice_servers } => LabRealtimeTransport::WebRtc {
+            offer: LabSessionDescription {
+                kind: offer.kind.clone(),
+                sdp: offer.sdp.clone(),
+            },
+            ice_servers: ice_servers.iter().map(map_ice_server).collect(),
+        },
+        RealtimeAvatarTransport::LiveKit { server_url, token } => LabRealtimeTransport::LiveKit {
+            server_url: server_url.clone(),
+            token: token.clone(),
+        },
+    };
     LabSignalBundle {
         evidence_session_sequence,
-        offer: LabSessionDescription {
-            kind: handle.offer().kind.clone(),
-            sdp: handle.offer().sdp.clone(),
-        },
-        ice_servers: handle.ice_servers().iter().map(map_ice_server).collect(),
+        transport,
         capabilities,
         client_control,
     }
@@ -543,7 +561,7 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 mod client_control;
 mod text;
 mod voice;
-pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent};
+pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceUsage};
 
