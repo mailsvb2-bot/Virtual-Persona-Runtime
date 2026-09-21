@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarSession, RealtimeAvatarTransport,
-    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarCapabilities, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::*;
