@@ -465,6 +465,41 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     }
 }
 
+#[derive(Deserialize)]
+struct AgentResponse {
+    presenter: AgentPresenter,
+}
+
+#[derive(Deserialize)]
+struct AgentPresenter {
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct CreateV2SessionResponse {
+    id: String,
+    session_url: String,
+    session_token: String,
+}
+
+#[derive(Serialize)]
+struct LiveKitSpeakRequest<'a> {
+    script: LiveKitSpeakScript<'a>,
+}
+
+#[derive(Serialize)]
+struct LiveKitSpeakScript<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    input: &'a str,
+}
+
+#[derive(Deserialize)]
+struct LiveKitEvent {
+    subject: Option<String>,
+}
+
 #[derive(Serialize)]
 struct CreateStreamRequest {
     fluent: bool,
@@ -529,21 +564,45 @@ impl TryFrom<CreateStreamResponse> for RealtimeAvatarSession {
             return Err(invalid_response());
         }
         Ok(Self {
-            provider_stream_id: value.id,
+            provider_resource_id: value.id,
             provider_session_id: value.session_id,
-            offer: WebRtcSessionDescription {
-                kind: value.offer.kind,
-                sdp: value.offer.sdp,
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: value.offer.kind,
+                    sdp: value.offer.sdp,
+                },
+                ice_servers: value
+                    .ice_servers
+                    .into_iter()
+                    .map(|server| WebRtcIceServer {
+                        urls: server.urls.into_vec(),
+                        username: server.username,
+                        credential: server.credential,
+                    })
+                    .collect(),
             },
-            ice_servers: value
-                .ice_servers
-                .into_iter()
-                .map(|server| WebRtcIceServer {
-                    urls: server.urls.into_vec(),
-                    username: server.username,
-                    credential: server.credential,
-                })
-                .collect(),
+        })
+    }
+}
+
+impl TryFrom<CreateV2SessionResponse> for RealtimeAvatarSession {
+    type Error = ProviderError;
+
+    fn try_from(value: CreateV2SessionResponse) -> Result<Self, Self::Error> {
+        let session_id = value.id.trim();
+        if session_id.is_empty()
+            || value.session_token.trim().is_empty()
+            || !valid_livekit_url(&value.session_url)
+        {
+            return Err(invalid_response());
+        }
+        Ok(Self {
+            provider_resource_id: session_id.to_owned(),
+            provider_session_id: session_id.to_owned(),
+            transport: RealtimeAvatarTransport::LiveKit {
+                server_url: value.session_url,
+                token: value.session_token,
+            },
         })
     }
 }
@@ -589,6 +648,27 @@ enum SpeakScript<'a> {
 #[derive(Serialize)]
 struct CloseRequest<'a> {
     session_id: &'a str,
+}
+
+fn parse_livekit_event(message: &str) -> Result<Option<RealtimeAvatarClientEvent>, ProviderError> {
+    if message.len() > 64 * 1024 {
+        return Err(invalid_response());
+    }
+    let event: LiveKitEvent = serde_json::from_str(message).map_err(|_| invalid_response())?;
+    match event.subject.as_deref() {
+        Some("stream-video/done") => Ok(Some(RealtimeAvatarClientEvent::PlaybackDone)),
+        _ => Ok(None),
+    }
+}
+
+fn valid_livekit_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "wss"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+    })
 }
 
 fn validate_audio_url(audio_url: &str) -> Result<(), ProviderError> {
@@ -669,6 +749,13 @@ const fn cancelled() -> ProviderError {
 const fn invalid_response() -> ProviderError {
     ProviderError {
         kind: ProviderErrorKind::InvalidResponse,
+        retryable: false,
+    }
+}
+
+const fn unavailable() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Unavailable,
         retryable: false,
     }
 }
