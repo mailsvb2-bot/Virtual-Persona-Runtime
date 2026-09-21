@@ -35,11 +35,9 @@ impl From<&RealtimeAvatarClientControl> for LabClientControl {
 impl From<&RealtimeAvatarClientRoute> for LabClientRoute {
     fn from(value: &RealtimeAvatarClientRoute) -> Self {
         match value {
-            RealtimeAvatarClientRoute::WebRtcDataChannel { label } => {
-                Self::WebRtcDataChannel {
-                    label: label.clone(),
-                }
-            }
+            RealtimeAvatarClientRoute::WebRtcDataChannel { label } => Self::WebRtcDataChannel {
+                label: label.clone(),
+            },
             RealtimeAvatarClientRoute::LiveKitTextTopic { topic } => Self::LiveKitTextTopic {
                 topic: topic.clone(),
             },
@@ -115,9 +113,7 @@ impl OwnerLabEngine {
         &mut self,
         playback_id: Option<&str>,
     ) -> Result<LabClientCommand, LabError> {
-        let playback_id = playback_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
+        let playback_id = playback_id.map(str::trim).filter(|value| !value.is_empty());
         let turn = self.new_turn()?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
         let control = handle.client_control().ok_or(LabError::InvalidState)?;
@@ -125,11 +121,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidInput);
         }
         let command = turn
-            .prepare_realtime_avatar_client_interrupt(
-                self.provider.as_ref(),
-                handle,
-                playback_id,
-            )
+            .prepare_realtime_avatar_client_interrupt(self.provider.as_ref(), handle, playback_id)
             .map_err(map_provider_execution)?;
         Ok(command.into())
     }
