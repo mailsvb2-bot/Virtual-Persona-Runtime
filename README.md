@@ -12,7 +12,9 @@ Bootstrap / RT0 foundation. No capability is `PRODUCTION_READY` until exact-cand
 
 ## RT0 Owner Lab
 
-`vpr-owner-lab` is the experimental loopback-only browser path for proving realtime avatar signaling through the canonical runtime. It is not a production-ready avatar claim and remains fail-closed unless both backend egress and explicit in-browser consent are enabled.
+`vpr-owner-lab` is the experimental loopback-only browser path for proving realtime avatar presence through the canonical runtime. The runtime contract is provider-neutral: an avatar adapter negotiates a supported realtime transport, while Persona identity, authority, output evidence, and conversation state remain independent of that provider. It is not a production-ready avatar claim and remains fail-closed unless both backend egress and explicit in-browser consent are enabled.
+
+The current D-ID adapter automatically selects the transport exposed by the configured presenter: legacy presenters use the Agents Streams WebRTC control plane, while `expressive` presenters use D-ID V2 sessions and a session-scoped LiveKit connection. D-ID-specific endpoints, topics, session identifiers, and credentials remain adapter details rather than canonical Persona state.
 
 Build the browser bundle:
 
@@ -32,8 +34,9 @@ VPR_OWNER_LAB_ALLOW_EGRESS=true \
 cargo run -p vpr-owner-lab
 ```
 
-Then open `http://127.0.0.1:8787`. `VPR_DID_ENDPOINT` and `VPR_OWNER_LAB_PORT` are optional overrides. `VPR_DID_FLUENT=true` may be set explicitly for D-ID agents whose presenter supports Fluent streaming; Owner Lab otherwise requests the broadly compatible non-Fluent stream mode. Provider credentials remain in the Rust process; the browser receives only the signaling material needed for its local `RTCPeerConnection`.
+Then open `http://127.0.0.1:8787`. `VPR_DID_ENDPOINT` and `VPR_OWNER_LAB_PORT` are optional overrides. `VPR_DID_FLUENT=true` applies only to the legacy D-ID Streams path and may be enabled for compatible presenters. Provider API credentials remain in the Rust process. The browser receives only the session-scoped signaling or transport material required by the negotiated realtime transport.
 
+D-ID is one adapter, not the architecture center. Future avatar providers may implement the same `RealtimeAvatarPort` using WebRTC, LiveKit, or another explicitly modeled transport without changing canonical Persona identity or authority.
 
 Optional push-to-talk voice conversation can be enabled without changing the avatar-only path. Configure one STT provider and one LLM provider together:
 
