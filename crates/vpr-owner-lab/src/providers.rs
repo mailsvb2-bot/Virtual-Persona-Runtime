@@ -135,7 +135,7 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
             if canonical == "deepseek" {
                 config = config
                     .with_reasoning_effort("none")
-                    .with_max_tokens(160);
+                    .with_max_tokens(96);
             }
             (
                 canonical,
@@ -168,7 +168,7 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
             }
         };
     let realtime_profile = if canonical == "deepseek" {
-        "reasoning=none;max_tokens=160"
+        "reasoning=none;max_tokens=96"
     } else {
         "provider-default"
     };
