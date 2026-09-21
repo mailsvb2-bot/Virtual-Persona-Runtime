@@ -1,4 +1,27 @@
 import { mountOwnerCapture } from "./owner-capture.js";
+const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
+let liveKitLoader = null;
+const loadLiveKitSdk = async () => {
+    const existing = window.LivekitClient;
+    if (existing)
+        return existing;
+    liveKitLoader ??= new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = LIVEKIT_CLIENT_URL;
+        script.async = true;
+        script.crossOrigin = "anonymous";
+        script.onload = () => {
+            const sdk = window.LivekitClient;
+            if (sdk)
+                resolve(sdk);
+            else
+                reject(new Error("LIVEKIT_CLIENT_UNAVAILABLE"));
+        };
+        script.onerror = () => reject(new Error("LIVEKIT_CLIENT_LOAD_FAILED"));
+        document.head.append(script);
+    });
+    return liveKitLoader;
+};
 const byId = (id) => {
     const element = document.getElementById(id);
     if (!element)
@@ -6,6 +29,7 @@ const byId = (id) => {
     return element;
 };
 const video = byId("avatar");
+const avatarAudio = byId("avatar-audio");
 const stage = document.querySelector(".stage");
 const personaPanel = byId("persona-panel");
 const audienceSelect = byId("session-audience");
@@ -25,7 +49,10 @@ let egressEnabled = false;
 let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer = null;
+let liveKitRoom = null;
+let realtimeTransportReady = false;
 let providerDataChannel = null;
+let activeClientControl = null;
 let providerPlaybackId = null;
 let answerSubmitted = false;
 let pendingIce = [];
@@ -314,10 +341,15 @@ const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
 const updateControls = () => {
-    const transportReady = peer !== null && answerSubmitted && backendStatus.session_state === "active";
+    const transportReady = realtimeTransportReady && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
     const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
-    const clientInterruptReady = providerDataChannel?.readyState === "open" && providerPlaybackId !== null;
+    const playbackReady = activeClientControl?.interrupt_requires_playback_id
+        ? providerPlaybackId !== null
+        : true;
+    const clientInterruptReady = transportReady
+        && activeClientControl?.interrupt === true
+        && playbackReady;
     speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
     interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
     voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
@@ -338,20 +370,189 @@ const ownerCapture = mountOwnerCapture({
         updateControls();
     },
 });
+const handleProviderClientEvent = (raw) => {
+    if (!raw)
+        return;
+    void api("/api/avatar/client-event", { message: raw })
+        .then((normalized) => {
+        if (normalized?.kind === "playback_started") {
+            providerPlaybackId = normalized.playback_id;
+        }
+        else if (normalized?.kind === "playback_done") {
+            providerPlaybackId = null;
+        }
+        updateControls();
+    })
+        .catch(() => undefined);
+};
+const dispatchClientCommand = async (command) => {
+    if (command.route.kind === "web_rtc_data_channel") {
+        const channel = providerDataChannel;
+        if (!channel
+            || channel.readyState !== "open"
+            || channel.label !== command.route.label) {
+            throw new Error("CLIENT_TRANSPORT_UNAVAILABLE");
+        }
+        channel.send(command.payload);
+        return;
+    }
+    const room = liveKitRoom;
+    if (!room)
+        throw new Error("CLIENT_TRANSPORT_UNAVAILABLE");
+    await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
+};
+const attachLiveKitTrack = (track) => {
+    if (track.kind === "video") {
+        track.attach(video);
+        stage?.classList.add("has-video");
+        const requestFrame = video.requestVideoFrameCallback;
+        if (typeof requestFrame === "function") {
+            requestFrame.call(video, () => recordFirstVideoFrame());
+        }
+        else {
+            video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+        }
+        setStatus("Видео подключено", "ready");
+    }
+    else if (track.kind === "audio") {
+        track.attach(avatarAudio);
+        if (track.mediaStreamTrack) {
+            void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
+        }
+    }
+};
 const closePeerTransport = () => {
     stopMicrophoneCapture();
     stopRemoteEvidence();
     providerDataChannel?.close();
     providerDataChannel = null;
     providerPlaybackId = null;
+    activeClientControl = null;
     peer?.close();
     peer = null;
+    void liveKitRoom?.disconnect().catch(() => undefined);
+    liveKitRoom = null;
+    realtimeTransportReady = false;
     video.srcObject = null;
+    avatarAudio.srcObject = null;
     stage?.classList.remove("has-video");
     answerSubmitted = false;
     pendingIce = [];
     capabilities.clear();
     updateControls();
+};
+const connectWebRtcTransport = async (transport, clientControl) => {
+    peer = new RTCPeerConnection({
+        iceServers: transport.ice_servers.map((server) => ({
+            urls: server.urls,
+            ...(server.username ? { username: server.username } : {}),
+            ...(server.credential ? { credential: server.credential } : {}),
+        })),
+    });
+    const eventRoute = clientControl?.event_route;
+    if (eventRoute?.kind === "web_rtc_data_channel") {
+        const channel = peer.createDataChannel(eventRoute.label);
+        providerDataChannel = channel;
+        channel.onopen = () => updateControls();
+        channel.onclose = () => {
+            providerPlaybackId = null;
+            updateControls();
+        };
+        channel.onmessage = (event) => {
+            const raw = typeof event.data === "string" ? event.data : "";
+            handleProviderClientEvent(raw);
+        };
+    }
+    peer.ontrack = (event) => {
+        remoteMediaStream ??= new MediaStream();
+        if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
+            remoteMediaStream.addTrack(event.track);
+        }
+        video.srcObject = remoteMediaStream;
+        if (event.track.kind === "video") {
+            stage?.classList.add("has-video");
+            const requestFrame = video.requestVideoFrameCallback;
+            if (typeof requestFrame === "function") {
+                requestFrame.call(video, () => recordFirstVideoFrame());
+            }
+            else {
+                video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+            }
+            setStatus("Видео подключено", "ready");
+        }
+        else if (event.track.kind === "audio") {
+            void attachRemoteAudioEvidence(event.track).catch(() => undefined);
+        }
+    };
+    peer.onconnectionstatechange = () => {
+        if (!peer)
+            return;
+        const state = peer.connectionState;
+        if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
+            reconnectStartedAt = performance.now();
+        }
+        else if (state === "connected" && reconnectStartedAt !== null) {
+            const startedAt = reconnectStartedAt;
+            reconnectStartedAt = null;
+            void postMediaEvidence("reconnect_restored", performance.now() - startedAt)
+                .catch(() => undefined);
+        }
+        if (state === "failed")
+            setStatus("WebRTC connection failed", "error");
+        void refreshSessionEvidence();
+    };
+    peer.onicecandidate = (event) => {
+        const json = event.candidate?.toJSON();
+        const candidate = {
+            candidate: json?.candidate ?? null,
+            sdpMid: json?.sdpMid ?? null,
+            sdpMLineIndex: json?.sdpMLineIndex ?? null,
+        };
+        if (!answerSubmitted)
+            pendingIce.push(candidate);
+        else
+            void postIce(candidate).catch((error) => setStatus(String(error), "error"));
+    };
+    await peer.setRemoteDescription({ type: transport.offer.kind, sdp: transport.offer.sdp });
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    await api("/api/avatar/answer", { kind: answer.type, sdp: answer.sdp ?? "" });
+    answerSubmitted = true;
+    await flushIce();
+    realtimeTransportReady = true;
+};
+const connectLiveKitTransport = async (transport) => {
+    const sdk = await loadLiveKitSdk();
+    const room = new sdk.Room();
+    liveKitRoom = room;
+    room.on(sdk.RoomEvent.TrackSubscribed, (...args) => {
+        const track = args[0];
+        if (track)
+            attachLiveKitTrack(track);
+    });
+    room.on(sdk.RoomEvent.DataReceived, (...args) => {
+        const payload = args[0];
+        if (!(payload instanceof Uint8Array))
+            return;
+        handleProviderClientEvent(new TextDecoder().decode(payload));
+    });
+    room.on(sdk.RoomEvent.Reconnecting, () => {
+        reconnectStartedAt ??= performance.now();
+    });
+    room.on(sdk.RoomEvent.Reconnected, () => {
+        if (reconnectStartedAt !== null) {
+            const startedAt = reconnectStartedAt;
+            reconnectStartedAt = null;
+            void postMediaEvidence("reconnect_restored", performance.now() - startedAt)
+                .catch(() => undefined);
+        }
+    });
+    room.on(sdk.RoomEvent.Disconnected, () => {
+        realtimeTransportReady = false;
+        updateControls();
+    });
+    await room.connect(transport.server_url, transport.token);
+    realtimeTransportReady = true;
 };
 const connectAvatar = async () => {
     if (!consent.checked) {
@@ -372,100 +573,27 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         evidenceSessionSequence = start.evidence_session_sequence;
-        backendStatus = { ...backendStatus, session_state: "active", avatar_open: true, egress_enabled: egressEnabled, session_audience: audience };
+        backendStatus = {
+            ...backendStatus,
+            session_state: "active",
+            avatar_open: true,
+            egress_enabled: egressEnabled,
+            session_audience: audience,
+        };
         capabilities = new Set(start.capabilities);
-        updateControls();
-        peer = new RTCPeerConnection({
-            iceServers: start.ice_servers.map((server) => ({
-                urls: server.urls,
-                ...(server.username ? { username: server.username } : {}),
-                ...(server.credential ? { credential: server.credential } : {}),
-            })),
-        });
-        if (start.client_control?.interrupt) {
-            const channel = peer.createDataChannel(start.client_control.data_channel_label);
-            providerDataChannel = channel;
-            channel.onopen = () => updateControls();
-            channel.onclose = () => {
-                providerPlaybackId = null;
-                updateControls();
-            };
-            channel.onmessage = (event) => {
-                const raw = typeof event.data === "string" ? event.data : "";
-                if (!raw)
-                    return;
-                void api("/api/avatar/client-event", { message: raw })
-                    .then((normalized) => {
-                    if (normalized?.kind === "playback_started") {
-                        providerPlaybackId = normalized.playback_id;
-                    }
-                    else if (normalized?.kind === "playback_done") {
-                        providerPlaybackId = null;
-                    }
-                    updateControls();
-                })
-                    .catch(() => undefined);
-            };
+        activeClientControl = start.client_control;
+        if (start.transport.kind === "web_rtc") {
+            await connectWebRtcTransport(start.transport, start.client_control);
         }
-        peer.ontrack = (event) => {
-            remoteMediaStream ??= new MediaStream();
-            if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
-                remoteMediaStream.addTrack(event.track);
-            }
-            video.srcObject = remoteMediaStream;
-            if (event.track.kind === "video") {
-                stage?.classList.add("has-video");
-                const requestFrame = video.requestVideoFrameCallback;
-                if (typeof requestFrame === "function") {
-                    requestFrame.call(video, () => recordFirstVideoFrame());
-                }
-                else {
-                    video.addEventListener("playing", recordFirstVideoFrame, { once: true });
-                }
-                setStatus("Видео подключено", "ready");
-            }
-            else if (event.track.kind === "audio") {
-                void attachRemoteAudioEvidence(event.track).catch(() => undefined);
-            }
-        };
-        peer.onconnectionstatechange = () => {
-            if (!peer)
-                return;
-            const state = peer.connectionState;
-            if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
-                reconnectStartedAt = performance.now();
-            }
-            else if (state === "connected" && reconnectStartedAt !== null) {
-                const startedAt = reconnectStartedAt;
-                reconnectStartedAt = null;
-                void postMediaEvidence("reconnect_restored", performance.now() - startedAt)
-                    .catch(() => undefined);
-            }
-            if (state === "failed")
-                setStatus("WebRTC connection failed", "error");
-            void refreshSessionEvidence();
-        };
-        peer.onicecandidate = (event) => {
-            const json = event.candidate?.toJSON();
-            const candidate = {
-                candidate: json?.candidate ?? null,
-                sdpMid: json?.sdpMid ?? null,
-                sdpMLineIndex: json?.sdpMLineIndex ?? null,
-            };
-            if (!answerSubmitted)
-                pendingIce.push(candidate);
-            else
-                void postIce(candidate).catch((error) => setStatus(String(error), "error"));
-        };
-        await peer.setRemoteDescription({ type: start.offer.kind, sdp: start.offer.sdp });
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        await api("/api/avatar/answer", { kind: answer.type, sdp: answer.sdp ?? "" });
-        answerSubmitted = true;
-        await flushIce();
+        else {
+            await connectLiveKitTransport(start.transport);
+        }
         updateControls();
-        setStatus(selectedAudience() === "visitor" ? "Visitor-сессия WebRTC согласована" : "WebRTC согласован", "ready");
-        showEvidence({ connectionState: peer.connectionState, capabilities: [...capabilities] });
+        const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
+        setStatus(selectedAudience() === "visitor"
+            ? `Visitor-сессия ${transportName} согласована`
+            : `${transportName} согласован`, "ready");
+        showEvidence({ transport: start.transport.kind, capabilities: [...capabilities] });
     }
     catch (error) {
         const messageText = error instanceof Error ? error.message : "Ошибка подключения";
@@ -591,6 +719,13 @@ const finishMicrophoneTurn = async () => {
             silentFrames: 0,
         };
         const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
+        if (result.client_command) {
+            await dispatchClientCommand(result.client_command);
+            await api("/api/avatar/client-delivery-sent", {
+                evidence_turn_sequence: result.evidence_turn_sequence,
+                evidence_output_sequence: result.evidence_output_sequence,
+            });
+        }
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
@@ -655,21 +790,21 @@ const interruptAvatar = async () => {
             silentFrames: 0,
         };
     }
-    const channel = providerDataChannel;
     const playbackId = providerPlaybackId;
+    const playbackReady = activeClientControl?.interrupt_requires_playback_id
+        ? playbackId !== null
+        : true;
     const clientReady = !textRequestInFlight
         && !voiceRequestInFlight
-        && channel?.readyState === "open"
-        && playbackId !== null;
+        && realtimeTransportReady
+        && activeClientControl?.interrupt === true
+        && playbackReady;
     try {
-        if (clientReady && channel && playbackId) {
+        if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,
             });
-            if (channel.readyState !== "open" || channel.label !== command.data_channel_label) {
-                throw new Error("CLIENT_INTERRUPT_CHANNEL_MISMATCH");
-            }
-            channel.send(command.payload);
+            await dispatchClientCommand(command);
             providerPlaybackId = null;
             updateControls();
             await refreshSessionEvidence();
