@@ -7,8 +7,9 @@ use vpr_domain::{
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
     RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer,
+    WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -52,17 +53,19 @@ impl RealtimeAvatarPort for RecordingAvatar {
         assert!(!cancellation.is_cancelled());
         self.creates.fetch_add(1, Ordering::SeqCst);
         Ok(RealtimeAvatarSession {
-            provider_stream_id: "stream-secret".into(),
+            provider_resource_id: "stream-secret".into(),
             provider_session_id: "provider-session-secret".into(),
-            offer: WebRtcSessionDescription {
-                kind: "offer".into(),
-                sdp: "private-sdp".into(),
+            transport: RealtimeAvatarTransport::WebRtc {
+                offer: WebRtcSessionDescription {
+                    kind: "offer".into(),
+                    sdp: "private-sdp".into(),
+                },
+                ice_servers: vec![WebRtcIceServer {
+                    urls: vec!["turn:example.invalid".into()],
+                    username: Some("u".into()),
+                    credential: Some("p".into()),
+                }],
             },
-            ice_servers: vec![WebRtcIceServer {
-                urls: vec!["turn:example.invalid".into()],
-                username: Some("u".into()),
-                credential: Some("p".into()),
-            }],
         })
     }
 
@@ -121,8 +124,12 @@ impl RealtimeAvatarPort for RecordingAvatar {
         _session: &RealtimeAvatarSession,
     ) -> Option<RealtimeAvatarClientControl> {
         Some(RealtimeAvatarClientControl {
-            data_channel_label: "test-channel".into(),
+            event_route: Some(RealtimeAvatarClientRoute::WebRtcDataChannel {
+                label: "test-channel".into(),
+            }),
             interrupt: true,
+            interrupt_requires_playback_id: true,
+            text_input: false,
         })
     }
 
@@ -141,14 +148,16 @@ impl RealtimeAvatarPort for RecordingAvatar {
     fn prepare_client_interrupt(
         &self,
         _session: &RealtimeAvatarSession,
-        playback_id: &str,
+        playback_id: Option<&str>,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         assert!(!cancellation.is_cancelled());
         self.client_interrupts.fetch_add(1, Ordering::SeqCst);
         Ok(RealtimeAvatarClientCommand {
-            data_channel_label: "test-channel".into(),
-            payload: format!("interrupt:{playback_id}"),
+            route: RealtimeAvatarClientRoute::WebRtcDataChannel {
+                label: "test-channel".into(),
+            },
+            payload: format!("interrupt:{}", playback_id.unwrap_or_default()),
         })
     }
 
@@ -202,8 +211,11 @@ fn avatar_handle_is_session_scoped_and_survives_turn_boundary() {
     let provider = RecordingAvatar::default();
 
     let handle = first.open_realtime_avatar(&provider).unwrap();
-    assert_eq!(handle.offer().kind, "offer");
-    assert_eq!(handle.ice_servers().len(), 1);
+    let RealtimeAvatarTransport::WebRtc { offer, ice_servers } = handle.transport() else {
+        panic!("expected WebRTC transport");
+    };
+    assert_eq!(offer.kind, "offer");
+    assert_eq!(ice_servers.len(), 1);
     second
         .speak_realtime_avatar_text(&provider, &handle, "Привет")
         .unwrap();
@@ -220,8 +232,10 @@ fn client_interrupt_command_is_exact_handle_and_authority_bound() {
     let provider = RecordingAvatar::default();
     let handle = opening.open_realtime_avatar(&provider).unwrap();
     assert_eq!(
-        handle.client_control().unwrap().data_channel_label,
-        "test-channel"
+        handle.client_control().unwrap().event_route,
+        Some(RealtimeAvatarClientRoute::WebRtcDataChannel {
+            label: "test-channel".into(),
+        })
     );
 
     let control_turn = turn("client-control", &persona, &session);
@@ -235,9 +249,14 @@ fn client_interrupt_command_is_exact_handle_and_authority_bound() {
         })
     );
     let command = control_turn
-        .prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1")
+        .prepare_realtime_avatar_client_interrupt(&provider, &handle, Some("playback-1"))
         .unwrap();
-    assert_eq!(command.data_channel_label, "test-channel");
+    assert_eq!(
+        command.route,
+        RealtimeAvatarClientRoute::WebRtcDataChannel {
+            label: "test-channel".into(),
+        }
+    );
     assert_eq!(command.payload, "interrupt:playback-1");
     assert_eq!(provider.client_interrupts.load(Ordering::SeqCst), 1);
 }
@@ -254,7 +273,7 @@ fn client_interrupt_command_rejects_cross_session_handle_before_provider() {
     let session_b = active_session("client-b", &persona_b);
     let turn_b = turn("client-b", &persona_b, &session_b);
     let error = turn_b
-        .prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1")
+        .prepare_realtime_avatar_client_interrupt(&provider, &handle, Some("playback-1"))
         .unwrap_err();
     assert_eq!(
         error,
@@ -328,7 +347,7 @@ fn revoke_blocks_new_avatar_input_but_cleanup_remains_available() {
         Err(ProviderExecutionError::Denied(_))
     ));
     assert!(matches!(
-        turn.prepare_realtime_avatar_client_interrupt(&provider, &handle, "playback-1"),
+        turn.prepare_realtime_avatar_client_interrupt(&provider, &handle, Some("playback-1")),
         Err(ProviderExecutionError::Denied(_))
     ));
     assert_eq!(provider.speaks.load(Ordering::SeqCst), 0);
