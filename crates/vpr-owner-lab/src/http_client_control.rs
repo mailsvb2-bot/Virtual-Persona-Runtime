@@ -19,7 +19,6 @@ struct ClientDeliverySentBody {
     evidence_output_sequence: u64,
 }
 
-
 pub(super) fn route_post(
     path: &str,
     request: &mut Request,
@@ -46,8 +45,8 @@ pub(super) fn route_post(
                 })
             }))
         }
-        "/api/avatar/client-delivery-sent" => {
-            Some(parse_json::<ClientDeliverySentBody>(request).and_then(|body| {
+        "/api/avatar/client-delivery-sent" => Some(
+            parse_json::<ClientDeliverySentBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
                 with_engine_result(state, |engine| {
                     engine
@@ -57,8 +56,8 @@ pub(super) fn route_post(
                         )
                         .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
                 })
-            }))
-        }
+            }),
+        ),
         _ => None,
     }
 }
