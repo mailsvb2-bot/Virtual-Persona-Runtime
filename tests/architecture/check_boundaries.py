@@ -756,9 +756,15 @@ if close_match is None:
 
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
-for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):
+integration_llm_source = (CRATES / "vpr-integration" / "src" / "llm.rs").read_text(encoding="utf-8")
+sealed_sources = {
+    "GeneratedTextSink": integration_llm_source,
+    "GeneratedAudioSink": integration_source,
+    "GeneratedVideoSink": integration_source,
+}
+for trait_name, source in sealed_sources.items():
     sealed_signature = f"pub trait {trait_name}: sealed::{trait_name}"
-    if sealed_signature not in integration_source:
+    if sealed_signature not in source:
         raise SystemExit(f"{trait_name} must remain sealed against external transport implementations")
     for src_dir in CRATES.glob("*/src"):
         if src_dir.parent.name == "vpr-integration":
@@ -768,6 +774,27 @@ for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSin
                 raise SystemExit(
                     f"external {trait_name} implementation can bypass canonical delivery: {path.relative_to(ROOT)}"
                 )
+
+# Incremental LLM output may be exposed to runtime as a pull stream, but the provider-operation
+# permit and cancellation authority must stay inside the non-forgeable runtime handle.
+for required_llm_stream_boundary in (
+    "pub trait LlmTextStream",
+    "fn open_stream(",
+):
+    if required_llm_stream_boundary not in integration_llm_source:
+        raise SystemExit(
+            f"integration LLM streaming contract missing {required_llm_stream_boundary}"
+        )
+for required_runtime_stream_boundary in (
+    "pub struct AuthorizedLlmStream",
+    "ProviderExecutionPermit",
+    "pub fn open_llm_stream",
+    ".open_stream(request, &permit.cancellation)",
+):
+    if required_runtime_stream_boundary not in turn_source:
+        raise SystemExit(
+            f"runtime-owned LLM streaming boundary missing {required_runtime_stream_boundary}"
+        )
 
 # Prevent production God Files from reappearing. Tests are allowed to be larger evidence bundles.
 MAX_PRODUCTION_RUST_LINES = 600

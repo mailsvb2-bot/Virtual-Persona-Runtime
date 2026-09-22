@@ -56,109 +56,16 @@ pub trait CancellationProbe: Send + Sync {
     fn is_cancelled(&self) -> bool;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LlmRequest {
-    pub locale: String,
-    pub context: String,
-}
+mod llm;
+
+pub use llm::{
+    GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
+    TimedGeneratedTextBuffer,
+};
 
 mod sealed {
-    pub trait GeneratedTextSink {}
     pub trait GeneratedAudioSink {}
     pub trait GeneratedVideoSink {}
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GeneratedTextBuffer(String);
-
-#[derive(Debug)]
-pub struct TimedGeneratedTextBuffer {
-    text: String,
-    started: std::time::Instant,
-    first_meaningful_elapsed_millis: Option<u64>,
-}
-
-impl TimedGeneratedTextBuffer {
-    #[must_use]
-    pub fn start() -> Self {
-        Self {
-            text: String::new(),
-            started: std::time::Instant::now(),
-            first_meaningful_elapsed_millis: None,
-        }
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.text
-    }
-
-    #[must_use]
-    pub fn first_meaningful_elapsed_millis(&self) -> Option<u64> {
-        self.first_meaningful_elapsed_millis
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (String, Option<u64>) {
-        (self.text, self.first_meaningful_elapsed_millis)
-    }
-}
-
-impl sealed::GeneratedTextSink for TimedGeneratedTextBuffer {}
-
-impl GeneratedTextSink for TimedGeneratedTextBuffer {
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.text.push_str(chunk);
-        if self.first_meaningful_elapsed_millis.is_none() && !self.text.trim().is_empty() {
-            self.first_meaningful_elapsed_millis =
-                u64::try_from(self.started.elapsed().as_millis()).ok();
-        }
-        Ok(())
-    }
-}
-
-impl GeneratedTextBuffer {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    #[must_use]
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl sealed::GeneratedTextSink for GeneratedTextBuffer {}
-
-impl GeneratedTextSink for GeneratedTextBuffer {
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.0.push_str(chunk);
-        Ok(())
-    }
-}
-
-pub trait GeneratedTextSink: sealed::GeneratedTextSink {
-    /// Returns a generated text chunk to a sealed in-memory generation buffer.
-    /// External crates cannot implement this trait, so provider callbacks cannot become transport.
-    ///
-    /// # Errors
-    /// Returns `ProviderError` when generated-text handoff fails or is cancelled.
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError>;
-}
-
-pub trait LlmPort: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor;
-    /// Streams provider output without transferring canonical Persona authority.
-    ///
-    /// # Errors
-    /// Returns a typed provider failure, including cancellation or policy denial.
-    fn stream(
-        &self,
-        request: &LlmRequest,
-        cancellation: &dyn CancellationProbe,
-        sink: &mut dyn GeneratedTextSink,
-    ) -> Result<UsageEvidence, ProviderError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

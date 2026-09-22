@@ -5,8 +5,8 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence, UsageUnit,
+    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -80,12 +80,11 @@ impl AnthropicLlm {
         Ok(Self { client, config })
     }
 
-    fn execute(
+    fn start_response(
         &self,
         request: &LlmRequest,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn GeneratedTextSink,
-    ) -> Result<UsageEvidence, ProviderError> {
+    ) -> Result<Response, ProviderError> {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
@@ -98,15 +97,23 @@ impl AnthropicLlm {
             }],
             stream: true,
         };
-        let response = self
-            .client
+        self.client
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("Bearer {}", self.config.api_key))
             .header("anthropic-version", API_VERSION)
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .map_err(|error| map_transport_error(&error))
+    }
+
+    fn execute(
+        &self,
+        request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedTextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        let response = self.start_response(request, cancellation)?;
         consume_response(response, cancellation, sink)
     }
 }
@@ -116,6 +123,15 @@ impl LlmPort for AnthropicLlm {
         self.config.descriptor()
     }
 
+    fn open_stream(
+        &self,
+        request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        let response = self.start_response(request, cancellation)?;
+        Ok(Box::new(AnthropicTextStream::new(response)?))
+    }
+
     fn stream(
         &self,
         request: &LlmRequest,
@@ -123,6 +139,85 @@ impl LlmPort for AnthropicLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.execute(request, cancellation, sink)
+    }
+}
+
+struct AnthropicTextStream {
+    lines: std::io::Lines<BufReader<Response>>,
+    usage: UsageEvidence,
+    completed: bool,
+}
+
+impl AnthropicTextStream {
+    fn new(response: Response) -> Result<Self, ProviderError> {
+        if !response.status().is_success() {
+            return Err(map_status(response.status().as_u16()));
+        }
+        Ok(Self {
+            lines: BufReader::new(response).lines(),
+            usage: UsageEvidence::default(),
+            completed: false,
+        })
+    }
+}
+
+impl LlmTextStream for AnthropicTextStream {
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        if self.completed {
+            return Ok(None);
+        }
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled());
+            }
+            let Some(line) = self.lines.next() else {
+                return Err(invalid_response());
+            };
+            let line = line.map_err(|_| invalid_response())?;
+            let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
+                continue;
+            };
+            let event: StreamEvent =
+                serde_json::from_str(payload).map_err(|_| invalid_response())?;
+            match event.event_type.as_str() {
+                "message_start" => {
+                    let message = event.message.ok_or_else(invalid_response)?;
+                    self.usage.input_units = message.usage.input_tokens;
+                    self.usage.input_unit = message.usage.input_tokens.map(|_| UsageUnit::Token);
+                    self.usage.output_units = message.usage.output_tokens;
+                    self.usage.output_unit = message.usage.output_tokens.map(|_| UsageUnit::Token);
+                }
+                "content_block_delta" => {
+                    let delta = event.delta.ok_or_else(invalid_response)?;
+                    if delta.delta_type == "text_delta"
+                        && let Some(text) = delta.text
+                        && !text.is_empty()
+                    {
+                        return Ok(Some(text));
+                    }
+                }
+                "message_delta" => {
+                    if let Some(event_usage) = event.usage {
+                        self.usage.output_units = event_usage.output_tokens;
+                        self.usage.output_unit =
+                            event_usage.output_tokens.map(|_| UsageUnit::Token);
+                    }
+                }
+                "message_stop" => {
+                    self.completed = true;
+                    return Ok(None);
+                }
+                "error" => return Err(map_stream_error(event.error.as_ref())),
+                _ => {}
+            }
+        }
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        self.usage.clone()
     }
 }
 
