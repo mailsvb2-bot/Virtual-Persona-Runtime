@@ -67,3 +67,5 @@ jobs:
         run: npm run test:e2e:backend
       - name: Backend-integrated voice browser E2E
         run: npm run test:e2e:voice
+      - name: Backend-integrated Expressive LiveKit E2E
+        run: npm run test:e2e:expressive
