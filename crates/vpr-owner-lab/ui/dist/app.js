@@ -470,7 +470,8 @@ const updateAudienceMode = () => {
 const updateControls = () => {
     const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
-    const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+    const voiceReady = backendStatus.conversation_readiness === "text_and_voice"
+        && realtimeReadiness.audio;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? providerPlaybackId !== null
         : true;
@@ -553,6 +554,7 @@ const attachLiveKitTrack = (track) => {
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
         }
+        updateControls();
     }
 };
 const detachLiveKitTrack = (track, element) => {
@@ -568,6 +570,11 @@ const handleLiveKitTrackUnsubscribed = (track) => {
         detachLiveKitTrack(track, avatarAudio);
         liveKitAudioTrack = null;
         realtimeReadiness.audio = false;
+        stopMicrophoneCapture();
+        setStatus("Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.", "error");
+        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
+            void interruptAvatar();
+        }
     }
     if (track === liveKitVideoTrack) {
         detachLiveKitTrack(track, video);
