@@ -133,9 +133,7 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
             let mut config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
                 .with_provider_name(canonical);
             if canonical == "deepseek" {
-                config = config
-                    .with_reasoning_effort("none")
-                    .with_max_tokens(96);
+                config = config.with_reasoning_effort("none").with_max_tokens(96);
             }
             (
                 canonical,
