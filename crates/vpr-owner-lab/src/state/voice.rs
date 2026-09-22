@@ -292,7 +292,7 @@ impl OwnerLabEngine {
 
     fn buffered_generation(
         &self,
-        turn: &ActiveTurn,
+        turn: &Arc<ActiveTurn>,
         llm: &dyn LlmPort,
         handle: &RealtimeAvatarHandle,
         request: &LlmRequest,
@@ -334,7 +334,7 @@ impl OwnerLabEngine {
 
     fn streaming_generation(
         &self,
-        turn: &ActiveTurn,
+        turn: &Arc<ActiveTurn>,
         llm: &dyn LlmPort,
         handle: &RealtimeAvatarHandle,
         request: &LlmRequest,
