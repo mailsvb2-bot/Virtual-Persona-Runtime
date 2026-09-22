@@ -237,6 +237,31 @@ const apiBinary = async (path, body, requestSequence) => {
     }
     return payload;
 };
+const waitForVoiceEvents = async (requestSequence, onSegment) => {
+    let finalResult = null;
+    while (true) {
+        const batch = await api("/api/voice/events", {
+            request_sequence: requestSequence,
+        });
+        for (const event of batch.events) {
+            if (event.kind === "segment") {
+                await onSegment(event.segment);
+            }
+            else if (event.kind === "complete") {
+                finalResult = event.result;
+            }
+            else {
+                throw new Error(event.code);
+            }
+        }
+        if (batch.terminal) {
+            if (!finalResult)
+                throw new Error("VOICE_STREAM_INCOMPLETE");
+            return finalResult;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 20));
+    }
+};
 const refreshSessionEvidence = async () => {
     if (evidenceSessionSequence === 0)
         return;
@@ -864,7 +889,7 @@ const finishMicrophoneTurn = async () => {
     voiceRequestInFlight = true;
     let attemptedRequestSequence = null;
     updateControls();
-    setStatus("Распознаю и формирую ответ…");
+    setStatus("Распознаю и начинаю ответ…");
     try {
         const resampled = resampleMono(samples, inputRate);
         const bounded = resampled.length > MAX_VOICE_SAMPLES
@@ -883,12 +908,23 @@ const finishMicrophoneTurn = async () => {
             speaking: false,
             silentFrames: 0,
         };
-        const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
-        if (result.client_command) {
-            await dispatchClientCommand(result.client_command);
+        const started = await apiBinary("/api/voice/turn", pcm, requestSequence);
+        if (started.request_sequence !== requestSequence)
+            throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
+        const pendingDeliveryAcks = [];
+        const result = await waitForVoiceEvents(requestSequence, async (segment) => {
+            if (segment.client_command) {
+                await dispatchClientCommand(segment.client_command);
+                pendingDeliveryAcks.push({
+                    turn: segment.evidence_turn_sequence,
+                    output: segment.evidence_output_sequence,
+                });
+            }
+        });
+        for (const delivery of pendingDeliveryAcks) {
             await api("/api/avatar/client-delivery-sent", {
-                evidence_turn_sequence: result.evidence_turn_sequence,
-                evidence_output_sequence: result.evidence_output_sequence,
+                evidence_turn_sequence: delivery.turn,
+                evidence_output_sequence: delivery.output,
             });
         }
         const voice = activeVoiceEvidence;
@@ -913,6 +949,7 @@ const finishMicrophoneTurn = async () => {
         updateControls();
     }
 };
+
 const toggleVoice = async () => {
     try {
         if (recording)
@@ -960,11 +997,13 @@ const interruptAvatar = async () => {
         ? playbackId !== null
         : true;
     const clientReady = !textRequestInFlight
-        && !voiceRequestInFlight
         && realtimeTransportReady
         && activeClientControl?.interrupt === true
         && playbackReady;
     try {
+        if (voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,
@@ -975,7 +1014,9 @@ const interruptAvatar = async () => {
             await refreshSessionEvidence();
             return;
         }
-        await api("/api/avatar/interrupt", {});
+        if (!voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         await refreshSessionEvidence();
     }
     catch (error) {
@@ -984,6 +1025,7 @@ const interruptAvatar = async () => {
         updateControls();
     }
 };
+
 const endSession = async (kind) => {
     closePeerTransport();
     try {
