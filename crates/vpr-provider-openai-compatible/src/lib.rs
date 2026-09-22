@@ -386,7 +386,7 @@ mod tests {
             )
             .unwrap();
         let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert!(request.contains("\"max_tokens\":160"));
+        assert!(request.contains("\"max_tokens\":96"));
         assert!(request.contains("\"reasoning_effort\":\"none\""));
     }
 
