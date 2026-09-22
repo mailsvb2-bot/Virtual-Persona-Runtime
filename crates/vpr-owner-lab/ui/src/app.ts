@@ -1099,9 +1099,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
 
     let deliveryFailure: Error | null = null;
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
-      if (!segment.client_command) return;
+      const command = segment.client_command;
+      if (!command) return;
       void (async () => {
-        const sent = await voiceCommandScheduler.dispatch(segment.client_command);
+        const sent = await voiceCommandScheduler.dispatch(command);
         if (!sent) return;
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
