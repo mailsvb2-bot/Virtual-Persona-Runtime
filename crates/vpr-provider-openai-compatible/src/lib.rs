@@ -160,7 +160,6 @@ impl OpenAiCompatibleLlm {
         }
         Ok(stream.usage())
     }
-
 }
 
 impl LlmPort for OpenAiCompatibleLlm {
@@ -229,8 +228,7 @@ impl LlmTextStream for OpenAiTextStream {
                 self.completed = true;
                 return Ok(None);
             }
-            let event: ChatChunk =
-                serde_json::from_str(payload).map_err(|_| invalid_response())?;
+            let event: ChatChunk = serde_json::from_str(payload).map_err(|_| invalid_response())?;
             if let Some(event_usage) = event.usage {
                 self.usage.input_units = event_usage.prompt_tokens;
                 self.usage.input_unit = event_usage.prompt_tokens.map(|_| UsageUnit::Token);
@@ -501,12 +499,21 @@ mod tests {
         let probe = Probe(AtomicBool::new(false));
         let mut stream = provider
             .open_stream(
-                &LlmRequest { locale: "ru-RU".into(), context: "Коротко".into() },
+                &LlmRequest {
+                    locale: "ru-RU".into(),
+                    context: "Коротко".into(),
+                },
                 &probe,
             )
             .unwrap();
-        assert_eq!(stream.next_chunk(&probe).unwrap().as_deref(), Some("Первая фраза."));
-        assert_eq!(stream.next_chunk(&probe).unwrap().as_deref(), Some(" Вторая."));
+        assert_eq!(
+            stream.next_chunk(&probe).unwrap().as_deref(),
+            Some("Первая фраза.")
+        );
+        assert_eq!(
+            stream.next_chunk(&probe).unwrap().as_deref(),
+            Some(" Вторая.")
+        );
         assert_eq!(stream.next_chunk(&probe).unwrap(), None);
         assert_eq!(stream.usage().input_units, Some(5));
         assert_eq!(stream.usage().output_units, Some(4));
