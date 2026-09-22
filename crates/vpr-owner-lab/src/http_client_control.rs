@@ -19,6 +19,13 @@ struct ClientDeliverySentBody {
     evidence_output_sequence: u64,
 }
 
+#[derive(Deserialize)]
+struct ClientPlaybackDoneBody {
+    request_sequence: u64,
+    evidence_turn_sequence: u64,
+    evidence_output_sequence: u64,
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut Request,
@@ -56,6 +63,31 @@ pub(super) fn route_post(
                         )
                         .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
                 })
+            }),
+        ),
+        "/api/avatar/client-playback-done" => Some(
+            parse_json::<ClientPlaybackDoneBody>(request).and_then(|body| {
+                reject_if_session_ending(state)?;
+                with_engine_result(state, |engine| {
+                    engine
+                        .acknowledge_voice_playback(
+                            body.evidence_turn_sequence,
+                            body.evidence_output_sequence,
+                        )
+                        .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
+                })?;
+                state
+                    .evidence
+                    .lock()
+                    .record_output_playback(
+                        body.request_sequence,
+                        body.evidence_turn_sequence,
+                        body.evidence_output_sequence,
+                    )
+                    .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
+                    .map_err(|error| {
+                        super::error_response(super::http_evidence::error_status(error), error.code())
+                    })
             }),
         ),
         _ => None,
