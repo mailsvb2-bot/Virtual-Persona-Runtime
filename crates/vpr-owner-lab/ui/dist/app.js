@@ -546,10 +546,8 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitVideoTrack) {
         detachLiveKitTrack(track, video);
         liveKitVideoTrack = null;
-        realtimeTransportReady = false;
         stage?.classList.remove("has-video");
-        stopMicrophoneCapture();
-        setStatus("Видео-поток аватара потерян. Ожидаю восстановление LiveKit…", "error");
+        setStatus("Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…", "error");
     }
     updateControls();
 };
@@ -717,7 +715,7 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room);
     });
     await room.connect(transport.server_url, transport.token);
-    realtimeTransportReady = liveKitVideoTrack !== null;
+    realtimeTransportReady = true;
     updateControls();
 };
 const connectAvatar = async () => {

@@ -337,8 +337,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     fakeWindow.__vprExpressiveLoseVideo?.();
   });
   await expect(page.locator(".stage")).not.toHaveClass(/has-video/);
-  await expect(voiceButton).toBeDisabled();
-  await expect(page.locator("#status")).toContainText("Видео-поток аватара потерян");
+  await expect(voiceButton).toBeEnabled();
+  await expect(page.locator("#status")).toContainText(
+    "Видео-поток аватара потерян. Голос остаётся доступен",
+  );
 
   await page.evaluate(() => {
     const fakeWindow = window as typeof window & { __vprExpressiveRestoreVideo?: () => void };

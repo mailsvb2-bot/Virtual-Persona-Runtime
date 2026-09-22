@@ -690,10 +690,11 @@ const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
   if (track === liveKitVideoTrack) {
     detachLiveKitTrack(track, video);
     liveKitVideoTrack = null;
-    realtimeTransportReady = false;
     stage?.classList.remove("has-video");
-    stopMicrophoneCapture();
-    setStatus("Видео-поток аватара потерян. Ожидаю восстановление LiveKit…", "error");
+    setStatus(
+      "Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…",
+      "error",
+    );
   }
   updateControls();
 };
@@ -867,7 +868,9 @@ const connectLiveKitTransport = async (
     void handleUnexpectedLiveKitDisconnect(room);
   });
   await room.connect(transport.server_url, transport.token);
-  realtimeTransportReady = liveKitVideoTrack !== null;
+  // Transport/control readiness is independent from video-track readiness.
+  // A transient video loss must degrade to voice/text instead of disabling the conversation.
+  realtimeTransportReady = true;
   updateControls();
 };
 
