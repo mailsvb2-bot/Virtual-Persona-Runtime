@@ -339,6 +339,22 @@ const recordStreamingVoiceTurn = async (
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
   )).toBe(2);
+  await page.waitForTimeout(75);
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(2);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(3);
   await page.evaluate(() => {
     const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
     fakeWindow.__vprExpressivePlaybackDone?.();
@@ -422,7 +438,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
-    "Голосовой ответ владельцу. Вторая фраза.",
+    "Голосовой ответ владельцу. Вторая фраза. Третья фраза.",
   );
 
   await expect.poll(async () => {
@@ -470,10 +486,11 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }).__vprLiveKitCommands ?? [],
   );
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak).toHaveLength(2);
+  expect(speak).toHaveLength(3);
   expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
     "Голосовой ответ владельцу.",
     "Вторая фраза.",
+    "Третья фраза.",
   ]);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
