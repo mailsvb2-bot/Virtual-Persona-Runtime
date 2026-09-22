@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex;
 use vpr_domain::{
@@ -28,6 +29,8 @@ use crate::turn_state::TurnMutableState;
 pub struct AuthorizedLlmStream {
     stream: Box<dyn LlmTextStream>,
     permit: ProviderExecutionPermit,
+    started: Instant,
+    first_meaningful_elapsed_millis: Option<u64>,
 }
 
 impl AuthorizedLlmStream {
@@ -36,9 +39,22 @@ impl AuthorizedLlmStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn next_chunk(&mut self) -> Result<Option<String>, ProviderExecutionError> {
-        self.stream
+        let chunk = self
+            .stream
             .next_chunk(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+            .map_err(ProviderExecutionError::from)?;
+        if self.first_meaningful_elapsed_millis.is_none()
+            && chunk.as_ref().is_some_and(|text| !text.trim().is_empty())
+        {
+            self.first_meaningful_elapsed_millis =
+                u64::try_from(self.started.elapsed().as_millis()).ok();
+        }
+        Ok(chunk)
+    }
+
+    #[must_use]
+    pub const fn first_meaningful_elapsed_millis(&self) -> Option<u64> {
+        self.first_meaningful_elapsed_millis
     }
 
     #[must_use]
@@ -79,6 +95,11 @@ impl AuthorizedSpokenLlmStream {
                 }
             }
         }
+    }
+
+    #[must_use]
+    pub const fn first_meaningful_elapsed_millis(&self) -> Option<u64> {
+        self.inner.first_meaningful_elapsed_millis()
     }
 
     #[must_use]
@@ -282,10 +303,16 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
+        let started = Instant::now();
         let stream = port
             .open_stream(request, &permit.cancellation)
             .map_err(ProviderExecutionError::from)?;
-        Ok(AuthorizedLlmStream { stream, permit })
+        Ok(AuthorizedLlmStream {
+            stream,
+            permit,
+            started,
+            first_meaningful_elapsed_millis: None,
+        })
     }
 
     /// Opens a phrase-oriented LLM stream for realtime spoken output.
