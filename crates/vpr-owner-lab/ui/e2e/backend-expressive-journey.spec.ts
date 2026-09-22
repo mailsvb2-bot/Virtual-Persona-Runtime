@@ -438,7 +438,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
-    "Голосовой ответ владельцу. Вторая фраза. Третья фраза.",
+    "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
 
   await expect.poll(async () => {
@@ -488,8 +488,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const speak = commands.filter((command) => command.topic === "did.speak");
   expect(speak).toHaveLength(3);
   expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
-    "Голосовой ответ владельцу.",
-    "Вторая фраза.",
+    "Сначала уточню один важный момент,",
+    "затем продолжу.",
     "Третья фраза.",
   ]);
 
