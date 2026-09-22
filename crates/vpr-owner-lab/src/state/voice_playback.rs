@@ -24,7 +24,7 @@ impl LabVoicePlaybackRegistry {
     pub(super) fn register_delivery(
         &self,
         evidence_turn_sequence: u64,
-        turn: Arc<ActiveTurn>,
+        turn: &Arc<ActiveTurn>,
         delivery: OutputDeliveryHandle,
     ) -> Result<u64, LabError> {
         let sequence = delivery.sequence();
@@ -32,7 +32,7 @@ impl LabVoicePlaybackRegistry {
         let entry = pending
             .entry(evidence_turn_sequence)
             .or_insert_with(|| PendingVoicePlayback {
-                turn: Arc::clone(&turn),
+                turn: Arc::clone(turn),
                 deliveries: BTreeMap::new(),
             });
         if entry.turn.snapshot().turn_id() != turn.snapshot().turn_id()
@@ -43,6 +43,10 @@ impl LabVoicePlaybackRegistry {
         Ok(sequence)
     }
 
+    /// Reconciles one browser-confirmed client transport send with a runtime-issued segment.
+    ///
+    /// # Errors
+    /// Returns an invalid-state or runtime lifecycle error for unknown or mismatched segments.
     pub fn acknowledge_voice_delivery_sent(
         &self,
         evidence_turn_sequence: u64,
@@ -62,6 +66,10 @@ impl LabVoicePlaybackRegistry {
             .map_err(LabError::Runtime)
     }
 
+    /// Reconciles one browser-observed audio start with a runtime-issued segment.
+    ///
+    /// # Errors
+    /// Returns an invalid-state or runtime lifecycle error for unknown or mismatched segments.
     pub fn acknowledge_voice_playback(
         &self,
         evidence_turn_sequence: u64,
