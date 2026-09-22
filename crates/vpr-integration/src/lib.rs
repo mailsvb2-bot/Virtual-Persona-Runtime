@@ -193,7 +193,7 @@ impl SttStreamEvent {
     }
 }
 
-pub trait SttAudioStream {
+pub trait SttAudioStream: Send {
     /// Sends one provider-neutral PCM chunk to the active recognition stream.
     ///
     /// # Errors
