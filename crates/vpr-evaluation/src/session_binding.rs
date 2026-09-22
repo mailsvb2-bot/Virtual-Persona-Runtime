@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub const RT0_OWNER_LAB_SESSION_BINDING_SCHEMA: &str =
-    "rt0-owner-lab-session-aggregate-binding-0.5";
+    "rt0-owner-lab-session-aggregate-binding-0.6";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -35,9 +35,10 @@ pub enum LabSessionBindingError {
 /// one exact provider-state artifact.
 ///
 /// The binding is intentionally evidence-only. It preserves runtime-backed canonical playback
-/// proof when every completed voice attempt was reconciled to `Played`, but browser observations
-/// alone cannot create that proof. Schema `0.5` additionally preserves payload-redacted canonical
-/// text-turn timing/usage, request-scoped A/V sync evidence, and the server-derived participant
+/// proof when every canonical output segment of every completed voice attempt was reconciled to
+/// `Played` and remote audio was observed. Browser observations alone cannot create that proof.
+/// Schema `0.6` preserves per-segment playback state, payload-redacted canonical text-turn
+/// timing/usage, request-scoped A/V sync evidence, and the server-derived participant
 /// role carried by each raw session snapshot. It does not infer participant identity from filenames.
 ///
 /// # Errors
