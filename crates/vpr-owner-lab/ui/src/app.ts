@@ -400,7 +400,6 @@ const waitForVoiceEvents = async (
       if (!finalResult) throw new Error("VOICE_STREAM_INCOMPLETE");
       return finalResult;
     }
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
   }
 };
 
