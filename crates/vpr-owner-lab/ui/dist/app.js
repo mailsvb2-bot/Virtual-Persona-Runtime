@@ -949,7 +949,6 @@ const finishMicrophoneTurn = async () => {
         updateControls();
     }
 };
-
 const toggleVoice = async () => {
     try {
         if (recording)
@@ -1025,7 +1024,6 @@ const interruptAvatar = async () => {
         updateControls();
     }
 };
-
 const endSession = async (kind) => {
     closePeerTransport();
     try {
