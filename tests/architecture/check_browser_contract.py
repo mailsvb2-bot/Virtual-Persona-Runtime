@@ -114,6 +114,10 @@ for required in (
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",
     "AV_SYNC_MAX_ATTEMPTS",
+    "getRTCStatsReport",
+    "liveKitAudioTrack",
+    "liveKitVideoTrack",
+    "TrackUnsubscribed",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
@@ -130,6 +134,9 @@ for required in (
     "#avatar",
     "width:100% !important",
     "max-width:100% !important",
+    "object-fit:contain",
+    ".shell > *",
+    "min-width:0",
     "overflow-x:hidden",
 ):
     if required not in styles:

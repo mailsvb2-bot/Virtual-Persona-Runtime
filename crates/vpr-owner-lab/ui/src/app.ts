@@ -37,6 +37,7 @@ type LiveKitTrack = {
   kind: string;
   mediaStreamTrack?: MediaStreamTrack;
   attach: (element: HTMLMediaElement) => HTMLMediaElement;
+  getRTCStatsReport?: () => Promise<RTCStatsReport | undefined>;
 };
 type LiveKitParticipant = {
   sendText: (text: string, options: { topic: string }) => Promise<void>;
@@ -51,6 +52,7 @@ type LiveKitSdk = {
   Room: new () => LiveKitRoom;
   RoomEvent: {
     TrackSubscribed: string;
+    TrackUnsubscribed: string;
     DataReceived: string;
     Reconnecting: string;
     Reconnected: string;
@@ -110,6 +112,8 @@ let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egre
 let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
+let liveKitAudioTrack: LiveKitTrack | null = null;
+let liveKitVideoTrack: LiveKitTrack | null = null;
 let realtimeTransportReady = false;
 let providerDataChannel: RTCDataChannel | null = null;
 let activeClientControl: ClientControl | null = null;
@@ -239,21 +243,42 @@ const postMediaEvidence = async (
   await refreshSessionEvidence();
 };
 
-const readAvSyncOffsetMillis = async (): Promise<number | null> => {
-  const currentPeer = peer;
-  if (!currentPeer) return null;
-  const audio: number[] = [];
-  const videoOffsets: number[] = [];
-  const stats = await currentPeer.getStats();
-  stats.forEach((raw) => {
+const collectPlayoutTimestamps = (
+  stats: RTCStatsReport | undefined,
+  expectedKind?: "audio" | "video",
+): number[] => {
+  const timestamps: number[] = [];
+  stats?.forEach((raw) => {
     const stat = raw as unknown as InboundRtpSyncStat;
     if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp)) return;
     const packetsReceived = stat.packetsReceived;
     if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0) return;
     const kind = stat.kind ?? stat.mediaType;
-    if (kind === "audio") audio.push(stat.estimatedPlayoutTimestamp as number);
-    else if (kind === "video") videoOffsets.push(stat.estimatedPlayoutTimestamp as number);
+    if (expectedKind && kind !== undefined && kind !== expectedKind) return;
+    timestamps.push(stat.estimatedPlayoutTimestamp as number);
   });
+  return timestamps;
+};
+
+const readAvSyncOffsetMillis = async (): Promise<number | null> => {
+  const currentPeer = peer;
+  let audio: number[] = [];
+  let videoOffsets: number[] = [];
+  if (currentPeer) {
+    const stats = await currentPeer.getStats();
+    audio = collectPlayoutTimestamps(stats, "audio");
+    videoOffsets = collectPlayoutTimestamps(stats, "video");
+  } else {
+    const audioStats = liveKitAudioTrack?.getRTCStatsReport;
+    const videoStats = liveKitVideoTrack?.getRTCStatsReport;
+    if (!audioStats || !videoStats) return null;
+    const [audioReport, videoReport] = await Promise.all([
+      audioStats.call(liveKitAudioTrack),
+      videoStats.call(liveKitVideoTrack),
+    ]);
+    audio = collectPlayoutTimestamps(audioReport, "audio");
+    videoOffsets = collectPlayoutTimestamps(videoReport, "video");
+  }
   if (audio.length !== 1 || videoOffsets.length !== 1) return null;
   const audioTimestamp = audio[0];
   const videoTimestamp = videoOffsets[0];
@@ -473,6 +498,7 @@ const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
 
 const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
+    liveKitVideoTrack = track;
     track.attach(video);
     stage?.classList.add("has-video");
     const requestFrame = (video as unknown as {
@@ -485,6 +511,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     }
     setStatus("Видео подключено", "ready");
   } else if (track.kind === "audio") {
+    liveKitAudioTrack = track;
     track.attach(avatarAudio);
     if (track.mediaStreamTrack) {
       void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
@@ -494,6 +521,8 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
 
 const clearRealtimeMedia = (): void => {
   realtimeTransportReady = false;
+  liveKitAudioTrack = null;
+  liveKitVideoTrack = null;
   video.srcObject = null;
   avatarAudio.srcObject = null;
   stage?.classList.remove("has-video");
@@ -634,6 +663,11 @@ const connectLiveKitTransport = async (
   room.on(sdk.RoomEvent.TrackSubscribed, (...args: unknown[]) => {
     const track = args[0] as LiveKitTrack | undefined;
     if (track) attachLiveKitTrack(track);
+  });
+  room.on(sdk.RoomEvent.TrackUnsubscribed, (...args: unknown[]) => {
+    const track = args[0] as LiveKitTrack | undefined;
+    if (track === liveKitAudioTrack) liveKitAudioTrack = null;
+    if (track === liveKitVideoTrack) liveKitVideoTrack = null;
   });
   room.on(sdk.RoomEvent.DataReceived, (...args: unknown[]) => {
     const payload = args[0];

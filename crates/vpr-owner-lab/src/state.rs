@@ -18,8 +18,8 @@ use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwne
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
-const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab conversation. Answer the user's latest utterance briefly in Russian. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
-const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance briefly in Russian. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
+const OWNER_LAB_FALLBACK_PROMPT_PREFIX: &str = "RT0 Owner Lab conversation. Answer the user's latest utterance in Russian using one or two short sentences, normally no more than 250 characters. Do not claim personal facts, opinions, memories, preferences, or private knowledge of the owner. If asked what the owner thinks, knows, remembers, or prefers, say that verified owner data is not available in this Owner Lab. User utterance: ";
+const VISITOR_PROMPT_PREFIX: &str = "RT0 visitor-scoped conversation with the same DIGITAL_TWIN Persona. Answer the visitor's latest utterance in Russian using one or two short sentences, normally no more than 250 characters. Visitor permissions do not expose owner-reviewed personal context. Do not state or imply owner personal facts, opinions, memories, preferences, private knowledge, or private instructions. If asked what the owner thinks, knows, remembers, or prefers, say that this visitor scope does not provide verified owner material. Visitor utterance: ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OwnerLabStartRequest {

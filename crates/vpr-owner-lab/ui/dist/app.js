@@ -50,6 +50,8 @@ let backendStatus = { session_state: "none", avatar_open: false, egress_enabled:
 let ownerCaptureReviewed = false;
 let peer = null;
 let liveKitRoom = null;
+let liveKitAudioTrack = null;
+let liveKitVideoTrack = null;
 let realtimeTransportReady = false;
 let providerDataChannel = null;
 let activeClientControl = null;
@@ -169,14 +171,9 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
     });
     await refreshSessionEvidence();
 };
-const readAvSyncOffsetMillis = async () => {
-    const currentPeer = peer;
-    if (!currentPeer)
-        return null;
-    const audio = [];
-    const videoOffsets = [];
-    const stats = await currentPeer.getStats();
-    stats.forEach((raw) => {
+const collectPlayoutTimestamps = (stats, expectedKind) => {
+    const timestamps = [];
+    stats?.forEach((raw) => {
         const stat = raw;
         if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp))
             return;
@@ -184,11 +181,33 @@ const readAvSyncOffsetMillis = async () => {
         if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0)
             return;
         const kind = stat.kind ?? stat.mediaType;
-        if (kind === "audio")
-            audio.push(stat.estimatedPlayoutTimestamp);
-        else if (kind === "video")
-            videoOffsets.push(stat.estimatedPlayoutTimestamp);
+        if (expectedKind && kind !== undefined && kind !== expectedKind)
+            return;
+        timestamps.push(stat.estimatedPlayoutTimestamp);
     });
+    return timestamps;
+};
+const readAvSyncOffsetMillis = async () => {
+    const currentPeer = peer;
+    let audio = [];
+    let videoOffsets = [];
+    if (currentPeer) {
+        const stats = await currentPeer.getStats();
+        audio = collectPlayoutTimestamps(stats, "audio");
+        videoOffsets = collectPlayoutTimestamps(stats, "video");
+    }
+    else {
+        const audioStats = liveKitAudioTrack?.getRTCStatsReport;
+        const videoStats = liveKitVideoTrack?.getRTCStatsReport;
+        if (!audioStats || !videoStats)
+            return null;
+        const [audioReport, videoReport] = await Promise.all([
+            audioStats.call(liveKitAudioTrack),
+            videoStats.call(liveKitVideoTrack),
+        ]);
+        audio = collectPlayoutTimestamps(audioReport, "audio");
+        videoOffsets = collectPlayoutTimestamps(videoReport, "video");
+    }
     if (audio.length !== 1 || videoOffsets.length !== 1)
         return null;
     const audioTimestamp = audio[0];
@@ -403,6 +422,7 @@ const dispatchClientCommand = async (command) => {
 };
 const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
+        liveKitVideoTrack = track;
         track.attach(video);
         stage?.classList.add("has-video");
         const requestFrame = video.requestVideoFrameCallback;
@@ -415,6 +435,7 @@ const attachLiveKitTrack = (track) => {
         setStatus("Видео подключено", "ready");
     }
     else if (track.kind === "audio") {
+        liveKitAudioTrack = track;
         track.attach(avatarAudio);
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
@@ -423,6 +444,8 @@ const attachLiveKitTrack = (track) => {
 };
 const clearRealtimeMedia = () => {
     realtimeTransportReady = false;
+    liveKitAudioTrack = null;
+    liveKitVideoTrack = null;
     video.srcObject = null;
     avatarAudio.srcObject = null;
     stage?.classList.remove("has-video");
@@ -556,6 +579,13 @@ const connectLiveKitTransport = async (transport) => {
         const track = args[0];
         if (track)
             attachLiveKitTrack(track);
+    });
+    room.on(sdk.RoomEvent.TrackUnsubscribed, (...args) => {
+        const track = args[0];
+        if (track === liveKitAudioTrack)
+            liveKitAudioTrack = null;
+        if (track === liveKitVideoTrack)
+            liveKitVideoTrack = null;
     });
     room.on(sdk.RoomEvent.DataReceived, (...args) => {
         const payload = args[0];
