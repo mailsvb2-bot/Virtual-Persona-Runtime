@@ -68,9 +68,18 @@ fn pull_stream_yields_text_before_completion_and_keeps_usage() {
     let provider = adapter(serve_once("200 OK", body));
     let probe = Probe(AtomicBool::new(false));
     let mut stream = provider
-        .open_stream(&LlmRequest { locale: "ru-RU".into(), context: "Коротко".into() }, &probe)
+        .open_stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                context: "Коротко".into(),
+            },
+            &probe,
+        )
         .unwrap();
-    assert_eq!(stream.next_chunk(&probe).unwrap().as_deref(), Some("Первая."));
+    assert_eq!(
+        stream.next_chunk(&probe).unwrap().as_deref(),
+        Some("Первая.")
+    );
     assert_eq!(stream.next_chunk(&probe).unwrap(), None);
     assert_eq!(stream.usage().input_units, Some(5));
     assert_eq!(stream.usage().output_units, Some(2));
