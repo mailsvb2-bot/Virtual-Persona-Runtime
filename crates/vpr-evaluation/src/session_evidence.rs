@@ -143,6 +143,12 @@ pub enum LabSessionAggregateError {
     Overflow,
 }
 
+/// Aggregates sanitized Owner Lab session snapshots into deterministic RT0 evidence.
+///
+/// # Errors
+///
+/// Returns an error when input is empty, duplicated, incomplete, structurally invalid,
+/// contains invalid media evidence, or would overflow aggregate counters.
 pub fn aggregate_owner_lab_session_evidence(
     snapshots: &[LabSessionEvidenceSnapshot],
 ) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
