@@ -259,7 +259,6 @@ const waitForVoiceEvents = async (requestSequence, onSegment) => {
                 throw new Error("VOICE_STREAM_INCOMPLETE");
             return finalResult;
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 20));
     }
 };
 const refreshSessionEvidence = async () => {
