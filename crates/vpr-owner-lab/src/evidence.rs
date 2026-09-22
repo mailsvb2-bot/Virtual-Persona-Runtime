@@ -195,6 +195,9 @@ impl LabSessionEvidenceRecorder {
     ///
     /// Later segments may extend the same canonical turn but cannot replace the first output
     /// sequence used for first-audio playback evidence.
+    ///
+    /// # Errors
+    /// Fails for malformed segments, unknown requests, or attempts that are no longer pending.
     pub fn bind_voice_segment(
         &mut self,
         request_sequence: u64,
