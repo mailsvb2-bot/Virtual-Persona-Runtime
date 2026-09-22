@@ -351,6 +351,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   await expect(page.locator("#metric-stt")).toHaveText(/\d+ мс/);
   await expect(page.locator("#metric-llm")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-llm-first")).toHaveText(/\d+ мс/);
   await expect(page.locator("#metric-server-total")).toHaveText(/\d+ мс/);
   await expect(page.locator("#metric-first-audio")).toHaveText(/\d+ мс/);
   await expect(page.locator("#metric-video-ready")).toHaveText(/\d+ мс/);
