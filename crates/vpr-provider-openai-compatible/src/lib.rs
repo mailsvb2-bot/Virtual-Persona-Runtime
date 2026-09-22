@@ -71,7 +71,6 @@ impl OpenAiCompatibleConfig {
         self
     }
 
-
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
@@ -339,10 +338,7 @@ mod tests {
         format!("http://{address}/v1/chat/completions")
     }
 
-    fn serve_once_capture(
-        status: &str,
-        body: &'static str,
-    ) -> (String, mpsc::Receiver<String>) {
+    fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let status = status.to_owned();
