@@ -393,11 +393,8 @@ const monitorRemoteAudio = () => {
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
-                if (voice.responseComplete) {
-                    void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
-                        .then(() => collectAvSyncEvidence(voice.requestSequence))
-                        .catch(() => undefined);
-                }
+                void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
+                    .catch(() => undefined);
             }
         }
         else if (voice?.speaking) {
@@ -917,27 +914,19 @@ const finishMicrophoneTurn = async () => {
         const started = await apiBinary("/api/voice/turn", pcm, requestSequence);
         if (started.request_sequence !== requestSequence)
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
-        const pendingDeliveryAcks = [];
         const result = await waitForVoiceEvents(requestSequence, async (segment) => {
             if (segment.client_command) {
                 await dispatchClientCommand(segment.client_command);
-                pendingDeliveryAcks.push({
-                    turn: segment.evidence_turn_sequence,
-                    output: segment.evidence_output_sequence,
+                await api("/api/avatar/client-delivery-sent", {
+                    evidence_turn_sequence: segment.evidence_turn_sequence,
+                    evidence_output_sequence: segment.evidence_output_sequence,
                 });
             }
         });
-        for (const delivery of pendingDeliveryAcks) {
-            await api("/api/avatar/client-delivery-sent", {
-                evidence_turn_sequence: delivery.turn,
-                evidence_output_sequence: delivery.output,
-            });
-        }
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
             if (voice.audioStartedElapsed !== null) {
-                await postMediaEvidence("audio_started", voice.audioStartedElapsed, requestSequence);
                 await collectAvSyncEvidence(requestSequence).catch(() => undefined);
             }
         }
