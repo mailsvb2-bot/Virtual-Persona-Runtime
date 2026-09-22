@@ -8,8 +8,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.7";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.7";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -67,11 +67,17 @@ pub enum LabVoiceAttemptStatus {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct LabVoiceOutputEvidence {
+    pub canonical_output_sequence: u64,
+    pub playback_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LabVoiceAttemptEvidence {
     pub request_sequence: u64,
     pub canonical_turn_sequence: Option<u64>,
-    pub canonical_output_sequence: Option<u64>,
-    pub canonical_playback_confirmed: bool,
+    pub canonical_outputs: Vec<LabVoiceOutputEvidence>,
     pub status: LabVoiceAttemptStatus,
     pub failure_code: Option<String>,
     pub stt_millis: Option<u64>,
@@ -242,7 +248,13 @@ impl SessionAggregateAccumulator {
         let playback_requests: HashSet<u64> = snapshot
             .voice_attempts
             .iter()
-            .filter(|attempt| attempt.canonical_playback_confirmed)
+            .filter(|attempt| {
+                !attempt.canonical_outputs.is_empty()
+                    && attempt
+                        .canonical_outputs
+                        .iter()
+                        .all(|output| output.playback_confirmed)
+            })
             .map(|attempt| attempt.request_sequence)
             .collect();
         let audio_requests: HashSet<u64> = snapshot
@@ -251,11 +263,9 @@ impl SessionAggregateAccumulator {
             .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
             .filter_map(|event| event.request_sequence)
             .collect();
-        if playback_requests != audio_requests {
-            return Err(LabSessionAggregateError::InvalidSnapshot);
-        }
-        let derived_playback =
-            !completed_requests.is_empty() && playback_requests == completed_requests;
+        let derived_playback = !completed_requests.is_empty()
+            && playback_requests == completed_requests
+            && audio_requests == completed_requests;
         if snapshot.canonical_playback_proven != derived_playback {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -271,7 +281,9 @@ impl SessionAggregateAccumulator {
             &playback_requests,
             &mut self.av_sync,
         )?;
-        let derived_av_sync = derived_playback && av_sync_requests == completed_requests;
+        let derived_av_sync = !completed_requests.is_empty()
+            && audio_requests == completed_requests
+            && av_sync_requests == completed_requests;
         if snapshot.av_sync_proven != derived_av_sync {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -352,8 +364,7 @@ impl SessionAggregateAccumulator {
             .as_deref()
             .is_none_or(|code| code.trim().is_empty())
             || attempt.canonical_turn_sequence.is_some()
-            || attempt.canonical_output_sequence.is_some()
-            || attempt.canonical_playback_confirmed
+            || !attempt.canonical_outputs.is_empty()
             || attempt.stt_millis.is_some()
             || attempt.llm_millis.is_some()
             || attempt.llm_first_meaningful_millis.is_some()
@@ -377,7 +388,6 @@ impl SessionAggregateAccumulator {
     ) -> Result<(), LabSessionAggregateError> {
         let (
             Some(turn),
-            Some(output),
             Some(stt_ms),
             Some(llm_ms),
             Some(llm_first_meaningful_ms),
@@ -387,7 +397,6 @@ impl SessionAggregateAccumulator {
             Some(llm_usage),
         ) = (
             attempt.canonical_turn_sequence,
-            attempt.canonical_output_sequence,
             attempt.stt_millis,
             attempt.llm_millis,
             attempt.llm_first_meaningful_millis,
@@ -399,8 +408,13 @@ impl SessionAggregateAccumulator {
         else {
             return Err(LabSessionAggregateError::IncompleteAttempt);
         };
+        let mut seen_outputs = HashSet::new();
         if turn == 0
-            || output == 0
+            || attempt.canonical_outputs.is_empty()
+            || attempt.canonical_outputs.iter().any(|output| {
+                output.canonical_output_sequence == 0
+                    || !seen_outputs.insert(output.canonical_output_sequence)
+            })
             || llm_first_meaningful_ms > llm_ms
             || llm_first_meaningful_ms > total_ms
             || attempt.failure_code.is_some()
