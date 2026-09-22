@@ -55,6 +55,16 @@ enum VoiceOutputMode<'a> {
     Streaming(&'a mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>),
 }
 
+struct VoiceGeneration {
+    reply: String,
+    usage: UsageEvidence,
+    llm_millis: u64,
+    first_meaningful_millis: u64,
+    avatar_millis: u64,
+    deliveries: Vec<OutputDeliveryHandle>,
+    client_command: Option<LabClientCommand>,
+}
+
 impl OwnerLabEngine {
     #[must_use]
     pub fn with_stt(mut self, stt: Box<dyn SttPort>) -> Self {
@@ -161,21 +171,10 @@ impl OwnerLabEngine {
             context: llm_context,
         };
 
-        let (
-            reply,
-            llm_usage,
-            llm_millis,
-            llm_first_meaningful_millis,
-            avatar_millis,
-            deliveries,
-            client_command,
-        ) = match &mut output_mode {
-            VoiceOutputMode::Buffered => self.buffered_generation(
-                &turn,
-                llm.as_ref(),
-                handle,
-                &request,
-            )?,
+        let generation = match &mut output_mode {
+            VoiceOutputMode::Buffered => {
+                self.buffered_generation(&turn, llm.as_ref(), handle, &request)?
+            }
             VoiceOutputMode::Streaming(emit_segment) => self.streaming_generation(
                 &turn,
                 llm.as_ref(),
@@ -186,30 +185,33 @@ impl OwnerLabEngine {
             )?,
         };
 
-        let evidence_output_sequence = deliveries
+        let evidence_output_sequence = generation.deliveries
             .first()
             .map(OutputDeliveryHandle::sequence)
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
         self.pending_voice_playback.insert(
             evidence_turn_sequence,
-            PendingVoicePlayback { turn, deliveries },
+            PendingVoicePlayback {
+                turn,
+                deliveries: generation.deliveries,
+            },
         );
 
         Ok(LabVoiceResult {
             transcript: transcript.text,
-            reply,
+            reply: generation.reply,
             locale: transcript.locale,
             evidence_turn_sequence,
             evidence_output_sequence,
             stt_millis,
-            llm_millis,
-            llm_first_meaningful_millis,
-            avatar_millis,
+            llm_millis: generation.llm_millis,
+            llm_first_meaningful_millis: generation.first_meaningful_millis,
+            avatar_millis: generation.avatar_millis,
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
-            llm_usage: map_usage(&llm_usage),
-            client_command,
+            llm_usage: map_usage(&generation.usage),
+            client_command: generation.client_command,
         })
     }
 
@@ -219,7 +221,7 @@ impl OwnerLabEngine {
         llm: &dyn LlmPort,
         handle: &RealtimeAvatarHandle,
         request: &LlmRequest,
-    ) -> Result<(String, UsageEvidence, u64, u64, u64, Vec<OutputDeliveryHandle>, Option<LabClientCommand>), LabError> {
+    ) -> Result<VoiceGeneration, LabError> {
         let llm_started = Instant::now();
         let mut generated = TimedGeneratedTextBuffer::start();
         let llm_usage = turn
@@ -235,22 +237,18 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        let (delivery, client_command) = deliver_phrase(
-            turn,
-            self.provider.as_ref(),
-            handle,
-            &reply,
-        )?;
+        let (delivery, client_command) =
+            deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
         let avatar_millis = elapsed_millis(avatar_started);
-        Ok((
+        Ok(VoiceGeneration {
             reply,
-            llm_usage,
+            usage: llm_usage,
             llm_millis,
-            first_meaningful,
+            first_meaningful_millis: first_meaningful,
             avatar_millis,
-            vec![delivery],
+            deliveries: vec![delivery],
             client_command,
-        ))
+        })
     }
 
     fn streaming_generation(
@@ -261,7 +259,7 @@ impl OwnerLabEngine {
         request: &LlmRequest,
         evidence_turn_sequence: u64,
         emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
-    ) -> Result<(String, UsageEvidence, u64, u64, u64, Vec<OutputDeliveryHandle>, Option<LabClientCommand>), LabError> {
+    ) -> Result<VoiceGeneration, LabError> {
         let llm_started = Instant::now();
         let mut stream = turn
             .open_llm_stream(llm, request)
@@ -289,15 +287,13 @@ impl OwnerLabEngine {
                 let avatar_started = Instant::now();
                 let (delivery, client_command) =
                     deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
-                avatar_millis =
-                    avatar_millis.saturating_add(elapsed_millis(avatar_started));
+                avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
                 let segment = LabVoiceSegment {
                     evidence_turn_sequence,
                     evidence_output_sequence: delivery.sequence(),
                     client_command,
                 };
-                emit_segment(segment)
-                    .map_err(|error| terminalize_failed_turn(turn, error))?;
+                emit_segment(segment).map_err(|error| terminalize_failed_turn(turn, error))?;
                 deliveries.push(delivery);
             }
         }
@@ -325,15 +321,15 @@ impl OwnerLabEngine {
         if reply.trim().is_empty() || deliveries.is_empty() {
             return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
         }
-        Ok((
+        Ok(VoiceGeneration {
             reply,
-            stream.usage(),
+            usage: stream.usage(),
             llm_millis,
-            first_meaningful,
+            first_meaningful_millis: first_meaningful,
             avatar_millis,
             deliveries,
-            None,
-        ))
+            client_command: None,
+        })
     }
 }
 
