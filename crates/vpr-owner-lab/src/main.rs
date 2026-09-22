@@ -37,6 +37,7 @@ const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
+const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
@@ -169,6 +170,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         (&Method::Get, "/app.js") => static_response(APP_JS, "text/javascript; charset=utf-8"),
         (&Method::Get, "/owner-capture.js") => {
             static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/voice-command-scheduler.js") => {
+            static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
         }
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
