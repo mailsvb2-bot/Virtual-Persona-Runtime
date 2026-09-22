@@ -389,7 +389,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
-    "Голосовой ответ владельцу.",
+    "Голосовой ответ владельцу. Вторая фраза.",
   );
 
   await expect.poll(async () => {
@@ -436,11 +436,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
-  const speak = commands.find((command) => command.topic === "did.speak");
-  expect(speak).toBeDefined();
-  expect(JSON.parse(speak?.text ?? "{}")).toMatchObject({
-    script: { type: "text", input: "Голосовой ответ владельцу." },
-  });
+  const speak = commands.filter((command) => command.topic === "did.speak");
+  expect(speak).toHaveLength(2);
+  expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
+    "Голосовой ответ владельцу.",
+    "Вторая фраза.",
+  ]);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
