@@ -46,6 +46,7 @@ const statusNode = byId("status");
 const evidenceNode = byId("evidence");
 const metricStt = byId("metric-stt");
 const metricLlm = byId("metric-llm");
+const metricLlmFirst = byId("metric-llm-first");
 const metricServerTotal = byId("metric-server-total");
 const metricTextFirst = byId("metric-text-first");
 const metricFirstAudio = byId("metric-first-audio");
@@ -126,6 +127,7 @@ const sumKnownCost = (usages, key) => {
 const resetTelemetry = () => {
     metricStt.textContent = "—";
     metricLlm.textContent = "—";
+    metricLlmFirst.textContent = "—";
     metricServerTotal.textContent = "—";
     metricTextFirst.textContent = "—";
     metricFirstAudio.textContent = "—";
@@ -139,6 +141,7 @@ const renderTelemetry = (snapshot) => {
     const text = lastCompleted(snapshot.text_attempts);
     metricStt.textContent = formatMillis(voice?.stt_millis);
     metricLlm.textContent = formatMillis(voice?.llm_millis);
+    metricLlmFirst.textContent = formatMillis(voice?.llm_first_meaningful_millis);
     metricServerTotal.textContent = formatMillis(voice?.server_total_millis ?? text?.server_total_millis);
     metricTextFirst.textContent = formatMillis(text?.first_meaningful_response_millis);
     const firstAudio = voice
