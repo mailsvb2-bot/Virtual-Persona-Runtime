@@ -154,7 +154,10 @@ fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
         )
         .unwrap();
 
-    assert_eq!(stream.next_chunk().unwrap().as_deref(), Some("Первая фраза."));
+    assert_eq!(
+        stream.next_chunk().unwrap().as_deref(),
+        Some("Первая фраза.")
+    );
     turn.interrupt_handle().interrupt().unwrap();
     let error = stream.next_chunk().unwrap_err();
     assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
