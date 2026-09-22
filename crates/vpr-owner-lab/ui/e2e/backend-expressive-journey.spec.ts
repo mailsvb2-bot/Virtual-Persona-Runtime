@@ -321,12 +321,14 @@ const recordStreamingVoiceTurn = async (
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
   )).toBe(1);
 
-  await page.waitForTimeout(150);
+  await page.waitForTimeout(250);
   await expect.poll(async () => page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
   )).toBe(1);
+  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
+  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 
   await page.evaluate(() => {
     const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
@@ -342,7 +344,6 @@ const recordStreamingVoiceTurn = async (
     fakeWindow.__vprExpressivePlaybackDone?.();
   });
 
-  await expect(page.locator("#status")).not.toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 };
