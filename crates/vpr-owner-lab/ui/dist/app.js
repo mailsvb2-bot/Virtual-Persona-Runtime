@@ -954,7 +954,12 @@ const finishMicrophoneTurn = async () => {
         if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence)
             activeVoiceEvidence = null;
         await refreshSessionEvidence();
-        setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+        if (error instanceof Error && error.message === "TURN_CANCELLED") {
+            setStatus("Ответ прерван", "ready");
+        }
+        else {
+            setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+        }
     }
     finally {
         voiceRequestInFlight = false;
@@ -1008,11 +1013,13 @@ const interruptAvatar = async () => {
         ? playbackId !== null
         : true;
     const clientReady = !textRequestInFlight
-        && !voiceRequestInFlight
         && realtimeTransportReady
         && activeClientControl?.interrupt === true
         && playbackReady;
     try {
+        if (voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,
@@ -1023,7 +1030,9 @@ const interruptAvatar = async () => {
             await refreshSessionEvidence();
             return;
         }
-        await api("/api/avatar/interrupt", {});
+        if (!voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         await refreshSessionEvidence();
     }
     catch (error) {
