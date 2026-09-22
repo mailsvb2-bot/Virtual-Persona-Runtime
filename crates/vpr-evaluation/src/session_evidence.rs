@@ -325,10 +325,7 @@ impl SessionAggregateAccumulator {
         }
     }
 
-    fn consume_attempt(
-        &mut self,
-        attempt: &LabVoiceAttemptEvidence,
-    ) -> Result<(), LabSessionAggregateError> {
+    fn consume_attempt(&mut self, attempt: &LabVoiceAttemptEvidence) -> Result<(), LabSessionAggregateError> {
         match attempt.status {
             LabVoiceAttemptStatus::Pending => Err(LabSessionAggregateError::IncompleteAttempt),
             LabVoiceAttemptStatus::Failed => self.consume_failed_attempt(attempt),
@@ -441,10 +438,7 @@ impl SessionAggregateAccumulator {
         add_cost(&mut self.provider_charge, llm.provider_charge_microunits)
     }
 
-    fn finish(
-        self,
-        sessions: u32,
-    ) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
+    fn finish(self, sessions: u32) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
         Ok(LabSessionEvidenceAggregate {
             schema_version: RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA.into(),
             source_schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
@@ -473,9 +467,7 @@ impl SessionAggregateAccumulator {
     }
 }
 
-fn validate_snapshot_header(
-    snapshot: &LabSessionEvidenceSnapshot,
-) -> Result<(), LabSessionAggregateError> {
+fn validate_snapshot_header(snapshot: &LabSessionEvidenceSnapshot) -> Result<(), LabSessionAggregateError> {
     if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
         || snapshot.session_sequence == 0
