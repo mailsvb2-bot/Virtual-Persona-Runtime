@@ -193,6 +193,8 @@ if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if '&& realtimeReadiness.audio' not in app:
     raise SystemExit("Owner Lab voice readiness must require the realtime audio modality")
+if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
+    raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
 
 for required in (
     "#avatar",
