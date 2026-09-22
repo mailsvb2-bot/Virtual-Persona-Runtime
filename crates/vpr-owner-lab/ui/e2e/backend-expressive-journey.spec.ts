@@ -215,6 +215,7 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
           __vprExpressiveDisconnect?: () => void;
           __vprExpressiveLoseVideo?: () => void;
           __vprExpressiveRestoreVideo?: () => void;
+          __vprExpressivePlaybackDone?: () => void;
         };
         fakeWindow.__vprExpressiveDisconnect = () => {
           for (const handler of this.handlers.get(roomEvents.Disconnected) ?? []) handler();
