@@ -48,7 +48,7 @@ struct AppState {
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
-    voice_streams: ParkingMutex<std::collections::BTreeMap<u64, http_voice::VoiceStreamState>>,
+    voice_streams: http_voice::VoiceStreamRegistry,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -122,7 +122,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
-        voice_streams: ParkingMutex::new(std::collections::BTreeMap::new()),
+        voice_streams: http_voice::VoiceStreamRegistry::default(),
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -239,7 +239,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                         .lock()
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
-                    state.voice_streams.lock().clear();
+                    state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
             })
@@ -315,7 +315,7 @@ fn request_voice_cancel(state: &AppState) {
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
     state.session_end_requested.store(true, Ordering::Release);
     state.evidence.lock().seal_session();
-    state.voice_streams.lock().clear();
+    state.voice_streams.clear();
     request_voice_cancel(state);
     let mut engine = state
         .engine
