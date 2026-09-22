@@ -292,6 +292,33 @@ fn assert_cancelled_voice_events(events: &[Value]) {
     assert!(!events.iter().any(|event| event["kind"] == "complete"));
 }
 
+fn assert_completed_voice_contract(events: &[Value]) {
+    assert!(
+        events.iter().any(|event| event["kind"] == "segment"),
+        "streaming voice must expose at least one canonical output segment"
+    );
+    let result = completed_voice_result(events);
+    assert_eq!(result["transcript"], "Привет");
+    assert_eq!(result["reply"], "Здравствуйте");
+    assert_eq!(result["locale"], "ru-RU");
+    assert!(result["evidence_turn_sequence"].as_u64().unwrap() > 0);
+    assert!(result["evidence_output_sequence"].as_u64().unwrap() > 0);
+    assert_eq!(result["stt_usage"]["input_units"], 100);
+    assert_eq!(result["llm_usage"]["input_units"], 7);
+    assert_eq!(result["llm_usage"]["output_units"], 1);
+
+    let serialized = serde_json::to_string(events).unwrap();
+    for secret in [
+        "did-integration-secret",
+        "stt-integration-secret",
+        "llm-integration-secret",
+        "stream-voice",
+        "session-voice",
+    ] {
+        assert!(!serialized.contains(secret));
+    }
+}
+
 fn launch_owner_lab(port: u16, did_endpoint: &str) -> ChildGuard {
     let child = Command::new(env!("CARGO_BIN_EXE_vpr-owner-lab"))
         .env("VPR_DID_ENDPOINT", did_endpoint)
@@ -588,29 +615,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
 
     let request_sequence = start_voice_turn(port, &host, &csrf, 1, &pcm);
     let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
-    assert!(
-        voice_events.iter().any(|event| event["kind"] == "segment"),
-        "streaming voice must expose at least one canonical output segment"
-    );
-    let voice_json = completed_voice_result(&voice_events);
-    assert_eq!(voice_json["transcript"], "Привет");
-    assert_eq!(voice_json["reply"], "Здравствуйте");
-    assert_eq!(voice_json["locale"], "ru-RU");
-    assert!(voice_json["evidence_turn_sequence"].as_u64().unwrap() > 0);
-    assert!(voice_json["evidence_output_sequence"].as_u64().unwrap() > 0);
-    assert_eq!(voice_json["stt_usage"]["input_units"], 100);
-    assert_eq!(voice_json["llm_usage"]["input_units"], 7);
-    assert_eq!(voice_json["llm_usage"]["output_units"], 1);
-    let serialized_events = serde_json::to_string(&voice_events).unwrap();
-    for secret in [
-        "did-integration-secret",
-        "stt-integration-secret",
-        "llm-integration-secret",
-        "stream-voice",
-        "session-voice",
-    ] {
-        assert!(!serialized_events.contains(secret));
-    }
+    assert_completed_voice_contract(&voice_events);
 
     assert_session_evidence_contract(port, &host, &csrf, evidence_session);
 
