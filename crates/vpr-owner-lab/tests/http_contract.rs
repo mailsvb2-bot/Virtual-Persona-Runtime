@@ -238,13 +238,7 @@ fn post_binary(
     http_bytes(port, "POST", path, host, &headers, body)
 }
 
-fn start_voice_turn(
-    port: u16,
-    host: &str,
-    csrf: &str,
-    request_sequence: u64,
-    pcm: &[u8],
-) -> u64 {
+fn start_voice_turn(port: u16, host: &str, csrf: &str, request_sequence: u64, pcm: &[u8]) -> u64 {
     let started = post_binary(
         port,
         host,
@@ -261,12 +255,7 @@ fn start_voice_turn(
     accepted
 }
 
-fn collect_voice_events(
-    port: u16,
-    host: &str,
-    csrf: &str,
-    request_sequence: u64,
-) -> Vec<Value> {
+fn collect_voice_events(port: u16, host: &str, csrf: &str, request_sequence: u64) -> Vec<Value> {
     let mut collected = Vec::new();
     for _ in 0..16 {
         let response = post(
