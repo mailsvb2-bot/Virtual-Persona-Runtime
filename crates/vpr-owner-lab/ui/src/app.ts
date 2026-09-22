@@ -9,7 +9,7 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
-type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
+type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type RealtimeTransport =
@@ -52,6 +52,7 @@ type VoiceAttemptEvidence = {
   status: string;
   stt_millis: number | null;
   llm_millis: number | null;
+  llm_first_meaningful_millis: number | null;
   avatar_millis: number | null;
   server_total_millis: number | null;
   stt_usage: UsageEvidence | null;
@@ -152,6 +153,7 @@ const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 const metricStt = byId<HTMLElement>("metric-stt");
 const metricLlm = byId<HTMLElement>("metric-llm");
+const metricLlmFirst = byId<HTMLElement>("metric-llm-first");
 const metricServerTotal = byId<HTMLElement>("metric-server-total");
 const metricTextFirst = byId<HTMLElement>("metric-text-first");
 const metricFirstAudio = byId<HTMLElement>("metric-first-audio");
@@ -251,6 +253,7 @@ const sumKnownCost = (
 const resetTelemetry = (): void => {
   metricStt.textContent = "—";
   metricLlm.textContent = "—";
+  metricLlmFirst.textContent = "—";
   metricServerTotal.textContent = "—";
   metricTextFirst.textContent = "—";
   metricFirstAudio.textContent = "—";
@@ -265,6 +268,7 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
   const text = lastCompleted(snapshot.text_attempts);
   metricStt.textContent = formatMillis(voice?.stt_millis);
   metricLlm.textContent = formatMillis(voice?.llm_millis);
+  metricLlmFirst.textContent = formatMillis(voice?.llm_first_meaningful_millis);
   metricServerTotal.textContent = formatMillis(voice?.server_total_millis ?? text?.server_total_millis);
   metricTextFirst.textContent = formatMillis(text?.first_meaningful_response_millis);
 
