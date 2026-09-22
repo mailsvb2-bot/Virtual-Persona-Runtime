@@ -13,6 +13,7 @@ EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
+VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 STYLES = UI / "styles.css"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
 EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
@@ -34,6 +35,7 @@ expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 styles = STYLES.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
 evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
@@ -195,6 +197,13 @@ if '&& realtimeReadiness.audio' not in app:
     raise SystemExit("Owner Lab voice readiness must require the realtime audio modality")
 if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
     raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
+for required in (
+    "private queueTail: Promise<void> = Promise.resolve()",
+    "this.queueTail.then(run, run)",
+    "this.queueTail = scheduled.then(",
+):
+    if required not in voice_scheduler:
+        raise SystemExit(f"Owner Lab playback scheduler must preserve strict FIFO serialization: {required}")
 
 for required in (
     "#avatar",
