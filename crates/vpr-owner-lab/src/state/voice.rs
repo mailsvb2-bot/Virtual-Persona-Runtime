@@ -236,7 +236,7 @@ impl OwnerLabEngine {
             deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
         let output_sequence = self.voice_playback.register_delivery(
             evidence_turn_sequence,
-            Arc::clone(turn),
+            turn,
             delivery,
         )?;
         let avatar_millis = elapsed_millis(avatar_started);
