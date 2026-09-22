@@ -1,4 +1,5 @@
 import { mountOwnerCapture } from "./owner-capture.js";
+import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
@@ -506,6 +507,7 @@ const handleProviderClientEvent = (raw) => {
         }
         else if (normalized?.kind === "playback_done") {
             providerPlaybackId = null;
+            voiceCommandScheduler.playbackDone();
         }
         updateControls();
     })
@@ -527,6 +529,7 @@ const dispatchClientCommand = async (command) => {
         throw new Error("CLIENT_TRANSPORT_UNAVAILABLE");
     await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
+const voiceCommandScheduler = new PlaybackAwareCommandScheduler(dispatchClientCommand);
 const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
@@ -585,6 +588,7 @@ const clearRealtimeMedia = () => {
     updateControls();
 };
 const closePeerTransport = () => {
+    voiceCommandScheduler.interrupt();
     stopMicrophoneCapture();
     stopRemoteEvidence();
     providerDataChannel?.close();
@@ -916,7 +920,9 @@ const finishMicrophoneTurn = async () => {
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
         const result = await waitForVoiceEvents(requestSequence, async (segment) => {
             if (segment.client_command) {
-                await dispatchClientCommand(segment.client_command);
+                const sent = await voiceCommandScheduler.dispatch(segment.client_command);
+                if (!sent)
+                    return;
                 await api("/api/avatar/client-delivery-sent", {
                     evidence_turn_sequence: segment.evidence_turn_sequence,
                     evidence_output_sequence: segment.evidence_output_sequence,
@@ -946,10 +952,15 @@ const finishMicrophoneTurn = async () => {
 };
 const toggleVoice = async () => {
     try {
-        if (recording)
+        if (recording) {
             await finishMicrophoneTurn();
-        else
+        }
+        else {
+            if (voiceCommandScheduler.hasActivePlayback) {
+                await interruptAvatar();
+            }
             await startMicrophone();
+        }
     }
     catch (error) {
         stopMicrophoneCapture();
@@ -994,6 +1005,7 @@ const interruptAvatar = async () => {
         && realtimeReadiness.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    voiceCommandScheduler.interrupt();
     try {
         if (voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
