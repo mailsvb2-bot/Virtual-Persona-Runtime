@@ -50,7 +50,7 @@ pub(super) fn route_post(
                 reject_if_session_ending(state)?;
                 state
                     .voice_playback
-                    .acknowledge_sent(
+                    .acknowledge_voice_delivery_sent(
                         body.evidence_turn_sequence,
                         body.evidence_output_sequence,
                     )
