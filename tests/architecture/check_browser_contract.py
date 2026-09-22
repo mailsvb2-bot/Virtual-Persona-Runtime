@@ -182,6 +182,17 @@ for required in (
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
 
 for required in (
+    "realtimeReadiness = { control: false, audio: false, video: false }",
+    "realtimeReadiness.control",
+    "realtimeReadiness.audio",
+    "realtimeReadiness.video",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
+if "realtimeTransportReady" in app:
+    raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
+
+for required in (
     "#avatar",
     "width:100% !important",
     "max-width:100% !important",
