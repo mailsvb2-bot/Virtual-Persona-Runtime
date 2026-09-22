@@ -142,4 +142,3 @@ pub trait LlmPort: Send + Sync {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError>;
 }
-
