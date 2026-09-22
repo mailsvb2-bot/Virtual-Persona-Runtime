@@ -222,20 +222,75 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
     }
     return payload;
 };
-const apiBinary = async (path, body, requestSequence) => {
-    const response = await fetch(path, {
+const streamVoiceTurn = async (body, requestSequence) => {
+    const response = await fetch("/api/voice/turn/stream", {
         method: "POST",
-        headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken, "X-VPR-Evidence-Request": String(requestSequence) },
+        headers: {
+            "Content-Type": "application/octet-stream",
+            "X-VPR-CSRF": csrfToken,
+            "X-VPR-Evidence-Request": String(requestSequence),
+        },
         body,
         credentials: "same-origin",
         cache: "no-store",
     });
-    const payload = await response.json();
     if (!response.ok) {
-        const code = payload.code ?? `HTTP_${response.status}`;
-        throw new Error(code);
+        const payload = await response.json();
+        throw new Error(payload.code ?? `HTTP_${response.status}`);
     }
-    return payload;
+    const reader = response.body?.getReader();
+    if (!reader)
+        throw new Error("VOICE_STREAM_UNAVAILABLE");
+    const decoder = new TextDecoder();
+    const acknowledgements = [];
+    let pending = "";
+    let complete = null;
+    const handleMessage = async (message) => {
+        if (message.type === "error")
+            throw new Error(message.code);
+        if (message.type === "complete") {
+            if (complete)
+                throw new Error("VOICE_STREAM_DUPLICATE_COMPLETE");
+            complete = message.result;
+            return;
+        }
+        if (complete)
+            throw new Error("VOICE_STREAM_AFTER_COMPLETE");
+        const command = message.phrase.client_command;
+        if (!command)
+            return;
+        await dispatchClientCommand(command);
+        setStatus("Отвечаю…", "ready");
+        acknowledgements.push(api("/api/avatar/client-delivery-sent", {
+            evidence_turn_sequence: message.phrase.evidence_turn_sequence,
+            evidence_output_sequence: message.phrase.evidence_output_sequence,
+        }));
+    };
+    const consumeLine = async (line) => {
+        const trimmed = line.trim();
+        if (!trimmed)
+            return;
+        await handleMessage(JSON.parse(trimmed));
+    };
+    while (true) {
+        const { value, done } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        let newline = pending.indexOf("\n");
+        while (newline >= 0) {
+            const line = pending.slice(0, newline);
+            pending = pending.slice(newline + 1);
+            await consumeLine(line);
+            newline = pending.indexOf("\n");
+        }
+        if (done)
+            break;
+    }
+    if (pending.trim())
+        await consumeLine(pending);
+    if (!complete)
+        throw new Error("VOICE_STREAM_INCOMPLETE");
+    await Promise.all(acknowledgements);
+    return complete;
 };
 const refreshSessionEvidence = async () => {
     if (evidenceSessionSequence === 0)
@@ -883,14 +938,7 @@ const finishMicrophoneTurn = async () => {
             speaking: false,
             silentFrames: 0,
         };
-        const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
-        if (result.client_command) {
-            await dispatchClientCommand(result.client_command);
-            await api("/api/avatar/client-delivery-sent", {
-                evidence_turn_sequence: result.evidence_turn_sequence,
-                evidence_output_sequence: result.evidence_output_sequence,
-            });
-        }
+        const result = await streamVoiceTurn(pcm, requestSequence);
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
