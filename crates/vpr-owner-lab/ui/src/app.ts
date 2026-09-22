@@ -9,7 +9,7 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
-type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
+type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequences: number[]; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type VoiceStartAck = { ok: true; request_sequence: number };
 type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
 type VoiceStreamEvent =
@@ -55,7 +55,7 @@ type TextAttemptEvidence = {
 };
 type VoiceAttemptEvidence = {
   request_sequence: number;
-  canonical_playback_confirmed: boolean;
+  canonical_outputs: Array<{ canonical_output_sequence: number; playback_confirmed: boolean }>;
   status: string;
   stt_millis: number | null;
   llm_millis: number | null;
@@ -182,6 +182,9 @@ let realtimeReadiness = { control: false, audio: false, video: false };
 let providerDataChannel: RTCDataChannel | null = null;
 let activeClientControl: ClientControl | null = null;
 let providerPlaybackId: string | null = null;
+type PendingPlaybackSegment = { requestSequence: number; turn: number; output: number };
+const pendingPlaybackSegments: PendingPlaybackSegment[] = [];
+const deferredProviderClientEvents: string[] = [];
 let answerSubmitted = false;
 let pendingIce: IceCandidatePayload[] = [];
 let capabilities = new Set<string>();
@@ -648,18 +651,38 @@ const ownerCapture = mountOwnerCapture({
   },
 });
 
+const processProviderClientEvent = async (raw: string): Promise<void> => {
+  const normalized = await api<ClientEvent | null>("/api/avatar/client-event", { message: raw });
+  if (normalized?.kind === "playback_started") {
+    providerPlaybackId = normalized.playback_id;
+  } else if (normalized?.kind === "playback_done") {
+    providerPlaybackId = null;
+    const segment = pendingPlaybackSegments.shift();
+    if (segment) {
+      await api<{ ok: true }>("/api/avatar/client-playback-done", {
+        request_sequence: segment.requestSequence,
+        evidence_turn_sequence: segment.turn,
+        evidence_output_sequence: segment.output,
+      });
+    }
+  }
+  updateControls();
+};
+
+const flushDeferredProviderClientEvents = async (): Promise<void> => {
+  while (deferredProviderClientEvents.length > 0) {
+    const raw = deferredProviderClientEvents.shift();
+    if (raw) await processProviderClientEvent(raw);
+  }
+};
+
 const handleProviderClientEvent = (raw: string): void => {
   if (!raw) return;
-  void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
-    .then((normalized) => {
-      if (normalized?.kind === "playback_started") {
-        providerPlaybackId = normalized.playback_id;
-      } else if (normalized?.kind === "playback_done") {
-        providerPlaybackId = null;
-      }
-      updateControls();
-    })
-    .catch(() => undefined);
+  if (voiceRequestInFlight) {
+    deferredProviderClientEvents.push(raw);
+    return;
+  }
+  void processProviderClientEvent(raw).catch(() => undefined);
 };
 
 const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
@@ -750,6 +773,8 @@ const closePeerTransport = (): void => {
   providerDataChannel?.close();
   providerDataChannel = null;
   providerPlaybackId = null;
+  pendingPlaybackSegments.length = 0;
+  deferredProviderClientEvents.length = 0;
   activeClientControl = null;
   peer?.close();
   peer = null;
@@ -1091,6 +1116,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
           output: segment.evidence_output_sequence,
         });
       }
+      pendingPlaybackSegments.push({
+        requestSequence,
+        turn: segment.evidence_turn_sequence,
+        output: segment.evidence_output_sequence,
+      });
     });
 
     for (const delivery of pendingDeliveryAcks) {
@@ -1099,6 +1129,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         evidence_output_sequence: delivery.output,
       });
     }
+    await flushDeferredProviderClientEvents();
 
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
