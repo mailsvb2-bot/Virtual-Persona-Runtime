@@ -349,10 +349,21 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
 
-  await recordVoiceTurn(
-    page,
-    "Привет из браузера",
-    "Голосовой ответ владельцу",
+  await voiceButton.click();
+  await expect(voiceButton).toHaveText("Остановить и отправить");
+  await voiceButton.click();
+
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.some((command) => command.topic === "did.speak") ?? false,
+  )).toBeTruthy();
+  await expect(page.locator("#status")).toHaveText("Отвечаю…");
+  await expect(page.locator("#status")).not.toContainText("Вы: Привет из браузера");
+
+  await expect(page.locator("#status")).toContainText("Вы: Привет из браузера");
+  await expect(page.locator("#status")).toContainText(
+    "Ответ: Голосовой ответ владельцу. Продолжаю после ранней фразы",
   );
 
   await expect.poll(async () => {
@@ -399,10 +410,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
-  const speak = commands.find((command) => command.topic === "did.speak");
-  expect(speak).toBeDefined();
-  expect(JSON.parse(speak?.text ?? "{}")).toMatchObject({
-    script: { type: "text", input: "Голосовой ответ владельцу" },
+  const speakCommands = commands.filter((command) => command.topic === "did.speak");
+  expect(speakCommands).toHaveLength(2);
+  expect(JSON.parse(speakCommands[0]?.text ?? "{}")).toMatchObject({
+    script: { type: "text", input: "Голосовой ответ владельцу." },
+  });
+  expect(JSON.parse(speakCommands[1]?.text ?? "{}")).toMatchObject({
+    script: { type: "text", input: "Продолжаю после ранней фразы" },
   });
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
