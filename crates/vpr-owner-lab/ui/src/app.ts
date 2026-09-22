@@ -10,6 +10,11 @@ type ClientRoute =
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
+type VoicePhrase = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
+type VoiceStreamMessage =
+  | { type: "phrase"; phrase: VoicePhrase }
+  | { type: "complete"; result: VoiceResult }
+  | { type: "error"; code: string };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type RealtimeTransport =
@@ -355,20 +360,73 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
   return payload as T;
 };
 
-const apiBinary = async <T>(path: string, body: ArrayBuffer, requestSequence: number): Promise<T> => {
-  const response = await fetch(path, {
+const streamVoiceTurn = async (
+  body: ArrayBuffer,
+  requestSequence: number,
+): Promise<VoiceResult> => {
+  const response = await fetch("/api/voice/turn/stream", {
     method: "POST",
-    headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken, "X-VPR-Evidence-Request": String(requestSequence) },
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-VPR-CSRF": csrfToken,
+      "X-VPR-Evidence-Request": String(requestSequence),
+    },
     body,
     credentials: "same-origin",
     cache: "no-store",
   });
-  const payload = await response.json() as T | ErrorPayload;
   if (!response.ok) {
-    const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
-    throw new Error(code);
+    const payload = await response.json() as ErrorPayload;
+    throw new Error(payload.code ?? `HTTP_${response.status}`);
   }
-  return payload as T;
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("VOICE_STREAM_UNAVAILABLE");
+
+  const decoder = new TextDecoder();
+  const acknowledgements: Promise<unknown>[] = [];
+  let pending = "";
+  let complete: VoiceResult | null = null;
+
+  const handleMessage = async (message: VoiceStreamMessage): Promise<void> => {
+    if (message.type === "error") throw new Error(message.code);
+    if (message.type === "complete") {
+      if (complete) throw new Error("VOICE_STREAM_DUPLICATE_COMPLETE");
+      complete = message.result;
+      return;
+    }
+    if (complete) throw new Error("VOICE_STREAM_AFTER_COMPLETE");
+    const command = message.phrase.client_command;
+    if (!command) return;
+    await dispatchClientCommand(command);
+    setStatus("Отвечаю…", "ready");
+    acknowledgements.push(api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+      evidence_turn_sequence: message.phrase.evidence_turn_sequence,
+      evidence_output_sequence: message.phrase.evidence_output_sequence,
+    }));
+  };
+
+  const consumeLine = async (line: string): Promise<void> => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    await handleMessage(JSON.parse(trimmed) as VoiceStreamMessage);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    let newline = pending.indexOf("\n");
+    while (newline >= 0) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      await consumeLine(line);
+      newline = pending.indexOf("\n");
+    }
+    if (done) break;
+  }
+  if (pending.trim()) await consumeLine(pending);
+  if (!complete) throw new Error("VOICE_STREAM_INCOMPLETE");
+  await Promise.all(acknowledgements);
+  return complete;
 };
 
 const refreshSessionEvidence = async (): Promise<void> => {
@@ -1042,14 +1100,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       speaking: false,
       silentFrames: 0,
     };
-    const result = await apiBinary<VoiceResult>("/api/voice/turn", pcm, requestSequence);
-    if (result.client_command) {
-      await dispatchClientCommand(result.client_command);
-      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
-        evidence_turn_sequence: result.evidence_turn_sequence,
-        evidence_output_sequence: result.evidence_output_sequence,
-      });
-    }
+    const result = await streamVoiceTurn(pcm, requestSequence);
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
