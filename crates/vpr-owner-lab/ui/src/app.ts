@@ -1,4 +1,5 @@
 import { mountOwnerCapture } from "./owner-capture.js";
+import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
@@ -653,6 +654,7 @@ const handleProviderClientEvent = (raw: string): void => {
         providerPlaybackId = normalized.playback_id;
       } else if (normalized?.kind === "playback_done") {
         providerPlaybackId = null;
+        voiceCommandScheduler.playbackDone();
       }
       updateControls();
     })
@@ -676,6 +678,10 @@ const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
   if (!room) throw new Error("CLIENT_TRANSPORT_UNAVAILABLE");
   await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
+
+const voiceCommandScheduler = new PlaybackAwareCommandScheduler<ClientCommand>(
+  dispatchClientCommand,
+);
 
 const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
@@ -742,6 +748,7 @@ const clearRealtimeMedia = (): void => {
 };
 
 const closePeerTransport = (): void => {
+  voiceCommandScheduler.interrupt();
   stopMicrophoneCapture();
   stopRemoteEvidence();
   providerDataChannel?.close();
@@ -1081,7 +1088,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     if (started.request_sequence !== requestSequence) throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
     const result = await waitForVoiceEvents(requestSequence, async (segment) => {
       if (segment.client_command) {
-        await dispatchClientCommand(segment.client_command);
+        const sent = await voiceCommandScheduler.dispatch(segment.client_command);
+        if (!sent) return;
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
           evidence_output_sequence: segment.evidence_output_sequence,
@@ -1110,8 +1118,14 @@ const finishMicrophoneTurn = async (): Promise<void> => {
 
 const toggleVoice = async (): Promise<void> => {
   try {
-    if (recording) await finishMicrophoneTurn();
-    else await startMicrophone();
+    if (recording) {
+      await finishMicrophoneTurn();
+    } else {
+      if (voiceCommandScheduler.hasActivePlayback) {
+        await interruptAvatar();
+      }
+      await startMicrophone();
+    }
   } catch (error) {
     stopMicrophoneCapture();
     setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
@@ -1155,6 +1169,7 @@ const interruptAvatar = async (): Promise<void> => {
     && realtimeReadiness.control
     && activeClientControl?.interrupt === true
     && playbackReady;
+  voiceCommandScheduler.interrupt();
   try {
     if (voiceRequestInFlight) {
       // Cancel the canonical turn first. This stops the provider stream and releases the runtime
