@@ -314,9 +314,11 @@ fn request_voice_cancel(state: &AppState) {
 
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
     state.session_end_requested.store(true, Ordering::Release);
-    state.evidence.lock().seal_session();
-    state.voice_streams.clear();
     request_voice_cancel(state);
+    if !state.voice_streams.wait_until_quiescent() {
+        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    }
+    state.evidence.lock().seal_session();
     let mut engine = state
         .engine
         .lock()
