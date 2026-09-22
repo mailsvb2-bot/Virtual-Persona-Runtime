@@ -402,6 +402,22 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
 
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressiveLoseAudio?: () => void };
+    fakeWindow.__vprExpressiveLoseAudio?.();
+  });
+  await expect(voiceButton).toBeDisabled();
+  await expect(page.locator("#speak")).toBeEnabled();
+  await expect(page.locator("#status")).toContainText(
+    "Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.",
+  );
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressiveRestoreAudio?: () => void };
+    fakeWindow.__vprExpressiveRestoreAudio?.();
+  });
+  await expect(voiceButton).toBeEnabled();
+
   await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
