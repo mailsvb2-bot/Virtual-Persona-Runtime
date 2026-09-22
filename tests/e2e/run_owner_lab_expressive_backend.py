@@ -8,14 +8,14 @@ ENV = {
     "VPR_DID_AGENT_ID": "voice-e2e-expressive-agent",
     "VPR_OWNER_LAB_ALLOW_EGRESS": "true",
     "VPR_OWNER_LAB_PORT": "18791",
-    "VPR_OWNER_LAB_STT_PROVIDER": "openai-transcription",
-    "VPR_OWNER_LAB_STT_ENDPOINT": "http://127.0.0.1:18790/v1/audio/transcriptions",
+    "VPR_OWNER_LAB_STT_PROVIDER": "deepgram",
+    "VPR_OWNER_LAB_STT_ENDPOINT": "http://127.0.0.1:18790/v1/listen",
     "VPR_OWNER_LAB_STT_API_KEY": "expressive-stt-e2e-secret",
-    "VPR_OWNER_LAB_STT_MODEL": "expressive-stt-e2e",
-    "VPR_OWNER_LAB_LLM_PROVIDER": "openai-compatible",
+    "VPR_OWNER_LAB_STT_MODEL": "nova-3",
+    "VPR_OWNER_LAB_LLM_PROVIDER": "deepseek",
     "VPR_OWNER_LAB_LLM_ENDPOINT": "http://127.0.0.1:18790/v1/chat/completions",
     "VPR_OWNER_LAB_LLM_API_KEY": "expressive-llm-e2e-secret",
-    "VPR_OWNER_LAB_LLM_MODEL": "expressive-llm-e2e",
+    "VPR_OWNER_LAB_LLM_MODEL": "deepseek-flash",
 }
 
 
