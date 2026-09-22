@@ -232,6 +232,13 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
           this.videoTrack = track;
           this.emit(roomEvents.TrackSubscribed, track);
         };
+        fakeWindow.__vprExpressivePlaybackDone = () => {
+          remoteSpeech = false;
+          this.emit(
+            roomEvents.DataReceived,
+            new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
+          );
+        };
       }
 
       on(event: string, handler: EventHandler): FakeRoom {
