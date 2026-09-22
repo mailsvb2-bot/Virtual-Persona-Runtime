@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Instant;
+
+use parking_lot::Mutex;
 
 use serde::Serialize;
 use vpr_domain::{Rt0ReasonCode, TurnState};
@@ -21,9 +25,80 @@ const MAX_VOICE_MILLIS: u64 = 30_000;
 const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 48;
 const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
-pub(super) struct PendingVoicePlayback {
-    turn: ActiveTurn,
-    deliveries: Vec<OutputDeliveryHandle>,
+struct PendingVoicePlayback {
+    turn: Arc<ActiveTurn>,
+    deliveries: BTreeMap<u64, OutputDeliveryHandle>,
+}
+
+#[derive(Clone, Default)]
+pub struct LabVoicePlaybackRegistry {
+    inner: Arc<Mutex<BTreeMap<u64, PendingVoicePlayback>>>,
+}
+
+impl LabVoicePlaybackRegistry {
+    pub fn clear(&self) {
+        self.inner.lock().clear();
+    }
+
+    fn register_delivery(
+        &self,
+        evidence_turn_sequence: u64,
+        turn: Arc<ActiveTurn>,
+        delivery: OutputDeliveryHandle,
+    ) -> Result<u64, LabError> {
+        let sequence = delivery.sequence();
+        let mut pending = self.inner.lock();
+        let entry = pending
+            .entry(evidence_turn_sequence)
+            .or_insert_with(|| PendingVoicePlayback {
+                turn: Arc::clone(&turn),
+                deliveries: BTreeMap::new(),
+            });
+        if entry.turn.snapshot().turn_id() != turn.snapshot().turn_id()
+            || entry.deliveries.insert(sequence, delivery).is_some()
+        {
+            return Err(LabError::InvalidState);
+        }
+        Ok(sequence)
+    }
+
+    pub fn acknowledge_sent(
+        &self,
+        evidence_turn_sequence: u64,
+        evidence_output_sequence: u64,
+    ) -> Result<(), LabError> {
+        let pending = self.inner.lock();
+        let entry = pending
+            .get(&evidence_turn_sequence)
+            .ok_or(LabError::InvalidState)?;
+        let delivery = entry
+            .deliveries
+            .get(&evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
+        entry
+            .turn
+            .acknowledge_output_sent(delivery)
+            .map_err(LabError::Runtime)
+    }
+
+    pub fn acknowledge_playback(
+        &self,
+        evidence_turn_sequence: u64,
+        evidence_output_sequence: u64,
+    ) -> Result<(), LabError> {
+        let pending = self.inner.lock();
+        let entry = pending
+            .get(&evidence_turn_sequence)
+            .ok_or(LabError::InvalidState)?;
+        let delivery = entry
+            .deliveries
+            .get(&evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
+        entry
+            .turn
+            .acknowledge_output_played(delivery)
+            .map_err(LabError::Runtime)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -61,7 +136,7 @@ struct VoiceGeneration {
     llm_millis: u64,
     first_meaningful_millis: u64,
     avatar_millis: u64,
-    deliveries: Vec<OutputDeliveryHandle>,
+    output_sequences: Vec<u64>,
     client_command: Option<LabClientCommand>,
 }
 
@@ -146,7 +221,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
 
-        let turn = self.new_turn()?;
+        let turn = Arc::new(self.new_turn()?);
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
@@ -173,7 +248,13 @@ impl OwnerLabEngine {
 
         let generation = match &mut output_mode {
             VoiceOutputMode::Buffered => {
-                self.buffered_generation(&turn, llm.as_ref(), handle, &request)?
+                self.buffered_generation(
+                    &turn,
+                    llm.as_ref(),
+                    handle,
+                    &request,
+                    evidence_turn_sequence,
+                )?
             }
             VoiceOutputMode::Streaming(emit_segment) => self.streaming_generation(
                 &turn,
@@ -186,18 +267,11 @@ impl OwnerLabEngine {
         };
 
         let evidence_output_sequence = generation
-            .deliveries
+            .output_sequences
             .first()
-            .map(OutputDeliveryHandle::sequence)
+            .copied()
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
-        self.pending_voice_playback.insert(
-            evidence_turn_sequence,
-            PendingVoicePlayback {
-                turn,
-                deliveries: generation.deliveries,
-            },
-        );
 
         Ok(LabVoiceResult {
             transcript: transcript.text,
@@ -222,6 +296,7 @@ impl OwnerLabEngine {
         llm: &dyn LlmPort,
         handle: &RealtimeAvatarHandle,
         request: &LlmRequest,
+        evidence_turn_sequence: u64,
     ) -> Result<VoiceGeneration, LabError> {
         let llm_started = Instant::now();
         let mut generated = TimedGeneratedTextBuffer::start();
@@ -240,6 +315,11 @@ impl OwnerLabEngine {
         let avatar_started = Instant::now();
         let (delivery, client_command) =
             deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
+        let output_sequence = self.voice_playback.register_delivery(
+            evidence_turn_sequence,
+            Arc::clone(turn),
+            delivery,
+        )?;
         let avatar_millis = elapsed_millis(avatar_started);
         Ok(VoiceGeneration {
             reply,
@@ -247,7 +327,7 @@ impl OwnerLabEngine {
             llm_millis,
             first_meaningful_millis: first_meaningful,
             avatar_millis,
-            deliveries: vec![delivery],
+            output_sequences: vec![output_sequence],
             client_command,
         })
     }
@@ -268,7 +348,7 @@ impl OwnerLabEngine {
         let mut reply = String::new();
         let mut first_meaningful = None;
         let mut phrases = RealtimePhraseBuffer::default();
-        let mut deliveries = Vec::new();
+        let mut output_sequences = Vec::new();
         let mut avatar_millis = 0_u64;
         let mut output_started = false;
 
@@ -289,13 +369,18 @@ impl OwnerLabEngine {
                 let (delivery, client_command) =
                     deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
                 avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
+                let output_sequence = self.voice_playback.register_delivery(
+                    evidence_turn_sequence,
+                    Arc::clone(turn),
+                    delivery,
+                )?;
                 let segment = LabVoiceSegment {
                     evidence_turn_sequence,
-                    evidence_output_sequence: delivery.sequence(),
+                    evidence_output_sequence: output_sequence,
                     client_command,
                 };
                 emit_segment(segment).map_err(|error| terminalize_failed_turn(turn, error))?;
-                deliveries.push(delivery);
+                output_sequences.push(output_sequence);
             }
         }
 
@@ -307,19 +392,24 @@ impl OwnerLabEngine {
             let (delivery, client_command) =
                 deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
             avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
+            let output_sequence = self.voice_playback.register_delivery(
+                evidence_turn_sequence,
+                Arc::clone(turn),
+                delivery,
+            )?;
             let segment = LabVoiceSegment {
                 evidence_turn_sequence,
-                evidence_output_sequence: delivery.sequence(),
+                evidence_output_sequence: output_sequence,
                 client_command,
             };
             emit_segment(segment).map_err(|error| terminalize_failed_turn(turn, error))?;
-            deliveries.push(delivery);
+            output_sequences.push(output_sequence);
         }
 
         let llm_millis = elapsed_millis(llm_started);
         let first_meaningful = first_meaningful
             .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
-        if reply.trim().is_empty() || deliveries.is_empty() {
+        if reply.trim().is_empty() || output_sequences.is_empty() {
             return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
         }
         Ok(VoiceGeneration {
@@ -328,7 +418,7 @@ impl OwnerLabEngine {
             llm_millis,
             first_meaningful_millis: first_meaningful,
             avatar_millis,
-            deliveries,
+            output_sequences,
             client_command: None,
         })
     }
@@ -344,19 +434,8 @@ impl OwnerLabEngine {
         evidence_turn_sequence: u64,
         evidence_output_sequence: u64,
     ) -> Result<(), LabError> {
-        let pending = self
-            .pending_voice_playback
-            .get(&evidence_turn_sequence)
-            .ok_or(LabError::InvalidState)?;
-        let delivery = pending
-            .deliveries
-            .iter()
-            .find(|delivery| delivery.sequence() == evidence_output_sequence)
-            .ok_or(LabError::InvalidState)?;
-        pending
-            .turn
-            .acknowledge_output_sent(delivery)
-            .map_err(LabError::Runtime)
+        self.voice_playback
+            .acknowledge_sent(evidence_turn_sequence, evidence_output_sequence)
     }
 
     /// Reconciles browser-observed remote audio with one exact canonical segment.
@@ -379,19 +458,8 @@ impl OwnerLabEngine {
         {
             return Err(LabError::InvalidState);
         }
-        let pending = self
-            .pending_voice_playback
-            .get(&evidence_turn_sequence)
-            .ok_or(LabError::InvalidState)?;
-        let delivery = pending
-            .deliveries
-            .iter()
-            .find(|delivery| delivery.sequence() == evidence_output_sequence)
-            .ok_or(LabError::InvalidState)?;
-        pending
-            .turn
-            .acknowledge_output_played(delivery)
-            .map_err(LabError::Runtime)
+        self.voice_playback
+            .acknowledge_playback(evidence_turn_sequence, evidence_output_sequence)
     }
 }
 
