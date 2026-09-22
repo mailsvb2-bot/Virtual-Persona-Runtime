@@ -60,6 +60,96 @@ const installBrowserFakes = async (page: Page): Promise<void> => {
   });
 };
 
+const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    type EventHandler = (...args: unknown[]) => void;
+    const roomEvents = {
+      TrackSubscribed: "track-subscribed",
+      TrackUnsubscribed: "track-unsubscribed",
+      DataReceived: "data-received",
+      Reconnecting: "reconnecting",
+      Reconnected: "reconnected",
+      Disconnected: "disconnected",
+    };
+
+    class FakeRemoteTrack {
+      readonly mediaStreamTrack = undefined;
+      constructor(readonly kind: "audio" | "video") {}
+      attach(element: HTMLMediaElement): HTMLMediaElement {
+        element.style.width = "4096px";
+        element.style.height = "4096px";
+        return element;
+      }
+      async getRTCStatsReport(): Promise<RTCStatsReport> {
+        const timestamp = this.kind === "audio" ? 1_000 : 1_035;
+        const report = new Map<string, unknown>([
+          [
+            `${this.kind}-inbound`,
+            {
+              type: "inbound-rtp",
+              kind: this.kind,
+              packetsReceived: 12,
+              estimatedPlayoutTimestamp: timestamp,
+            },
+          ],
+        ]);
+        return report as unknown as RTCStatsReport;
+      }
+    }
+
+    class FakeRoom {
+      readonly localParticipant = {
+        sendText: async (): Promise<void> => undefined,
+      };
+      private readonly handlers = new Map<string, EventHandler[]>();
+
+      on(event: string, handler: EventHandler): FakeRoom {
+        const handlers = this.handlers.get(event) ?? [];
+        handlers.push(handler);
+        this.handlers.set(event, handlers);
+        return this;
+      }
+
+      private emit(event: string, ...args: unknown[]): void {
+        for (const handler of this.handlers.get(event) ?? []) handler(...args);
+      }
+
+      async connect(): Promise<void> {
+        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("video"));
+        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("audio"));
+      }
+
+      async disconnect(): Promise<void> {}
+
+      triggerUnexpectedDisconnect(): void {
+        this.emit(roomEvents.Disconnected);
+      }
+    }
+
+    const fakeWindow = window as typeof window & {
+      LivekitClient?: unknown;
+      __vprFakeLiveKitDisconnect?: () => void;
+    };
+    fakeWindow.LivekitClient = {
+      Room: class extends FakeRoom {
+        constructor() {
+          super();
+          fakeWindow.__vprFakeLiveKitDisconnect = () => this.triggerUnexpectedDisconnect();
+        }
+      },
+      RoomEvent: roomEvents,
+    };
+
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value(callback: () => void): number {
+        queueMicrotask(callback);
+        return 1;
+      },
+    });
+  });
+};
+
 const json = async (route: Route, payload: unknown, status = 200): Promise<void> => {
   await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(payload) });
 };
