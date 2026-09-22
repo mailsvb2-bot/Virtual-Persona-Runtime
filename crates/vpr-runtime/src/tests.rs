@@ -14,8 +14,74 @@ use vpr_domain::{
     CorrelationId, OutputCheckpoint, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode,
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
-use vpr_integration::{CancellationProbe, ProviderErrorKind};
+use vpr_integration::{
+    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, UsageEvidence,
+};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
+
+struct PullLlm;
+
+struct PullStream {
+    emitted: bool,
+}
+
+impl LlmTextStream for PullStream {
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        if self.emitted {
+            Ok(None)
+        } else {
+            self.emitted = true;
+            Ok(Some("Первая фраза.".into()))
+        }
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence::default()
+    }
+}
+
+impl LlmPort for PullLlm {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "pull-test".into(),
+            model: "contract".into(),
+            representation: None,
+        }
+    }
+
+    fn open_stream(
+        &self,
+        _request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        Ok(Box::new(PullStream { emitted: false }))
+    }
+
+    fn stream(
+        &self,
+        _request: &LlmRequest,
+        _cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn GeneratedTextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        unreachable!("runtime pull-stream test must not use callback streaming")
+    }
+}
 
 #[derive(Debug)]
 struct ManualClock(AtomicU64);
@@ -70,6 +136,28 @@ fn turn(session: &ActiveSession, name: &str) -> ActiveTurn {
         session,
     )
     .unwrap()
+}
+
+#[test]
+fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
+    let session = active_session();
+    let turn = turn(&session, "pull-stream-cancel");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_llm_stream(
+            &PullLlm,
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                context: "Ответь кратко".into(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(stream.next_chunk().unwrap().as_deref(), Some("Первая фраза."));
+    turn.interrupt_handle().interrupt().unwrap();
+    let error = stream.next_chunk().unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
 }
 
 #[test]
