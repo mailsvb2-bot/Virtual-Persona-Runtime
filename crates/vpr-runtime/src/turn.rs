@@ -7,7 +7,8 @@ use vpr_domain::{
 };
 use vpr_integration::{
     AudioInput, AvatarPort, GeneratedAudioSink, GeneratedTextSink, GeneratedVideoSink, LlmPort,
-    LlmRequest, LlmTextStream, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    LlmRequest, LlmTextStream, SttAudioStream, SttPort, SttRequest, SttStreamEvent,
+    SttStreamRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
 };
 use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
@@ -37,6 +38,48 @@ impl AuthorizedLlmStream {
     pub fn next_chunk(&mut self) -> Result<Option<String>, ProviderExecutionError> {
         self.stream
             .next_chunk(&self.permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    #[must_use]
+    pub fn usage(&self) -> UsageEvidence {
+        self.stream.usage()
+    }
+}
+
+pub struct AuthorizedSttStream {
+    stream: Box<dyn SttAudioStream>,
+    permit: ProviderExecutionPermit,
+}
+
+impl AuthorizedSttStream {
+    /// Sends one audio chunk under the exact runtime-issued STT operation permit.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure or cancellation observed by the runtime permit.
+    pub fn push_audio(&mut self, pcm: &[u8]) -> Result<(), ProviderExecutionError> {
+        self.stream
+            .push_audio(pcm, &self.permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Closes provider input without releasing the runtime-owned STT permit.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure or cancellation observed by the runtime permit.
+    pub fn finish_input(&mut self) -> Result<(), ProviderExecutionError> {
+        self.stream
+            .finish_input(&self.permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    /// Pulls the next normalized recognition event under the same STT permit.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure or cancellation observed by the runtime permit.
+    pub fn next_event(&mut self) -> Result<Option<SttStreamEvent>, ProviderExecutionError> {
+        self.stream
+            .next_event(&self.permit.cancellation)
             .map_err(ProviderExecutionError::from)
     }
 
@@ -263,6 +306,28 @@ impl ActiveTurn {
             .map_err(ProviderExecutionError::from)?;
         port.stream(request, &permit.cancellation, sink)
             .map_err(ProviderExecutionError::from)
+    }
+
+    /// Opens one full-duplex STT stream through the canonical provider enforcement boundary.
+    ///
+    /// The returned handle retains the exact provider-operation permit across audio upload,
+    /// input finalization, and transcript-event polling, so revoke, expiry, and interruption
+    /// cancel the entire recognition stream rather than only its creation.
+    ///
+    /// # Errors
+    /// Returns a runtime denial or typed provider failure before a stream handle is exposed.
+    pub fn open_stt_stream(
+        &self,
+        port: &dyn SttPort,
+        request: &SttStreamRequest,
+    ) -> Result<AuthorizedSttStream, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_operation(ProviderOperation::Stt)
+            .map_err(ProviderExecutionError::from)?;
+        let stream = port
+            .open_stream(request, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)?;
+        Ok(AuthorizedSttStream { stream, permit })
     }
 
     /// Executes one STT operation through the canonical provider enforcement boundary.
