@@ -281,19 +281,6 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
   });
 };
 
-const recordVoiceTurn = async (
-  page: Page,
-  transcript: string,
-  reply: string,
-): Promise<void> => {
-  const voice = page.locator("#voice");
-  await voice.click();
-  await expect(voice).toHaveText("Остановить и отправить");
-  await voice.click();
-  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
-};
-
 test("Expressive LiveKit voice path reaches canonical playback, A/V sync and recovery", async ({
   page,
   request,
