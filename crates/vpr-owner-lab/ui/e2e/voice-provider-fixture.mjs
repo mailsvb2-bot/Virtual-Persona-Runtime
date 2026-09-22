@@ -52,6 +52,33 @@ const llmEventStream = (reply) => [
   "data: [DONE]\n\n",
 ].join("");
 
+const writeLlmEvent = (response, payload) => {
+  response.write(`data: ${JSON.stringify(payload)}\n\n`);
+};
+
+const sendProgressiveOwnerVoice = (response) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-store",
+    "connection": "keep-alive",
+  });
+  writeLlmEvent(response, {
+    choices: [{ delta: { content: "Голосовой ответ владельцу." } }],
+    usage: null,
+  });
+  setTimeout(() => {
+    writeLlmEvent(response, {
+      choices: [{ delta: { content: " Продолжаю после ранней фразы" } }],
+      usage: null,
+    });
+    writeLlmEvent(response, {
+      choices: [],
+      usage: { prompt_tokens: 12, completion_tokens: 8 },
+    });
+    response.end("data: [DONE]\n\n");
+  }, 700);
+};
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   if (request.method === "GET" && url.pathname === "/health") {
@@ -106,15 +133,17 @@ const server = http.createServer(async (request, response) => {
     if (prompt.includes("Спровоцируй отказ провайдера")) {
       return sendJson(response, 503, { error: { message: "fixture unavailable" } });
     }
+    if (prompt.includes("Привет из браузера")) {
+      sendProgressiveOwnerVoice(response);
+      return;
+    }
     const reply = prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"
       : prompt.includes("Текстовый вопрос владельца")
       ? "Текстовый ответ владельцу"
-      : prompt.includes("Привет из браузера")
-        ? "Голосовой ответ владельцу"
-        : prompt.includes("Текстовый вопрос visitor")
-          ? "Текстовый ответ visitor"
-          : "В visitor scope нет подтверждённых данных владельца";
+      : prompt.includes("Текстовый вопрос visitor")
+        ? "Текстовый ответ visitor"
+        : "В visitor scope нет подтверждённых данных владельца";
     return sendText(
       response,
       200,
