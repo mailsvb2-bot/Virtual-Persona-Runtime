@@ -186,11 +186,9 @@ impl LlmTextStream for AnthropicTextStream {
                 "message_start" => {
                     let message = event.message.ok_or_else(invalid_response)?;
                     self.usage.input_units = message.usage.input_tokens;
-                    self.usage.input_unit =
-                        message.usage.input_tokens.map(|_| UsageUnit::Token);
+                    self.usage.input_unit = message.usage.input_tokens.map(|_| UsageUnit::Token);
                     self.usage.output_units = message.usage.output_tokens;
-                    self.usage.output_unit =
-                        message.usage.output_tokens.map(|_| UsageUnit::Token);
+                    self.usage.output_unit = message.usage.output_tokens.map(|_| UsageUnit::Token);
                 }
                 "content_block_delta" => {
                     let delta = event.delta.ok_or_else(invalid_response)?;
