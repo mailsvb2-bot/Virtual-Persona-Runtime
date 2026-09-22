@@ -6,6 +6,7 @@ use crate::{
     LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
     SessionUsageEvidence, sha256_hex,
 };
+use crate::session_statistics::{add_cost, distribution};
 
 pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
@@ -325,7 +326,10 @@ impl SessionAggregateAccumulator {
         }
     }
 
-    fn consume_attempt(&mut self, attempt: &LabVoiceAttemptEvidence) -> Result<(), LabSessionAggregateError> {
+    fn consume_attempt(
+        &mut self,
+        attempt: &LabVoiceAttemptEvidence,
+    ) -> Result<(), LabSessionAggregateError> {
         match attempt.status {
             LabVoiceAttemptStatus::Pending => Err(LabSessionAggregateError::IncompleteAttempt),
             LabVoiceAttemptStatus::Failed => self.consume_failed_attempt(attempt),
@@ -438,7 +442,10 @@ impl SessionAggregateAccumulator {
         add_cost(&mut self.provider_charge, llm.provider_charge_microunits)
     }
 
-    fn finish(self, sessions: u32) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
+    fn finish(
+        self,
+        sessions: u32,
+    ) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
         Ok(LabSessionEvidenceAggregate {
             schema_version: RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA.into(),
             source_schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
@@ -467,7 +474,9 @@ impl SessionAggregateAccumulator {
     }
 }
 
-fn validate_snapshot_header(snapshot: &LabSessionEvidenceSnapshot) -> Result<(), LabSessionAggregateError> {
+fn validate_snapshot_header(
+    snapshot: &LabSessionEvidenceSnapshot,
+) -> Result<(), LabSessionAggregateError> {
     if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
         || snapshot.session_sequence == 0
@@ -559,37 +568,4 @@ fn validate_and_collect_av_sync(
         .filter(|(_, sequences)| sequences.len() == required_samples)
         .map(|(request, _)| request)
         .collect())
-}
-
-fn add_cost(total: &mut Option<u64>, value: Option<u64>) -> Result<(), LabSessionAggregateError> {
-    let (Some(current), Some(value)) = (*total, value) else {
-        *total = None;
-        return Ok(());
-    };
-    *total = Some(
-        current
-            .checked_add(value)
-            .ok_or(LabSessionAggregateError::Overflow)?,
-    );
-    Ok(())
-}
-
-fn distribution(
-    mut values: Vec<u64>,
-) -> Result<Option<LatencyDistributionMillis>, LabSessionAggregateError> {
-    if values.is_empty() {
-        return Ok(None);
-    }
-    values.sort_unstable();
-    let samples = u32::try_from(values.len()).map_err(|_| LabSessionAggregateError::Overflow)?;
-    Ok(Some(LatencyDistributionMillis {
-        samples,
-        p50: nearest_rank(&values, 50),
-        p95: nearest_rank(&values, 95),
-    }))
-}
-
-fn nearest_rank(values: &[u64], percentile: usize) -> u64 {
-    let rank = values.len().saturating_mul(percentile).div_ceil(100).max(1);
-    values[rank - 1]
 }
