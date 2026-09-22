@@ -142,11 +142,6 @@ pub enum LabSessionAggregateError {
     Overflow,
 }
 
-/// Aggregates sanitized Owner Lab session snapshots into deterministic latency/cost evidence.
-///
-/// # Errors
-/// Returns a fail-closed error for empty input, malformed or duplicate snapshots, pending or
-/// inconsistent voice attempts, malformed media evidence, or arithmetic overflow.
 pub fn aggregate_owner_lab_session_evidence(
     snapshots: &[LabSessionEvidenceSnapshot],
 ) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
