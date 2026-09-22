@@ -185,7 +185,8 @@ impl OwnerLabEngine {
             )?,
         };
 
-        let evidence_output_sequence = generation.deliveries
+        let evidence_output_sequence = generation
+            .deliveries
             .first()
             .map(OutputDeliveryHandle::sequence)
             .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
