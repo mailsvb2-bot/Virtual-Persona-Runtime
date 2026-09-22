@@ -34,7 +34,7 @@ impl Drop for TempDir {
 
 fn snapshot(session: u64, elapsed: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.5",
+        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
@@ -59,6 +59,7 @@ fn snapshot(session: u64, elapsed: u64) -> Value {
             "failure_code":null,
             "stt_millis":100,
             "llm_millis":200,
+            "llm_first_meaningful_millis":120,
             "avatar_millis":50,
             "server_total_millis":350,
             "stt_usage":{"input_units":10,"output_units":null,"estimated_cost_microunits":2,"provider_charge_microunits":3},
