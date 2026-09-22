@@ -715,8 +715,6 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room);
     });
     await room.connect(transport.server_url, transport.token);
-    // Transport/control readiness is independent from video-track readiness.
-    // A transient video loss must degrade to voice/text instead of disabling the conversation.
     realtimeTransportReady = true;
     updateControls();
 };
