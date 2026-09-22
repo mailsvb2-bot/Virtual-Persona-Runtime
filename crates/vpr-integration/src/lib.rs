@@ -147,9 +147,47 @@ pub trait GeneratedTextSink: sealed::GeneratedTextSink {
     fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError>;
 }
 
+pub trait LlmTextStream {
+    /// Pulls the next generated text chunk under the caller-owned cancellation authority.
+    ///
+    /// Returning `Ok(None)` means the provider stream completed cleanly. Provider adapters retain
+    /// protocol framing internally; callers receive generated text only.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure, including cancellation or malformed provider framing.
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError>;
+
+    /// Returns usage observed so far for this provider stream.
+    fn usage(&self) -> UsageEvidence;
+}
+
 pub trait LlmPort: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
-    /// Streams provider output without transferring canonical Persona authority.
+
+    /// Opens a pull-based provider stream without transferring Persona authority or transport
+    /// ownership to the provider callback. Realtime runtimes can poll this stream and decide when
+    /// authorized output may leave the runtime boundary.
+    ///
+    /// Providers that have not implemented pull streaming may keep the default unavailable result;
+    /// non-realtime callers can continue using `stream`.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure, including cancellation or policy denial.
+    fn open_stream(
+        &self,
+        _request: &LlmRequest,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
+    /// Streams provider output into a sealed generation sink.
     ///
     /// # Errors
     /// Returns a typed provider failure, including cancellation or policy denial.
