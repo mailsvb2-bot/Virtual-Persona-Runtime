@@ -15,6 +15,7 @@ use super::{
 };
 
 const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
+const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_millis(1_000);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -40,6 +41,27 @@ impl VoiceStreamRegistry {
     pub(super) fn clear(&self) {
         self.streams.lock().clear();
         self.changed.notify_all();
+    }
+
+    pub(super) fn wait_until_quiescent(&self) -> bool {
+        let started = std::time::Instant::now();
+        let mut streams = self.streams.lock();
+        loop {
+            if streams.values().all(|stream| stream.terminal) {
+                return true;
+            }
+            let Some(remaining) = TERMINATION_WAIT_TIMEOUT.checked_sub(started.elapsed()) else {
+                return false;
+            };
+            if remaining.is_zero() {
+                return false;
+            }
+            if self.changed.wait_for(&mut streams, remaining).timed_out()
+                && streams.values().any(|stream| !stream.terminal)
+            {
+                return false;
+            }
+        }
     }
 
     fn begin(&self, request_sequence: u64) -> bool {
