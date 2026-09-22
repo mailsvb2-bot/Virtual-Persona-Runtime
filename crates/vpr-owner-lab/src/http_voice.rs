@@ -190,6 +190,11 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
                 },
                 |segment| {
                     worker_state
+                        .evidence
+                        .lock()
+                        .bind_voice_segment(request_sequence, &segment)
+                        .map_err(|_| LabError::Internal)?;
+                    worker_state
                         .voice_streams
                         .push(request_sequence, VoiceStreamEvent::Segment { segment })
                 },
