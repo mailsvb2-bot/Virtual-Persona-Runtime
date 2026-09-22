@@ -203,7 +203,12 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       readonly localParticipant = {
         sendText: async (text: string, options: { topic: string }): Promise<void> => {
           commands.push({ topic: options.topic, text });
-          if (options.topic === "did.speak") remoteSpeech = true;
+          if (options.topic === "did.speak") {
+            remoteSpeech = true;
+            window.setTimeout(() => {
+              remoteSpeech = false;
+            }, 400);
+          }
           if (options.topic === "did.interrupt") remoteSpeech = false;
         },
       };
@@ -406,9 +411,20 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     script: { type: "text", input: "Продолжаю после ранней фразы" },
   });
 
+  await voiceButton.click();
+  await expect(voiceButton).toHaveText("Остановить и отправить");
+  await voiceButton.click();
+  await expect.poll(async () => page.evaluate(
+    () => ((window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands ?? []).filter((command) => command.topic === "did.speak").length,
+  )).toBe(3);
+  await expect(page.locator("#status")).toHaveText("Отвечаю…");
+
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
+  await expect(page.locator("#status")).toHaveText("Ответ прерван");
   await expect.poll(async () => {
     const current = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const currentSnapshot = await current.json() as {
@@ -423,6 +439,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }).__vprLiveKitCommands ?? [],
   );
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
+  const spokenAfterInterrupt = commandsAfterInterrupt
+    .filter((command) => command.topic === "did.speak")
+    .map((command) => JSON.parse(command.text) as { script?: { input?: string } });
+  expect(spokenAfterInterrupt.some((payload) =>
+    payload.script?.input?.includes("Этот хвост не должен быть произнесён") ?? false
+  )).toBeFalsy();
 
   await page.evaluate(() => {
     const fakeWindow = window as typeof window & { __vprExpressiveDisconnect?: () => void };
@@ -447,7 +469,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const llmRequests = requests.filter((entry) => entry.kind === "llm");
   const avatarRequests = requests.filter((entry) => entry.kind === "avatar");
 
-  expect(sttRequests).toHaveLength(1);
+  expect(sttRequests).toHaveLength(2);
   expect(sttRequests[0]?.path).toBe("/v1/listen");
   expect(sttRequests[0]?.query).toContain("model=nova-3");
   expect(sttRequests[0]?.query).toContain("encoding=linear16");
@@ -458,12 +480,14 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
   expect(sttRequests[0]?.contentType).toBe("application/octet-stream");
 
-  expect(llmRequests).toHaveLength(1);
-  expect(llmRequests[0]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
-  expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
-  expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
-  expect(llmRequests[0]?.bodyText).toContain('"thinking":{"type":"disabled"}');
-  expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
+  expect(llmRequests).toHaveLength(2);
+  expect(llmRequests.every((entry) =>
+    entry.authorization === "Bearer expressive-llm-e2e-secret"
+      && entry.bodyText.includes('"model":"deepseek-flash"')
+      && entry.bodyText.includes('"reasoning_effort":"none"')
+      && entry.bodyText.includes('"thinking":{"type":"disabled"}')
+      && entry.bodyText.includes('"max_tokens":96')
+  )).toBeTruthy();
 
   expect(avatarRequests.some((entry) =>
     entry.method === "GET" && entry.path === "/agents/voice-e2e-expressive-agent"
