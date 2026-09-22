@@ -9,8 +9,8 @@ use vpr_integration::{
     TimedGeneratedTextBuffer, UsageEvidence,
 };
 use vpr_runtime::{
-    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarOutputError,
-    TurnInterruptHandle,
+    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarHandle,
+    RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
 use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
@@ -18,10 +18,19 @@ use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
+const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 48;
+const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
 pub(super) struct PendingVoicePlayback {
     turn: ActiveTurn,
-    delivery: OutputDeliveryHandle,
+    deliveries: Vec<OutputDeliveryHandle>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LabVoiceSegment {
+    pub evidence_turn_sequence: u64,
+    pub evidence_output_sequence: u64,
+    pub client_command: Option<LabClientCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -39,6 +48,21 @@ pub struct LabVoiceResult {
     pub stt_usage: LabVoiceUsage,
     pub llm_usage: LabVoiceUsage,
     pub client_command: Option<LabClientCommand>,
+}
+
+enum VoiceOutputMode<'a> {
+    Buffered,
+    Streaming(&'a mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>),
+}
+
+struct VoiceGeneration {
+    reply: String,
+    usage: UsageEvidence,
+    llm_millis: u64,
+    first_meaningful_millis: u64,
+    avatar_millis: u64,
+    deliveries: Vec<OutputDeliveryHandle>,
+    client_command: Option<LabClientCommand>,
 }
 
 impl OwnerLabEngine {
@@ -60,7 +84,9 @@ impl OwnerLabEngine {
     }
 
     /// Runs one microphone utterance through STT -> LLM -> realtime avatar on one canonical turn.
-    /// The callback receives a narrow interrupt-only capability before external provider work starts.
+    ///
+    /// This compatibility path keeps a single buffered avatar delivery. Interactive Owner Lab
+    /// should use `voice_turn_streaming` so first useful output does not wait for full generation.
     ///
     /// # Errors
     /// Fails closed when voice providers are not configured, audio is malformed, session state is
@@ -69,6 +95,42 @@ impl OwnerLabEngine {
         &mut self,
         pcm_s16le_mono_16khz: Vec<u8>,
         register_interrupt: impl FnOnce(TurnInterruptHandle),
+    ) -> Result<LabVoiceResult, LabError> {
+        self.run_voice_turn(
+            pcm_s16le_mono_16khz,
+            register_interrupt,
+            VoiceOutputMode::Buffered,
+        )
+    }
+
+    /// Runs one realtime microphone turn using the canonical pull-based LLM stream.
+    ///
+    /// Generated text is converted into bounded natural phrase segments while the provider is
+    /// still generating. Each phrase receives its own runtime-issued output-delivery handle before
+    /// the opaque browser/provider command is emitted. The same turn cancellation authority covers
+    /// STT, the open LLM stream, every avatar segment and the remaining generation tail.
+    ///
+    /// # Errors
+    /// Fails closed for malformed audio, unavailable pull streaming, authority/cancellation
+    /// changes, provider failures, or a failed segment handoff.
+    pub fn voice_turn_streaming(
+        &mut self,
+        pcm_s16le_mono_16khz: Vec<u8>,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
+        mut emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), LabError>,
+    ) -> Result<LabVoiceResult, LabError> {
+        self.run_voice_turn(
+            pcm_s16le_mono_16khz,
+            register_interrupt,
+            VoiceOutputMode::Streaming(&mut emit_segment),
+        )
+    }
+
+    fn run_voice_turn(
+        &mut self,
+        pcm_s16le_mono_16khz: Vec<u8>,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
+        mut output_mode: VoiceOutputMode<'_>,
     ) -> Result<LabVoiceResult, LabError> {
         let audio = AudioInput {
             pcm: pcm_s16le_mono_16khz,
@@ -83,6 +145,7 @@ impl OwnerLabEngine {
         if self.stt.is_none() || self.llm.is_none() || self.avatar.is_none() {
             return Err(LabError::InvalidState);
         }
+
         let turn = self.new_turn()?;
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
@@ -102,72 +165,177 @@ impl OwnerLabEngine {
             )
             .map_err(|error| terminalize_provider_error(&turn, error))?;
         let stt_millis = elapsed_millis(stt_started);
-
         let llm_context = self.conversation_context(&transcript.text)?;
-        let llm_started = Instant::now();
-        let mut generated = TimedGeneratedTextBuffer::start();
-        let llm_usage = turn
-            .execute_llm(
-                llm.as_ref(),
-                &LlmRequest {
-                    locale: transcript.locale.clone(),
-                    context: llm_context,
-                },
-                &mut generated,
-            )
-            .map_err(|error| terminalize_provider_error(&turn, error))?;
-        let llm_millis = elapsed_millis(llm_started);
-        let (reply, llm_first_meaningful_millis) = generated.into_parts();
-        let llm_first_meaningful_millis = llm_first_meaningful_millis
-            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
-        if reply.trim().is_empty() {
-            return Err(terminalize_failed_turn(&turn, LabError::InvalidInput));
-        }
-
-        turn.begin_output().map_err(LabError::Runtime)?;
-        let avatar_started = Instant::now();
-        let client_text = handle
-            .client_control()
-            .is_some_and(|control| control.text_input);
-        let (delivery, client_command) = if client_text {
-            let (delivery, command) = turn
-                .prepare_realtime_avatar_client_text(self.provider.as_ref(), handle, &reply)
-                .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
-            (delivery, Some(command.into()))
-        } else {
-            let delivery = turn
-                .deliver_realtime_avatar_text(self.provider.as_ref(), handle, &reply)
-                .map_err(|error| terminalize_avatar_output_error(&turn, error))?;
-            (delivery, None)
+        let request = LlmRequest {
+            locale: transcript.locale.clone(),
+            context: llm_context,
         };
-        let avatar_millis = elapsed_millis(avatar_started);
-        let evidence_output_sequence = delivery.sequence();
+
+        let generation = match &mut output_mode {
+            VoiceOutputMode::Buffered => {
+                self.buffered_generation(&turn, llm.as_ref(), handle, &request)?
+            }
+            VoiceOutputMode::Streaming(emit_segment) => self.streaming_generation(
+                &turn,
+                llm.as_ref(),
+                handle,
+                &request,
+                evidence_turn_sequence,
+                emit_segment,
+            )?,
+        };
+
+        let evidence_output_sequence = generation
+            .deliveries
+            .first()
+            .map(OutputDeliveryHandle::sequence)
+            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         turn.complete().map_err(LabError::Runtime)?;
         self.pending_voice_playback.insert(
             evidence_turn_sequence,
-            PendingVoicePlayback { turn, delivery },
+            PendingVoicePlayback {
+                turn,
+                deliveries: generation.deliveries,
+            },
         );
 
         Ok(LabVoiceResult {
             transcript: transcript.text,
-            reply,
+            reply: generation.reply,
             locale: transcript.locale,
             evidence_turn_sequence,
             evidence_output_sequence,
             stt_millis,
-            llm_millis,
-            llm_first_meaningful_millis,
-            avatar_millis,
+            llm_millis: generation.llm_millis,
+            llm_first_meaningful_millis: generation.first_meaningful_millis,
+            avatar_millis: generation.avatar_millis,
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
-            llm_usage: map_usage(&llm_usage),
+            llm_usage: map_usage(&generation.usage),
+            client_command: generation.client_command,
+        })
+    }
+
+    fn buffered_generation(
+        &self,
+        turn: &ActiveTurn,
+        llm: &dyn LlmPort,
+        handle: &RealtimeAvatarHandle,
+        request: &LlmRequest,
+    ) -> Result<VoiceGeneration, LabError> {
+        let llm_started = Instant::now();
+        let mut generated = TimedGeneratedTextBuffer::start();
+        let llm_usage = turn
+            .execute_llm(llm, request, &mut generated)
+            .map_err(|error| terminalize_provider_error(turn, error))?;
+        let llm_millis = elapsed_millis(llm_started);
+        let (reply, first_meaningful) = generated.into_parts();
+        let first_meaningful = first_meaningful
+            .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
+        if reply.trim().is_empty() {
+            return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
+        }
+
+        turn.begin_output().map_err(LabError::Runtime)?;
+        let avatar_started = Instant::now();
+        let (delivery, client_command) =
+            deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
+        let avatar_millis = elapsed_millis(avatar_started);
+        Ok(VoiceGeneration {
+            reply,
+            usage: llm_usage,
+            llm_millis,
+            first_meaningful_millis: first_meaningful,
+            avatar_millis,
+            deliveries: vec![delivery],
             client_command,
+        })
+    }
+
+    fn streaming_generation(
+        &self,
+        turn: &ActiveTurn,
+        llm: &dyn LlmPort,
+        handle: &RealtimeAvatarHandle,
+        request: &LlmRequest,
+        evidence_turn_sequence: u64,
+        emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
+    ) -> Result<VoiceGeneration, LabError> {
+        let llm_started = Instant::now();
+        let mut stream = turn
+            .open_llm_stream(llm, request)
+            .map_err(|error| terminalize_provider_error(turn, error))?;
+        let mut reply = String::new();
+        let mut first_meaningful = None;
+        let mut phrases = RealtimePhraseBuffer::default();
+        let mut deliveries = Vec::new();
+        let mut avatar_millis = 0_u64;
+        let mut output_started = false;
+
+        while let Some(chunk) = stream
+            .next_chunk()
+            .map_err(|error| terminalize_provider_error(turn, error))?
+        {
+            if first_meaningful.is_none() && !chunk.trim().is_empty() {
+                first_meaningful = Some(elapsed_millis(llm_started));
+            }
+            reply.push_str(&chunk);
+            for phrase in phrases.push(&chunk) {
+                if !output_started {
+                    turn.begin_output().map_err(LabError::Runtime)?;
+                    output_started = true;
+                }
+                let avatar_started = Instant::now();
+                let (delivery, client_command) =
+                    deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
+                avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
+                let segment = LabVoiceSegment {
+                    evidence_turn_sequence,
+                    evidence_output_sequence: delivery.sequence(),
+                    client_command,
+                };
+                emit_segment(segment).map_err(|error| terminalize_failed_turn(turn, error))?;
+                deliveries.push(delivery);
+            }
+        }
+
+        if let Some(phrase) = phrases.finish() {
+            if !output_started {
+                turn.begin_output().map_err(LabError::Runtime)?;
+            }
+            let avatar_started = Instant::now();
+            let (delivery, client_command) =
+                deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
+            avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
+            let segment = LabVoiceSegment {
+                evidence_turn_sequence,
+                evidence_output_sequence: delivery.sequence(),
+                client_command,
+            };
+            emit_segment(segment).map_err(|error| terminalize_failed_turn(turn, error))?;
+            deliveries.push(delivery);
+        }
+
+        let llm_millis = elapsed_millis(llm_started);
+        let first_meaningful = first_meaningful
+            .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
+        if reply.trim().is_empty() || deliveries.is_empty() {
+            return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
+        }
+        Ok(VoiceGeneration {
+            reply,
+            usage: stream.usage(),
+            llm_millis,
+            first_meaningful_millis: first_meaningful,
+            avatar_millis,
+            deliveries,
+            client_command: None,
         })
     }
 }
 
 impl OwnerLabEngine {
-    /// Reconciles a browser-confirmed client-transport send with the exact canonical output.
+    /// Reconciles a browser-confirmed client-transport send with one exact canonical segment.
     ///
     /// # Errors
     /// Returns `INVALID_STATE_TRANSITION` for stale or mismatched evidence identifiers.
@@ -180,21 +348,24 @@ impl OwnerLabEngine {
             .pending_voice_playback
             .get(&evidence_turn_sequence)
             .ok_or(LabError::InvalidState)?;
-        if pending.delivery.sequence() != evidence_output_sequence {
-            return Err(LabError::InvalidState);
-        }
+        let delivery = pending
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.sequence() == evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
         pending
             .turn
-            .acknowledge_output_sent(&pending.delivery)
+            .acknowledge_output_sent(delivery)
             .map_err(LabError::Runtime)
     }
 
-    /// Reconciles a browser-observed remote-audio start with the exact canonical voice turn.
-    /// Duplicate acknowledgements are idempotent; stale or unknown turn sequences fail closed.
+    /// Reconciles browser-observed remote audio with one exact canonical segment.
+    ///
+    /// Duplicate acknowledgements are idempotent; stale or unknown turn/segment sequences fail
+    /// closed.
     ///
     /// # Errors
-    /// Returns `INVALID_STATE_TRANSITION` when the turn does not belong to the current session or
-    /// no runtime-issued delivery handle exists for it.
+    /// Returns `INVALID_STATE_TRANSITION` when the segment does not belong to the current session.
     pub fn acknowledge_voice_playback(
         &mut self,
         evidence_turn_sequence: u64,
@@ -212,13 +383,95 @@ impl OwnerLabEngine {
             .pending_voice_playback
             .get(&evidence_turn_sequence)
             .ok_or(LabError::InvalidState)?;
-        if pending.delivery.sequence() != evidence_output_sequence {
-            return Err(LabError::InvalidState);
-        }
+        let delivery = pending
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.sequence() == evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
         pending
             .turn
-            .acknowledge_output_played(&pending.delivery)
+            .acknowledge_output_played(delivery)
             .map_err(LabError::Runtime)
+    }
+}
+
+fn deliver_phrase(
+    turn: &ActiveTurn,
+    provider: &dyn vpr_integration::RealtimeAvatarPort,
+    handle: &RealtimeAvatarHandle,
+    phrase: &str,
+) -> Result<(OutputDeliveryHandle, Option<LabClientCommand>), LabError> {
+    let client_text = handle
+        .client_control()
+        .is_some_and(|control| control.text_input);
+    if client_text {
+        let (delivery, command) = turn
+            .prepare_realtime_avatar_client_text(provider, handle, phrase)
+            .map_err(|error| terminalize_avatar_output_error(turn, error))?;
+        Ok((delivery, Some(command.into())))
+    } else {
+        let delivery = turn
+            .deliver_realtime_avatar_text(provider, handle, phrase)
+            .map_err(|error| terminalize_avatar_output_error(turn, error))?;
+        Ok((delivery, None))
+    }
+}
+
+#[derive(Default)]
+struct RealtimePhraseBuffer {
+    pending: String,
+    emitted_any: bool,
+}
+
+impl RealtimePhraseBuffer {
+    fn push(&mut self, chunk: &str) -> Vec<String> {
+        self.pending.push_str(chunk);
+        let mut output = Vec::new();
+        while let Some(boundary) = self.next_boundary() {
+            let tail = self.pending.split_off(boundary);
+            let phrase = std::mem::replace(&mut self.pending, tail);
+            if !phrase.trim().is_empty() {
+                self.emitted_any = true;
+                output.push(phrase.trim().to_owned());
+            }
+        }
+        output
+    }
+
+    fn finish(&mut self) -> Option<String> {
+        let phrase = std::mem::take(&mut self.pending);
+        let phrase = phrase.trim();
+        (!phrase.is_empty()).then(|| phrase.to_owned())
+    }
+
+    fn next_boundary(&self) -> Option<usize> {
+        for (index, ch) in self.pending.char_indices() {
+            if matches!(ch, '.' | '!' | '?' | '…' | '\n') {
+                return Some(index + ch.len_utf8());
+            }
+        }
+
+        let limit = if self.emitted_any {
+            NEXT_PHRASE_SOFT_LIMIT_CHARS
+        } else {
+            FIRST_PHRASE_SOFT_LIMIT_CHARS
+        };
+        if self.pending.chars().count() < limit {
+            return None;
+        }
+
+        let mut chars_seen = 0_usize;
+        let mut whitespace_boundary = None;
+        for (index, ch) in self.pending.char_indices() {
+            chars_seen += 1;
+            if ch.is_whitespace() {
+                whitespace_boundary = Some(index + ch.len_utf8());
+            }
+            if chars_seen >= limit {
+                break;
+            }
+        }
+        whitespace_boundary
     }
 }
 
@@ -267,4 +520,28 @@ pub(super) fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
 
 pub(super) fn elapsed_millis(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod phrase_tests {
+    use super::RealtimePhraseBuffer;
+
+    #[test]
+    fn emits_sentence_before_stream_finishes() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert!(buffer.push("Первая").is_empty());
+        assert_eq!(buffer.push(" фраза. Вто"), ["Первая фраза."]);
+        assert_eq!(buffer.finish().as_deref(), Some("Вто"));
+    }
+
+    #[test]
+    fn soft_limit_emits_at_word_boundary() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        let output = buffer.push(
+            "Это достаточно длинная первая фраза без знака завершения чтобы начать речь раньше",
+        );
+        assert_eq!(output.len(), 1);
+        assert!(!output[0].is_empty());
+        assert!(!output[0].ends_with(' '));
+    }
 }

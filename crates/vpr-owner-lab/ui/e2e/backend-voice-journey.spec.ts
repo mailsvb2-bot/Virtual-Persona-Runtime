@@ -580,12 +580,16 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(visitorVoiceLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
 
   expect(avatar.every((entry) => entry.authorization === "Basic voice-avatar-e2e-secret")).toBeTruthy();
-  const ownerSpeech = avatar.find((entry) =>
-    entry.method === "POST" && entry.path.endsWith("/stream-1")
-  );
-  const visitorSpeech = avatar.find((entry) =>
-    entry.method === "POST" && entry.path.endsWith("/stream-2")
-  );
-  expect(ownerSpeech?.bodyText).toContain("Голосовой ответ владельцу");
-  expect(visitorSpeech?.bodyText).toContain("В visitor scope нет подтверждённых данных владельца");
+  const spokenText = (streamPath: string): string =>
+    avatar
+      .filter((entry) => entry.method === "POST" && entry.path.endsWith(streamPath))
+      .map((entry) => {
+        const payload = JSON.parse(entry.bodyText) as { script?: { input?: string } };
+        return payload.script?.input ?? "";
+      })
+      .filter(Boolean)
+      .join(" ");
+
+  expect(spokenText("/stream-1")).toContain("Голосовой ответ владельцу");
+  expect(spokenText("/stream-2")).toBe("В visitor scope нет подтверждённых данных владельца");
 });

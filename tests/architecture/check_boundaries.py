@@ -596,6 +596,8 @@ for required_text_http in (
         raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
 
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_http_voice = (owner_lab_src / "http_voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_http_boundary = owner_lab_main + "\n" + owner_lab_http_voice
 owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
 if not owner_lab_mic_worklet.is_file():
@@ -618,7 +620,7 @@ for required_voice_http in (
     "request_voice_cancel",
     "compare_exchange",
 ):
-    if required_voice_http not in owner_lab_main:
+    if required_voice_http not in owner_lab_voice_http_boundary:
         raise SystemExit(f"Owner Lab voice HTTP boundary missing {required_voice_http}")
 for provider_name in (
     "openai-transcription",

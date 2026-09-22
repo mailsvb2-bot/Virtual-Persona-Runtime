@@ -6,6 +6,7 @@ mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
 mod http_text;
+mod http_voice;
 
 use std::env;
 use std::error::Error;
@@ -47,6 +48,7 @@ struct AppState {
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
+    voice_streams: http_voice::VoiceStreamRegistry,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -120,6 +122,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
+        voice_streams: http_voice::VoiceStreamRegistry::default(),
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -150,7 +153,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-fn handle_request(mut request: Request, state: &AppState) {
+fn handle_request(mut request: Request, state: &Arc<AppState>) {
     if !valid_host(&request, state.port) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
         return;
@@ -181,7 +184,7 @@ fn handle_request(mut request: Request, state: &AppState) {
         },
         (&Method::Post, "/api/voice/turn") => {
             if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
-                voice_turn_response(&mut request, state)
+                http_voice::voice_turn_response(&mut request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
@@ -236,6 +239,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                         .lock()
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
+                    state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
             })
@@ -260,6 +264,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             )
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
+        "/api/voice/events" => http_voice::events_response(request, state),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
             http_evidence::record_media(&state.engine, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
@@ -309,8 +314,11 @@ fn request_voice_cancel(state: &AppState) {
 
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
     state.session_end_requested.store(true, Ordering::Release);
-    state.evidence.lock().seal_session();
     request_voice_cancel(state);
+    if !state.voice_streams.wait_until_quiescent() {
+        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    }
+    state.evidence.lock().seal_session();
     let mut engine = state
         .engine
         .lock()
@@ -332,76 +340,6 @@ fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpRespon
                 state.session_end_requested.store(false, Ordering::Release);
             }
             Err(lab_error_response(&error))
-        }
-    }
-}
-
-fn voice_turn_response(request: &mut Request, state: &AppState) -> HttpResponse {
-    if let Err(response) = reject_if_session_ending(state) {
-        return response;
-    }
-    if state
-        .voice_busy
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return error_response(409, "INVALID_STATE_TRANSITION");
-    }
-    let _busy =
-        http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
-    if let Err(response) = reject_if_session_ending(state) {
-        return response;
-    }
-    let request_sequence = match http_evidence::request_sequence(request) {
-        Ok(sequence) => sequence,
-        Err(error) => return error_response(http_evidence::error_status(error), error.code()),
-    };
-    let audio = match read_body(request, MAX_VOICE_BODY_BYTES) {
-        Ok(audio) => audio,
-        Err(response) => return response,
-    };
-    if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
-        return error_response(http_evidence::error_status(error), error.code());
-    }
-    let result = {
-        let Ok(mut engine) = state.engine.lock() else {
-            let _ = state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, "INTERNAL_ERROR");
-            return error_response(500, "INTERNAL_ERROR");
-        };
-        let result = engine.voice_turn(audio, |handle| {
-            *state.active_voice_interrupt.lock() = Some(handle.clone());
-            if state.voice_cancel_requested.load(Ordering::Acquire) {
-                let _ = handle.interrupt();
-            }
-        });
-        *state.active_voice_interrupt.lock() = None;
-        result
-    };
-    match result {
-        Ok(value) => match state
-            .evidence
-            .lock()
-            .complete_voice_request(request_sequence, &value)
-        {
-            Ok(()) => json_response(200, &value),
-            Err(error) => error_response(http_evidence::error_status(error), error.code()),
-        },
-        Err(error) => {
-            if let Err(evidence_error) = state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, error.code())
-            {
-                error_response(
-                    http_evidence::error_status(evidence_error),
-                    evidence_error.code(),
-                )
-            } else {
-                lab_error_response(&error)
-            }
         }
     }
 }

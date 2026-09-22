@@ -10,6 +10,13 @@ type ClientRoute =
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
+type VoiceStartAck = { ok: true; request_sequence: number };
+type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
+type VoiceStreamEvent =
+  | { kind: "segment"; segment: VoiceSegment }
+  | { kind: "complete"; result: VoiceResult }
+  | { kind: "failed"; code: string };
+type VoiceEventsResponse = { events: VoiceStreamEvent[]; terminal: boolean };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
 type RealtimeTransport =
@@ -369,6 +376,31 @@ const apiBinary = async <T>(path: string, body: ArrayBuffer, requestSequence: nu
     throw new Error(code);
   }
   return payload as T;
+};
+
+const waitForVoiceEvents = async (
+  requestSequence: number,
+  onSegment: (segment: VoiceSegment) => Promise<void>,
+): Promise<VoiceResult> => {
+  let finalResult: VoiceResult | null = null;
+  while (true) {
+    const batch = await api<VoiceEventsResponse>("/api/voice/events", {
+      request_sequence: requestSequence,
+    });
+    for (const event of batch.events) {
+      if (event.kind === "segment") {
+        await onSegment(event.segment);
+      } else if (event.kind === "complete") {
+        finalResult = event.result;
+      } else {
+        throw new Error(event.code);
+      }
+    }
+    if (batch.terminal) {
+      if (!finalResult) throw new Error("VOICE_STREAM_INCOMPLETE");
+      return finalResult;
+    }
+  }
 };
 
 const refreshSessionEvidence = async (): Promise<void> => {
@@ -1023,7 +1055,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
   voiceRequestInFlight = true;
   let attemptedRequestSequence: number | null = null;
   updateControls();
-  setStatus("Распознаю и формирую ответ…");
+  setStatus("Распознаю и начинаю ответ…");
   try {
     const resampled = resampleMono(samples, inputRate);
     const bounded = resampled.length > MAX_VOICE_SAMPLES
@@ -1042,14 +1074,27 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       speaking: false,
       silentFrames: 0,
     };
-    const result = await apiBinary<VoiceResult>("/api/voice/turn", pcm, requestSequence);
-    if (result.client_command) {
-      await dispatchClientCommand(result.client_command);
+
+    const started = await apiBinary<VoiceStartAck>("/api/voice/turn", pcm, requestSequence);
+    if (started.request_sequence !== requestSequence) throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
+    const pendingDeliveryAcks: Array<{ turn: number; output: number }> = [];
+    const result = await waitForVoiceEvents(requestSequence, async (segment) => {
+      if (segment.client_command) {
+        await dispatchClientCommand(segment.client_command);
+        pendingDeliveryAcks.push({
+          turn: segment.evidence_turn_sequence,
+          output: segment.evidence_output_sequence,
+        });
+      }
+    });
+
+    for (const delivery of pendingDeliveryAcks) {
       await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
-        evidence_turn_sequence: result.evidence_turn_sequence,
-        evidence_output_sequence: result.evidence_output_sequence,
+        evidence_turn_sequence: delivery.turn,
+        evidence_output_sequence: delivery.output,
       });
     }
+
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
@@ -1114,11 +1159,15 @@ const interruptAvatar = async (): Promise<void> => {
     ? playbackId !== null
     : true;
   const clientReady = !textRequestInFlight
-    && !voiceRequestInFlight
     && realtimeTransportReady
     && activeClientControl?.interrupt === true
     && playbackReady;
   try {
+    if (voiceRequestInFlight) {
+      // Cancel the canonical turn first. This stops the provider stream and releases the runtime
+      // engine lock before a provider-specific browser interrupt command is prepared.
+      await api<{ ok: true }>("/api/avatar/interrupt", {});
+    }
     if (clientReady) {
       const command = await api<ClientCommand>("/api/avatar/client-interrupt", {
         playback_id: playbackId,
@@ -1129,7 +1178,9 @@ const interruptAvatar = async (): Promise<void> => {
       await refreshSessionEvidence();
       return;
     }
-    await api<{ ok: true }>("/api/avatar/interrupt", {});
+    if (!voiceRequestInFlight) {
+      await api<{ ok: true }>("/api/avatar/interrupt", {});
+    }
     await refreshSessionEvidence();
   } catch (error) {
     interruptEvidenceWatch = null;

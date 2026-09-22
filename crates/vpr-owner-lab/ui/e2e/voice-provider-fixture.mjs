@@ -33,6 +33,23 @@ const sendText = (response, status, contentType, body) => {
   });
   response.end(body);
 };
+
+const sendDelayedEventStream = (response, firstText, delayMillis = 500) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-store",
+    "connection": "close",
+  });
+  response.write(
+    `data: ${JSON.stringify({ choices: [{ delta: { content: firstText } }], usage: null })}\n\n`,
+  );
+  setTimeout(() => {
+    response.write(
+      `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 4 } })}\n\n`,
+    );
+    response.end("data: [DONE]\n\n");
+  }, delayMillis);
+};
 const record = (kind, request, url, body) => {
   requests.push({
     kind,
@@ -105,6 +122,11 @@ const server = http.createServer(async (request, response) => {
     const prompt = body.toString("utf8");
     if (prompt.includes("Спровоцируй отказ провайдера")) {
       return sendJson(response, 503, { error: { message: "fixture unavailable" } });
+    }
+    const expressiveRealtime = request.headers.authorization === "Bearer expressive-llm-e2e-secret"
+      && prompt.includes("Привет из браузера");
+    if (expressiveRealtime) {
+      return sendDelayedEventStream(response, "Голосовой ответ владельцу.");
     }
     const reply = prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"
