@@ -19,6 +19,7 @@ pub struct OpenAiCompatibleConfig {
     timeout: Duration,
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
+    thinking: Option<ThinkingConfig>,
 }
 
 impl OpenAiCompatibleConfig {
@@ -36,6 +37,7 @@ impl OpenAiCompatibleConfig {
             timeout: DEFAULT_TIMEOUT,
             max_tokens: None,
             reasoning_effort: None,
+            thinking: None,
         }
     }
 
@@ -68,6 +70,12 @@ impl OpenAiCompatibleConfig {
         if !reasoning_effort.trim().is_empty() {
             self.reasoning_effort = Some(reasoning_effort);
         }
+        self
+    }
+
+    #[must_use]
+    pub const fn with_thinking_disabled(mut self) -> Self {
+        self.thinking = Some(ThinkingConfig { r#type: "disabled" });
         self
     }
 
@@ -121,6 +129,7 @@ impl OpenAiCompatibleLlm {
             },
             max_tokens: self.config.max_tokens,
             reasoning_effort: self.config.reasoning_effort.as_deref(),
+            thinking: self.config.thinking,
         };
         let response = self
             .client
@@ -202,6 +211,13 @@ struct ChatRequest<'a> {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<ThinkingConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+struct ThinkingConfig {
+    r#type: &'static str,
 }
 
 #[derive(Serialize)]
@@ -371,6 +387,7 @@ mod tests {
         let provider = OpenAiCompatibleLlm::new(
             OpenAiCompatibleConfig::new(endpoint, "secret", "test-model")
                 .with_reasoning_effort("none")
+                .with_thinking_disabled()
                 .with_max_tokens(96),
         )
         .unwrap();
@@ -388,6 +405,7 @@ mod tests {
         let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.contains("\"max_tokens\":96"));
         assert!(request.contains("\"reasoning_effort\":\"none\""));
+        assert!(request.contains("\"thinking\":{\"type\":\"disabled\"}"));
     }
 
     #[test]

@@ -60,6 +60,8 @@ VPR_OWNER_LAB_LLM_API_KEY=<secret set outside the repository>
 
 Provider keys must remain outside the repository and are never serialized into provider-state or live-proof receipts. If a different DeepSeek model or endpoint is used, that exact model/endpoint participates in the configuration fingerprint and therefore produces a different evidence-bound provider state.
 
+For the realtime Owner Lab path, the DeepSeek adapter explicitly sends both `reasoning_effort="none"` and `thinking.type="disabled"`, plus the bounded spoken-response token cap. The realtime tuning is part of the sanitized configuration fingerprint so evidence cannot silently mix a thinking-enabled run with the low-latency profile.
+
 ## Credentialed live-provider probe
 
 After preflight, `vpr-live-proof probe` can test real provider reachability for the exact clean candidate:
