@@ -208,13 +208,28 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
         },
       };
       private readonly handlers = new Map<string, EventHandler[]>();
+      private videoTrack: FakeRemoteTrack | null = null;
 
       constructor() {
         const fakeWindow = window as typeof window & {
           __vprExpressiveDisconnect?: () => void;
+          __vprExpressiveLoseVideo?: () => void;
+          __vprExpressiveRestoreVideo?: () => void;
         };
         fakeWindow.__vprExpressiveDisconnect = () => {
           for (const handler of this.handlers.get(roomEvents.Disconnected) ?? []) handler();
+        };
+        fakeWindow.__vprExpressiveLoseVideo = () => {
+          const track = this.videoTrack;
+          if (!track) return;
+          this.videoTrack = null;
+          this.emit(roomEvents.TrackUnsubscribed, track);
+        };
+        fakeWindow.__vprExpressiveRestoreVideo = () => {
+          if (this.videoTrack) return;
+          const track = new FakeRemoteTrack("video");
+          this.videoTrack = track;
+          this.emit(roomEvents.TrackSubscribed, track);
         };
       }
 
@@ -230,7 +245,8 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       }
 
       async connect(): Promise<void> {
-        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("video"));
+        this.videoTrack = new FakeRemoteTrack("video");
+        this.emit(roomEvents.TrackSubscribed, this.videoTrack);
         this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("audio"));
       }
 
@@ -313,6 +329,23 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(layout.objectFit).toBe("contain");
   expect(layout.avatarWidth).toBeLessThanOrEqual(layout.stageWidth);
   expect(layout.avatarHeight).toBeLessThanOrEqual(layout.stageHeight);
+
+  const voiceButton = page.locator("#voice");
+  await expect(voiceButton).toBeEnabled();
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressiveLoseVideo?: () => void };
+    fakeWindow.__vprExpressiveLoseVideo?.();
+  });
+  await expect(page.locator(".stage")).not.toHaveClass(/has-video/);
+  await expect(voiceButton).toBeDisabled();
+  await expect(page.locator("#status")).toContainText("Видео-поток аватара потерян");
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressiveRestoreVideo?: () => void };
+    fakeWindow.__vprExpressiveRestoreVideo?.();
+  });
+  await expect(page.locator(".stage")).toHaveClass(/has-video/);
+  await expect(voiceButton).toBeEnabled();
 
   await recordVoiceTurn(
     page,
