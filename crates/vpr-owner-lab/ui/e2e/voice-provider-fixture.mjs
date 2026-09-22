@@ -39,7 +39,7 @@ const sendDelayedEventStream = (
   firstText,
   secondText = "",
   phraseDelayMillis = 80,
-  completionDelayMillis = 420,
+  completionDelayMillis = 40,
 ) => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
