@@ -137,7 +137,7 @@ pub struct OwnerLabEngine {
     session_audience: Option<LabSessionAudience>,
     session_counter: u64,
     turn_counter: u64,
-    voice_playback: voice::LabVoicePlaybackRegistry,
+    voice_playback: voice_playback::LabVoicePlaybackRegistry,
     egress_enabled: bool,
 }
 
@@ -163,7 +163,7 @@ impl OwnerLabEngine {
             session_audience: None,
             session_counter: 0,
             turn_counter: 0,
-            voice_playback: voice::LabVoicePlaybackRegistry::default(),
+            voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
     }
@@ -565,11 +565,11 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 mod client_control;
 mod text;
 mod voice;
+mod voice_playback;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
 pub use text::LabTextResult;
-pub use voice::{
-    LabProviderUsage, LabVoicePlaybackRegistry, LabVoiceResult, LabVoiceSegment, LabVoiceUsage,
-};
+pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
+pub use voice_playback::LabVoicePlaybackRegistry;
 
 #[cfg(test)]
 mod tests;
