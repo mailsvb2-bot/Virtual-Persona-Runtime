@@ -114,6 +114,10 @@ for required in (
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",
     "AV_SYNC_MAX_ATTEMPTS",
+    "getRTCStatsReport",
+    "liveKitAudioTrack",
+    "liveKitVideoTrack",
+    "TrackUnsubscribed",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
