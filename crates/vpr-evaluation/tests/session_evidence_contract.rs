@@ -38,6 +38,7 @@ fn completed(request: u64, base: u64) -> LabVoiceAttemptEvidence {
         failure_code: None,
         stt_millis: Some(base),
         llm_millis: Some(base + 100),
+        llm_first_meaningful_millis: Some(base / 2),
         avatar_millis: Some(base + 20),
         server_total_millis: Some(base + 250),
         stt_usage: Some(usage(Some(2), Some(3))),
@@ -110,6 +111,8 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.completed_voice_attempts, 2);
     assert_eq!(aggregate.text_first_meaningful_response.unwrap().p50, 150);
     assert_eq!(aggregate.text_first_meaningful_response.unwrap().p95, 350);
+    assert_eq!(aggregate.llm_first_meaningful_response.unwrap().p50, 50);
+    assert_eq!(aggregate.llm_first_meaningful_response.unwrap().p95, 150);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
     assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
@@ -171,6 +174,17 @@ fn text_attempts_are_exact_and_fail_closed() {
 }
 
 #[test]
+fn voice_llm_first_meaningful_must_not_exceed_full_llm_latency() {
+    let mut impossible = snapshot(60, 1, 100);
+    impossible.voice_attempts[0].llm_first_meaningful_millis = Some(250);
+    impossible.voice_attempts[0].llm_millis = Some(200);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[impossible]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+}
+
+#[test]
 fn duplicate_pending_and_forged_snapshots_fail_closed() {
     let original = snapshot(1, 1, 100);
     assert_eq!(
@@ -214,6 +228,7 @@ fn failed_attempts_must_be_clean_and_media_cannot_claim_failed_output() {
         failure_code: Some("TURN_CANCELLED".into()),
         stt_millis: None,
         llm_millis: None,
+        llm_first_meaningful_millis: None,
         avatar_millis: None,
         server_total_millis: None,
         stt_usage: None,
