@@ -266,9 +266,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
-            http_evidence::record_media(&state.engine, &state.evidence, &body)
+            http_evidence::record_media(&state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                .map_err(|error| error_response(error.status(), error.code()))
+                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
         "/api/evidence/av-sync" => parse_json::<LabAvSyncEvidenceInput>(request).and_then(|body| {
             http_evidence::record_av_sync(&state.evidence, &body)
