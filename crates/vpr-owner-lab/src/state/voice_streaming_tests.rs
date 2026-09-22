@@ -260,10 +260,7 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
         )
         .unwrap();
     playback
-        .acknowledge_voice_playback(
-            first.evidence_turn_sequence,
-            first.evidence_output_sequence,
-        )
+        .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
         .unwrap();
     assert!(matches!(
         result_rx.try_recv(),
