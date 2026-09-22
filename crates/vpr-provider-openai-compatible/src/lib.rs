@@ -79,7 +79,6 @@ impl OpenAiCompatibleConfig {
         self
     }
 
-
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
