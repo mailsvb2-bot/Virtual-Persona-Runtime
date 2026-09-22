@@ -168,15 +168,13 @@ impl OwnerLabEngine {
         };
 
         let generation = match &mut output_mode {
-            VoiceOutputMode::Buffered => {
-                self.buffered_generation(
-                    &turn,
-                    llm.as_ref(),
-                    handle,
-                    &request,
-                    evidence_turn_sequence,
-                )?
-            }
+            VoiceOutputMode::Buffered => self.buffered_generation(
+                &turn,
+                llm.as_ref(),
+                handle,
+                &request,
+                evidence_turn_sequence,
+            )?,
             VoiceOutputMode::Streaming(emit_segment) => self.streaming_generation(
                 &turn,
                 llm.as_ref(),
