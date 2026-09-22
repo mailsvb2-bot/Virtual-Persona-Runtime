@@ -128,6 +128,7 @@ for required in (
     "__vprExpressiveDisconnect",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
     "#metric-stt",
+    "#metric-llm-first",
     "#metric-av-sync",
     "#metric-playback",
     "#metric-cost",
@@ -196,6 +197,7 @@ for required in (
 for required in (
     'id="metric-stt"',
     'id="metric-llm"',
+    'id="metric-llm-first"',
     'id="metric-server-total"',
     'id="metric-text-first"',
     'id="metric-first-audio"',
@@ -210,6 +212,7 @@ for required in (
 for required in (
     "renderTelemetry",
     "isSessionEvidenceSnapshot",
+    "llm_first_meaningful_millis",
     "estimated_cost_microunits",
     "provider_charge_microunits",
     "провайдер не сообщил стоимость",

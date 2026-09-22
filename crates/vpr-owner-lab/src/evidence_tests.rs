@@ -27,6 +27,7 @@ fn voice_result() -> LabVoiceResult {
         evidence_output_sequence: 1,
         stt_millis: 100,
         llm_millis: 200,
+        llm_first_meaningful_millis: 80,
         avatar_millis: 50,
         total_millis: 350,
         stt_usage: LabVoiceUsage {
@@ -110,6 +111,10 @@ fn session_reset_and_snapshot_are_payload_redacted() {
         Some(1)
     );
     assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
+    assert_eq!(
+        snapshot.voice_attempts[0].llm_first_meaningful_millis,
+        Some(80)
+    );
     assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
     assert_eq!(snapshot.participant_role, ParticipantRole::Owner);
     assert!(snapshot.canonical_playback_proven);

@@ -251,7 +251,7 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
             }));
         }
         json!({
-            "schema_version":"rt0-owner-lab-session-evidence-0.5",
+            "schema_version":"rt0-owner-lab-session-evidence-0.6",
             "scope":"browser_observed_media_plane_only",
             "session_sequence":session_sequence,
             "participant_role":role,
@@ -276,6 +276,7 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
                 "failure_code":null,
                 "stt_millis":100,
                 "llm_millis":120,
+                "llm_first_meaningful_millis":80,
                 "avatar_millis":150,
                 "server_total_millis":370,
                 "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},

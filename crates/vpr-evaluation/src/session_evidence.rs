@@ -2,13 +2,14 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::session_statistics::{add_cost, distribution};
 use crate::{
     LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.5";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.5";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -75,6 +76,7 @@ pub struct LabVoiceAttemptEvidence {
     pub failure_code: Option<String>,
     pub stt_millis: Option<u64>,
     pub llm_millis: Option<u64>,
+    pub llm_first_meaningful_millis: Option<u64>,
     pub avatar_millis: Option<u64>,
     pub server_total_millis: Option<u64>,
     pub stt_usage: Option<SessionUsageEvidence>,
@@ -120,6 +122,7 @@ pub struct LabSessionEvidenceAggregate {
     pub av_sync_absolute_offset: Option<LatencyDistributionMillis>,
     pub stt_latency: Option<LatencyDistributionMillis>,
     pub llm_latency: Option<LatencyDistributionMillis>,
+    pub llm_first_meaningful_response: Option<LatencyDistributionMillis>,
     pub avatar_submit_latency: Option<LatencyDistributionMillis>,
     pub server_total_latency: Option<LatencyDistributionMillis>,
     pub first_meaningful_audio: Option<LatencyDistributionMillis>,
@@ -140,11 +143,12 @@ pub enum LabSessionAggregateError {
     Overflow,
 }
 
-/// Aggregates sanitized Owner Lab session snapshots into deterministic latency/cost evidence.
+/// Aggregates sanitized Owner Lab session snapshots into deterministic RT0 evidence.
 ///
 /// # Errors
-/// Returns a fail-closed error for empty input, malformed or duplicate snapshots, pending or
-/// inconsistent voice attempts, malformed media evidence, or arithmetic overflow.
+///
+/// Returns an error when input is empty, duplicated, incomplete, structurally invalid,
+/// contains invalid media evidence, or would overflow aggregate counters.
 pub fn aggregate_owner_lab_session_evidence(
     snapshots: &[LabSessionEvidenceSnapshot],
 ) -> Result<LabSessionEvidenceAggregate, LabSessionAggregateError> {
@@ -183,6 +187,7 @@ struct SessionAggregateAccumulator {
     av_sync: Vec<u64>,
     stt: Vec<u64>,
     llm: Vec<u64>,
+    llm_first_meaningful: Vec<u64>,
     avatar: Vec<u64>,
     server_total: Vec<u64>,
     audio: Vec<u64>,
@@ -351,6 +356,7 @@ impl SessionAggregateAccumulator {
             || attempt.canonical_playback_confirmed
             || attempt.stt_millis.is_some()
             || attempt.llm_millis.is_some()
+            || attempt.llm_first_meaningful_millis.is_some()
             || attempt.avatar_millis.is_some()
             || attempt.server_total_millis.is_some()
             || attempt.stt_usage.is_some()
@@ -374,6 +380,7 @@ impl SessionAggregateAccumulator {
             Some(output),
             Some(stt_ms),
             Some(llm_ms),
+            Some(llm_first_meaningful_ms),
             Some(avatar_ms),
             Some(total_ms),
             Some(stt_usage),
@@ -383,6 +390,7 @@ impl SessionAggregateAccumulator {
             attempt.canonical_output_sequence,
             attempt.stt_millis,
             attempt.llm_millis,
+            attempt.llm_first_meaningful_millis,
             attempt.avatar_millis,
             attempt.server_total_millis,
             attempt.stt_usage.as_ref(),
@@ -391,7 +399,12 @@ impl SessionAggregateAccumulator {
         else {
             return Err(LabSessionAggregateError::IncompleteAttempt);
         };
-        if turn == 0 || output == 0 || attempt.failure_code.is_some() {
+        if turn == 0
+            || output == 0
+            || llm_first_meaningful_ms > llm_ms
+            || llm_first_meaningful_ms > total_ms
+            || attempt.failure_code.is_some()
+        {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
         self.completed_voice = self
@@ -400,6 +413,7 @@ impl SessionAggregateAccumulator {
             .ok_or(LabSessionAggregateError::Overflow)?;
         self.stt.push(stt_ms);
         self.llm.push(llm_ms);
+        self.llm_first_meaningful.push(llm_first_meaningful_ms);
         self.avatar.push(avatar_ms);
         self.server_total.push(total_ms);
         self.add_usage_costs(stt_usage, llm_usage)
@@ -453,6 +467,7 @@ impl SessionAggregateAccumulator {
             av_sync_absolute_offset: distribution(self.av_sync)?,
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
+            llm_first_meaningful_response: distribution(self.llm_first_meaningful)?,
             avatar_submit_latency: distribution(self.avatar)?,
             server_total_latency: distribution(self.server_total)?,
             first_meaningful_audio: distribution(self.audio)?,
@@ -559,37 +574,4 @@ fn validate_and_collect_av_sync(
         .filter(|(_, sequences)| sequences.len() == required_samples)
         .map(|(request, _)| request)
         .collect())
-}
-
-fn add_cost(total: &mut Option<u64>, value: Option<u64>) -> Result<(), LabSessionAggregateError> {
-    let (Some(current), Some(value)) = (*total, value) else {
-        *total = None;
-        return Ok(());
-    };
-    *total = Some(
-        current
-            .checked_add(value)
-            .ok_or(LabSessionAggregateError::Overflow)?,
-    );
-    Ok(())
-}
-
-fn distribution(
-    mut values: Vec<u64>,
-) -> Result<Option<LatencyDistributionMillis>, LabSessionAggregateError> {
-    if values.is_empty() {
-        return Ok(None);
-    }
-    values.sort_unstable();
-    let samples = u32::try_from(values.len()).map_err(|_| LabSessionAggregateError::Overflow)?;
-    Ok(Some(LatencyDistributionMillis {
-        samples,
-        p50: nearest_rank(&values, 50),
-        p95: nearest_rank(&values, 95),
-    }))
-}
-
-fn nearest_rank(values: &[u64], percentile: usize) -> u64 {
-    let rank = values.len().saturating_mul(percentile).div_ceil(100).max(1);
-    values[rank - 1]
 }

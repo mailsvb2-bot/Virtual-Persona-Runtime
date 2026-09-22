@@ -197,7 +197,7 @@ fn session_snapshot_bytes_with_av_sync(
     ];
     media_events.extend(interruption);
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.5",
+        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -225,6 +225,7 @@ fn session_snapshot_bytes_with_av_sync(
             "failure_code":null,
             "stt_millis":100,
             "llm_millis":120,
+            "llm_first_meaningful_millis":80,
             "avatar_millis":150,
             "server_total_millis":370,
             "stt_usage":{
