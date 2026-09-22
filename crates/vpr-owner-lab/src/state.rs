@@ -568,6 +568,6 @@ pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod voice_tests;
-#[cfg(test)]
 mod voice_streaming_tests;
+#[cfg(test)]
+mod voice_tests;
