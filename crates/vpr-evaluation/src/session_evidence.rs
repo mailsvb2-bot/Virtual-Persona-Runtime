@@ -7,8 +7,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.5";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.5";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -75,6 +75,7 @@ pub struct LabVoiceAttemptEvidence {
     pub failure_code: Option<String>,
     pub stt_millis: Option<u64>,
     pub llm_millis: Option<u64>,
+    pub llm_first_meaningful_millis: Option<u64>,
     pub avatar_millis: Option<u64>,
     pub server_total_millis: Option<u64>,
     pub stt_usage: Option<SessionUsageEvidence>,
@@ -120,6 +121,7 @@ pub struct LabSessionEvidenceAggregate {
     pub av_sync_absolute_offset: Option<LatencyDistributionMillis>,
     pub stt_latency: Option<LatencyDistributionMillis>,
     pub llm_latency: Option<LatencyDistributionMillis>,
+    pub llm_first_meaningful_response: Option<LatencyDistributionMillis>,
     pub avatar_submit_latency: Option<LatencyDistributionMillis>,
     pub server_total_latency: Option<LatencyDistributionMillis>,
     pub first_meaningful_audio: Option<LatencyDistributionMillis>,
@@ -183,6 +185,7 @@ struct SessionAggregateAccumulator {
     av_sync: Vec<u64>,
     stt: Vec<u64>,
     llm: Vec<u64>,
+    llm_first_meaningful: Vec<u64>,
     avatar: Vec<u64>,
     server_total: Vec<u64>,
     audio: Vec<u64>,
@@ -351,6 +354,7 @@ impl SessionAggregateAccumulator {
             || attempt.canonical_playback_confirmed
             || attempt.stt_millis.is_some()
             || attempt.llm_millis.is_some()
+            || attempt.llm_first_meaningful_millis.is_some()
             || attempt.avatar_millis.is_some()
             || attempt.server_total_millis.is_some()
             || attempt.stt_usage.is_some()
@@ -374,6 +378,7 @@ impl SessionAggregateAccumulator {
             Some(output),
             Some(stt_ms),
             Some(llm_ms),
+            Some(llm_first_meaningful_ms),
             Some(avatar_ms),
             Some(total_ms),
             Some(stt_usage),
@@ -383,6 +388,7 @@ impl SessionAggregateAccumulator {
             attempt.canonical_output_sequence,
             attempt.stt_millis,
             attempt.llm_millis,
+            attempt.llm_first_meaningful_millis,
             attempt.avatar_millis,
             attempt.server_total_millis,
             attempt.stt_usage.as_ref(),
@@ -391,7 +397,12 @@ impl SessionAggregateAccumulator {
         else {
             return Err(LabSessionAggregateError::IncompleteAttempt);
         };
-        if turn == 0 || output == 0 || attempt.failure_code.is_some() {
+        if turn == 0
+            || output == 0
+            || llm_first_meaningful_ms > llm_ms
+            || llm_first_meaningful_ms > total_ms
+            || attempt.failure_code.is_some()
+        {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
         self.completed_voice = self
@@ -400,6 +411,7 @@ impl SessionAggregateAccumulator {
             .ok_or(LabSessionAggregateError::Overflow)?;
         self.stt.push(stt_ms);
         self.llm.push(llm_ms);
+        self.llm_first_meaningful.push(llm_first_meaningful_ms);
         self.avatar.push(avatar_ms);
         self.server_total.push(total_ms);
         self.add_usage_costs(stt_usage, llm_usage)
@@ -453,6 +465,7 @@ impl SessionAggregateAccumulator {
             av_sync_absolute_offset: distribution(self.av_sync)?,
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
+            llm_first_meaningful_response: distribution(self.llm_first_meaningful)?,
             avatar_submit_latency: distribution(self.avatar)?,
             server_total_latency: distribution(self.server_total)?,
             first_meaningful_audio: distribution(self.audio)?,
