@@ -8,7 +8,8 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:backend": "playwright test --config playwright.backend.config.ts",
-    "test:e2e:voice": "playwright test --config playwright.voice.config.ts"
+    "test:e2e:voice": "playwright test --config playwright.voice.config.ts",
+    "test:e2e:expressive": "playwright test --config playwright.expressive.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
