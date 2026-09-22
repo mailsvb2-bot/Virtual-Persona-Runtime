@@ -16,6 +16,14 @@ h1 { margin:0; font-size:clamp(36px,6vw,70px); line-height:.95; letter-spacing:-
 .placeholder { position:absolute; inset:0; display:grid; place-items:center; color:#68738c; pointer-events:none; }
 .stage.has-video .placeholder { display:none; }
 .panel,.evidence { border:1px solid #293149; border-radius:18px; padding:18px; background:rgba(17,21,31,.82); }
+.telemetry-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:14px 0 12px; }
+.metric-card { min-width:0; border:1px solid #303a51; border-radius:14px; padding:13px; background:#0d111a; display:grid; gap:7px; }
+.metric-card span,.cost-line span { color:#9fb0d8; font-size:12px; }
+.metric-card strong { font-size:18px; line-height:1.2; word-break:break-word; }
+.cost-line { display:flex; justify-content:space-between; gap:16px; align-items:center; border:1px solid #303a51; border-radius:14px; padding:13px; background:#0d111a; }
+.cost-line strong { text-align:right; font-size:14px; }
+.evidence-heading { margin-top:24px; }
+
 .consent { display:flex; gap:10px; align-items:flex-start; color:#d6dcef; line-height:1.45; }
 input[type="checkbox"] { margin-top:3px; width:18px; height:18px; }
 .row { display:flex; flex-wrap:wrap; gap:10px; margin-top:16px; }
@@ -26,7 +34,7 @@ label[for="message"] { display:block; margin-bottom:9px; color:#b9c2d7; }
 textarea { width:100%; resize:vertical; border:1px solid #343e56; border-radius:12px; padding:12px; background:#0b0e15; color:#f7f8ff; font:inherit; }
 h2 { margin:0 0 12px; font-size:16px; }
 pre { margin:0; color:#9fb0d8; white-space:pre-wrap; word-break:break-word; font-size:12px; }
-@media (max-width:700px) { .hero { flex-direction:column; } .stage { aspect-ratio:16/9; min-height:0; } }
+@media (max-width:700px) { .hero { flex-direction:column; } .stage { aspect-ratio:16/9; min-height:0; } .telemetry-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .cost-line { align-items:flex-start; flex-direction:column; } .cost-line strong { text-align:left; } }
 
 .hint { margin: 0 0 12px; opacity: 0.72; font-size: 0.92rem; }
 
