@@ -2,48 +2,58 @@ export class PlaybackAwareCommandScheduler {
     send;
     currentPlayback = null;
     generation = 0;
+    queueTail = Promise.resolve();
     constructor(send) {
         this.send = send;
     }
     get hasActivePlayback() {
         return this.currentPlayback !== null;
     }
-    async dispatch(command) {
+    dispatch(command) {
         const generation = this.generation;
-        const previous = this.currentPlayback;
-        if (previous) {
-            await previous.promise;
-            if (generation !== this.generation)
-                return false;
-        }
-        if (generation !== this.generation)
-            return false;
-        let resolve;
-        const barrier = {
-            promise: new Promise((done) => {
-                resolve = done;
-            }),
-            resolve: () => resolve(),
+        let resolveResult;
+        let rejectResult;
+        const result = new Promise((resolve, reject) => {
+            resolveResult = resolve;
+            rejectResult = reject;
+        });
+        const run = async () => {
+            if (generation !== this.generation) {
+                resolveResult(false);
+                return;
+            }
+            let release;
+            const barrier = {
+                promise: new Promise((done) => {
+                    release = done;
+                }),
+                resolve: () => release(),
+            };
+            this.currentPlayback = barrier;
+            try {
+                await this.send(command);
+                if (generation !== this.generation) {
+                    if (this.currentPlayback === barrier) {
+                        this.currentPlayback = null;
+                        barrier.resolve();
+                    }
+                    resolveResult(false);
+                    return;
+                }
+                resolveResult(true);
+                await barrier.promise;
+            }
+            catch (error) {
+                if (this.currentPlayback === barrier) {
+                    this.currentPlayback = null;
+                    barrier.resolve();
+                }
+                rejectResult(error);
+            }
         };
-        this.currentPlayback = barrier;
-        try {
-            await this.send(command);
-        }
-        catch (error) {
-            if (this.currentPlayback === barrier) {
-                this.currentPlayback = null;
-                barrier.resolve();
-            }
-            throw error;
-        }
-        if (generation !== this.generation) {
-            if (this.currentPlayback === barrier) {
-                this.currentPlayback = null;
-                barrier.resolve();
-            }
-            return false;
-        }
-        return true;
+        const scheduled = this.queueTail.then(run, run);
+        this.queueTail = scheduled.then(() => undefined, () => undefined);
+        return result;
     }
     playbackDone() {
         const barrier = this.currentPlayback;
