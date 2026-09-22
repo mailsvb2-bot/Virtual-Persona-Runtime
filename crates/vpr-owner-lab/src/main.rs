@@ -6,8 +6,8 @@ mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
 mod http_text;
+mod http_voice;
 
-use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
@@ -23,8 +23,7 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
-    LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
-    ParticipantRole, ProviderBundle,
+    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -49,7 +48,7 @@ struct AppState {
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
-    voice_streams: ParkingMutex<BTreeMap<u64, VoiceStreamState>>,
+    voice_streams: ParkingMutex<std::collections::BTreeMap<u64, http_voice::VoiceStreamState>>,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -93,31 +92,6 @@ struct SpeakBody {
     text: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum VoiceStreamEvent {
-    Segment { segment: LabVoiceSegment },
-    Complete { result: LabVoiceResult },
-    Failed { code: String },
-}
-
-#[derive(Default)]
-struct VoiceStreamState {
-    events: VecDeque<VoiceStreamEvent>,
-    terminal: bool,
-}
-
-#[derive(Deserialize)]
-struct VoiceEventsBody {
-    request_sequence: u64,
-}
-
-#[derive(Serialize)]
-struct VoiceEventsResponse {
-    events: Vec<VoiceStreamEvent>,
-    terminal: bool,
-}
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -148,7 +122,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
-        voice_streams: ParkingMutex::new(BTreeMap::new()),
+        voice_streams: ParkingMutex::new(std::collections::BTreeMap::new()),
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -210,7 +184,7 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         },
         (&Method::Post, "/api/voice/turn") => {
             if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
-                voice_turn_response(&mut request, state)
+                http_voice::voice_turn_response(&mut request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
@@ -290,8 +264,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             )
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
-        "/api/voice/events" => parse_json::<VoiceEventsBody>(request)
-            .and_then(|body| voice_events_response(state, body.request_sequence)),
+        "/api/voice/events" => http_voice::events_response(request, state),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
             http_evidence::record_media(&state.engine, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
@@ -367,167 +340,6 @@ fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpRespon
             Err(lab_error_response(&error))
         }
     }
-}
-
-fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
-    if let Err(response) = reject_if_session_ending(state) {
-        return response;
-    }
-    if state
-        .voice_busy
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return error_response(409, "INVALID_STATE_TRANSITION");
-    }
-    if let Err(response) = reject_if_session_ending(state) {
-        state.voice_busy.store(false, Ordering::Release);
-        return response;
-    }
-    let request_sequence = match http_evidence::request_sequence(request) {
-        Ok(sequence) => sequence,
-        Err(error) => {
-            state.voice_busy.store(false, Ordering::Release);
-            return error_response(http_evidence::error_status(error), error.code());
-        }
-    };
-    let audio = match read_body(request, MAX_VOICE_BODY_BYTES) {
-        Ok(audio) => audio,
-        Err(response) => {
-            state.voice_busy.store(false, Ordering::Release);
-            return response;
-        }
-    };
-    if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
-        state.voice_busy.store(false, Ordering::Release);
-        return error_response(http_evidence::error_status(error), error.code());
-    }
-    {
-        let mut streams = state.voice_streams.lock();
-        if streams.contains_key(&request_sequence) {
-            state.voice_busy.store(false, Ordering::Release);
-            let _ = state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, "INVALID_STATE_TRANSITION");
-            return error_response(409, "INVALID_STATE_TRANSITION");
-        }
-        streams.insert(request_sequence, VoiceStreamState::default());
-    }
-
-    let worker_state = Arc::clone(state);
-    thread::spawn(move || {
-        let _busy = http_evidence::VoiceBusyGuard::new(
-            &worker_state.voice_busy,
-            &worker_state.voice_cancel_requested,
-        );
-        let result = {
-            let Ok(mut engine) = worker_state.engine.lock() else {
-                finish_voice_stream(
-                    &worker_state,
-                    request_sequence,
-                    Err(LabError::Internal),
-                );
-                return;
-            };
-            let result = engine.voice_turn_streaming(
-                audio,
-                |handle| {
-                    *worker_state.active_voice_interrupt.lock() = Some(handle.clone());
-                    if worker_state.voice_cancel_requested.load(Ordering::Acquire) {
-                        let _ = handle.interrupt();
-                    }
-                },
-                |segment| {
-                    push_voice_stream_event(
-                        &worker_state,
-                        request_sequence,
-                        VoiceStreamEvent::Segment { segment },
-                    )
-                },
-            );
-            *worker_state.active_voice_interrupt.lock() = None;
-            result
-        };
-        finish_voice_stream(&worker_state, request_sequence, result);
-    });
-
-    json_response(
-        202,
-        &serde_json::json!({"ok": true, "request_sequence": request_sequence}),
-    )
-}
-
-fn push_voice_stream_event(
-    state: &AppState,
-    request_sequence: u64,
-    event: VoiceStreamEvent,
-) -> Result<(), LabError> {
-    let mut streams = state.voice_streams.lock();
-    let stream = streams
-        .get_mut(&request_sequence)
-        .ok_or(LabError::InvalidState)?;
-    if stream.terminal {
-        return Err(LabError::InvalidState);
-    }
-    stream.events.push_back(event);
-    Ok(())
-}
-
-fn finish_voice_stream(
-    state: &AppState,
-    request_sequence: u64,
-    result: Result<LabVoiceResult, LabError>,
-) {
-    let event = match result {
-        Ok(value) => match state
-            .evidence
-            .lock()
-            .complete_voice_request(request_sequence, &value)
-        {
-            Ok(()) => VoiceStreamEvent::Complete { result: value },
-            Err(error) => VoiceStreamEvent::Failed {
-                code: error.code().to_owned(),
-            },
-        },
-        Err(error) => {
-            let code = match state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, error.code())
-            {
-                Ok(()) => error.code(),
-                Err(evidence_error) => evidence_error.code(),
-            };
-            VoiceStreamEvent::Failed {
-                code: code.to_owned(),
-            }
-        }
-    };
-    let mut streams = state.voice_streams.lock();
-    if let Some(stream) = streams.get_mut(&request_sequence) {
-        stream.events.push_back(event);
-        stream.terminal = true;
-    }
-}
-
-fn voice_events_response(
-    state: &AppState,
-    request_sequence: u64,
-) -> Result<HttpResponse, HttpResponse> {
-    let mut streams = state.voice_streams.lock();
-    let stream = streams
-        .get_mut(&request_sequence)
-        .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
-    let events: Vec<_> = stream.events.drain(..).collect();
-    let terminal = stream.terminal;
-    if terminal {
-        streams.remove(&request_sequence);
-    }
-    Ok(json_response(
-        200,
-        &VoiceEventsResponse { events, terminal },
-    ))
 }
 
 fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse> {
