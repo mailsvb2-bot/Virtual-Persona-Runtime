@@ -4,7 +4,7 @@ pub use vpr_evaluation::{
     LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
     LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
     LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabVoiceOutputEvidence, ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
@@ -175,8 +175,7 @@ impl LabSessionEvidenceRecorder {
             LabVoiceAttemptEvidence {
                 request_sequence,
                 canonical_turn_sequence: None,
-                canonical_output_sequence: None,
-                canonical_playback_confirmed: false,
+                canonical_outputs: Vec::new(),
                 status: LabVoiceAttemptStatus::Pending,
                 failure_code: None,
                 stt_millis: None,
@@ -208,7 +207,11 @@ impl LabSessionEvidenceRecorder {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
         if result.evidence_turn_sequence == 0
-            || result.evidence_output_sequence == 0
+            || result.evidence_output_sequences.is_empty()
+            || result
+                .evidence_output_sequences
+                .iter()
+                .any(|sequence| *sequence == 0)
             || result.stt_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_first_meaningful_millis > result.llm_millis
@@ -217,9 +220,20 @@ impl LabSessionEvidenceRecorder {
         {
             return Err(LabEvidenceError::InvalidInput);
         }
+        let mut outputs = result.evidence_output_sequences.clone();
+        outputs.sort_unstable();
+        outputs.dedup();
+        if outputs.len() != result.evidence_output_sequences.len() {
+            return Err(LabEvidenceError::InvalidInput);
+        }
         attempt.canonical_turn_sequence = Some(result.evidence_turn_sequence);
-        attempt.canonical_output_sequence = Some(result.evidence_output_sequence);
-        attempt.canonical_playback_confirmed = false;
+        attempt.canonical_outputs = outputs
+            .into_iter()
+            .map(|canonical_output_sequence| LabVoiceOutputEvidence {
+                canonical_output_sequence,
+                playback_confirmed: false,
+            })
+            .collect();
         attempt.status = LabVoiceAttemptStatus::Completed;
         attempt.stt_millis = Some(result.stt_millis);
         attempt.llm_millis = Some(result.llm_millis);
@@ -252,82 +266,37 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Returns the canonical turn/output binding for a completed browser voice request.
+    /// Reconciles one provider-confirmed playback completion with one exact canonical segment.
     ///
     /// # Errors
-    /// Fails for sealed sessions, unknown requests, failed/pending attempts, or missing turn data.
-    pub fn completed_playback_binding(
-        &self,
-        request_sequence: u64,
-    ) -> Result<(u64, u64), LabEvidenceError> {
-        if self.sealed {
-            return Err(LabEvidenceError::InvalidState);
-        }
-        let attempt = self
-            .voice_attempts
-            .get(&request_sequence)
-            .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabVoiceAttemptStatus::Completed {
-            return Err(LabEvidenceError::InvalidState);
-        }
-        match (
-            attempt.canonical_turn_sequence,
-            attempt.canonical_output_sequence,
-        ) {
-            (Some(turn), Some(output)) if turn > 0 && output > 0 => Ok((turn, output)),
-            _ => Err(LabEvidenceError::InvalidState),
-        }
-    }
-
-    /// Validates one browser audio-start observation and returns the exact canonical turn that
-    /// must be reconciled before the observation may contribute playback proof.
-    ///
-    /// # Errors
-    /// Fails for stale sessions, malformed/duplicate media, unknown requests, or incomplete turns.
-    pub fn prepare_canonical_playback(
-        &self,
-        input: &LabMediaEvidenceInput,
-    ) -> Result<(u64, u64), LabEvidenceError> {
-        if input.kind != LabMediaEvidenceKind::AudioStarted {
-            return Err(LabEvidenceError::InvalidInput);
-        }
-        self.validate_media(input)?;
-        self.completed_playback_binding(
-            input
-                .request_sequence
-                .ok_or(LabEvidenceError::InvalidInput)?,
-        )
-    }
-
-    /// Atomically records a browser audio-start observation after canonical runtime playback
-    /// reconciliation succeeded for the exact completed turn.
-    ///
-    /// # Errors
-    /// Fails for stale, duplicate, unknown, incomplete, or cross-turn acknowledgements.
-    pub fn record_canonical_playback(
+    /// Fails for sealed/unknown requests, cross-turn/output receipts, or duplicate playback proof.
+    pub fn record_output_playback(
         &mut self,
-        input: &LabMediaEvidenceInput,
+        request_sequence: u64,
         canonical_turn_sequence: u64,
         canonical_output_sequence: u64,
     ) -> Result<(), LabEvidenceError> {
-        if input.kind != LabMediaEvidenceKind::AudioStarted {
-            return Err(LabEvidenceError::InvalidInput);
-        }
-        self.validate_media(input)?;
-        let request_sequence = input
-            .request_sequence
-            .ok_or(LabEvidenceError::InvalidInput)?;
-        if self.completed_playback_binding(request_sequence)?
-            != (canonical_turn_sequence, canonical_output_sequence)
-        {
+        if self.sealed || canonical_turn_sequence == 0 || canonical_output_sequence == 0 {
             return Err(LabEvidenceError::InvalidState);
         }
         let attempt = self
             .voice_attempts
             .get_mut(&request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        attempt.canonical_playback_confirmed = true;
-        self.push_media(input);
+        if attempt.status != LabVoiceAttemptStatus::Completed
+            || attempt.canonical_turn_sequence != Some(canonical_turn_sequence)
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        let output = attempt
+            .canonical_outputs
+            .iter_mut()
+            .find(|output| output.canonical_output_sequence == canonical_output_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        if output.playback_confirmed {
+            return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        output.playback_confirmed = true;
         Ok(())
     }
 
@@ -354,9 +323,11 @@ impl LabSessionEvidenceRecorder {
             .voice_attempts
             .get(&input.request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabVoiceAttemptStatus::Completed
-            || !attempt.canonical_playback_confirmed
-        {
+        let audio_started = self.media_events.iter().any(|event| {
+            event.request_sequence == Some(input.request_sequence)
+                && event.kind == LabMediaEvidenceKind::AudioStarted
+        });
+        if attempt.status != LabVoiceAttemptStatus::Completed || !audio_started {
             return Err(LabEvidenceError::InvalidState);
         }
         if self.av_sync_samples.iter().any(|sample| {
@@ -374,17 +345,24 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser-observed media-plane latency event without promoting it to canonical
-    /// playback proof. Audio-start evidence reaches `canonical_playback_proven` only through
-    /// `record_canonical_playback` after runtime reconciliation.
+    /// Records one browser-observed media-plane event without promoting it to delivery playback.
+    ///
+    /// `audio_started` measures first meaningful audio only. Canonical output playback is recorded
+    /// separately from provider-normalized playback-completion events.
     ///
     /// # Errors
-    /// Fails for stale sessions, impossible event/request combinations, unknown requests, or duplicates.
+    /// Fails for stale sessions, impossible event/request combinations, incomplete requests, or duplicates.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
-        if input.kind == LabMediaEvidenceKind::AudioStarted {
-            return Err(LabEvidenceError::InvalidState);
-        }
         self.validate_media(input)?;
+        if let Some(request_sequence) = input.request_sequence {
+            let attempt = self
+                .voice_attempts
+                .get(&request_sequence)
+                .ok_or(LabEvidenceError::InvalidState)?;
+            if attempt.status != LabVoiceAttemptStatus::Completed {
+                return Err(LabEvidenceError::InvalidState);
+            }
+        }
         self.push_media(input);
         Ok(())
     }
@@ -444,17 +422,31 @@ impl LabSessionEvidenceRecorder {
             .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
             .collect();
         let canonical_playback_proven = !completed_attempts.is_empty()
-            && completed_attempts
-                .iter()
-                .all(|attempt| attempt.canonical_playback_confirmed);
-        let av_sync_proven = canonical_playback_proven
             && completed_attempts.iter().all(|attempt| {
-                (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
-                    self.av_sync_samples.iter().any(|sample| {
-                        sample.request_sequence == attempt.request_sequence
-                            && sample.sample_sequence == sample_sequence
+                !attempt.canonical_outputs.is_empty()
+                    && attempt
+                        .canonical_outputs
+                        .iter()
+                        .all(|output| output.playback_confirmed)
+                    && self.media_events.iter().any(|event| {
+                        event.request_sequence == Some(attempt.request_sequence)
+                            && event.kind == LabMediaEvidenceKind::AudioStarted
                     })
-                })
+            });
+        let av_sync_proven = !completed_attempts.is_empty()
+            && completed_attempts.iter().all(|attempt| {
+                let audio_started = self.media_events.iter().any(|event| {
+                    event.request_sequence == Some(attempt.request_sequence)
+                        && event.kind == LabMediaEvidenceKind::AudioStarted
+                });
+                audio_started
+                    && 
+(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
+                        self.av_sync_samples.iter().any(|sample| {
+                            sample.request_sequence == attempt.request_sequence
+                                && sample.sample_sequence == sample_sequence
+                        })
+                    })
             });
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
