@@ -34,7 +34,13 @@ const sendText = (response, status, contentType, body) => {
   response.end(body);
 };
 
-const sendDelayedEventStream = (response, firstText, delayMillis = 500) => {
+const sendDelayedEventStream = (
+  response,
+  firstText,
+  secondText = "",
+  phraseDelayMillis = 80,
+  completionDelayMillis = 420,
+) => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-store",
@@ -44,11 +50,18 @@ const sendDelayedEventStream = (response, firstText, delayMillis = 500) => {
     `data: ${JSON.stringify({ choices: [{ delta: { content: firstText } }], usage: null })}\n\n`,
   );
   setTimeout(() => {
-    response.write(
-      `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 4 } })}\n\n`,
-    );
-    response.end("data: [DONE]\n\n");
-  }, delayMillis);
+    if (secondText) {
+      response.write(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: secondText } }], usage: null })}\n\n`,
+      );
+    }
+    setTimeout(() => {
+      response.write(
+        `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 8 } })}\n\n`,
+      );
+      response.end("data: [DONE]\n\n");
+    }, completionDelayMillis);
+  }, phraseDelayMillis);
 };
 const record = (kind, request, url, body) => {
   requests.push({
@@ -126,7 +139,7 @@ const server = http.createServer(async (request, response) => {
     const expressiveRealtime = request.headers.authorization === "Bearer expressive-llm-e2e-secret"
       && prompt.includes("Привет из браузера");
     if (expressiveRealtime) {
-      return sendDelayedEventStream(response, "Голосовой ответ владельцу.");
+      return sendDelayedEventStream(response, "Голосовой ответ владельцу.", " Вторая фраза.");
     }
     const reply = prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"

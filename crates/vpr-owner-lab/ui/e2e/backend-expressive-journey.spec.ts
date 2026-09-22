@@ -215,6 +215,7 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
           __vprExpressiveDisconnect?: () => void;
           __vprExpressiveLoseVideo?: () => void;
           __vprExpressiveRestoreVideo?: () => void;
+          __vprExpressivePlaybackDone?: () => void;
         };
         fakeWindow.__vprExpressiveDisconnect = () => {
           for (const handler of this.handlers.get(roomEvents.Disconnected) ?? []) handler();
@@ -230,6 +231,13 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
           const track = new FakeRemoteTrack("video");
           this.videoTrack = track;
           this.emit(roomEvents.TrackSubscribed, track);
+        };
+        fakeWindow.__vprExpressivePlaybackDone = () => {
+          remoteSpeech = false;
+          this.emit(
+            roomEvents.DataReceived,
+            new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
+          );
         };
       }
 
@@ -294,11 +302,30 @@ const recordStreamingVoiceTurn = async (
   await expect.poll(async () => page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.some((command) => command.topic === "did.speak") ?? false,
-  )).toBeTruthy();
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(1);
 
-  // The fixture keeps the LLM stream open after its first complete phrase. Seeing did.speak before
-  // the final status proves browser delivery no longer waits for full generation.
+  await page.waitForTimeout(150);
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(1);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(2);
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+
   await expect(page.locator("#status")).not.toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
@@ -362,7 +389,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
-    "Голосовой ответ владельцу.",
+    "Голосовой ответ владельцу. Вторая фраза.",
   );
 
   await expect.poll(async () => {
@@ -409,11 +436,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
-  const speak = commands.find((command) => command.topic === "did.speak");
-  expect(speak).toBeDefined();
-  expect(JSON.parse(speak?.text ?? "{}")).toMatchObject({
-    script: { type: "text", input: "Голосовой ответ владельцу." },
-  });
+  const speak = commands.filter((command) => command.topic === "did.speak");
+  expect(speak).toHaveLength(2);
+  expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
+    "Голосовой ответ владельцу.",
+    "Вторая фраза.",
+  ]);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
