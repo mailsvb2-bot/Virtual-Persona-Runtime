@@ -235,7 +235,7 @@ fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
 
 fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
     let snapshot = bytes(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.5",
+        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":1,
         "participant_role":"owner",
@@ -265,6 +265,7 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
             "failure_code":null,
             "stt_millis":100,
             "llm_millis":120,
+            "llm_first_meaningful_millis":80,
             "avatar_millis":150,
             "server_total_millis":370,
             "stt_usage":{
