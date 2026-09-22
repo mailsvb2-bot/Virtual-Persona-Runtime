@@ -147,7 +147,7 @@ const server = http.createServer(async (request, response) => {
     const expressiveRealtime = request.headers.authorization === "Bearer expressive-llm-e2e-secret"
       && prompt.includes("Привет из браузера");
     if (expressiveRealtime) {
-      return sendDelayedEventStream(response, "Голосовой ответ владельцу.", " Вторая фраза.", " Третья фраза.");
+      return sendDelayedEventStream(response, "Сначала уточню один важный момент,", " затем продолжу.", " Третья фраза.");
     }
     const reply = prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"
