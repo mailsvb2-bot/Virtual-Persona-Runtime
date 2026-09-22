@@ -51,11 +51,7 @@ impl VoiceStreamRegistry {
         true
     }
 
-    fn push(
-        &self,
-        request_sequence: u64,
-        event: VoiceStreamEvent,
-    ) -> Result<(), LabError> {
+    fn push(&self, request_sequence: u64, event: VoiceStreamEvent) -> Result<(), LabError> {
         let mut streams = self.streams.lock();
         let stream = streams
             .get_mut(&request_sequence)
@@ -89,10 +85,7 @@ impl VoiceStreamRegistry {
         }
         let (events, terminal) = {
             let stream = streams.get_mut(&request_sequence)?;
-            (
-                stream.events.drain(..).collect::<Vec<_>>(),
-                stream.terminal,
-            )
+            (stream.events.drain(..).collect::<Vec<_>>(), stream.terminal)
         };
         if terminal {
             streams.remove(&request_sequence);
@@ -174,10 +167,9 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
                     }
                 },
                 |segment| {
-                    worker_state.voice_streams.push(
-                        request_sequence,
-                        VoiceStreamEvent::Segment { segment },
-                    )
+                    worker_state
+                        .voice_streams
+                        .push(request_sequence, VoiceStreamEvent::Segment { segment })
                 },
             );
             *worker_state.active_voice_interrupt.lock() = None;
