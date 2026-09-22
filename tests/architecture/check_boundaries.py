@@ -655,7 +655,7 @@ for required_progressive_http in (
     "application/x-ndjson",
     "voice_turn_progressive",
     "VoiceStreamMessage",
-    "X-VPR-Evidence-Request",
+    "http_evidence::request_sequence",
 ):
     if required_progressive_http not in owner_lab_voice_stream_http:
         raise SystemExit(
@@ -676,6 +676,10 @@ if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" 
     raise SystemExit("Owner Lab voice UI must cap actual PCM samples before upload")
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
+
+owner_lab_http_evidence = (owner_lab_src / "http_evidence.rs").read_text(encoding="utf-8")
+if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
+    raise SystemExit("Owner Lab evidence request parser must retain X-VPR-Evidence-Request binding")
 
 owner_lab_evidence = (owner_lab_src / "evidence.rs").read_text(encoding="utf-8")
 evaluation_session_evidence = (CRATES / "vpr-evaluation" / "src" / "session_evidence.rs").read_text(encoding="utf-8")
