@@ -173,7 +173,6 @@ impl OwnerLabEngine {
         self.voice_playback.clone()
     }
 
-
     /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
     /// subsequent turns. The profile's Persona identity/version becomes the turn snapshot source.
     ///
