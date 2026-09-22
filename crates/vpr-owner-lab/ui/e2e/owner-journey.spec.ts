@@ -436,6 +436,61 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   expect(state.apiPaths).toContain("POST /api/session/revoke");
 });
 
+test("LiveKit avatar stays contained and unexpected disconnect closes the backend session", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "owner-livekit-e2e";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.transportKind = "live_kit";
+  state.claims = [{
+    claim_id: "preference-tone",
+    statement: "Предпочитаю спокойный тон",
+    kind: "preference",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await installBrowserFakes(page);
+  await installLiveKitBrowserFake(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Подключить аватар" }).click();
+  await expect(page.locator("#status")).toContainText("LiveKit согласован");
+  await expect(page.locator(".stage")).toHaveClass(/has-video/);
+
+  const layout = await page.evaluate(() => {
+    const stage = document.querySelector<HTMLElement>(".stage");
+    const avatar = document.querySelector<HTMLVideoElement>("#avatar");
+    if (!stage || !avatar) throw new Error("missing realtime stage");
+    const stageRect = stage.getBoundingClientRect();
+    const avatarRect = avatar.getBoundingClientRect();
+    return {
+      bodyOverflow: document.documentElement.scrollWidth > window.innerWidth,
+      objectFit: getComputedStyle(avatar).objectFit,
+      stageWidth: stageRect.width,
+      stageHeight: stageRect.height,
+      avatarWidth: avatarRect.width,
+      avatarHeight: avatarRect.height,
+    };
+  });
+  expect(layout.bodyOverflow).toBe(false);
+  expect(layout.objectFit).toBe("contain");
+  expect(layout.avatarWidth).toBeLessThanOrEqual(layout.stageWidth);
+  expect(layout.avatarHeight).toBeLessThanOrEqual(layout.stageHeight);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprFakeLiveKitDisconnect?: () => void };
+    fakeWindow.__vprFakeLiveKitDisconnect?.();
+  });
+  await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  await expect.poll(() => state.sessionState).toBe("closed");
+  expect(state.apiPaths).toContain("POST /api/session/close");
+});
+
 test("active visitor recovery does not request owner-only persona endpoints", async ({ page }) => {
   const state = initialState();
   state.personaId = "owner-e2e";
