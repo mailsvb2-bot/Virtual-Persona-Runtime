@@ -7,7 +7,7 @@ use vpr_domain::{
 };
 use vpr_integration::{
     AudioInput, AvatarPort, GeneratedAudioSink, GeneratedTextSink, GeneratedVideoSink, LlmPort,
-    LlmRequest, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
+    LlmRequest, LlmTextStream, SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence,
 };
 use vpr_policy::{AuthorityScope, AuthorizationSnapshot, DataClass};
 
@@ -23,6 +23,28 @@ use crate::output::{OutputSegmentEvidence, OutputSegmentId};
 use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
 use crate::turn_state::TurnMutableState;
+
+pub struct AuthorizedLlmStream {
+    stream: Box<dyn LlmTextStream>,
+    permit: ProviderExecutionPermit,
+}
+
+impl AuthorizedLlmStream {
+    /// Pulls the next provider text chunk under the exact runtime-issued operation permit.
+    ///
+    /// # Errors
+    /// Returns a typed provider failure or cancellation observed by the runtime permit.
+    pub fn next_chunk(&mut self) -> Result<Option<String>, ProviderExecutionError> {
+        self.stream
+            .next_chunk(&self.permit.cancellation)
+            .map_err(ProviderExecutionError::from)
+    }
+
+    #[must_use]
+    pub fn usage(&self) -> UsageEvidence {
+        self.stream.usage()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct TurnInterruptHandle {
@@ -201,6 +223,28 @@ impl ActiveTurn {
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
         let required_scope = operation.required_scope();
         self.issue_provider_permit(&required_scope, operation.data_class())
+    }
+
+    /// Opens one pull-based LLM stream through the canonical provider enforcement boundary.
+    ///
+    /// The returned handle owns the exact provider-operation permit, so cancellation and authority
+    /// invalidation remain runtime-controlled while callers decide when generated chunks become
+    /// authorized output.
+    ///
+    /// # Errors
+    /// Returns a runtime denial or typed provider failure before a stream handle is exposed.
+    pub fn open_llm_stream(
+        &self,
+        port: &dyn LlmPort,
+        request: &LlmRequest,
+    ) -> Result<AuthorizedLlmStream, ProviderExecutionError> {
+        let permit = self
+            .issue_provider_operation(ProviderOperation::Llm)
+            .map_err(ProviderExecutionError::from)?;
+        let stream = port
+            .open_stream(request, &permit.cancellation)
+            .map_err(ProviderExecutionError::from)?;
+        Ok(AuthorizedLlmStream { stream, permit })
     }
 
     /// Executes one LLM operation through the canonical provider enforcement boundary.
