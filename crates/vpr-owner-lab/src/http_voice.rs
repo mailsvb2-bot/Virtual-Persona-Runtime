@@ -1,8 +1,10 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
+use std::time::Duration;
 
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use tiny_http::Request;
 use vpr_owner_lab::{LabError, LabVoiceResult, LabVoiceSegment};
@@ -11,6 +13,8 @@ use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, read_body,
     reject_if_session_ending,
 };
+
+const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -21,9 +25,80 @@ enum VoiceStreamEvent {
 }
 
 #[derive(Default)]
-pub(super) struct VoiceStreamState {
+struct VoiceStreamState {
     events: VecDeque<VoiceStreamEvent>,
     terminal: bool,
+}
+
+#[derive(Default)]
+pub(super) struct VoiceStreamRegistry {
+    streams: Mutex<BTreeMap<u64, VoiceStreamState>>,
+    changed: Condvar,
+}
+
+impl VoiceStreamRegistry {
+    pub(super) fn clear(&self) {
+        self.streams.lock().clear();
+        self.changed.notify_all();
+    }
+
+    fn begin(&self, request_sequence: u64) -> bool {
+        let mut streams = self.streams.lock();
+        if streams.contains_key(&request_sequence) {
+            return false;
+        }
+        streams.insert(request_sequence, VoiceStreamState::default());
+        true
+    }
+
+    fn push(
+        &self,
+        request_sequence: u64,
+        event: VoiceStreamEvent,
+    ) -> Result<(), LabError> {
+        let mut streams = self.streams.lock();
+        let stream = streams
+            .get_mut(&request_sequence)
+            .ok_or(LabError::InvalidState)?;
+        if stream.terminal {
+            return Err(LabError::InvalidState);
+        }
+        stream.events.push_back(event);
+        drop(streams);
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    fn finish(&self, request_sequence: u64, event: VoiceStreamEvent) {
+        let mut streams = self.streams.lock();
+        if let Some(stream) = streams.get_mut(&request_sequence) {
+            stream.events.push_back(event);
+            stream.terminal = true;
+        }
+        drop(streams);
+        self.changed.notify_all();
+    }
+
+    fn wait_events(&self, request_sequence: u64) -> Option<VoiceEventsResponse> {
+        let mut streams = self.streams.lock();
+        {
+            let stream = streams.get(&request_sequence)?;
+            if stream.events.is_empty() && !stream.terminal {
+                self.changed.wait_for(&mut streams, EVENT_WAIT_TIMEOUT);
+            }
+        }
+        let (events, terminal) = {
+            let stream = streams.get_mut(&request_sequence)?;
+            (
+                stream.events.drain(..).collect::<Vec<_>>(),
+                stream.terminal,
+            )
+        };
+        if terminal {
+            streams.remove(&request_sequence);
+        }
+        Some(VoiceEventsResponse { events, terminal })
+    }
 }
 
 #[derive(Deserialize)]
@@ -70,17 +145,13 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         state.voice_busy.store(false, Ordering::Release);
         return error_response(http_evidence::error_status(error), error.code());
     }
-    {
-        let mut streams = state.voice_streams.lock();
-        if streams.contains_key(&request_sequence) {
-            state.voice_busy.store(false, Ordering::Release);
-            let _ = state
-                .evidence
-                .lock()
-                .fail_voice_request(request_sequence, "INVALID_STATE_TRANSITION");
-            return error_response(409, "INVALID_STATE_TRANSITION");
-        }
-        streams.insert(request_sequence, VoiceStreamState::default());
+    if !state.voice_streams.begin(request_sequence) {
+        state.voice_busy.store(false, Ordering::Release);
+        let _ = state
+            .evidence
+            .lock()
+            .fail_voice_request(request_sequence, "INVALID_STATE_TRANSITION");
+        return error_response(409, "INVALID_STATE_TRANSITION");
     }
 
     let worker_state = Arc::clone(state);
@@ -103,8 +174,7 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
                     }
                 },
                 |segment| {
-                    push_voice_stream_event(
-                        &worker_state,
+                    worker_state.voice_streams.push(
                         request_sequence,
                         VoiceStreamEvent::Segment { segment },
                     )
@@ -127,35 +197,11 @@ pub(super) fn events_response(
     state: &AppState,
 ) -> Result<HttpResponse, HttpResponse> {
     let body = super::parse_json::<VoiceEventsBody>(request)?;
-    let mut streams = state.voice_streams.lock();
-    let stream = streams
-        .get_mut(&body.request_sequence)
+    let response = state
+        .voice_streams
+        .wait_events(body.request_sequence)
         .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
-    let events: Vec<_> = stream.events.drain(..).collect();
-    let terminal = stream.terminal;
-    if terminal {
-        streams.remove(&body.request_sequence);
-    }
-    Ok(json_response(
-        200,
-        &VoiceEventsResponse { events, terminal },
-    ))
-}
-
-fn push_voice_stream_event(
-    state: &AppState,
-    request_sequence: u64,
-    event: VoiceStreamEvent,
-) -> Result<(), LabError> {
-    let mut streams = state.voice_streams.lock();
-    let stream = streams
-        .get_mut(&request_sequence)
-        .ok_or(LabError::InvalidState)?;
-    if stream.terminal {
-        return Err(LabError::InvalidState);
-    }
-    stream.events.push_back(event);
-    Ok(())
+    Ok(json_response(200, &response))
 }
 
 fn finish_voice_stream(
@@ -190,9 +236,5 @@ fn finish_voice_stream(
             }
         }
     };
-    let mut streams = state.voice_streams.lock();
-    if let Some(stream) = streams.get_mut(&request_sequence) {
-        stream.events.push_back(event);
-        stream.terminal = true;
-    }
+    state.voice_streams.finish(request_sequence, event);
 }
