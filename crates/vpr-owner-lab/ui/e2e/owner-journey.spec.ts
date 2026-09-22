@@ -26,6 +26,7 @@ type FixtureState = {
   sessionState: string;
   sessionAudience: null | "owner" | "visitor";
   avatarOpen: boolean;
+  transportKind: "web_rtc" | "live_kit";
   startAudiences: string[];
   directSpeech: string[];
   textMessages: string[];
@@ -201,15 +202,25 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       state.sessionAudience = audience as "owner" | "visitor";
       state.sessionState = "active";
       state.avatarOpen = true;
+      const transport = state.transportKind === "live_kit"
+        ? { kind: "live_kit", server_url: "wss://livekit.example.test", token: "fixture-token" }
+        : {
+            kind: "web_rtc",
+            offer: { kind: "offer", sdp: "v=0" },
+            ice_servers: [],
+          };
       return json(route, {
         evidence_session_sequence: state.startAudiences.length,
-        transport: {
-          kind: "web_rtc",
-          offer: { kind: "offer", sdp: "v=0" },
-          ice_servers: [],
-        },
+        transport,
         capabilities: ["text", "interrupt"],
-        client_control: null,
+        client_control: state.transportKind === "live_kit"
+          ? {
+              event_route: null,
+              interrupt: true,
+              interrupt_requires_playback_id: false,
+              text_input: true,
+            }
+          : null,
       });
     }
     if (path === "/api/avatar/answer" || path === "/api/avatar/ice") {
@@ -262,6 +273,7 @@ const initialState = (): FixtureState => ({
   sessionState: "none",
   sessionAudience: null,
   avatarOpen: false,
+  transportKind: "web_rtc",
   startAudiences: [],
   directSpeech: [],
   textMessages: [],
