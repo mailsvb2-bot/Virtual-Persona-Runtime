@@ -22,6 +22,7 @@ use crate::media_timeline::MediaTimeline;
 use crate::output::{OutputSegmentEvidence, OutputSegmentId};
 use crate::provider::{ProviderExecutionPermit, ProviderOperation};
 use crate::session::ActiveSession;
+use crate::spoken_text::SpokenPhraseBuffer;
 use crate::turn_state::TurnMutableState;
 
 pub struct AuthorizedLlmStream {
@@ -43,6 +44,46 @@ impl AuthorizedLlmStream {
     #[must_use]
     pub fn usage(&self) -> UsageEvidence {
         self.stream.usage()
+    }
+}
+
+pub struct AuthorizedSpokenLlmStream {
+    inner: AuthorizedLlmStream,
+    phrases: SpokenPhraseBuffer,
+    finished: bool,
+}
+
+impl AuthorizedSpokenLlmStream {
+    /// Pulls the next complete spoken phrase while the provider stream is still generating.
+    ///
+    /// # Errors
+    /// Returns the same typed provider/runtime failure as the underlying authorized LLM stream.
+    pub fn next_phrase(&mut self) -> Result<Option<String>, ProviderExecutionError> {
+        if let Some(phrase) = self.phrases.pop_ready() {
+            return Ok(Some(phrase));
+        }
+        if self.finished {
+            return Ok(self.phrases.finish());
+        }
+        loop {
+            match self.inner.next_chunk()? {
+                Some(chunk) => {
+                    self.phrases.push_chunk(&chunk);
+                    if let Some(phrase) = self.phrases.pop_ready() {
+                        return Ok(Some(phrase));
+                    }
+                }
+                None => {
+                    self.finished = true;
+                    return Ok(self.phrases.finish());
+                }
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn usage(&self) -> UsageEvidence {
+        self.inner.usage()
     }
 }
 
@@ -245,6 +286,23 @@ impl ActiveTurn {
             .open_stream(request, &permit.cancellation)
             .map_err(ProviderExecutionError::from)?;
         Ok(AuthorizedLlmStream { stream, permit })
+    }
+
+    /// Opens a phrase-oriented LLM stream for realtime spoken output.
+    ///
+    /// # Errors
+    /// Returns a runtime denial or typed provider failure before a stream handle is exposed.
+    pub fn open_spoken_llm_stream(
+        &self,
+        port: &dyn LlmPort,
+        request: &LlmRequest,
+    ) -> Result<AuthorizedSpokenLlmStream, ProviderExecutionError> {
+        self.open_llm_stream(port, request)
+            .map(|inner| AuthorizedSpokenLlmStream {
+                inner,
+                phrases: SpokenPhraseBuffer::default(),
+                finished: false,
+            })
     }
 
     /// Executes one LLM operation through the canonical provider enforcement boundary.
