@@ -208,17 +208,32 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
         },
       };
       private readonly handlers = new Map<string, EventHandler[]>();
+      private audioTrack: FakeRemoteTrack | null = null;
       private videoTrack: FakeRemoteTrack | null = null;
 
       constructor() {
         const fakeWindow = window as typeof window & {
           __vprExpressiveDisconnect?: () => void;
+          __vprExpressiveLoseAudio?: () => void;
+          __vprExpressiveRestoreAudio?: () => void;
           __vprExpressiveLoseVideo?: () => void;
           __vprExpressiveRestoreVideo?: () => void;
           __vprExpressivePlaybackDone?: () => void;
         };
         fakeWindow.__vprExpressiveDisconnect = () => {
           for (const handler of this.handlers.get(roomEvents.Disconnected) ?? []) handler();
+        };
+        fakeWindow.__vprExpressiveLoseAudio = () => {
+          const track = this.audioTrack;
+          if (!track) return;
+          this.audioTrack = null;
+          this.emit(roomEvents.TrackUnsubscribed, track);
+        };
+        fakeWindow.__vprExpressiveRestoreAudio = () => {
+          if (this.audioTrack) return;
+          const track = new FakeRemoteTrack("audio");
+          this.audioTrack = track;
+          this.emit(roomEvents.TrackSubscribed, track);
         };
         fakeWindow.__vprExpressiveLoseVideo = () => {
           const track = this.videoTrack;
@@ -254,8 +269,9 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
 
       async connect(): Promise<void> {
         this.videoTrack = new FakeRemoteTrack("video");
+        this.audioTrack = new FakeRemoteTrack("audio");
         this.emit(roomEvents.TrackSubscribed, this.videoTrack);
-        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("audio"));
+        this.emit(roomEvents.TrackSubscribed, this.audioTrack);
       }
 
       async disconnect(): Promise<void> {}
