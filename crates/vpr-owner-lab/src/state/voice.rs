@@ -234,11 +234,9 @@ impl OwnerLabEngine {
         let avatar_started = Instant::now();
         let (delivery, client_command) =
             deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
-        let output_sequence = self.voice_playback.register_delivery(
-            evidence_turn_sequence,
-            turn,
-            delivery,
-        )?;
+        let output_sequence =
+            self.voice_playback
+                .register_delivery(evidence_turn_sequence, turn, delivery)?;
         let avatar_millis = elapsed_millis(avatar_started);
         Ok(VoiceGeneration {
             reply,
@@ -311,11 +309,9 @@ impl OwnerLabEngine {
             let (delivery, client_command) =
                 deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
             avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
-            let output_sequence = self.voice_playback.register_delivery(
-                evidence_turn_sequence,
-                turn,
-                delivery,
-            )?;
+            let output_sequence =
+                self.voice_playback
+                    .register_delivery(evidence_turn_sequence, turn, delivery)?;
             let segment = LabVoiceSegment {
                 evidence_turn_sequence,
                 evidence_output_sequence: output_sequence,
