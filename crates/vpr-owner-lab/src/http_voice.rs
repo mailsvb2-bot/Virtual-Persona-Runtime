@@ -16,7 +16,7 @@ use super::{
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum VoiceStreamEvent {
     Segment { segment: LabVoiceSegment },
-    Complete { result: LabVoiceResult },
+    Complete { result: Box<LabVoiceResult> },
     Failed { code: String },
 }
 
@@ -169,7 +169,9 @@ fn finish_voice_stream(
             .lock()
             .complete_voice_request(request_sequence, &value)
         {
-            Ok(()) => VoiceStreamEvent::Complete { result: value },
+            Ok(()) => VoiceStreamEvent::Complete {
+                result: Box::new(value),
+            },
             Err(error) => VoiceStreamEvent::Failed {
                 code: error.code().to_owned(),
             },
