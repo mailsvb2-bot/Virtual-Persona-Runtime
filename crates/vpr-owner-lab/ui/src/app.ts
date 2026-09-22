@@ -83,6 +83,7 @@ type LiveKitTrack = {
   kind: string;
   mediaStreamTrack?: MediaStreamTrack;
   attach: (element: HTMLMediaElement) => HTMLMediaElement;
+  detach?: (element?: HTMLMediaElement) => HTMLMediaElement[];
   getRTCStatsReport?: () => Promise<RTCStatsReport | undefined>;
 };
 type LiveKitParticipant = {
@@ -651,6 +652,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
     liveKitVideoTrack = track;
     track.attach(video);
+    realtimeTransportReady = true;
     stage?.classList.add("has-video");
     const requestFrame = (video as unknown as {
       requestVideoFrameCallback?: (callback: () => void) => number;
@@ -661,6 +663,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
       video.addEventListener("playing", recordFirstVideoFrame, { once: true });
     }
     setStatus("Видео подключено", "ready");
+    updateControls();
   } else if (track.kind === "audio") {
     liveKitAudioTrack = track;
     track.attach(avatarAudio);
@@ -668,6 +671,31 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
       void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
     }
   }
+};
+
+const detachLiveKitTrack = (track: LiveKitTrack, element: HTMLMediaElement): void => {
+  try {
+    track.detach?.(element);
+  } catch {
+    // The media element is still cleared below; provider detach is best-effort cleanup.
+  }
+  element.srcObject = null;
+};
+
+const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
+  if (track === liveKitAudioTrack) {
+    detachLiveKitTrack(track, avatarAudio);
+    liveKitAudioTrack = null;
+  }
+  if (track === liveKitVideoTrack) {
+    detachLiveKitTrack(track, video);
+    liveKitVideoTrack = null;
+    realtimeTransportReady = false;
+    stage?.classList.remove("has-video");
+    stopMicrophoneCapture();
+    setStatus("Видео-поток аватара потерян. Ожидаю восстановление LiveKit…", "error");
+  }
+  updateControls();
 };
 
 const clearRealtimeMedia = (): void => {
@@ -817,8 +845,7 @@ const connectLiveKitTransport = async (
   });
   room.on(sdk.RoomEvent.TrackUnsubscribed, (...args: unknown[]) => {
     const track = args[0] as LiveKitTrack | undefined;
-    if (track === liveKitAudioTrack) liveKitAudioTrack = null;
-    if (track === liveKitVideoTrack) liveKitVideoTrack = null;
+    if (track) handleLiveKitTrackUnsubscribed(track);
   });
   room.on(sdk.RoomEvent.DataReceived, (...args: unknown[]) => {
     const payload = args[0];
@@ -840,7 +867,8 @@ const connectLiveKitTransport = async (
     void handleUnexpectedLiveKitDisconnect(room);
   });
   await room.connect(transport.server_url, transport.token);
-  realtimeTransportReady = true;
+  realtimeTransportReady = liveKitVideoTrack !== null;
+  updateControls();
 };
 
 const connectAvatar = async (): Promise<void> => {
