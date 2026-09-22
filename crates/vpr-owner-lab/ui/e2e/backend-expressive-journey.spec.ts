@@ -203,7 +203,11 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       readonly localParticipant = {
         sendText: async (text: string, options: { topic: string }): Promise<void> => {
           commands.push({ topic: options.topic, text });
-          if (options.topic === "did.speak") remoteSpeech = true;
+          if (options.topic === "did.speak") {
+            remoteSpeech = true;
+            const done = new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" }));
+            queueMicrotask(() => this.emit(roomEvents.DataReceived, done));
+          }
           if (options.topic === "did.interrupt") remoteSpeech = false;
         },
       };
