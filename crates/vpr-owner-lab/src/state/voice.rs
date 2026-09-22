@@ -62,7 +62,7 @@ impl LabVoicePlaybackRegistry {
         Ok(sequence)
     }
 
-    pub fn acknowledge_sent(
+    pub fn acknowledge_voice_delivery_sent(
         &self,
         evidence_turn_sequence: u64,
         evidence_output_sequence: u64,
@@ -81,7 +81,7 @@ impl LabVoicePlaybackRegistry {
             .map_err(LabError::Runtime)
     }
 
-    pub fn acknowledge_playback(
+    pub fn acknowledge_voice_playback(
         &self,
         evidence_turn_sequence: u64,
         evidence_output_sequence: u64,
@@ -435,7 +435,7 @@ impl OwnerLabEngine {
         evidence_output_sequence: u64,
     ) -> Result<(), LabError> {
         self.voice_playback
-            .acknowledge_sent(evidence_turn_sequence, evidence_output_sequence)
+            .acknowledge_voice_delivery_sent(evidence_turn_sequence, evidence_output_sequence)
     }
 
     /// Reconciles browser-observed remote audio with one exact canonical segment.
@@ -459,7 +459,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
         self.voice_playback
-            .acknowledge_playback(evidence_turn_sequence, evidence_output_sequence)
+            .acknowledge_voice_playback(evidence_turn_sequence, evidence_output_sequence)
     }
 }
 
