@@ -178,7 +178,7 @@ let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
 let liveKitAudioTrack: LiveKitTrack | null = null;
 let liveKitVideoTrack: LiveKitTrack | null = null;
-let realtimeTransportReady = false;
+let realtimeReadiness = { control: false, audio: false, video: false };
 let providerDataChannel: RTCDataChannel | null = null;
 let activeClientControl: ClientControl | null = null;
 let providerPlaybackId: string | null = null;
@@ -618,7 +618,7 @@ const updateAudienceMode = (): void => {
 };
 
 const updateControls = (): void => {
-  const transportReady = realtimeTransportReady && backendStatus.session_state === "active";
+  const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
   const textReady = backendStatus.conversation_readiness !== "none";
   const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
   const playbackReady = activeClientControl?.interrupt_requires_playback_id
@@ -684,7 +684,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
     liveKitVideoTrack = track;
     track.attach(video);
-    realtimeTransportReady = true;
+    realtimeReadiness.video = true;
     stage?.classList.add("has-video");
     const requestFrame = (video as unknown as {
       requestVideoFrameCallback?: (callback: () => void) => number;
@@ -698,6 +698,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     updateControls();
   } else if (track.kind === "audio") {
     liveKitAudioTrack = track;
+    realtimeReadiness.audio = true;
     track.attach(avatarAudio);
     if (track.mediaStreamTrack) {
       void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
@@ -718,10 +719,12 @@ const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
   if (track === liveKitAudioTrack) {
     detachLiveKitTrack(track, avatarAudio);
     liveKitAudioTrack = null;
+    realtimeReadiness.audio = false;
   }
   if (track === liveKitVideoTrack) {
     detachLiveKitTrack(track, video);
     liveKitVideoTrack = null;
+    realtimeReadiness.video = false;
     stage?.classList.remove("has-video");
     setStatus(
       "Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…",
@@ -732,7 +735,7 @@ const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
 };
 
 const clearRealtimeMedia = (): void => {
-  realtimeTransportReady = false;
+  realtimeReadiness = { control: false, audio: false, video: false };
   liveKitAudioTrack = null;
   liveKitVideoTrack = null;
   video.srcObject = null;
@@ -818,6 +821,7 @@ const connectWebRtcTransport = async (
     }
     video.srcObject = remoteMediaStream;
     if (event.track.kind === "video") {
+      realtimeReadiness.video = true;
       stage?.classList.add("has-video");
       const requestFrame = (video as unknown as {
         requestVideoFrameCallback?: (callback: () => void) => number;
@@ -829,12 +833,16 @@ const connectWebRtcTransport = async (
       }
       setStatus("Видео подключено", "ready");
     } else if (event.track.kind === "audio") {
+      realtimeReadiness.audio = true;
       void attachRemoteAudioEvidence(event.track).catch(() => undefined);
     }
+    updateControls();
   };
   peer.onconnectionstatechange = () => {
     if (!peer) return;
     const state = peer.connectionState;
+    realtimeReadiness.control = state === "connected";
+    updateControls();
     if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
       reconnectStartedAt = performance.now();
     } else if (state === "connected" && reconnectStartedAt !== null) {
@@ -863,7 +871,6 @@ const connectWebRtcTransport = async (
   await api<{ ok: true }>("/api/avatar/answer", { kind: answer.type, sdp: answer.sdp ?? "" });
   answerSubmitted = true;
   await flushIce();
-  realtimeTransportReady = true;
 };
 
 const connectLiveKitTransport = async (
@@ -900,9 +907,7 @@ const connectLiveKitTransport = async (
     void handleUnexpectedLiveKitDisconnect(room);
   });
   await room.connect(transport.server_url, transport.token);
-  // Transport/control readiness is independent from video-track readiness.
-  // A transient video loss must degrade to voice/text instead of disabling the conversation.
-  realtimeTransportReady = true;
+  realtimeReadiness.control = true;
   updateControls();
 };
 
@@ -1159,7 +1164,7 @@ const interruptAvatar = async (): Promise<void> => {
     ? playbackId !== null
     : true;
   const clientReady = !textRequestInFlight
-    && realtimeTransportReady
+    && realtimeReadiness.control
     && activeClientControl?.interrupt === true
     && playbackReady;
   try {

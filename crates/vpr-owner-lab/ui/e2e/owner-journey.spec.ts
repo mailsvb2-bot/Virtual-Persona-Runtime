@@ -51,8 +51,14 @@ const installBrowserFakes = async (page: Page): Promise<void> => {
       async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
         return { type: "answer", sdp: "v=0" };
       }
-      async setLocalDescription(): Promise<void> {}
-      close(): void { this.connectionState = "closed"; }
+      async setLocalDescription(): Promise<void> {
+        this.connectionState = "connected";
+        queueMicrotask(() => this.onconnectionstatechange?.());
+      }
+      close(): void {
+        this.connectionState = "closed";
+        this.onconnectionstatechange?.();
+      }
     }
 
     Object.defineProperty(window, "AudioContext", { value: FakeAudioContext });
