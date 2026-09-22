@@ -927,10 +927,11 @@ const finishMicrophoneTurn = async () => {
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
         let deliveryFailure = null;
         const scheduleSegmentDelivery = (segment) => {
-            if (!segment.client_command)
+            const command = segment.client_command;
+            if (!command)
                 return;
             void (async () => {
-                const sent = await voiceCommandScheduler.dispatch(segment.client_command);
+                const sent = await voiceCommandScheduler.dispatch(command);
                 if (!sent)
                     return;
                 await api("/api/avatar/client-delivery-sent", {
