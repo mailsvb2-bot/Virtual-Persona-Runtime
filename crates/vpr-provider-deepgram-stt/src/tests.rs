@@ -4,7 +4,9 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use vpr_integration::{AudioInput, PcmSampleFormat, ProviderErrorKind, SttRequest, UsageUnit};
+use vpr_integration::{
+    AudioInput, PcmSampleFormat, ProviderErrorKind, SttRequest, SttStreamRequest, UsageUnit,
+};
 
 struct Probe(AtomicBool);
 impl CancellationProbe for Probe {
@@ -67,6 +69,24 @@ fn transcribes_raw_linear16_and_reports_duration() {
     assert!(http.contains("language=ru"));
     assert!(!http.contains("language=ru-ru"));
     assert!(http.contains("authorization: token secret"));
+}
+
+#[test]
+fn batch_adapter_does_not_claim_streaming_support() {
+    let provider = adapter("http://127.0.0.1:1/v1/listen".to_owned());
+    let probe = Probe(AtomicBool::new(false));
+    let request = SttStreamRequest {
+        sample_rate_hz: 16_000,
+        channels: 1,
+        sample_format: PcmSampleFormat::S16Le,
+        locale_hint: Some("ru-RU".to_owned()),
+    };
+    let error = match provider.open_stream(&request, &probe) {
+        Ok(_) => panic!("batch Deepgram adapter must not expose a fake streaming session"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
 }
 
 #[test]
