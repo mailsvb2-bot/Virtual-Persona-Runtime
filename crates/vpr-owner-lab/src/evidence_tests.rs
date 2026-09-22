@@ -205,7 +205,10 @@ fn first_stream_segment_can_prove_playback_before_llm_completion() {
         .record_canonical_playback(&audio_started, 7, 1)
         .unwrap();
     let pending = recorder.snapshot().unwrap();
-    assert_eq!(pending.voice_attempts[0].status, LabVoiceAttemptStatus::Pending);
+    assert_eq!(
+        pending.voice_attempts[0].status,
+        LabVoiceAttemptStatus::Pending
+    );
     assert!(pending.voice_attempts[0].canonical_playback_confirmed);
 
     recorder.complete_voice_request(1, &voice_result()).unwrap();
