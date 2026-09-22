@@ -6,6 +6,7 @@ mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
 mod http_text;
+mod http_voice_stream;
 
 use std::env;
 use std::error::Error;
@@ -150,13 +151,17 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-fn handle_request(mut request: Request, state: &AppState) {
+fn handle_request(mut request: Request, state: &Arc<AppState>) {
     if !valid_host(&request, state.port) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
         return;
     }
     let method = request.method().clone();
     let path = request.url().to_owned();
+    if method == Method::Post && path == "/api/voice/turn/stream" {
+        http_voice_stream::respond(request, Arc::clone(state));
+        return;
+    }
     let response = match (&method, path.as_str()) {
         (&Method::Get, "/") => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         (&Method::Get, "/app.js") => static_response(APP_JS, "text/javascript; charset=utf-8"),
