@@ -290,7 +290,7 @@ impl OwnerLabEngine {
                 avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
                 let output_sequence = self.voice_playback.register_delivery(
                     evidence_turn_sequence,
-                    Arc::clone(turn),
+                    turn,
                     delivery,
                 )?;
                 let segment = LabVoiceSegment {
@@ -313,7 +313,7 @@ impl OwnerLabEngine {
             avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
             let output_sequence = self.voice_playback.register_delivery(
                 evidence_turn_sequence,
-                Arc::clone(turn),
+                turn,
                 delivery,
             )?;
             let segment = LabVoiceSegment {
