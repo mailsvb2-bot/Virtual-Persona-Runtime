@@ -281,7 +281,7 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
   });
 };
 
-const recordVoiceTurn = async (
+const recordStreamingVoiceTurn = async (
   page: Page,
   transcript: string,
   reply: string,
@@ -290,6 +290,16 @@ const recordVoiceTurn = async (
   await voice.click();
   await expect(voice).toHaveText("Остановить и отправить");
   await voice.click();
+
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.some((command) => command.topic === "did.speak") ?? false,
+  )).toBeTruthy();
+
+  // The fixture keeps the LLM stream open after its first complete phrase. Seeing did.speak before
+  // the final status proves browser delivery no longer waits for full generation.
+  await expect(page.locator("#status")).not.toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 };
@@ -349,10 +359,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
 
-  await recordVoiceTurn(
+  await recordStreamingVoiceTurn(
     page,
     "Привет из браузера",
-    "Голосовой ответ владельцу",
+    "Голосовой ответ владельцу.",
   );
 
   await expect.poll(async () => {
@@ -402,7 +412,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const speak = commands.find((command) => command.topic === "did.speak");
   expect(speak).toBeDefined();
   expect(JSON.parse(speak?.text ?? "{}")).toMatchObject({
-    script: { type: "text", input: "Голосовой ответ владельцу" },
+    script: { type: "text", input: "Голосовой ответ владельцу." },
   });
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
