@@ -400,6 +400,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       kind: "stt" | "llm" | "avatar";
       method: string;
       path: string;
+      query: string;
       authorization: string | null;
       contentType: string | null;
       bodyText: string;
@@ -411,6 +412,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   expect(sttRequests).toHaveLength(1);
   expect(sttRequests[0]?.path).toBe("/v1/listen");
+  expect(sttRequests[0]?.query).toContain("model=nova-3");
+  expect(sttRequests[0]?.query).toContain("encoding=linear16");
+  expect(sttRequests[0]?.query).toContain("sample_rate=16000");
+  expect(sttRequests[0]?.query).toContain("channels=1");
+  expect(sttRequests[0]?.query).toContain("smart_format=true");
+  expect(sttRequests[0]?.query).toContain("language=ru");
   expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
   expect(sttRequests[0]?.contentType).toBe("application/octet-stream");
 
