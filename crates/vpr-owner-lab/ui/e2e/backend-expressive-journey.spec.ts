@@ -425,6 +425,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(llmRequests[0]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
   expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
   expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
+  expect(llmRequests[0]?.bodyText).toContain('"thinking":{"type":"disabled"}');
   expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
 
   expect(avatarRequests.some((entry) =>
