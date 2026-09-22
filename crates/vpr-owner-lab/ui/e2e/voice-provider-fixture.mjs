@@ -56,21 +56,23 @@ const writeLlmEvent = (response, payload) => {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 };
 
-const sendProgressiveOwnerVoice = (response) => {
+const sendProgressiveVoice = (response, firstPhrase, tail) => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-store",
     "connection": "keep-alive",
   });
   writeLlmEvent(response, {
-    choices: [{ delta: { content: "Голосовой ответ владельцу." } }],
+    choices: [{ delta: { content: firstPhrase } }],
     usage: null,
   });
   setTimeout(() => {
-    writeLlmEvent(response, {
-      choices: [{ delta: { content: " Продолжаю после ранней фразы" } }],
-      usage: null,
-    });
+    if (tail) {
+      writeLlmEvent(response, {
+        choices: [{ delta: { content: tail } }],
+        usage: null,
+      });
+    }
     writeLlmEvent(response, {
       choices: [],
       usage: { prompt_tokens: 12, completion_tokens: 8 },
@@ -134,7 +136,19 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 503, { error: { message: "fixture unavailable" } });
     }
     if (prompt.includes("Привет из браузера")) {
-      sendProgressiveOwnerVoice(response);
+      sendProgressiveVoice(
+        response,
+        "Голосовой ответ владельцу.",
+        " Продолжаю после ранней фразы",
+      );
+      return;
+    }
+    if (prompt.includes("Что думает владелец?")) {
+      sendProgressiveVoice(
+        response,
+        "Подтверждённых данных недостаточно.",
+        " Этот хвост не должен быть произнесён после barge-in",
+      );
       return;
     }
     const reply = prompt.includes("Восстановление после отказа")
