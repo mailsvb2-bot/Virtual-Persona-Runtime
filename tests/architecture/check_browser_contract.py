@@ -132,6 +132,8 @@ for required in (
     "#metric-playback",
     "#metric-cost",
     '"/v1/listen"',
+    '"model=nova-3"',
+    '"language=ru"',
     '"reasoning_effort":"none"',
     '"max_tokens":96',
     '"model":"deepseek-flash"',
