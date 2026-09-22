@@ -401,9 +401,25 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       method: string;
       path: string;
       authorization: string | null;
+      contentType: string | null;
+      bodyText: string;
     }>;
   };
+  const sttRequests = requests.filter((entry) => entry.kind === "stt");
+  const llmRequests = requests.filter((entry) => entry.kind === "llm");
   const avatarRequests = requests.filter((entry) => entry.kind === "avatar");
+
+  expect(sttRequests).toHaveLength(1);
+  expect(sttRequests[0]?.path).toBe("/v1/listen");
+  expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
+  expect(sttRequests[0]?.contentType).toBe("application/octet-stream");
+
+  expect(llmRequests).toHaveLength(1);
+  expect(llmRequests[0]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
+  expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
+  expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
+  expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
+
   expect(avatarRequests.some((entry) =>
     entry.method === "GET" && entry.path === "/agents/voice-e2e-expressive-agent"
   )).toBeTruthy();
