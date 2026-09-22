@@ -9,6 +9,9 @@ BACKEND_CONFIG = UI / "playwright.backend.config.ts"
 BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
+EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
+EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
+EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
 STYLES = UI / "styles.css"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
@@ -27,6 +30,9 @@ backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
 backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
+expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
+expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
+expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
 styles = STYLES.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
@@ -72,7 +78,11 @@ for required in (
     if required not in backend_config:
         raise SystemExit(f"Owner Lab backend browser config missing: {required}")
 
-for required in ("backend-owner-journey.spec.ts", "backend-voice-journey.spec.ts"):
+for required in (
+    "backend-owner-journey.spec.ts",
+    "backend-voice-journey.spec.ts",
+    "backend-expressive-journey.spec.ts",
+):
     if required not in default_config:
         raise SystemExit(f"Default browser contract must exclude {required}")
 
@@ -110,6 +120,38 @@ for required in (
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
 
 for required in (
+    "LiveKit согласован",
+    "canonical_playback_proven",
+    "av_sync_proven",
+    "did.speak",
+    "did.interrupt",
+    "__vprExpressiveDisconnect",
+    "/v2/agents/voice-e2e-expressive-agent/sessions",
+    "#metric-stt",
+    "#metric-av-sync",
+    "#metric-playback",
+    "#metric-cost",
+):
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
+
+for required in (
+    "run_owner_lab_expressive_backend.py",
+    "backend-expressive-journey.spec.ts",
+):
+    if required not in expressive_config:
+        raise SystemExit(f"Owner Lab Expressive browser config missing: {required}")
+
+for required in (
+    "VPR_DID_AGENT_ID",
+    "voice-e2e-expressive-agent",
+    "VPR_OWNER_LAB_STT_PROVIDER",
+    "VPR_OWNER_LAB_LLM_PROVIDER",
+):
+    if required not in expressive_launcher:
+        raise SystemExit(f"Owner Lab Expressive launcher missing: {required}")
+
+for required in (
     "estimatedPlayoutTimestamp",
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",
@@ -142,6 +184,30 @@ for required in (
     if required not in styles:
         raise SystemExit(f"Owner Lab realtime media containment missing: {required}")
 
+
+for required in (
+    'id="metric-stt"',
+    'id="metric-llm"',
+    'id="metric-server-total"',
+    'id="metric-text-first"',
+    'id="metric-first-audio"',
+    'id="metric-video-ready"',
+    'id="metric-av-sync"',
+    'id="metric-playback"',
+    'id="metric-cost"',
+):
+    if required not in index_html:
+        raise SystemExit(f"Owner Lab readable telemetry DOM missing: {required}")
+
+for required in (
+    "renderTelemetry",
+    "isSessionEvidenceSnapshot",
+    "estimated_cost_microunits",
+    "provider_charge_microunits",
+    "провайдер не сообщил стоимость",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab readable telemetry rendering missing: {required}")
 
 for required in ('id="export-evidence"', "Скачать evidence snapshot"):
     if required not in index_html:
@@ -211,6 +277,7 @@ for required in (
     "npm run test:e2e",
     "npm run test:e2e:backend",
     "npm run test:e2e:voice",
+    "npm run test:e2e:expressive",
     "dist/owner-capture.js",
 ):
     if required not in ci:
