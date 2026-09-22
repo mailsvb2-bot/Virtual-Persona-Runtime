@@ -10,6 +10,7 @@ mod media_timeline;
 mod output;
 mod provider;
 mod session;
+mod spoken_text;
 mod turn;
 mod turn_state;
 
@@ -18,7 +19,7 @@ pub use delivery::{OutputDeliveryError, OutputDeliveryHandle};
 pub use error::{ProviderExecutionError, RuntimeDenyReason, provider_reason_code};
 pub use output::{OutputSegmentEvidence, OutputSegmentId};
 pub use session::{ActiveSession, SessionSecurityConfig};
-pub use turn::{ActiveTurn, AuthorizedLlmStream, TurnInterruptHandle};
+pub use turn::{ActiveTurn, AuthorizedLlmStream, AuthorizedSpokenLlmStream, TurnInterruptHandle};
 
 #[cfg(test)]
 mod tests;
