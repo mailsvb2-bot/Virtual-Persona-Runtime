@@ -6,7 +6,8 @@ use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabEvidenceError, LabMediaEvidenceInput,
-    LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot, OwnerLabEngine,
+    LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
+    LabVoicePlaybackRegistry, OwnerLabEngine,
 };
 
 pub fn request_sequence(request: &Request) -> Result<u64, LabEvidenceError> {
@@ -126,7 +127,6 @@ pub fn export_terminal_snapshot(
 pub enum MediaRecordError {
     Evidence(LabEvidenceError),
     Lab(LabError),
-    Internal,
 }
 
 impl MediaRecordError {
@@ -134,7 +134,6 @@ impl MediaRecordError {
         match self {
             Self::Evidence(error) => error.code(),
             Self::Lab(error) => error.code(),
-            Self::Internal => "INTERNAL_ERROR",
         }
     }
 
@@ -155,13 +154,13 @@ impl MediaRecordError {
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderRateLimited)) => 429,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderTimeout)) => 504,
             Self::Lab(LabError::Provider(_)) => 502,
-            Self::Lab(LabError::Internal) | Self::Internal => 500,
+            Self::Lab(LabError::Internal) => 500,
         }
     }
 }
 
 pub fn record_media(
-    engine: &StdMutex<OwnerLabEngine>,
+    playback: &LabVoicePlaybackRegistry,
     recorder: &Mutex<LabSessionEvidenceRecorder>,
     input: &LabMediaEvidenceInput,
 ) -> Result<(), MediaRecordError> {
@@ -170,9 +169,7 @@ pub fn record_media(
             .lock()
             .prepare_canonical_playback(input)
             .map_err(MediaRecordError::Evidence)?;
-        engine
-            .lock()
-            .map_err(|_| MediaRecordError::Internal)?
+        playback
             .acknowledge_voice_playback(canonical_turn_sequence, canonical_output_sequence)
             .map_err(MediaRecordError::Lab)?;
         return recorder

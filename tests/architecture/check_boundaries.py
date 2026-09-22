@@ -690,11 +690,25 @@ if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
 if "acknowledge_voice_playback" not in owner_lab_http_evidence:
     raise SystemExit("Owner Lab HTTP evidence must reconcile browser audio to canonical runtime playback")
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_playback = (
+    owner_lab_src / "state" / "voice_playback.rs"
+).read_text(encoding="utf-8")
 runtime_avatar = (CRATES / "vpr-runtime" / "src" / "avatar_runtime.rs").read_text(encoding="utf-8")
 if "deliver_realtime_avatar_text" not in runtime_avatar or "OutputDeliveryHandle" not in runtime_avatar:
     raise SystemExit("realtime avatar output must allocate the canonical delivery handle")
-if "acknowledge_voice_playback" not in owner_lab_voice or "acknowledge_output_played" not in owner_lab_voice:
-    raise SystemExit("Owner Lab voice playback must reconcile through canonical runtime output evidence")
+for required_playback_boundary in (
+    "LabVoicePlaybackRegistry",
+    "acknowledge_voice_delivery_sent",
+    "acknowledge_voice_playback",
+    "acknowledge_output_sent",
+    "acknowledge_output_played",
+):
+    if required_playback_boundary not in owner_lab_voice_playback:
+        raise SystemExit(
+            f"Owner Lab shared voice playback boundary missing {required_playback_boundary}"
+        )
+if "voice_playback_registry" not in owner_lab_state:
+    raise SystemExit("Owner Lab must expose one shared playback registry outside the engine mutex")
 if "acknowledge_voice_playback" in owner_lab_ui or "acknowledge_output_played" in owner_lab_ui:
     raise SystemExit("browser UI must not self-promote media observations to canonical playback")
 for required_browser_media_evidence in (

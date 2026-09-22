@@ -23,7 +23,8 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
-    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
+    LabVoicePlaybackRegistry, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
+    ParticipantRole, ProviderBundle,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -49,6 +50,7 @@ struct AppState {
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
     voice_streams: http_voice::VoiceStreamRegistry,
+    voice_playback: LabVoicePlaybackRegistry,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -116,6 +118,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(stt) = providers.stt.take() {
         engine = engine.with_stt(stt);
     }
+    let voice_playback = engine.voice_playback_registry();
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
@@ -123,6 +126,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
         voice_streams: http_voice::VoiceStreamRegistry::default(),
+        voice_playback,
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -266,7 +270,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
-            http_evidence::record_media(&state.engine, &state.evidence, &body)
+            http_evidence::record_media(&state.voice_playback, &state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(error.status(), error.code()))
         }),

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::Serialize;
 use vpr_domain::{
     ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
@@ -139,7 +137,7 @@ pub struct OwnerLabEngine {
     session_audience: Option<LabSessionAudience>,
     session_counter: u64,
     turn_counter: u64,
-    pending_voice_playback: BTreeMap<u64, voice::PendingVoicePlayback>,
+    voice_playback: voice_playback::LabVoicePlaybackRegistry,
     egress_enabled: bool,
 }
 
@@ -165,9 +163,14 @@ impl OwnerLabEngine {
             session_audience: None,
             session_counter: 0,
             turn_counter: 0,
-            pending_voice_playback: BTreeMap::new(),
+            voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
+    }
+
+    #[must_use]
+    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
+        self.voice_playback.clone()
     }
 
     /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
@@ -311,7 +314,7 @@ impl OwnerLabEngine {
         {
             return Err(LabError::InvalidState);
         }
-        self.pending_voice_playback.clear();
+        self.voice_playback.clear();
 
         self.session_counter = self
             .session_counter
@@ -561,9 +564,11 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 mod client_control;
 mod text;
 mod voice;
+mod voice_playback;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
+pub use voice_playback::LabVoicePlaybackRegistry;
 
 #[cfg(test)]
 mod tests;

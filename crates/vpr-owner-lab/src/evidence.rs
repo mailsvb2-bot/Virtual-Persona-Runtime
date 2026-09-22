@@ -8,7 +8,7 @@ pub use vpr_evaluation::{
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
-use crate::{LabTextResult, LabVoiceResult};
+use crate::{LabTextResult, LabVoiceResult, LabVoiceSegment};
 
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 
@@ -191,6 +191,42 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
+    /// Binds the first runtime-issued streaming output segment to an in-flight browser request.
+    ///
+    /// Later segments may extend the same canonical turn but cannot replace the first output
+    /// sequence used for first-audio playback evidence.
+    ///
+    /// # Errors
+    /// Fails for malformed segments, unknown requests, or attempts that are no longer pending.
+    pub fn bind_voice_segment(
+        &mut self,
+        request_sequence: u64,
+        segment: &LabVoiceSegment,
+    ) -> Result<(), LabEvidenceError> {
+        if segment.evidence_turn_sequence == 0 || segment.evidence_output_sequence == 0 {
+            return Err(LabEvidenceError::InvalidInput);
+        }
+        let attempt = self
+            .voice_attempts
+            .get_mut(&request_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        if attempt.status != LabVoiceAttemptStatus::Pending {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        match (
+            attempt.canonical_turn_sequence,
+            attempt.canonical_output_sequence,
+        ) {
+            (None, None) => {
+                attempt.canonical_turn_sequence = Some(segment.evidence_turn_sequence);
+                attempt.canonical_output_sequence = Some(segment.evidence_output_sequence);
+                Ok(())
+            }
+            (Some(turn), Some(_)) if turn == segment.evidence_turn_sequence => Ok(()),
+            _ => Err(LabEvidenceError::InvalidState),
+        }
+    }
+
     /// Completes a registered request using sanitized server-side voice evidence.
     ///
     /// # Errors
@@ -209,6 +245,12 @@ impl LabSessionEvidenceRecorder {
         }
         if result.evidence_turn_sequence == 0
             || result.evidence_output_sequence == 0
+            || matches!(
+                (attempt.canonical_turn_sequence, attempt.canonical_output_sequence),
+                (Some(turn), Some(output))
+                    if turn != result.evidence_turn_sequence
+                        || output != result.evidence_output_sequence
+            )
             || result.stt_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_first_meaningful_millis > result.llm_millis
@@ -219,7 +261,6 @@ impl LabSessionEvidenceRecorder {
         }
         attempt.canonical_turn_sequence = Some(result.evidence_turn_sequence);
         attempt.canonical_output_sequence = Some(result.evidence_output_sequence);
-        attempt.canonical_playback_confirmed = false;
         attempt.status = LabVoiceAttemptStatus::Completed;
         attempt.stt_millis = Some(result.stt_millis);
         attempt.llm_millis = Some(result.llm_millis);
@@ -252,10 +293,10 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Returns the canonical turn/output binding for a completed browser voice request.
+    /// Returns the canonical first-output binding for a live or completed browser voice request.
     ///
     /// # Errors
-    /// Fails for sealed sessions, unknown requests, failed/pending attempts, or missing turn data.
+    /// Fails for sealed sessions, unknown/failed requests, or missing canonical segment data.
     pub fn completed_playback_binding(
         &self,
         request_sequence: u64,
@@ -267,7 +308,7 @@ impl LabSessionEvidenceRecorder {
             .voice_attempts
             .get(&request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabVoiceAttemptStatus::Completed {
+        if attempt.status == LabVoiceAttemptStatus::Failed {
             return Err(LabEvidenceError::InvalidState);
         }
         match (

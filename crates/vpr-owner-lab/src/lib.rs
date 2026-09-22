@@ -21,8 +21,8 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 pub use state::{
     ConversationReadiness, LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute,
     LabError, LabProviderUsage, LabRealtimeTransport, LabSessionAudience, LabSignalBundle,
-    LabStatus, LabTextResult, LabVoiceResult, LabVoiceSegment, LabVoiceUsage, OwnerContextState,
-    OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
+    LabStatus, LabTextResult, LabVoicePlaybackRegistry, LabVoiceResult, LabVoiceSegment,
+    LabVoiceUsage, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};

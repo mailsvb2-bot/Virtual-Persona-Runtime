@@ -236,6 +236,7 @@ fn sample_pcm() -> Vec<u8> {
 #[test]
 fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
     let (mut engine, stats, release_tail) = streaming_voice_engine();
+    let playback = engine.voice_playback_registry();
     let (segment_tx, segment_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
@@ -252,6 +253,15 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
 
     let first = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(first.evidence_output_sequence > 0);
+    playback
+        .acknowledge_voice_delivery_sent(
+            first.evidence_turn_sequence,
+            first.evidence_output_sequence,
+        )
+        .unwrap();
+    playback
+        .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
+        .unwrap();
     assert!(matches!(
         result_rx.try_recv(),
         Err(mpsc::TryRecvError::Empty)
