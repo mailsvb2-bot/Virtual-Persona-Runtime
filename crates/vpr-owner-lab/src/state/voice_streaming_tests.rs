@@ -254,13 +254,13 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
     let first = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(first.evidence_output_sequence > 0);
     playback
-        .acknowledge_sent(
+        .acknowledge_voice_delivery_sent(
             first.evidence_turn_sequence,
             first.evidence_output_sequence,
         )
         .unwrap();
     playback
-        .acknowledge_playback(
+        .acknowledge_voice_playback(
             first.evidence_turn_sequence,
             first.evidence_output_sequence,
         )
