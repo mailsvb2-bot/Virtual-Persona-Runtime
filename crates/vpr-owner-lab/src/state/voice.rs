@@ -29,7 +29,7 @@ pub(super) struct PendingVoicePlayback {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabVoiceSegment {
     pub evidence_turn_sequence: u64,
-    pub evidence_output_sequence: u64,
+    pub evidence_output_sequences: Vec<u64>,
     pub client_command: Option<LabClientCommand>,
 }
 
@@ -185,11 +185,14 @@ impl OwnerLabEngine {
             )?,
         };
 
-        let evidence_output_sequence = generation
+        let evidence_output_sequences: Vec<u64> = generation
             .deliveries
-            .first()
+            .iter()
             .map(OutputDeliveryHandle::sequence)
-            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
+            .collect();
+        if evidence_output_sequences.is_empty() {
+            return Err(terminalize_failed_turn(&turn, LabError::InvalidInput));
+        }
         turn.complete().map_err(LabError::Runtime)?;
         self.pending_voice_playback.insert(
             evidence_turn_sequence,
@@ -204,7 +207,7 @@ impl OwnerLabEngine {
             reply: generation.reply,
             locale: transcript.locale,
             evidence_turn_sequence,
-            evidence_output_sequence,
+            evidence_output_sequences,
             stt_millis,
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
