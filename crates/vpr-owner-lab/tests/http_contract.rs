@@ -238,6 +238,71 @@ fn post_binary(
     http_bytes(port, "POST", path, host, &headers, body)
 }
 
+fn start_voice_turn(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    request_sequence: u64,
+    pcm: &[u8],
+) -> u64 {
+    let started = post_binary(
+        port,
+        host,
+        csrf,
+        "/api/voice/turn",
+        Some(request_sequence),
+        pcm,
+    );
+    assert_eq!(started.status, 202, "{}", started.body);
+    let started_json: Value = serde_json::from_str(&started.body).unwrap();
+    assert_eq!(started_json["ok"], true);
+    let accepted = started_json["request_sequence"].as_u64().unwrap();
+    assert_eq!(accepted, request_sequence);
+    accepted
+}
+
+fn collect_voice_events(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    request_sequence: u64,
+) -> Vec<Value> {
+    let mut collected = Vec::new();
+    for _ in 0..16 {
+        let response = post(
+            port,
+            host,
+            csrf,
+            "/api/voice/events",
+            &format!(r#"{{"request_sequence":{request_sequence}}}"#),
+        );
+        assert_eq!(response.status, 200, "{}", response.body);
+        let payload: Value = serde_json::from_str(&response.body).unwrap();
+        collected.extend(payload["events"].as_array().unwrap().iter().cloned());
+        if payload["terminal"] == true {
+            return collected;
+        }
+    }
+    panic!("voice event stream did not reach a terminal event");
+}
+
+fn completed_voice_result(events: &[Value]) -> &Value {
+    events
+        .iter()
+        .find(|event| event["kind"] == "complete")
+        .and_then(|event| event.get("result"))
+        .expect("voice events must contain one complete result")
+}
+
+fn assert_cancelled_voice_events(events: &[Value]) {
+    let failed = events
+        .iter()
+        .find(|event| event["kind"] == "failed")
+        .expect("cancelled voice turn must publish a failed terminal event");
+    assert_eq!(failed["code"], "TURN_CANCELLED");
+    assert!(!events.iter().any(|event| event["kind"] == "complete"));
+}
+
 fn launch_owner_lab(port: u16, did_endpoint: &str) -> ChildGuard {
     let child = Command::new(env!("CARGO_BIN_EXE_vpr-owner-lab"))
         .env("VPR_DID_ENDPOINT", did_endpoint)
@@ -532,9 +597,13 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert_eq!(missing_correlation.status, 400);
     assert!(missing_correlation.body.contains("INVALID_INPUT"));
 
-    let voice = post_binary(port, &host, &csrf, "/api/voice/turn", Some(1), &pcm);
-    assert_eq!(voice.status, 200, "{}", voice.body);
-    let voice_json: Value = serde_json::from_str(&voice.body).unwrap();
+    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &pcm);
+    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    assert!(
+        voice_events.iter().any(|event| event["kind"] == "segment"),
+        "streaming voice must expose at least one canonical output segment"
+    );
+    let voice_json = completed_voice_result(&voice_events);
     assert_eq!(voice_json["transcript"], "Привет");
     assert_eq!(voice_json["reply"], "Здравствуйте");
     assert_eq!(voice_json["locale"], "ru-RU");
@@ -543,6 +612,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert_eq!(voice_json["stt_usage"]["input_units"], 100);
     assert_eq!(voice_json["llm_usage"]["input_units"], 7);
     assert_eq!(voice_json["llm_usage"]["output_units"], 1);
+    let serialized_events = serde_json::to_string(&voice_events).unwrap();
     for secret in [
         "did-integration-secret",
         "stt-integration-secret",
@@ -550,7 +620,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
         "stream-voice",
         "session-voice",
     ] {
-        assert!(!voice.body.contains(secret));
+        assert!(!serialized_events.contains(secret));
     }
 
     assert_session_evidence_contract(port, &host, &csrf, evidence_session);
@@ -767,18 +837,7 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
         200
     );
 
-    let voice_host = host.clone();
-    let voice_csrf = csrf.clone();
-    let voice = thread::spawn(move || {
-        post_binary(
-            port,
-            &voice_host,
-            &voice_csrf,
-            "/api/voice/turn",
-            Some(1),
-            &vec![0_u8; 3_200],
-        )
-    });
+    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let revoke_started = Instant::now();
@@ -788,10 +847,8 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
         revoke_started.elapsed() < Duration::from_millis(1_500),
         "revoke waited for the provider instead of preempting the voice turn"
     );
-
-    let voice = voice.join().unwrap();
-    assert_eq!(voice.status, 409, "{}", voice.body);
-    assert!(voice.body.contains("TURN_CANCELLED"));
+    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    assert_cancelled_voice_events(&voice_events);
     assert_eq!(
         post(port, &host, &csrf, "/api/session/close", "{}").status,
         200
@@ -838,18 +895,7 @@ fn close_preempts_active_voice_before_any_avatar_output() {
         200
     );
 
-    let voice_host = host.clone();
-    let voice_csrf = csrf.clone();
-    let voice = thread::spawn(move || {
-        post_binary(
-            port,
-            &voice_host,
-            &voice_csrf,
-            "/api/voice/turn",
-            Some(1),
-            &vec![0_u8; 3_200],
-        )
-    });
+    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let close_started = Instant::now();
@@ -859,10 +905,8 @@ fn close_preempts_active_voice_before_any_avatar_output() {
         close_started.elapsed() < Duration::from_millis(1_500),
         "close waited for the provider instead of preempting the voice turn"
     );
-
-    let voice = voice.join().unwrap();
-    assert_eq!(voice.status, 409, "{}", voice.body);
-    assert!(voice.body.contains("TURN_CANCELLED"));
+    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    assert_cancelled_voice_events(&voice_events);
 
     let status = http(port, "GET", "/api/status", &host, &[], "");
     let status_json: Value = serde_json::from_str(&status.body).unwrap();
