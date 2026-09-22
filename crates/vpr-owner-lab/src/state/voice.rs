@@ -15,13 +15,13 @@ use vpr_runtime::{
 
 use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
 
-const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
-const VOICE_CHANNELS: u16 = 1;
-const MAX_VOICE_MILLIS: u64 = 30_000;
+pub(super) const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
+pub(super) const VOICE_CHANNELS: u16 = 1;
+pub(super) const MAX_VOICE_MILLIS: u64 = 30_000;
 
 pub(super) struct PendingVoicePlayback {
-    turn: ActiveTurn,
-    delivery: OutputDeliveryHandle,
+    pub(super) turn: ActiveTurn,
+    pub(super) deliveries: Vec<OutputDeliveryHandle>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -145,7 +145,10 @@ impl OwnerLabEngine {
         turn.complete().map_err(LabError::Runtime)?;
         self.pending_voice_playback.insert(
             evidence_turn_sequence,
-            PendingVoicePlayback { turn, delivery },
+            PendingVoicePlayback {
+                turn,
+                deliveries: vec![delivery],
+            },
         );
 
         Ok(LabVoiceResult {
@@ -180,12 +183,14 @@ impl OwnerLabEngine {
             .pending_voice_playback
             .get(&evidence_turn_sequence)
             .ok_or(LabError::InvalidState)?;
-        if pending.delivery.sequence() != evidence_output_sequence {
-            return Err(LabError::InvalidState);
-        }
+        let delivery = pending
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.sequence() == evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
         pending
             .turn
-            .acknowledge_output_sent(&pending.delivery)
+            .acknowledge_output_sent(delivery)
             .map_err(LabError::Runtime)
     }
 
@@ -212,17 +217,19 @@ impl OwnerLabEngine {
             .pending_voice_playback
             .get(&evidence_turn_sequence)
             .ok_or(LabError::InvalidState)?;
-        if pending.delivery.sequence() != evidence_output_sequence {
-            return Err(LabError::InvalidState);
-        }
+        let delivery = pending
+            .deliveries
+            .iter()
+            .find(|delivery| delivery.sequence() == evidence_output_sequence)
+            .ok_or(LabError::InvalidState)?;
         pending
             .turn
-            .acknowledge_output_played(&pending.delivery)
+            .acknowledge_output_played(delivery)
             .map_err(LabError::Runtime)
     }
 }
 
-fn terminalize_avatar_output_error(
+pub(super) fn terminalize_avatar_output_error(
     turn: &ActiveTurn,
     error: RealtimeAvatarOutputError,
 ) -> LabError {
