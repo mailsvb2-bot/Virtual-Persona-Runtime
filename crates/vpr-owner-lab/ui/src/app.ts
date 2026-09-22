@@ -381,7 +381,7 @@ const apiBinary = async <T>(path: string, body: ArrayBuffer, requestSequence: nu
 
 const waitForVoiceEvents = async (
   requestSequence: number,
-  onSegment: (segment: VoiceSegment) => Promise<void>,
+  onSegment: (segment: VoiceSegment) => void,
 ): Promise<VoiceResult> => {
   let finalResult: VoiceResult | null = null;
   while (true) {
@@ -390,7 +390,7 @@ const waitForVoiceEvents = async (
     });
     for (const event of batch.events) {
       if (event.kind === "segment") {
-        await onSegment(event.segment);
+        onSegment(event.segment);
       } else if (event.kind === "complete") {
         finalResult = event.result;
       } else {
@@ -1096,16 +1096,29 @@ const finishMicrophoneTurn = async (): Promise<void> => {
 
     const started = await apiBinary<VoiceStartAck>("/api/voice/turn", pcm, requestSequence);
     if (started.request_sequence !== requestSequence) throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
-    const result = await waitForVoiceEvents(requestSequence, async (segment) => {
-      if (segment.client_command) {
+
+    let deliveryFailure: Error | null = null;
+    const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
+      if (!segment.client_command) return;
+      void (async () => {
         const sent = await voiceCommandScheduler.dispatch(segment.client_command);
         if (!sent) return;
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
           evidence_output_sequence: segment.evidence_output_sequence,
         });
-      }
-    });
+      })().catch((error: unknown) => {
+        deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
+        voiceCommandScheduler.interrupt();
+        void api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
+        if (activeVoiceEvidence?.requestSequence === requestSequence) {
+          setStatus(deliveryFailure.message, "error");
+        }
+      });
+    };
+
+    const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+    if (deliveryFailure) throw deliveryFailure;
 
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
