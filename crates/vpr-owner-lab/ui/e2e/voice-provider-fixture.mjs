@@ -2,8 +2,10 @@ import http from "node:http";
 
 const port = 18_790;
 const agentId = "voice-e2e-agent";
+const expressiveAgentId = "voice-e2e-expressive-agent";
 const requests = [];
 let streamSequence = 0;
+let expressiveSessionSequence = 0;
 let sttSequence = 0;
 let llmSequence = 0;
 
@@ -62,6 +64,10 @@ const server = http.createServer(async (request, response) => {
     record("avatar", request, url, Buffer.alloc(0));
     return sendJson(response, 200, { presenter: { type: "clip" } });
   }
+  if (request.method === "GET" && url.pathname === `/agents/${expressiveAgentId}`) {
+    record("avatar", request, url, Buffer.alloc(0));
+    return sendJson(response, 200, { presenter: { type: "expressive" } });
+  }
 
   const body = await readBody(request);
   if (request.method === "POST" && url.pathname === "/v1/audio/transcriptions") {
@@ -95,6 +101,19 @@ const server = http.createServer(async (request, response) => {
       "text/event-stream",
       llmEventStream(reply),
     );
+  }
+
+  if (
+    request.method === "POST"
+    && url.pathname === `/v2/agents/${expressiveAgentId}/sessions`
+  ) {
+    expressiveSessionSequence += 1;
+    record("avatar", request, url, body);
+    return sendJson(response, 201, {
+      id: `live-session-${expressiveSessionSequence}`,
+      session_url: "wss://livekit.example.test",
+      session_token: `fixture-livekit-token-${expressiveSessionSequence}`,
+    });
   }
 
   if (request.method === "POST" && url.pathname === `/agents/${agentId}/streams`) {
