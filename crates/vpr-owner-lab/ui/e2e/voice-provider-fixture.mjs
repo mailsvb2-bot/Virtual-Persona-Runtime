@@ -38,6 +38,7 @@ const record = (kind, request, url, body) => {
     kind,
     method: request.method,
     path: url.pathname,
+    query: url.search,
     authorization: request.headers.authorization ?? null,
     contentType: request.headers["content-type"] ?? null,
     bodyLength: body.length,
