@@ -5,8 +5,8 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence, UsageUnit,
+    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -108,12 +108,11 @@ impl OpenAiCompatibleLlm {
         Ok(Self { client, config })
     }
 
-    fn execute(
+    fn start_response(
         &self,
         request: &LlmRequest,
         cancellation: &dyn CancellationProbe,
-        sink: &mut dyn GeneratedTextSink,
-    ) -> Result<UsageEvidence, ProviderError> {
+    ) -> Result<Response, ProviderError> {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
@@ -131,14 +130,22 @@ impl OpenAiCompatibleLlm {
             reasoning_effort: self.config.reasoning_effort.as_deref(),
             thinking: self.config.thinking,
         };
-        let response = self
-            .client
+        self.client
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("Bearer {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .map_err(|error| map_transport_error(&error))
+    }
+
+    fn execute(
+        &self,
+        request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedTextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        let response = self.start_response(request, cancellation)?;
         Self::consume_response(response, cancellation, sink)
     }
 
@@ -147,48 +154,27 @@ impl OpenAiCompatibleLlm {
         cancellation: &dyn CancellationProbe,
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
-        if !response.status().is_success() {
-            return Err(map_status(response.status().as_u16()));
+        let mut stream = OpenAiTextStream::new(response)?;
+        while let Some(chunk) = stream.next_chunk(cancellation)? {
+            sink.push_generated_text(&chunk)?;
         }
-        let mut usage = UsageEvidence::default();
-        let mut saw_done = false;
-        for line in BufReader::new(response).lines() {
-            if cancellation.is_cancelled() {
-                return Err(cancelled());
-            }
-            let line = line.map_err(|_| invalid_response())?;
-            let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
-                continue;
-            };
-            if payload == "[DONE]" {
-                saw_done = true;
-                break;
-            }
-            let event: ChatChunk = serde_json::from_str(payload).map_err(|_| invalid_response())?;
-            for choice in event.choices {
-                if let Some(content) = choice.delta.content {
-                    if !content.is_empty() {
-                        sink.push_generated_text(&content)?;
-                    }
-                }
-            }
-            if let Some(event_usage) = event.usage {
-                usage.input_units = event_usage.prompt_tokens;
-                usage.input_unit = event_usage.prompt_tokens.map(|_| UsageUnit::Token);
-                usage.output_units = event_usage.completion_tokens;
-                usage.output_unit = event_usage.completion_tokens.map(|_| UsageUnit::Token);
-            }
-        }
-        if !saw_done {
-            return Err(invalid_response());
-        }
-        Ok(usage)
+        Ok(stream.usage())
     }
+
 }
 
 impl LlmPort for OpenAiCompatibleLlm {
     fn descriptor(&self) -> ProviderDescriptor {
         self.config.descriptor()
+    }
+
+    fn open_stream(
+        &self,
+        request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        let response = self.start_response(request, cancellation)?;
+        Ok(Box::new(OpenAiTextStream::new(response)?))
     }
 
     fn stream(
@@ -198,6 +184,73 @@ impl LlmPort for OpenAiCompatibleLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         self.execute(request, cancellation, sink)
+    }
+}
+
+struct OpenAiTextStream {
+    lines: std::io::Lines<BufReader<Response>>,
+    usage: UsageEvidence,
+    completed: bool,
+}
+
+impl OpenAiTextStream {
+    fn new(response: Response) -> Result<Self, ProviderError> {
+        if !response.status().is_success() {
+            return Err(map_status(response.status().as_u16()));
+        }
+        Ok(Self {
+            lines: BufReader::new(response).lines(),
+            usage: UsageEvidence::default(),
+            completed: false,
+        })
+    }
+}
+
+impl LlmTextStream for OpenAiTextStream {
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        if self.completed {
+            return Ok(None);
+        }
+        loop {
+            if cancellation.is_cancelled() {
+                return Err(cancelled());
+            }
+            let Some(line) = self.lines.next() else {
+                return Err(invalid_response());
+            };
+            let line = line.map_err(|_| invalid_response())?;
+            let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
+                continue;
+            };
+            if payload == "[DONE]" {
+                self.completed = true;
+                return Ok(None);
+            }
+            let event: ChatChunk =
+                serde_json::from_str(payload).map_err(|_| invalid_response())?;
+            if let Some(event_usage) = event.usage {
+                self.usage.input_units = event_usage.prompt_tokens;
+                self.usage.input_unit = event_usage.prompt_tokens.map(|_| UsageUnit::Token);
+                self.usage.output_units = event_usage.completion_tokens;
+                self.usage.output_unit = event_usage.completion_tokens.map(|_| UsageUnit::Token);
+            }
+            let text: String = event
+                .choices
+                .into_iter()
+                .filter_map(|choice| choice.delta.content)
+                .filter(|content| !content.is_empty())
+                .collect();
+            if !text.is_empty() {
+                return Ok(Some(text));
+            }
+        }
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        self.usage.clone()
     }
 }
 
