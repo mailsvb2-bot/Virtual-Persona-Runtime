@@ -19,6 +19,8 @@ use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
+const FIRST_CLAUSE_MIN_CHARS: usize = 24;
+const NEXT_CLAUSE_MIN_CHARS: usize = 48;
 const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 48;
 const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
@@ -434,16 +436,29 @@ impl RealtimePhraseBuffer {
             }
         }
 
+        let clause_min = if self.emitted_any {
+            NEXT_CLAUSE_MIN_CHARS
+        } else {
+            FIRST_CLAUSE_MIN_CHARS
+        };
+        let mut chars_seen = 0_usize;
+        for (index, ch) in self.pending.char_indices() {
+            chars_seen += 1;
+            if chars_seen >= clause_min && matches!(ch, ',' | ';' | ':' | '—') {
+                return Some(index + ch.len_utf8());
+            }
+        }
+
         let limit = if self.emitted_any {
             NEXT_PHRASE_SOFT_LIMIT_CHARS
         } else {
             FIRST_PHRASE_SOFT_LIMIT_CHARS
         };
-        if self.pending.chars().count() < limit {
+        if chars_seen < limit {
             return None;
         }
 
-        let mut chars_seen = 0_usize;
+        chars_seen = 0;
         let mut whitespace_boundary = None;
         for (index, ch) in self.pending.char_indices() {
             chars_seen += 1;
@@ -515,6 +530,26 @@ mod phrase_tests {
         assert!(buffer.push("Первая").is_empty());
         assert_eq!(buffer.push(" фраза. Вто"), ["Первая фраза."]);
         assert_eq!(buffer.finish().as_deref(), Some("Вто"));
+    }
+
+    #[test]
+    fn natural_clause_boundary_releases_first_phrase_before_soft_limit() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert_eq!(
+            buffer.push("Сначала уточню один важный момент, затем продолжу"),
+            ["Сначала уточню один важный момент,"]
+        );
+        assert_eq!(buffer.finish().as_deref(), Some("затем продолжу"));
+    }
+
+    #[test]
+    fn tiny_intro_commas_do_not_create_choppy_phrases() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert!(buffer.push("Да, конечно, отвечу подробно").is_empty());
+        assert_eq!(
+            buffer.finish().as_deref(),
+            Some("Да, конечно, отвечу подробно")
+        );
     }
 
     #[test]
