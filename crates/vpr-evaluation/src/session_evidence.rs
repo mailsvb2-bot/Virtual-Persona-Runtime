@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::session_statistics::{add_cost, distribution};
 use crate::{
     LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
     SessionUsageEvidence, sha256_hex,
 };
-use crate::session_statistics::{add_cost, distribution};
 
 pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
