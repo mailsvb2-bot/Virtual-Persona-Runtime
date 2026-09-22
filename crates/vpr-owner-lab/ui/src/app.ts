@@ -1114,7 +1114,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
   } catch (error) {
     if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence) activeVoiceEvidence = null;
     await refreshSessionEvidence();
-    setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+    if (error instanceof Error && error.message === "TURN_CANCELLED") {
+      setStatus("Ответ прерван", "ready");
+    } else {
+      setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+    }
   } finally {
     voiceRequestInFlight = false;
     updateControls();
@@ -1165,11 +1169,13 @@ const interruptAvatar = async (): Promise<void> => {
     ? playbackId !== null
     : true;
   const clientReady = !textRequestInFlight
-    && !voiceRequestInFlight
     && realtimeTransportReady
     && activeClientControl?.interrupt === true
     && playbackReady;
   try {
+    if (voiceRequestInFlight) {
+      await api<{ ok: true }>("/api/avatar/interrupt", {});
+    }
     if (clientReady) {
       const command = await api<ClientCommand>("/api/avatar/client-interrupt", {
         playback_id: playbackId,
@@ -1180,7 +1186,9 @@ const interruptAvatar = async (): Promise<void> => {
       await refreshSessionEvidence();
       return;
     }
-    await api<{ ok: true }>("/api/avatar/interrupt", {});
+    if (!voiceRequestInFlight) {
+      await api<{ ok: true }>("/api/avatar/interrupt", {});
+    }
     await refreshSessionEvidence();
   } catch (error) {
     interruptEvidenceWatch = null;
