@@ -302,11 +302,30 @@ const recordStreamingVoiceTurn = async (
   await expect.poll(async () => page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.some((command) => command.topic === "did.speak") ?? false,
-  )).toBeTruthy();
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(1);
 
-  // The fixture keeps the LLM stream open after its first complete phrase. Seeing did.speak before
-  // the final status proves browser delivery no longer waits for full generation.
+  await page.waitForTimeout(150);
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(1);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(2);
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+
   await expect(page.locator("#status")).not.toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
