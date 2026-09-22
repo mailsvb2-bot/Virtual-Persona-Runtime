@@ -44,6 +44,15 @@ const closeButton = byId("close");
 const voiceButton = byId("voice");
 const statusNode = byId("status");
 const evidenceNode = byId("evidence");
+const metricStt = byId("metric-stt");
+const metricLlm = byId("metric-llm");
+const metricServerTotal = byId("metric-server-total");
+const metricTextFirst = byId("metric-text-first");
+const metricFirstAudio = byId("metric-first-audio");
+const metricVideoReady = byId("metric-video-ready");
+const metricAvSync = byId("metric-av-sync");
+const metricPlayback = byId("metric-playback");
+const metricCost = byId("metric-cost");
 let csrfToken = "";
 let egressEnabled = false;
 let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
@@ -93,8 +102,82 @@ const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
 };
+const formatMillis = (value) => value === null || value === undefined ? "—" : `${Math.round(value)} мс`;
+const isSessionEvidenceSnapshot = (value) => {
+    if (typeof value !== "object" || value === null)
+        return false;
+    const candidate = value;
+    return typeof candidate.schema_version === "string"
+        && candidate.schema_version.startsWith("rt0-owner-lab-session-evidence-")
+        && Array.isArray(candidate.text_attempts)
+        && Array.isArray(candidate.voice_attempts)
+        && Array.isArray(candidate.media_events)
+        && Array.isArray(candidate.av_sync_samples);
+};
+const lastCompleted = (items) => [...items].reverse().find((item) => item.status === "completed");
+const lastMediaEvent = (events, kind, requestSequence) => [...events].reverse().find((event) => event.kind === kind
+    && (requestSequence === undefined || event.request_sequence === requestSequence));
+const sumKnownCost = (usages, key) => {
+    const values = usages
+        .map((usage) => usage?.[key] ?? null)
+        .filter((value) => value !== null && Number.isFinite(value));
+    return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
+};
+const resetTelemetry = () => {
+    metricStt.textContent = "—";
+    metricLlm.textContent = "—";
+    metricServerTotal.textContent = "—";
+    metricTextFirst.textContent = "—";
+    metricFirstAudio.textContent = "—";
+    metricVideoReady.textContent = "—";
+    metricAvSync.textContent = "—";
+    metricPlayback.textContent = "—";
+    metricCost.textContent = "нет измеренных данных";
+};
+const renderTelemetry = (snapshot) => {
+    const voice = lastCompleted(snapshot.voice_attempts);
+    const text = lastCompleted(snapshot.text_attempts);
+    metricStt.textContent = formatMillis(voice?.stt_millis);
+    metricLlm.textContent = formatMillis(voice?.llm_millis);
+    metricServerTotal.textContent = formatMillis(voice?.server_total_millis ?? text?.server_total_millis);
+    metricTextFirst.textContent = formatMillis(text?.first_meaningful_response_millis);
+    const firstAudio = voice
+        ? lastMediaEvent(snapshot.media_events, "audio_started", voice.request_sequence)
+        : lastMediaEvent(snapshot.media_events, "audio_started");
+    metricFirstAudio.textContent = formatMillis(firstAudio?.elapsed_millis);
+    metricVideoReady.textContent = formatMillis(lastMediaEvent(snapshot.media_events, "video_ready")?.elapsed_millis);
+    const avSamples = voice
+        ? snapshot.av_sync_samples.filter((sample) => sample.request_sequence === voice.request_sequence)
+        : snapshot.av_sync_samples;
+    if (snapshot.av_sync_proven && avSamples.length > 0) {
+        const maxOffset = Math.max(...avSamples.map((sample) => sample.absolute_offset_millis));
+        metricAvSync.textContent = `${maxOffset} мс · ${avSamples.length} изм.`;
+    }
+    else {
+        metricAvSync.textContent = voice ? "ещё не доказан" : "—";
+    }
+    metricPlayback.textContent = snapshot.canonical_playback_proven
+        ? "подтверждён"
+        : voice ? "ожидание" : "—";
+    const usages = [
+        ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
+        ...snapshot.voice_attempts.flatMap((attempt) => [attempt.stt_usage, attempt.llm_usage]),
+    ];
+    const estimated = sumKnownCost(usages, "estimated_cost_microunits");
+    const charged = sumKnownCost(usages, "provider_charge_microunits");
+    const parts = [];
+    if (estimated !== null)
+        parts.push(`оценка: ${estimated} μunits`);
+    if (charged !== null)
+        parts.push(`провайдер: ${charged} μunits`);
+    metricCost.textContent = parts.length > 0
+        ? parts.join(" · ")
+        : "провайдер не сообщил стоимость";
+};
 const showEvidence = (value) => {
     evidenceNode.textContent = JSON.stringify(value, null, 2);
+    if (isSessionEvidenceSnapshot(value))
+        renderTelemetry(value);
 };
 const api = async (path, body) => {
     const init = body === undefined
@@ -617,6 +700,7 @@ const connectAvatar = async () => {
     }
     connectButton.disabled = true;
     connectEvidenceStartedAt = performance.now();
+    resetTelemetry();
     videoEvidencePosted = false;
     reconnectStartedAt = null;
     evidenceSessionSequence = 0;

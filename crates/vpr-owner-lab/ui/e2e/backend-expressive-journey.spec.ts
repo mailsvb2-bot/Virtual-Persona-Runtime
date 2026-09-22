@@ -349,6 +349,15 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
 
+  await expect(page.locator("#metric-stt")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-llm")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-server-total")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-first-audio")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-video-ready")).toHaveText(/\d+ мс/);
+  await expect(page.locator("#metric-av-sync")).toHaveText("60 мс · 3 изм.");
+  await expect(page.locator("#metric-playback")).toHaveText("подтверждён");
+  await expect(page.locator("#metric-cost")).toHaveText("провайдер не сообщил стоимость");
+
   const commands = await page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
