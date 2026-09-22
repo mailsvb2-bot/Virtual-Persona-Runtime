@@ -637,8 +637,41 @@ for forbidden_browser_secret in (
 ):
     if forbidden_browser_secret in owner_lab_ui:
         raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
-if "AudioWorkletNode" not in owner_lab_ui or "apiBinary" not in owner_lab_ui:
-    raise SystemExit("Owner Lab voice UI must use AudioWorklet plus binary same-origin upload")
+owner_lab_progressive_voice = (owner_lab_src / "state" / "voice_progressive.rs").read_text(
+    encoding="utf-8"
+)
+owner_lab_voice_stream_http = (owner_lab_src / "http_voice_stream.rs").read_text(encoding="utf-8")
+for required_progressive_runtime in (
+    "open_spoken_llm_stream",
+    "prepare_realtime_avatar_client_text",
+    "PendingVoicePlayback",
+    "evidence_output_sequence",
+):
+    if required_progressive_runtime not in owner_lab_progressive_voice:
+        raise SystemExit(
+            f"Owner Lab progressive voice path missing canonical boundary {required_progressive_runtime}"
+        )
+for required_progressive_http in (
+    "application/x-ndjson",
+    "voice_turn_progressive",
+    "VoiceStreamMessage",
+    "X-VPR-Evidence-Request",
+):
+    if required_progressive_http not in owner_lab_voice_stream_http:
+        raise SystemExit(
+            f"Owner Lab progressive voice HTTP boundary missing {required_progressive_http}"
+        )
+for required_progressive_ui in (
+    "AudioWorkletNode",
+    "streamVoiceTurn",
+    "/api/voice/turn/stream",
+    "application/octet-stream",
+    "/api/avatar/client-delivery-sent",
+):
+    if required_progressive_ui not in owner_lab_ui:
+        raise SystemExit(
+            f"Owner Lab voice UI must retain progressive same-origin boundary {required_progressive_ui}"
+        )
 if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" not in owner_lab_ui:
     raise SystemExit("Owner Lab voice UI must cap actual PCM samples before upload")
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
