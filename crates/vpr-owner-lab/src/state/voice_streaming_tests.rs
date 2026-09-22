@@ -252,11 +252,17 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
 
     let first = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert!(first.evidence_output_sequence > 0);
-    assert!(matches!(result_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(matches!(
+        result_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
 
     release_tail.store(true, Ordering::SeqCst);
-    let result = result_rx.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
+    let result = result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
     worker.join().unwrap();
     assert_eq!(result.reply, "Первая фраза. Вторая фраза.");
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 2);
