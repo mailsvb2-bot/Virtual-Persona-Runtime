@@ -127,7 +127,6 @@ pub fn export_terminal_snapshot(
 pub enum MediaRecordError {
     Evidence(LabEvidenceError),
     Lab(LabError),
-    Internal,
 }
 
 impl MediaRecordError {
@@ -135,7 +134,6 @@ impl MediaRecordError {
         match self {
             Self::Evidence(error) => error.code(),
             Self::Lab(error) => error.code(),
-            Self::Internal => "INTERNAL_ERROR",
         }
     }
 
@@ -156,7 +154,7 @@ impl MediaRecordError {
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderRateLimited)) => 429,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderTimeout)) => 504,
             Self::Lab(LabError::Provider(_)) => 502,
-            Self::Lab(LabError::Internal) | Self::Internal => 500,
+            Self::Lab(LabError::Internal) => 500,
         }
     }
 }
