@@ -48,14 +48,14 @@ pub(super) fn route_post(
         "/api/avatar/client-delivery-sent" => Some(
             parse_json::<ClientDeliverySentBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
-                with_engine_result(state, |engine| {
-                    engine
-                        .acknowledge_voice_delivery_sent(
-                            body.evidence_turn_sequence,
-                            body.evidence_output_sequence,
-                        )
-                        .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
-                })
+                state
+                    .voice_playback
+                    .acknowledge_sent(
+                        body.evidence_turn_sequence,
+                        body.evidence_output_sequence,
+                    )
+                    .map(|()| super::json_response(200, &serde_json::json!({"ok": true})))
+                    .map_err(|error| super::lab_error_response(&error))
             }),
         ),
         _ => None,
