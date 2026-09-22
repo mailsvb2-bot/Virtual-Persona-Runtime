@@ -93,7 +93,18 @@
     </section>
 
     <section class="evidence">
-      <h2>Состояние и evidence</h2>
+      <h2>Метрики текущей сессии</h2>
+      <p class="hint">Здесь показаны измеренные значения из sanitized evidence. Если провайдер не сообщает стоимость, интерфейс прямо показывает, что она недоступна.</p>
+      <div id="telemetry" class="telemetry-grid" aria-live="polite">
+        <div class="metric-card"><span>STT</span><strong id="metric-stt">—</strong></div>
+        <div class="metric-card"><span>LLM</span><strong id="metric-llm">—</strong></div>
+        <div class="metric-card"><span>До начала аудио</span><strong id="metric-first-audio">—</strong></div>
+        <div class="metric-card"><span>Первое видео</span><strong id="metric-video-ready">—</strong></div>
+        <div class="metric-card"><span>A/V sync</span><strong id="metric-av-sync">—</strong></div>
+        <div class="metric-card"><span>Playback</span><strong id="metric-playback">—</strong></div>
+      </div>
+      <div class="cost-line"><span>Стоимость</span><strong id="metric-cost">нет измеренных данных</strong></div>
+      <h2 class="evidence-heading">Состояние и raw evidence</h2>
       <p class="hint">После завершения каждой owner/visitor-сессии сохраните sanitized snapshot. Следующая сессия не начнётся, пока предыдущий snapshot не экспортирован.</p>
       <div class="row">
         <button id="export-evidence">Скачать evidence snapshot</button>
