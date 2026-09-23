@@ -222,8 +222,7 @@ fn rejects_plain_http_for_non_loopback_endpoint() {
 
 #[test]
 fn descriptor_does_not_expose_secret() {
-    let config =
-        OpenAiCompatibleConfig::new("https://example.invalid", "super-secret", "model-x");
+    let config = OpenAiCompatibleConfig::new("https://example.invalid", "super-secret", "model-x");
     let descriptor = config.descriptor();
     assert_eq!(descriptor.provider, "openai-compatible");
     assert_eq!(descriptor.model, "model-x");
