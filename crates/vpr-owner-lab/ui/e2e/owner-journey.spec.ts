@@ -36,7 +36,10 @@ type FixtureState = {
 const installBrowserFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     class FakeAudioContext {
-      sampleRate = 48_000;
+      sampleRate: number;
+      constructor(options?: AudioContextOptions) {
+        this.sampleRate = options?.sampleRate ?? 48_000;
+      }
       audioWorklet = { addModule: async () => undefined };
       async resume(): Promise<void> {}
       async close(): Promise<void> {}

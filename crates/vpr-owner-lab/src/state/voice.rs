@@ -15,17 +15,13 @@ use vpr_runtime::{
 };
 
 use super::{
-    LabClientCommand, LabError, OwnerLabEngine, map_provider_execution,
-    voice_stt::transcribe_voice_audio,
+    LabClientCommand, LabError, OwnerLabEngine, map_provider_execution, voice_input::LabVoiceInput,
+    voice_phrase::RealtimePhraseBuffer, voice_stt::transcribe_voice_audio,
 };
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
 const MAX_VOICE_MILLIS: u64 = 30_000;
-const FIRST_CLAUSE_MIN_CHARS: usize = 24;
-const NEXT_CLAUSE_MIN_CHARS: usize = 48;
-const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 48;
-const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LabVoiceSegment {
@@ -125,6 +121,68 @@ impl OwnerLabEngine {
             register_interrupt,
             VoiceOutputMode::Streaming(&mut emit_segment),
         )
+    }
+
+    /// Finishes an incrementally uploaded microphone turn after browser input closes.
+    ///
+    /// STT remains bound to the same canonical turn that accepted live PCM; only the finalization
+    /// and downstream LLM/avatar phases begin here. This keeps interruption, revocation and egress
+    /// authority continuous across microphone -> STT -> LLM -> avatar.
+    ///
+    /// # Errors
+    /// Fails closed for empty input, provider/runtime cancellation, invalid session state, or a
+    /// failed output segment handoff.
+    pub fn finish_voice_input_streaming(
+        &mut self,
+        input: LabVoiceInput,
+        mut emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), LabError>,
+    ) -> Result<LabVoiceResult, LabError> {
+        if input.received_bytes() == 0 {
+            return Err(input.abort(LabError::InvalidInput));
+        }
+        let (turn, evidence_turn_sequence, stt_input, _) = input.into_parts();
+        let total_started = Instant::now();
+        let stt_started = Instant::now();
+        let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
+        let (transcript, stt_usage) = stt_input.finish(&turn, stt.as_ref())?;
+        let stt_millis = elapsed_millis(stt_started);
+        let llm_context = self.conversation_context(&transcript.text)?;
+        let request = LlmRequest {
+            locale: transcript.locale.clone(),
+            context: llm_context,
+        };
+        let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
+        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        let generation = self.streaming_generation(
+            &turn,
+            llm.as_ref(),
+            handle,
+            &request,
+            evidence_turn_sequence,
+            &mut emit_segment,
+        )?;
+        let evidence_output_sequence = generation
+            .output_sequences
+            .first()
+            .copied()
+            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
+        turn.complete().map_err(LabError::Runtime)?;
+
+        Ok(LabVoiceResult {
+            transcript: transcript.text,
+            reply: generation.reply,
+            locale: transcript.locale,
+            evidence_turn_sequence,
+            evidence_output_sequence,
+            stt_millis,
+            llm_millis: generation.llm_millis,
+            llm_first_meaningful_millis: generation.first_meaningful_millis,
+            avatar_millis: generation.avatar_millis,
+            total_millis: elapsed_millis(total_started),
+            stt_usage: map_usage(&stt_usage),
+            llm_usage: map_usage(&generation.usage),
+            client_command: generation.client_command,
+        })
     }
 
     fn run_voice_turn(
@@ -397,77 +455,6 @@ fn deliver_phrase(
     }
 }
 
-#[derive(Default)]
-struct RealtimePhraseBuffer {
-    pending: String,
-    emitted_any: bool,
-}
-
-impl RealtimePhraseBuffer {
-    fn push(&mut self, chunk: &str) -> Vec<String> {
-        self.pending.push_str(chunk);
-        let mut output = Vec::new();
-        while let Some(boundary) = self.next_boundary() {
-            let tail = self.pending.split_off(boundary);
-            let phrase = std::mem::replace(&mut self.pending, tail);
-            if !phrase.trim().is_empty() {
-                self.emitted_any = true;
-                output.push(phrase.trim().to_owned());
-            }
-        }
-        output
-    }
-
-    fn finish(&mut self) -> Option<String> {
-        let phrase = std::mem::take(&mut self.pending);
-        let phrase = phrase.trim();
-        (!phrase.is_empty()).then(|| phrase.to_owned())
-    }
-
-    fn next_boundary(&self) -> Option<usize> {
-        for (index, ch) in self.pending.char_indices() {
-            if matches!(ch, '.' | '!' | '?' | '…' | '\n') {
-                return Some(index + ch.len_utf8());
-            }
-        }
-
-        let clause_min = if self.emitted_any {
-            NEXT_CLAUSE_MIN_CHARS
-        } else {
-            FIRST_CLAUSE_MIN_CHARS
-        };
-        let mut chars_seen = 0_usize;
-        for (index, ch) in self.pending.char_indices() {
-            chars_seen += 1;
-            if chars_seen >= clause_min && matches!(ch, ',' | ';' | ':' | '—') {
-                return Some(index + ch.len_utf8());
-            }
-        }
-
-        let limit = if self.emitted_any {
-            NEXT_PHRASE_SOFT_LIMIT_CHARS
-        } else {
-            FIRST_PHRASE_SOFT_LIMIT_CHARS
-        };
-        if chars_seen < limit {
-            return None;
-        }
-
-        chars_seen = 0;
-        let mut whitespace_boundary = None;
-        for (index, ch) in self.pending.char_indices() {
-            chars_seen += 1;
-            if ch.is_whitespace() {
-                whitespace_boundary = Some(index + ch.len_utf8());
-            }
-            if chars_seen >= limit {
-                break;
-            }
-        }
-        whitespace_boundary
-    }
-}
-
 fn terminalize_avatar_output_error(
     turn: &ActiveTurn,
     error: RealtimeAvatarOutputError,
@@ -513,48 +500,4 @@ pub(super) fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
 
 pub(super) fn elapsed_millis(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-#[cfg(test)]
-mod phrase_tests {
-    use super::RealtimePhraseBuffer;
-
-    #[test]
-    fn emits_sentence_before_stream_finishes() {
-        let mut buffer = RealtimePhraseBuffer::default();
-        assert!(buffer.push("Первая").is_empty());
-        assert_eq!(buffer.push(" фраза. Вто"), ["Первая фраза."]);
-        assert_eq!(buffer.finish().as_deref(), Some("Вто"));
-    }
-
-    #[test]
-    fn natural_clause_boundary_releases_first_phrase_before_soft_limit() {
-        let mut buffer = RealtimePhraseBuffer::default();
-        assert_eq!(
-            buffer.push("Сначала уточню один важный момент, затем продолжу"),
-            ["Сначала уточню один важный момент,"]
-        );
-        assert_eq!(buffer.finish().as_deref(), Some("затем продолжу"));
-    }
-
-    #[test]
-    fn tiny_intro_commas_do_not_create_choppy_phrases() {
-        let mut buffer = RealtimePhraseBuffer::default();
-        assert!(buffer.push("Да, конечно, отвечу подробно").is_empty());
-        assert_eq!(
-            buffer.finish().as_deref(),
-            Some("Да, конечно, отвечу подробно")
-        );
-    }
-
-    #[test]
-    fn soft_limit_emits_at_word_boundary() {
-        let mut buffer = RealtimePhraseBuffer::default();
-        let output = buffer.push(
-            "Это достаточно длинная первая фраза без знака завершения чтобы начать речь раньше",
-        );
-        assert_eq!(output.len(), 1);
-        assert!(!output[0].is_empty());
-        assert!(!output[0].ends_with(' '));
-    }
 }

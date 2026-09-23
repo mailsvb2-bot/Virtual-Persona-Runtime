@@ -645,10 +645,37 @@ for forbidden_browser_secret in (
 ):
     if forbidden_browser_secret in owner_lab_ui:
         raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
-if "AudioWorkletNode" not in owner_lab_ui or "apiBinary" not in owner_lab_ui:
-    raise SystemExit("Owner Lab voice UI must use AudioWorklet plus binary same-origin upload")
-if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" not in owner_lab_ui:
-    raise SystemExit("Owner Lab voice UI must cap actual PCM samples before upload")
+for required_live_mic in (
+    "AudioWorkletNode",
+    "apiBinary",
+    "VOICE_UPLOAD_CHUNK_BYTES",
+    "queueMicrophoneChunk",
+    '"/api/voice/input/start"',
+    '"/api/voice/input/chunk"',
+    '"/api/voice/input/finish"',
+    '"/api/voice/input/cancel"',
+    'new AudioContext({ sampleRate: 16_000',
+):
+    if required_live_mic not in owner_lab_app:
+        raise SystemExit(f"Owner Lab live microphone upload missing {required_live_mic}")
+if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
+    raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
+if (
+    "MAX_VOICE_SAMPLES" not in owner_lab_ui
+    or "MAX_VOICE_SAMPLES - micSamplesSent" not in owner_lab_ui
+    or ".subarray(0, remaining)" not in owner_lab_ui
+):
+    raise SystemExit("Owner Lab voice UI must cap streamed PCM samples before upload")
+for required_streaming_http in (
+    "VoiceInputRegistry",
+    "input_chunk_response",
+    "begin_voice_input",
+    "finish_voice_input_streaming",
+):
+    if required_streaming_http not in owner_lab_voice_http_boundary:
+        raise SystemExit(
+            f"Owner Lab HTTP microphone path must remain incrementally streamed: {required_streaming_http}"
+        )
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
 

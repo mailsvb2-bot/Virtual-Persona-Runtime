@@ -50,6 +50,7 @@ struct AppState {
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
+    voice_inputs: http_voice::VoiceInputRegistry,
     voice_streams: http_voice::VoiceStreamRegistry,
     voice_playback: LabVoicePlaybackRegistry,
     session_end_requested: AtomicBool,
@@ -126,6 +127,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
+        voice_inputs: http_voice::VoiceInputRegistry::default(),
         voice_streams: http_voice::VoiceStreamRegistry::default(),
         voice_playback,
         session_end_requested: AtomicBool::new(false),
@@ -193,6 +195,34 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         (&Method::Post, "/api/voice/turn") => {
             if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
                 http_voice::voice_turn_response(&mut request, state)
+            } else {
+                error_response(403, "CSRF_DENIED")
+            }
+        }
+        (&Method::Post, "/api/voice/input/chunk") => {
+            if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
+                http_voice::input_chunk_response(&mut request, state)
+            } else {
+                error_response(403, "CSRF_DENIED")
+            }
+        }
+        (&Method::Post, "/api/voice/input/start") => {
+            if valid_post_headers(&request, &state.csrf_token, state.port) {
+                http_voice::start_input_response(&mut request, state)
+            } else {
+                error_response(403, "CSRF_DENIED")
+            }
+        }
+        (&Method::Post, "/api/voice/input/finish") => {
+            if valid_post_headers(&request, &state.csrf_token, state.port) {
+                http_voice::finish_input_response(&mut request, state)
+            } else {
+                error_response(403, "CSRF_DENIED")
+            }
+        }
+        (&Method::Post, "/api/voice/input/cancel") => {
+            if valid_post_headers(&request, &state.csrf_token, state.port) {
+                http_voice::cancel_input_response(&mut request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
@@ -318,6 +348,7 @@ fn request_voice_cancel(state: &AppState) {
     if let Some(handle) = state.active_voice_interrupt.lock().clone() {
         let _ = handle.interrupt();
     }
+    let _ = http_voice::cancel_active_input(state, LabError::Runtime(Rt0ReasonCode::TurnCancelled));
 }
 
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
