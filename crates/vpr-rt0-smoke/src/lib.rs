@@ -169,7 +169,8 @@ pub fn run(config: SmokeConfig) -> Result<SmokeRun, SmokeError> {
     let descriptor = provider.descriptor();
     let request = LlmRequest {
         locale,
-        context: prompt,
+        instructions: None,
+        user_input: prompt,
     };
     let mut generated = GeneratedTextBuffer::default();
     let started = Instant::now();
