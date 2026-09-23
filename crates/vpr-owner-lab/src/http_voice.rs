@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -12,8 +11,7 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::{LabError, LabVoiceInput, LabVoiceResult, LabVoiceSegment};
 
 use super::{
-    AppState, HttpResponse, error_response, http_evidence, json_response,
-    reject_if_session_ending,
+    AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
 };
 
 const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
@@ -188,12 +186,7 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         return fail_voice_upload(state, request_sequence, input, error);
     }
     if !state.voice_streams.begin(request_sequence) {
-        return fail_voice_upload(
-            state,
-            request_sequence,
-            input,
-            LabError::InvalidState,
-        );
+        return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
 
     let worker_state = Arc::clone(state);
