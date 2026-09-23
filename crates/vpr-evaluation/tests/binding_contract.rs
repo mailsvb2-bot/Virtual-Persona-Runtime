@@ -81,7 +81,7 @@ fn exact_candidate_and_provider_state_are_preserved_in_redacted_report() {
         sha256_hex(b"private evidence artifact")
     );
     assert_eq!(report.provider_state.providers.len(), 3);
-    assert_eq!(report.golden.total, 12);
+    assert_eq!(report.golden.total, 13);
     assert_eq!(report.golden.failed, 12);
     let json = serde_json::to_string(&report).unwrap();
     assert!(!json.contains("prompt_ru"));
