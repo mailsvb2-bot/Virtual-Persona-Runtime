@@ -496,9 +496,23 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     "Третья фраза.",
   ]);
 
+  // Start a second streamed voice turn and interrupt it while the LLM tail is still open.
+  // The browser must stop both provider playback and the canonical voice turn, so no later
+  // generated phrase may leak through to did.speak after the user barge-in.
+  await voiceButton.click();
+  await expect(voiceButton).toHaveText("Остановить и отправить");
+  await voiceButton.click();
+  await expect.poll(async () => page.evaluate(
+    () => (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
+  )).toBe(4);
+
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
+  await expect(page.locator("#status")).toContainText("TURN_CANCELLED");
+
   await expect.poll(async () => {
     const current = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const currentSnapshot = await current.json() as {
@@ -507,11 +521,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     return currentSnapshot.media_events.some((event) => event.kind === "interruption_stopped");
   }).toBeTruthy();
 
+  await page.waitForTimeout(800);
   const commandsAfterInterrupt = await page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
+  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(4);
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
   await page.evaluate(() => {
@@ -537,7 +553,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const llmRequests = requests.filter((entry) => entry.kind === "llm");
   const avatarRequests = requests.filter((entry) => entry.kind === "avatar");
 
-  expect(sttRequests).toHaveLength(1);
+  expect(sttRequests).toHaveLength(2);
   expect(sttRequests[0]?.method).toBe("WEBSOCKET");
   expect(sttRequests[0]?.path).toBe("/v1/listen");
   expect(sttRequests[0]?.query).toContain("model=nova-3");
@@ -550,12 +566,14 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
   expect(sttRequests[0]?.contentType).toBeNull();
 
-  expect(llmRequests).toHaveLength(1);
+  expect(llmRequests).toHaveLength(2);
   expect(llmRequests[0]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
   expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
   expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
   expect(llmRequests[0]?.bodyText).toContain('"thinking":{"type":"disabled"}');
   expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
+  expect(llmRequests[1]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
+  expect(llmRequests[1]?.bodyText).toContain("Что думает владелец?");
 
   expect(avatarRequests.some((entry) =>
     entry.method === "GET" && entry.path === "/agents/voice-e2e-expressive-agent"
