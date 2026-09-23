@@ -145,10 +145,19 @@ const server = http.createServer(async (request, response) => {
     if (prompt.includes("Спровоцируй отказ провайдера")) {
       return sendJson(response, 503, { error: { message: "fixture unavailable" } });
     }
-    const expressiveRealtime = request.headers.authorization === "Bearer expressive-llm-e2e-secret"
-      && prompt.includes("Привет из браузера");
-    if (expressiveRealtime) {
+    const expressiveRealtime = request.headers.authorization === "Bearer expressive-llm-e2e-secret";
+    if (expressiveRealtime && prompt.includes("Привет из браузера")) {
       return sendDelayedEventStream(response, "Сначала уточню один важный момент,", " затем продолжу.", " Третья фраза.");
+    }
+    if (expressiveRealtime && prompt.includes("Что думает владелец?")) {
+      return sendDelayedEventStream(
+        response,
+        "Этот ответ должен начаться,",
+        " но хвост обязан отмениться.",
+        " Эта фраза не должна дойти до аватара.",
+        250,
+        250,
+      );
     }
     const reply = prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"
