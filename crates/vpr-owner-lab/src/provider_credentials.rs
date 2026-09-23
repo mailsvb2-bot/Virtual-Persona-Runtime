@@ -131,7 +131,7 @@ mod platform {
             .map_err(|_| "secure provider profile serialization failed")?;
         entry()?
             .set_password(&raw)
-            .map_err(|_| "Windows Credential Manager write failed")
+            .map_err(|_| "Windows Credential Manager write failed".to_string())
     }
 
     pub(super) fn delete() -> Result<(), String> {
