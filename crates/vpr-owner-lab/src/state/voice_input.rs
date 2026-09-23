@@ -79,7 +79,6 @@ impl OwnerLabEngine {
 
         let turn = Arc::new(self.new_turn()?);
         let evidence_turn_sequence = self.turn_counter;
-        register_interrupt(turn.interrupt_handle());
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
         let stt_input = VoiceSttInput::open(
             &turn,
@@ -91,6 +90,7 @@ impl OwnerLabEngine {
                 locale_hint: Some("ru-RU".to_owned()),
             },
         )?;
+        register_interrupt(turn.interrupt_handle());
 
         Ok(LabVoiceInput {
             turn,
