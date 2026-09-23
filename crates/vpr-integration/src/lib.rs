@@ -57,11 +57,13 @@ pub trait CancellationProbe: Send + Sync {
 }
 
 mod llm;
+mod stt;
 
 pub use llm::{
     GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
     TimedGeneratedTextBuffer,
 };
+pub use stt::{SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript};
 
 mod sealed {
     pub trait GeneratedAudioSink {}
@@ -71,6 +73,15 @@ mod sealed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcmSampleFormat {
     S16Le,
+}
+
+impl PcmSampleFormat {
+    #[must_use]
+    pub const fn bytes_per_sample(self) -> usize {
+        match self {
+            Self::S16Le => 2,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -96,9 +107,7 @@ impl std::fmt::Debug for AudioInput {
 impl AudioInput {
     #[must_use]
     pub const fn bytes_per_sample(&self) -> usize {
-        match self.sample_format {
-            PcmSampleFormat::S16Le => 2,
-        }
+        self.sample_format.bytes_per_sample()
     }
 
     #[must_use]
@@ -123,31 +132,6 @@ impl AudioInput {
             .checked_mul(1_000)?
             .checked_div(u64::from(self.sample_rate_hz))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SttRequest {
-    pub audio: AudioInput,
-    pub locale_hint: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Transcript {
-    pub text: String,
-    pub locale: String,
-}
-
-pub trait SttPort: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor;
-    /// Transcribes audio using the selected provider representation.
-    ///
-    /// # Errors
-    /// Returns a typed provider failure, including cancellation or invalid output.
-    fn transcribe(
-        &self,
-        request: &SttRequest,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(Transcript, UsageEvidence), ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,6 +389,36 @@ mod tests {
         };
         assert!(!audio.is_well_formed());
         assert_eq!(audio.duration_millis(), None);
+    }
+
+    #[test]
+    fn streaming_stt_request_validates_chunk_alignment_without_owning_audio() {
+        let request = SttStreamRequest {
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+            locale_hint: Some("ru-RU".to_owned()),
+        };
+        assert!(request.is_well_formed());
+        assert!(request.is_well_formed_chunk(&[0, 0, 1, 0]));
+        assert!(!request.is_well_formed_chunk(&[]));
+        assert!(!request.is_well_formed_chunk(&[0]));
+    }
+
+    #[test]
+    fn streaming_stt_event_preserves_interim_and_final_semantics() {
+        let interim = SttStreamEvent::Interim(Transcript {
+            text: "При".to_owned(),
+            locale: "ru".to_owned(),
+        });
+        let final_event = SttStreamEvent::Final(Transcript {
+            text: "Привет".to_owned(),
+            locale: "ru".to_owned(),
+        });
+        assert!(!interim.is_final());
+        assert!(final_event.is_final());
+        assert_eq!(interim.transcript().text, "При");
+        assert_eq!(final_event.transcript().text, "Привет");
     }
 
     #[test]
