@@ -2,6 +2,7 @@ use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use vpr_integration::GeneratedTextBuffer;
 
@@ -28,6 +29,25 @@ fn serve_once(status: &str, body: &'static str) -> String {
     });
     format!("http://{address}/v1/messages")
 }
+fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let status = status.to_owned();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let read = stream.read(&mut request).unwrap();
+        tx.send(String::from_utf8_lossy(&request[..read]).into_owned())
+            .unwrap();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    (format!("http://{address}/v1/messages"), rx)
+}
+
 fn adapter(endpoint: String) -> AnthropicLlm {
     AnthropicLlm::new(AnthropicConfig::new(endpoint, "secret", "claude-test")).unwrap()
 }
