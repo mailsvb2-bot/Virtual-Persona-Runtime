@@ -71,7 +71,9 @@ fn preserves_system_instruction_and_user_input_as_distinct_fields() {
             &mut GeneratedTextBuffer::default(),
         )
         .unwrap();
-    let request = captured.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
     assert!(request.contains("\"system\":\"canonical-policy\""));
     assert!(request.contains("\"messages\":[{\"role\":\"user\",\"content\":\"visitor-input\"}]"));
 }
