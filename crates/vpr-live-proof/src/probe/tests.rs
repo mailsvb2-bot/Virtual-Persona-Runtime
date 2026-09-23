@@ -73,7 +73,13 @@ impl LlmPort for FakeLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         assert!(!cancellation.is_cancelled());
-        assert!(!request.context.contains("Секретная тестовая транскрипция"));
+        assert!(!request.user_input.contains("Секретная тестовая транскрипция"));
+        assert!(
+            request
+                .instructions
+                .as_deref()
+                .is_some_and(|instructions| instructions.contains("provider reachability probe"))
+        );
         sink.push_generated_text("секретный-ответ")?;
         Ok(UsageEvidence {
             input_units: Some(8),
