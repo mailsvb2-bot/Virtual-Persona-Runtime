@@ -53,4 +53,36 @@ VPR_DID_API_KEY='<key>' VPR_DID_AGENT_ID='<agent-id>' \
 VPR_OWNER_LAB_ALLOW_EGRESS=true cargo run -p vpr-owner-lab
 ```
 
-STT provider values are `openai-transcription` (alias `openai`) and `deepgram`. LLM provider values are `openai-compatible` (alias `openai`), `anthropic`, and `gemini`. The browser captures push-to-talk audio with `AudioWorklet`, converts it locally to mono PCM S16LE at 16 kHz, and sends the binary utterance to the loopback backend. The backend runs one canonical authorized turn through STT -> LLM -> realtime avatar and returns transcript/reply plus latency/usage evidence. Raw microphone PCM is not returned as evidence, and provider credentials are never sent to the browser. Voice mode is still experimental and does not prove credentialed RT0 exit criteria.
+STT provider values are `openai-transcription` (alias `openai`) and `deepgram`. LLM provider values are `openai-compatible` (alias `openai`), `deepseek`, `anthropic`, and `gemini`. The browser captures push-to-talk audio with `AudioWorklet`, converts it locally to mono PCM S16LE at 16 kHz, and sends the binary utterance to the loopback backend. The backend runs one canonical authorized turn through STT -> LLM -> realtime avatar and returns transcript/reply plus latency/usage evidence. Raw microphone PCM is not returned as evidence, and provider credentials are never sent to the browser. Voice mode is still experimental and does not prove credentialed RT0 exit criteria.
+
+### Windows provider credentials
+
+On Windows, configure the RT0 provider stack once and store it in **Windows Credential Manager** for the current Windows user. This replaces the old CMD-only `set` workflow, whose values disappeared when that shell closed.
+
+If the CMD window that already contains the old `set VPR_...` values is still open, migrate those values without re-entering the keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env
+```
+
+Otherwise run the secure setup once:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set
+```
+
+The setup asks for the D-ID API key, D-ID agent ID, Deepgram API key, and DeepSeek API key. Secret values are entered without terminal echo. The saved profile selects D-ID Expressive, Deepgram `nova-3`, and DeepSeek `deepseek-flash`.
+
+Check configuration without revealing keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- status
+```
+
+Remove the stored profile:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
+```
+
+Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority, so CI and deliberate per-process overrides keep their existing behavior. API-key values are never printed or included in provider descriptors or evidence.
