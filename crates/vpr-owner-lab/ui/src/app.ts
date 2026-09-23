@@ -190,7 +190,11 @@ let micStream: MediaStream | null = null;
 let audioContext: AudioContext | null = null;
 let micSource: MediaStreamAudioSourceNode | null = null;
 let micWorklet: AudioWorkletNode | null = null;
-let micChunks: Float32Array[] = [];
+let micUploadController: ReadableStreamDefaultController<Uint8Array> | null = null;
+let micUploadPromise: Promise<VoiceStartAck> | null = null;
+let micUploadAbort: AbortController | null = null;
+let micRequestSequence: number | null = null;
+let micSamplesSent = 0;
 let recording = false;
 let recordingTimer: number | null = null;
 let textRequestInFlight = false;
@@ -363,14 +367,26 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
   return payload as T;
 };
 
-const apiBinary = async <T>(path: string, body: ArrayBuffer, requestSequence: number): Promise<T> => {
-  const response = await fetch(path, {
+const apiBinaryStream = async <T>(
+  path: string,
+  body: ReadableStream<Uint8Array>,
+  requestSequence: number,
+  signal: AbortSignal,
+): Promise<T> => {
+  const init = {
     method: "POST",
-    headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken, "X-VPR-Evidence-Request": String(requestSequence) },
-    body,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-VPR-CSRF": csrfToken,
+      "X-VPR-Evidence-Request": String(requestSequence),
+    },
+    body: body as unknown as BodyInit,
     credentials: "same-origin",
     cache: "no-store",
-  });
+    signal,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" };
+  const response = await fetch(path, init);
   const payload = await response.json() as T | ErrorPayload;
   if (!response.ok) {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
@@ -989,11 +1005,32 @@ const connectAvatar = async (): Promise<void> => {
   }
 };
 
+const resetMicrophoneUpload = (): void => {
+  micUploadController = null;
+  micUploadPromise = null;
+  micUploadAbort = null;
+  micRequestSequence = null;
+  micSamplesSent = 0;
+};
+
+const abortMicrophoneUpload = (): void => {
+  micUploadAbort?.abort();
+  if (micUploadController) {
+    try {
+      micUploadController.error(new DOMException("Microphone upload aborted", "AbortError"));
+    } catch {
+      // The stream may already be closed by finishMicrophoneTurn.
+    }
+  }
+  resetMicrophoneUpload();
+};
+
 const stopMicrophoneCapture = (): void => {
   if (recordingTimer !== null) window.clearTimeout(recordingTimer);
   recordingTimer = null;
   micSource?.disconnect();
   micWorklet?.disconnect();
+  if (micWorklet) micWorklet.port.onmessage = null;
   micStream?.getTracks().forEach((track) => track.stop());
   void audioContext?.close();
   micSource = null;
@@ -1002,32 +1039,6 @@ const stopMicrophoneCapture = (): void => {
   audioContext = null;
   recording = false;
   updateControls();
-};
-
-const flattenChunks = (chunks: Float32Array[]): Float32Array => {
-  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-  const output = new Float32Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return output;
-};
-
-const resampleMono = (input: Float32Array, inputRate: number, outputRate = 16000): Float32Array => {
-  if (inputRate === outputRate) return input;
-  const outputLength = Math.max(1, Math.floor(input.length * outputRate / inputRate));
-  const output = new Float32Array(outputLength);
-  const ratio = inputRate / outputRate;
-  for (let i = 0; i < outputLength; i += 1) {
-    const start = Math.floor(i * ratio);
-    const end = Math.min(input.length, Math.max(start + 1, Math.floor((i + 1) * ratio)));
-    let sum = 0;
-    for (let j = start; j < end; j += 1) sum += input[j] ?? 0;
-    output[i] = sum / Math.max(1, end - start);
-  }
-  return output;
 };
 
 const encodeS16Le = (input: Float32Array): ArrayBuffer => {
@@ -1042,59 +1053,105 @@ const encodeS16Le = (input: Float32Array): ArrayBuffer => {
 };
 
 const startMicrophone = async (): Promise<void> => {
-  micChunks = [];
   micStream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    audio: {
+      channelCount: 1,
+      sampleRate: 16_000,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
   });
-  audioContext = new AudioContext();
+  audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+  if (audioContext.sampleRate !== 16_000) {
+    stopMicrophoneCapture();
+    throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
+  }
   await audioContext.audioWorklet.addModule("/mic-worklet.js");
   micSource = audioContext.createMediaStreamSource(micStream);
   micWorklet = new AudioWorkletNode(audioContext, "vpr-mic-capture");
+
+  nextVoiceRequestSequence += 1;
+  const requestSequence = nextVoiceRequestSequence;
+  micRequestSequence = requestSequence;
+  micSamplesSent = 0;
+  const abort = new AbortController();
+  micUploadAbort = abort;
+  const uploadBody = new ReadableStream<Uint8Array>({
+    start(controller) {
+      micUploadController = controller;
+    },
+  });
+  const upload = apiBinaryStream<VoiceStartAck>(
+    "/api/voice/turn",
+    uploadBody,
+    requestSequence,
+    abort.signal,
+  );
+  micUploadPromise = upload;
+  void upload.catch(() => undefined);
+
   micWorklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
-    micChunks.push(new Float32Array(event.data));
+    if (!recording || !micUploadController) return;
+    const samples = new Float32Array(event.data);
+    const remaining = MAX_VOICE_SAMPLES - micSamplesSent;
+    if (remaining <= 0) {
+      void finishMicrophoneTurn();
+      return;
+    }
+    const bounded = samples.length > remaining ? samples.subarray(0, remaining) : samples;
+    if (bounded.length === 0) return;
+    micUploadController.enqueue(new Uint8Array(encodeS16Le(bounded)));
+    micSamplesSent += bounded.length;
+    if (micSamplesSent >= MAX_VOICE_SAMPLES) void finishMicrophoneTurn();
   };
+  recording = true;
   micSource.connect(micWorklet);
   micWorklet.connect(audioContext.destination);
-  recording = true;
   recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
-  setStatus("Слушаю… нажмите ещё раз, чтобы отправить", "ready");
+  setStatus("Слушаю… аудио уже передаётся в распознавание; нажмите ещё раз, чтобы закончить", "ready");
   updateControls();
 };
 
 const finishMicrophoneTurn = async (): Promise<void> => {
-  if (!recording || !audioContext) return;
-  const inputRate = audioContext.sampleRate;
-  const samples = flattenChunks(micChunks);
+  if (!recording) return;
+  const requestSequence = micRequestSequence;
+  const upload = micUploadPromise;
+  const controller = micUploadController;
+  const samplesSent = micSamplesSent;
   stopMicrophoneCapture();
-  micChunks = [];
-  if (samples.length === 0) {
+
+  if (requestSequence === null || !upload || !controller) {
+    abortMicrophoneUpload();
+    setStatus("Поток микрофона не был создан", "error");
+    return;
+  }
+
+  micUploadController = null;
+  controller.close();
+  if (samplesSent === 0) {
+    await upload.catch(() => undefined);
+    resetMicrophoneUpload();
     setStatus("Микрофон не записал звук", "error");
     return;
   }
-  voiceRequestInFlight = true;
-  let attemptedRequestSequence: number | null = null;
-  updateControls();
-  setStatus("Распознаю и начинаю ответ…");
-  try {
-    const resampled = resampleMono(samples, inputRate);
-    const bounded = resampled.length > MAX_VOICE_SAMPLES
-      ? resampled.subarray(0, MAX_VOICE_SAMPLES)
-      : resampled;
-    const pcm = encodeS16Le(bounded);
-    nextVoiceRequestSequence += 1;
-    const requestSequence = nextVoiceRequestSequence;
-    attemptedRequestSequence = requestSequence;
-    activeVoiceEvidence = {
-      requestSequence,
-      startedAt: performance.now(),
-      audioStarted: false,
-      audioStartedElapsed: null,
-      responseComplete: false,
-      speaking: false,
-      silentFrames: 0,
-    };
 
-    const started = await apiBinary<VoiceStartAck>("/api/voice/turn", pcm, requestSequence);
+  voiceRequestInFlight = true;
+  const attemptedRequestSequence = requestSequence;
+  updateControls();
+  setStatus("Завершаю распознавание и начинаю ответ…");
+  activeVoiceEvidence = {
+    requestSequence,
+    startedAt: performance.now(),
+    audioStarted: false,
+    audioStartedElapsed: null,
+    responseComplete: false,
+    speaking: false,
+    silentFrames: 0,
+  };
+
+  try {
+    const started = await upload;
     if (started.request_sequence !== requestSequence) throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
 
     let deliveryFailure: Error | null = null;
@@ -1135,6 +1192,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     await refreshSessionEvidence();
     setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
   } finally {
+    resetMicrophoneUpload();
     voiceRequestInFlight = false;
     updateControls();
   }
@@ -1152,6 +1210,7 @@ const toggleVoice = async (): Promise<void> => {
     }
   } catch (error) {
     stopMicrophoneCapture();
+    abortMicrophoneUpload();
     setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
   }
 };
