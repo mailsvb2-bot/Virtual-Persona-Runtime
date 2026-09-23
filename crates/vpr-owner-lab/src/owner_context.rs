@@ -190,7 +190,9 @@ mod tests {
             .unwrap();
 
         let instructions = context.conversation_instructions();
-        assert!(instructions.contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки"));
+        assert!(
+            instructions.contains("[verified_owner_opinion] Предпочитаю короткие циклы проверки")
+        );
         assert!(!instructions.contains("Люблю быстрые итерации"));
         assert!(!instructions.contains("Какой стиль работы тебе близок?"));
         assert_eq!(context.identity().version().get(), 3);
