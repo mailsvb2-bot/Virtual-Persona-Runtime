@@ -4,8 +4,10 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use tungstenite::{Message, accept};
 use vpr_integration::{
-    AudioInput, PcmSampleFormat, ProviderErrorKind, SttRequest, SttStreamRequest, UsageUnit,
+    AudioInput, PcmSampleFormat, ProviderErrorKind, SttRequest, SttStreamEvent, SttStreamRequest,
+    UsageUnit,
 };
 
 struct Probe(AtomicBool);
@@ -71,9 +73,42 @@ fn transcribes_raw_linear16_and_reports_duration() {
     assert!(http.contains("authorization: token secret"));
 }
 
+fn serve_live_once() -> (String, mpsc::Receiver<Vec<u8>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (audio_tx, audio_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = accept(stream).unwrap();
+        let Message::Binary(audio) = socket.read().unwrap() else {
+            panic!("expected binary audio");
+        };
+        audio_tx.send(audio.to_vec()).unwrap();
+        socket
+            .send(Message::Text(
+                r#"{"type":"Results","is_final":false,"channel":{"alternatives":[{"transcript":"Pri"}]}}"#
+                    .into(),
+            ))
+            .unwrap();
+        socket
+            .send(Message::Text(
+                r#"{"type":"Results","is_final":true,"channel":{"alternatives":[{"transcript":"Privet"}]}}"#
+                    .into(),
+            ))
+            .unwrap();
+        let Message::Text(close) = socket.read().unwrap() else {
+            panic!("expected CloseStream control message");
+        };
+        assert_eq!(close, r#"{"type":"CloseStream"}"#);
+        socket.close(None).unwrap();
+    });
+    (format!("http://{address}/v1/listen"), audio_rx)
+}
+
 #[test]
-fn batch_adapter_does_not_claim_streaming_support() {
-    let provider = adapter("http://127.0.0.1:1/v1/listen".to_owned());
+fn streams_live_pcm_and_normalizes_interim_and_final_events() {
+    let (endpoint, captured_audio) = serve_live_once();
+    let provider = adapter(endpoint);
     let probe = Probe(AtomicBool::new(false));
     let request = SttStreamRequest {
         sample_rate_hz: 16_000,
@@ -81,11 +116,43 @@ fn batch_adapter_does_not_claim_streaming_support() {
         sample_format: PcmSampleFormat::S16Le,
         locale_hint: Some("ru-RU".to_owned()),
     };
-    let Err(error) = provider.open_stream(&request, &probe) else {
-        panic!("batch Deepgram adapter must not expose a fake streaming session");
+    let mut stream = provider.open_stream(&request, &probe).unwrap();
+    let pcm = vec![0_u8; 640];
+    stream.push_audio(&pcm, &probe).unwrap();
+
+    assert_eq!(
+        stream.next_event(&probe).unwrap().unwrap(),
+        SttStreamEvent::Interim(Transcript {
+            text: "Pri".to_owned(),
+            locale: "ru".to_owned(),
+        })
+    );
+    assert_eq!(
+        stream.next_event(&probe).unwrap().unwrap(),
+        SttStreamEvent::Final(Transcript {
+            text: "Privet".to_owned(),
+            locale: "ru".to_owned(),
+        })
+    );
+
+    stream.finish_input(&probe).unwrap();
+    assert_eq!(stream.usage().input_units, Some(20));
+    assert_eq!(stream.usage().input_unit, Some(UsageUnit::AudioMillisecond));
+    assert_eq!(captured_audio.recv().unwrap(), pcm);
+}
+
+#[test]
+fn pre_cancelled_live_stream_never_connects() {
+    let provider = adapter("http://127.0.0.1:1/v1/listen".to_owned());
+    let probe = Probe(AtomicBool::new(true));
+    let request = SttStreamRequest {
+        sample_rate_hz: 16_000,
+        channels: 1,
+        sample_format: PcmSampleFormat::S16Le,
+        locale_hint: Some("ru-RU".to_owned()),
     };
-    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
-    assert!(!error.retryable);
+    let error = provider.open_stream(&request, &probe).err().unwrap();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
 }
 
 #[test]

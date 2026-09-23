@@ -7,6 +7,7 @@ rust-version.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
 vpr-domain = { path = "../vpr-domain" }
 vpr-integration = { path = "../vpr-integration" }
 vpr-policy = { path = "../vpr-policy" }
