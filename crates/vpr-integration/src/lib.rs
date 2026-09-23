@@ -63,9 +63,7 @@ pub use llm::{
     GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
     TimedGeneratedTextBuffer,
 };
-pub use stt::{
-    SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript,
-};
+pub use stt::{SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript};
 
 mod sealed {
     pub trait GeneratedAudioSink {}
