@@ -157,11 +157,11 @@ impl LlmPort for VoiceLlm {
             .contexts
             .lock()
             .unwrap()
-            .push(request.context.clone());
+            .push(request.instructions.clone().unwrap_or_default());
         if let Some(started) = &self.started {
             started.send(()).unwrap();
         }
-        assert!(request.context.contains("Как дела?"));
+        assert_eq!(request.user_input, "Как дела?");
         if self.block_until_cancelled {
             let deadline = Instant::now() + Duration::from_secs(2);
             while !cancellation.is_cancelled() {
