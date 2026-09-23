@@ -102,7 +102,7 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
-      if (!target.endsWith("/api/voice/turn")) return realFetch(input, init);
+      if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
       remoteSpeech = true;
       playbackSequence += 1;
       providerDataChannel?.onmessage?.({
