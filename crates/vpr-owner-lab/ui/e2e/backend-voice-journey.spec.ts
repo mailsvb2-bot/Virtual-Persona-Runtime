@@ -159,7 +159,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       disconnect(): void {}
     }
     class FakeAudioContext {
-      sampleRate = 48_000;
+      sampleRate: number;
+      constructor(options?: AudioContextOptions) {
+        this.sampleRate = options?.sampleRate ?? 48_000;
+      }
       destination = {};
       audioWorklet = { addModule: async () => undefined };
       async resume(): Promise<void> {}
