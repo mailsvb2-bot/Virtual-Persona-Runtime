@@ -1,5 +1,6 @@
 [package]
 name = "vpr-owner-lab"
+default-run = "vpr-owner-lab"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
