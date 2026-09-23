@@ -3,9 +3,7 @@ use std::sync::Arc;
 use vpr_integration::{PcmSampleFormat, SttStreamRequest};
 use vpr_runtime::{ActiveTurn, TurnInterruptHandle};
 
-use super::{
-    LabError, OwnerLabEngine, voice::terminalize_failed_turn, voice_stt::VoiceSttInput,
-};
+use super::{LabError, OwnerLabEngine, voice::terminalize_failed_turn, voice_stt::VoiceSttInput};
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
@@ -30,10 +28,7 @@ impl LabVoiceInput {
             .checked_add(pcm.len())
             .ok_or_else(|| terminalize_failed_turn(&self.turn, LabError::InvalidInput))?;
         if next_bytes > MAX_VOICE_BYTES {
-            return Err(terminalize_failed_turn(
-                &self.turn,
-                LabError::InvalidInput,
-            ));
+            return Err(terminalize_failed_turn(&self.turn, LabError::InvalidInput));
         }
         self.stt_input.push_audio(&self.turn, pcm)?;
         self.received_bytes = next_bytes;
