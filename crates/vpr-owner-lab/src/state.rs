@@ -564,11 +564,13 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 mod client_control;
 mod text;
 mod voice;
+mod voice_input;
 mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
+pub use voice_input::LabVoiceInput;
 pub use voice_playback::LabVoicePlaybackRegistry;
 
 #[cfg(test)]
