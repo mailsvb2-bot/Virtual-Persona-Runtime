@@ -348,10 +348,7 @@ fn request_voice_cancel(state: &AppState) {
     if let Some(handle) = state.active_voice_interrupt.lock().clone() {
         let _ = handle.interrupt();
     }
-    let _ = http_voice::cancel_active_input(
-        state,
-        LabError::Runtime(Rt0ReasonCode::TurnCancelled),
-    );
+    let _ = http_voice::cancel_active_input(state, LabError::Runtime(Rt0ReasonCode::TurnCancelled));
 }
 
 fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
