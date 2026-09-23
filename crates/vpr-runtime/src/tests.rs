@@ -113,10 +113,7 @@ impl SttAudioStream for PullSttStream {
         Ok(())
     }
 
-    fn finish_input(
-        &mut self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(), ProviderError> {
+    fn finish_input(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
         if cancellation.is_cancelled() {
             return Err(cancelled_provider_error());
         }
