@@ -455,7 +455,8 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "Коротко".into(),
+                    instructions: None,
+                    user_input: "Коротко".into(),
                 },
                 &probe,
                 &mut GeneratedTextBuffer::default(),
@@ -482,7 +483,8 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "Ответь кратко".into(),
+                    instructions: None,
+                    user_input: "Ответь кратко".into(),
                 },
                 &probe,
                 &mut sink,
@@ -509,7 +511,8 @@ mod tests {
             .open_stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "Коротко".into(),
+                    instructions: None,
+                    user_input: "Коротко".into(),
                 },
                 &probe,
             )
@@ -535,7 +538,8 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "test".into(),
+                    instructions: None,
+                    user_input: "test".into(),
                 },
                 &probe,
                 &mut GeneratedTextBuffer::default(),
@@ -553,7 +557,8 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "test".into(),
+                    instructions: None,
+                    user_input: "test".into(),
                 },
                 &probe,
                 &mut GeneratedTextBuffer::default(),
@@ -572,7 +577,8 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    context: "test".into(),
+                    instructions: None,
+                    user_input: "test".into(),
                 },
                 &probe,
                 &mut GeneratedTextBuffer::default(),
