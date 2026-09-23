@@ -41,7 +41,12 @@ pub(super) fn route_post(
                 with_engine_result(state, |engine| {
                     engine
                         .prepare_client_interrupt(body.playback_id.as_deref())
-                        .map(|command| super::json_response(200, &command))
+                        .map(|command| {
+                            if let Some(handle) = state.active_voice_interrupt.lock().clone() {
+                                let _ = handle.interrupt();
+                            }
+                            super::json_response(200, &command)
+                        })
                 })
             }))
         }
