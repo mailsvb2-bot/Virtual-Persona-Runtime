@@ -79,10 +79,7 @@ pub trait SttAudioStream: Send {
     ///
     /// # Errors
     /// Returns a typed provider failure when the stream cannot finalize input.
-    fn finish_input(
-        &mut self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(), ProviderError>;
+    fn finish_input(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError>;
 
     /// Pulls the next normalized recognition event.
     ///
