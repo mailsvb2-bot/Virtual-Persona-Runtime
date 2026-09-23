@@ -107,7 +107,8 @@ fn interrupt_cancels_in_flight_provider_without_split_turn_state() {
             &provider,
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "stream until interrupted".into(),
+                instructions: None,
+                user_input: "stream until interrupted".into(),
             },
             &mut GeneratedTextBuffer::default(),
         )
