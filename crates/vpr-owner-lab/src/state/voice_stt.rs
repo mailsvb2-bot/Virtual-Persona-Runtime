@@ -41,11 +41,7 @@ impl VoiceSttInput {
         }
     }
 
-    pub(super) fn push_audio(
-        &mut self,
-        turn: &ActiveTurn,
-        pcm: &[u8],
-    ) -> Result<(), LabError> {
+    pub(super) fn push_audio(&mut self, turn: &ActiveTurn, pcm: &[u8]) -> Result<(), LabError> {
         if !self.request.is_well_formed_chunk(pcm) {
             return Err(super::voice::terminalize_failed_turn(
                 turn,
