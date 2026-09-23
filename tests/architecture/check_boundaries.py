@@ -773,6 +773,7 @@ if close_match is None:
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
 integration_llm_source = (CRATES / "vpr-integration" / "src" / "llm.rs").read_text(encoding="utf-8")
+integration_stt_source = (CRATES / "vpr-integration" / "src" / "stt.rs").read_text(encoding="utf-8")
 sealed_sources = {
     "GeneratedTextSink": integration_llm_source,
     "GeneratedAudioSink": integration_source,
@@ -820,7 +821,7 @@ for required_stt_stream_boundary in (
     "pub enum SttStreamEvent",
     "fn open_stream(",
 ):
-    if required_stt_stream_boundary not in integration_source:
+    if required_stt_stream_boundary not in integration_stt_source:
         raise SystemExit(
             f"integration STT streaming contract missing {required_stt_stream_boundary}"
         )
