@@ -647,13 +647,19 @@ for forbidden_browser_secret in (
         raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
 for required_live_mic in (
     "AudioWorkletNode",
-    "apiBinaryStream",
-    "ReadableStream<Uint8Array>",
-    'duplex: "half"',
+    "apiBinary",
+    "VOICE_UPLOAD_CHUNK_BYTES",
+    "queueMicrophoneChunk",
+    '"/api/voice/input/start"',
+    '"/api/voice/input/chunk"',
+    '"/api/voice/input/finish"',
+    '"/api/voice/input/cancel"',
     'new AudioContext({ sampleRate: 16_000',
 ):
     if required_live_mic not in owner_lab_ui:
         raise SystemExit(f"Owner Lab live microphone upload missing {required_live_mic}")
+if "ReadableStream<Uint8Array>" in owner_lab_ui or 'duplex: "half"' in owner_lab_ui:
+    raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (
     "MAX_VOICE_SAMPLES" not in owner_lab_ui
     or "MAX_VOICE_SAMPLES - micSamplesSent" not in owner_lab_ui
@@ -661,11 +667,12 @@ if (
 ):
     raise SystemExit("Owner Lab voice UI must cap streamed PCM samples before upload")
 for required_streaming_http in (
-    "stream_voice_body",
+    "VoiceInputRegistry",
+    "input_chunk_response",
     "begin_voice_input",
     "finish_voice_input_streaming",
 ):
-    if required_streaming_http not in owner_lab_http_voice:
+    if required_streaming_http not in owner_lab_voice_http_boundary:
         raise SystemExit(
             f"Owner Lab HTTP microphone path must remain incrementally streamed: {required_streaming_http}"
         )
