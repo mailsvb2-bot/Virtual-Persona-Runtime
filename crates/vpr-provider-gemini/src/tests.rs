@@ -53,6 +53,30 @@ fn adapter(endpoint: String) -> GeminiLlm {
 }
 
 #[test]
+fn preserves_system_instruction_and_user_input_as_distinct_fields() {
+    let body = concat!(
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":\"completed\",\"usage\":{\"total_input_tokens\":1,\"total_output_tokens\":0}}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (endpoint, captured) = serve_once_capture("200 OK", body);
+    let provider = adapter(endpoint);
+    provider
+        .stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: Some("canonical-policy".into()),
+                user_input: "visitor-input".into(),
+            },
+            &Probe(AtomicBool::new(false)),
+            &mut GeneratedTextBuffer::default(),
+        )
+        .unwrap();
+    let request = captured.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(request.contains("\"input\":\"visitor-input\""));
+    assert!(request.contains("\"system_instruction\":\"canonical-policy\""));
+}
+
+#[test]
 fn streams_text_and_usage_from_interactions_sse() {
     let body = concat!(
         "data: {\"event_type\":\"step.delta\",\"delta\":{\"type\":\"text\",\"text\":\"При\"}}\n\n",
