@@ -326,7 +326,8 @@ fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
             &PullLlm,
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "Ответь кратко".into(),
+                instructions: None,
+                user_input: "Ответь кратко".into(),
             },
         )
         .unwrap();
