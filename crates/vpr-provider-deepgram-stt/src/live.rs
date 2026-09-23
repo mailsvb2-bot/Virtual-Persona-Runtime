@@ -29,10 +29,10 @@ pub(crate) fn open(
     }
 
     let url = streaming_url(config, request)?;
-    let mut websocket_request = url.as_str().into_client_request().map_err(|error| {
-        eprintln!("REQERR={error:?}");
-        invalid_response()
-    })?;
+    let mut websocket_request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| invalid_response())?;
     websocket_request.headers_mut().insert(
         "Authorization",
         format!("Token {}", config.api_key)
