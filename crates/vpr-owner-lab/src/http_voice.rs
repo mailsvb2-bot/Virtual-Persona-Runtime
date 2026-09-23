@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
@@ -7,10 +8,11 @@ use std::time::Duration;
 use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use tiny_http::Request;
-use vpr_owner_lab::{LabError, LabVoiceResult, LabVoiceSegment};
+use vpr_domain::Rt0ReasonCode;
+use vpr_owner_lab::{LabError, LabVoiceInput, LabVoiceResult, LabVoiceSegment};
 
 use super::{
-    AppState, HttpResponse, error_response, http_evidence, json_response, read_body,
+    AppState, HttpResponse, error_response, http_evidence, json_response,
     reject_if_session_ending,
 };
 
@@ -139,34 +141,59 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         return error_response(409, "INVALID_STATE_TRANSITION");
     }
     if let Err(response) = reject_if_session_ending(state) {
-        state.voice_busy.store(false, Ordering::Release);
+        release_voice_busy(state);
         return response;
     }
     let request_sequence = match http_evidence::request_sequence(request) {
         Ok(sequence) => sequence,
         Err(error) => {
-            state.voice_busy.store(false, Ordering::Release);
+            release_voice_busy(state);
             return error_response(http_evidence::error_status(error), error.code());
         }
     };
-    let audio = match read_body(request, super::MAX_VOICE_BODY_BYTES) {
-        Ok(audio) => audio,
-        Err(response) => {
-            state.voice_busy.store(false, Ordering::Release);
-            return response;
-        }
-    };
     if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
-        state.voice_busy.store(false, Ordering::Release);
+        release_voice_busy(state);
         return error_response(http_evidence::error_status(error), error.code());
     }
+
+    let mut input = {
+        let Ok(mut engine) = state.engine.lock() else {
+            let error = LabError::Internal;
+            let _ = state
+                .evidence
+                .lock()
+                .fail_voice_request(request_sequence, error.code());
+            release_voice_busy(state);
+            return error_response(lab_error_status(&error), error.code());
+        };
+        match engine.begin_voice_input(|handle| {
+            *state.active_voice_interrupt.lock() = Some(handle.clone());
+            if state.voice_cancel_requested.load(Ordering::Acquire) {
+                let _ = handle.interrupt();
+            }
+        }) {
+            Ok(input) => input,
+            Err(error) => {
+                let _ = state
+                    .evidence
+                    .lock()
+                    .fail_voice_request(request_sequence, error.code());
+                release_voice_busy(state);
+                return error_response(lab_error_status(&error), error.code());
+            }
+        }
+    };
+
+    if let Err(error) = stream_voice_body(request, &mut input) {
+        return fail_voice_upload(state, request_sequence, input, error);
+    }
     if !state.voice_streams.begin(request_sequence) {
-        state.voice_busy.store(false, Ordering::Release);
-        let _ = state
-            .evidence
-            .lock()
-            .fail_voice_request(request_sequence, "INVALID_STATE_TRANSITION");
-        return error_response(409, "INVALID_STATE_TRANSITION");
+        return fail_voice_upload(
+            state,
+            request_sequence,
+            input,
+            LabError::InvalidState,
+        );
     }
 
     let worker_state = Arc::clone(state);
@@ -180,25 +207,16 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
                 finish_voice_stream(&worker_state, request_sequence, Err(LabError::Internal));
                 return;
             };
-            let result = engine.voice_turn_streaming(
-                audio,
-                |handle| {
-                    *worker_state.active_voice_interrupt.lock() = Some(handle.clone());
-                    if worker_state.voice_cancel_requested.load(Ordering::Acquire) {
-                        let _ = handle.interrupt();
-                    }
-                },
-                |segment| {
-                    worker_state
-                        .evidence
-                        .lock()
-                        .bind_voice_segment(request_sequence, &segment)
-                        .map_err(|_| LabError::Internal)?;
-                    worker_state
-                        .voice_streams
-                        .push(request_sequence, VoiceStreamEvent::Segment { segment })
-                },
-            );
+            let result = engine.finish_voice_input_streaming(input, |segment| {
+                worker_state
+                    .evidence
+                    .lock()
+                    .bind_voice_segment(request_sequence, &segment)
+                    .map_err(|_| LabError::Internal)?;
+                worker_state
+                    .voice_streams
+                    .push(request_sequence, VoiceStreamEvent::Segment { segment })
+            });
             *worker_state.active_voice_interrupt.lock() = None;
             result
         };
@@ -209,6 +227,90 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         202,
         &serde_json::json!({"ok": true, "request_sequence": request_sequence}),
     )
+}
+
+fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result<(), LabError> {
+    const READ_BYTES: usize = 3_200;
+
+    let mut buffer = [0_u8; READ_BYTES];
+    let mut pending_byte = None;
+    let mut total_bytes = 0_u64;
+    loop {
+        let read = request
+            .as_reader()
+            .read(&mut buffer)
+            .map_err(|_| LabError::InvalidInput)?;
+        if read == 0 {
+            break;
+        }
+        total_bytes = total_bytes
+            .checked_add(u64::try_from(read).map_err(|_| LabError::InvalidInput)?)
+            .ok_or(LabError::InvalidInput)?;
+        if total_bytes > super::MAX_VOICE_BODY_BYTES {
+            return Err(LabError::InvalidInput);
+        }
+
+        let mut start = 0;
+        if let Some(first) = pending_byte.take() {
+            input.push_audio(&[first, buffer[0]])?;
+            start = 1;
+        }
+        let even_end = start + ((read - start) / 2) * 2;
+        if even_end > start {
+            input.push_audio(&buffer[start..even_end])?;
+        }
+        if even_end < read {
+            pending_byte = Some(buffer[read - 1]);
+        }
+    }
+
+    if total_bytes == 0 || pending_byte.is_some() {
+        return Err(LabError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn fail_voice_upload(
+    state: &AppState,
+    request_sequence: u64,
+    input: LabVoiceInput,
+    error: LabError,
+) -> HttpResponse {
+    let error = input.abort(error);
+    *state.active_voice_interrupt.lock() = None;
+    let code = match state
+        .evidence
+        .lock()
+        .fail_voice_request(request_sequence, error.code())
+    {
+        Ok(()) => error.code(),
+        Err(evidence_error) => evidence_error.code(),
+    };
+    release_voice_busy(state);
+    error_response(lab_error_status(&error), code)
+}
+
+fn release_voice_busy(state: &AppState) {
+    state.voice_cancel_requested.store(false, Ordering::Release);
+    state.voice_busy.store(false, Ordering::Release);
+}
+
+const fn lab_error_status(error: &LabError) -> u16 {
+    match error {
+        LabError::EgressDisabled
+        | LabError::ConsentRequired
+        | LabError::Runtime(
+            Rt0ReasonCode::AuthRevoked
+            | Rt0ReasonCode::AuthExpired
+            | Rt0ReasonCode::AuthScopeDenied,
+        ) => 403,
+        LabError::InvalidInput => 400,
+        LabError::InvalidState | LabError::Runtime(_) => 409,
+        LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
+        LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
+        LabError::Provider(_) => 502,
+        LabError::Internal => 500,
+    }
 }
 
 pub(super) fn events_response(
