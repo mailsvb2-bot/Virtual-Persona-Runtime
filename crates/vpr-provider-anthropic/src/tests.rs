@@ -53,6 +53,30 @@ fn adapter(endpoint: String) -> AnthropicLlm {
 }
 
 #[test]
+fn preserves_system_instruction_and_user_input_as_distinct_fields() {
+    let body = concat!(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
+        "data: {\"type\":\"message_stop\"}\n\n"
+    );
+    let (endpoint, captured) = serve_once_capture("200 OK", body);
+    let provider = adapter(endpoint);
+    provider
+        .stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: Some("canonical-policy".into()),
+                user_input: "visitor-input".into(),
+            },
+            &Probe(AtomicBool::new(false)),
+            &mut GeneratedTextBuffer::default(),
+        )
+        .unwrap();
+    let request = captured.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+    assert!(request.contains("\"system\":\"canonical-policy\""));
+    assert!(request.contains("\"messages\":[{\"role\":\"user\",\"content\":\"visitor-input\"}]"));
+}
+
+#[test]
 fn streams_text_and_usage_from_messages_sse() {
     let body = concat!(
         "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}}\n\n",
