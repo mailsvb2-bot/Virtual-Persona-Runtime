@@ -86,3 +86,12 @@ cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
 ```
 
 Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority, so CI and deliberate per-process overrides keep their existing behavior. API-key values are never printed or included in provider descriptors or evidence.
+
+
+If an older Owner Lab process is already listening on port `8787` with egress disabled, use the safe Windows restart bridge instead of killing it manually:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
+```
+
+The bridge first reads the current loopback-only reviewed Persona through the existing CSRF-protected API. For the canonical RT0 initial reviewed profile (Persona version 2, three claims), it keeps that profile only in a temporary local file, refuses to interrupt a non-terminal realtime session, stops the stale listener, fast-forwards `main`, builds Owner Lab, starts the new process with `VPR_OWNER_LAB_ALLOW_EGRESS=true`, verifies `text_and_voice` readiness, reconstructs and verifies the same reviewed Persona, deletes the temporary file, and opens the browser. It fails closed instead of replaying a later Persona revision whose history cannot be reconstructed losslessly.
