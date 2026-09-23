@@ -23,6 +23,7 @@ VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
+HTTP_CLIENT_CONTROL = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_client_control.rs"
 
 index_html = INDEX.read_text(encoding="utf-8")
 browser_e2e = E2E.read_text(encoding="utf-8")
@@ -46,6 +47,7 @@ default_config = (UI / "playwright.config.ts").read_text(encoding="utf-8")
 ci = CI.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
+http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
 
 for required in (
     "/api/persona/reviewed",
@@ -161,6 +163,14 @@ for required in (
 ):
     if required not in expressive_launcher:
         raise SystemExit(f"Owner Lab Expressive launcher missing: {required}")
+
+for required in (
+    '"/api/avatar/client-interrupt"',
+    "active_voice_interrupt.lock().clone()",
+    "handle.interrupt()",
+):
+    if required not in http_client_control:
+        raise SystemExit(f"Owner Lab browser interruption must cancel the active canonical voice turn: {required}")
 
 for required in (
     "estimatedPlayoutTimestamp",
