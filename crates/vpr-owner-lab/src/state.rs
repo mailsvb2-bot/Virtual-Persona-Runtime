@@ -565,6 +565,7 @@ mod client_control;
 mod text;
 mod voice;
 mod voice_input;
+mod voice_phrase;
 mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
