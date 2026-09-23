@@ -15,9 +15,8 @@ use vpr_runtime::{
 };
 
 use super::{
-    LabClientCommand, LabError, OwnerLabEngine, map_provider_execution,
-    voice_input::LabVoiceInput, voice_phrase::RealtimePhraseBuffer,
-    voice_stt::transcribe_voice_audio,
+    LabClientCommand, LabError, OwnerLabEngine, map_provider_execution, voice_input::LabVoiceInput,
+    voice_phrase::RealtimePhraseBuffer, voice_stt::transcribe_voice_audio,
 };
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
