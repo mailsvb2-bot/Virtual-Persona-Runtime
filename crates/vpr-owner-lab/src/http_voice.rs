@@ -305,13 +305,13 @@ pub(super) fn cancel_input_response(request: &mut Request, state: &AppState) -> 
         Ok(sequence) => sequence,
         Err(error) => return error_response(http_evidence::error_status(error), error.code()),
     };
+    let Some(input) = state.voice_inputs.take(request_sequence) else {
+        return error_response(409, "INVALID_STATE_TRANSITION");
+    };
     state.voice_cancel_requested.store(true, Ordering::Release);
     if let Some(handle) = state.active_voice_interrupt.lock().clone() {
         let _ = handle.interrupt();
     }
-    let Some(input) = state.voice_inputs.take(request_sequence) else {
-        return error_response(409, "INVALID_STATE_TRANSITION");
-    };
     let error = input.abort(LabError::Runtime(Rt0ReasonCode::TurnCancelled));
     *state.active_voice_interrupt.lock() = None;
     fail_voice_evidence(state, request_sequence, &error);
