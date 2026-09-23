@@ -455,7 +455,7 @@ mod tests {
             .stream(
                 &LlmRequest {
                     locale: "ru-RU".into(),
-                    instructions: None,
+                    instructions: Some("canonical-policy".into()),
                     user_input: "Коротко".into(),
                 },
                 &probe,
@@ -466,6 +466,8 @@ mod tests {
         assert!(request.contains("\"max_tokens\":96"));
         assert!(request.contains("\"reasoning_effort\":\"none\""));
         assert!(request.contains("\"thinking\":{\"type\":\"disabled\"}"));
+        assert!(request.contains("\"role\":\"system\",\"content\":\"canonical-policy\""));
+        assert!(request.contains("\"role\":\"user\",\"content\":\"Коротко\""));
     }
 
     #[test]
