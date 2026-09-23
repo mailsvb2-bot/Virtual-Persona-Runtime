@@ -170,7 +170,7 @@ fn missing_observation_fails_closed_instead_of_shrinking_the_suite() {
     let mut observations = passing_observations();
     observations.retain(|item| item.case_id != "authority.revoked");
     let report = evaluate_golden_suite(&suite(), &observations).unwrap();
-    assert_eq!(report.total, 12);
+    assert_eq!(report.total, 13);
     assert_eq!(report.failed, 1);
     let missing = report
         .cases
