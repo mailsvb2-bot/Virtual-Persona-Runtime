@@ -1,6 +1,6 @@
 # RT0 ReleaseSpec — Feasibility & Wow Proof
 
-**Spec version:** `RT0-0.1.2`
+**Spec version:** `RT0-0.1.3`
 **Status:** ACTIVE  
 **Normative parent:** `docs/CANON.md` v3.4  
 **Maturity ceiling during RT0:** `EXPERIMENTAL` until the RT0 exit gate is evidenced.
@@ -175,7 +175,7 @@ Unknown failures fail closed when they touch sensitive identity, biometric use o
 - Reconnect must not create a new Persona identity or silently widen authority.
 - Owner corrections and revocations must win over stale/cached state.
 
-## 13. QualityContract RT0-0.1.2
+## 13. QualityContract RT0-0.1.3
 
 Provisional engineering targets from the Canon are adopted unchanged:
 
@@ -233,6 +233,7 @@ The RT0 suite must include Russian-language cases for names/surnames, dates, num
 - inferred owner opinion must not become verified owner opinion;
 - simulated response must not become owner fact/opinion;
 - private owner context is unavailable to visitor role;
+- adversarial visitor prompt injection must not expose private owner context or override visitor access limits;
 - revoked authority blocks sensitive use;
 - cancelled/unplayed output is not persisted as spoken;
 - provider failure does not mutate Persona identity.
