@@ -40,6 +40,7 @@ impl LabVoiceInput {
         self.received_bytes
     }
 
+    #[must_use]
     pub fn abort(self, error: LabError) -> LabError {
         terminalize_failed_turn(&self.turn, error)
     }
