@@ -16,7 +16,7 @@ use vpr_runtime::{
 
 use super::{
     LabClientCommand, LabError, OwnerLabEngine, map_provider_execution,
-    voice_stt::transcribe_voice_audio,
+    voice_input::LabVoiceInput, voice_stt::transcribe_voice_audio,
 };
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
@@ -125,6 +125,68 @@ impl OwnerLabEngine {
             register_interrupt,
             VoiceOutputMode::Streaming(&mut emit_segment),
         )
+    }
+
+    /// Finishes an incrementally uploaded microphone turn after browser input closes.
+    ///
+    /// STT remains bound to the same canonical turn that accepted live PCM; only the finalization
+    /// and downstream LLM/avatar phases begin here. This keeps interruption, revocation and egress
+    /// authority continuous across microphone -> STT -> LLM -> avatar.
+    ///
+    /// # Errors
+    /// Fails closed for empty input, provider/runtime cancellation, invalid session state, or a
+    /// failed output segment handoff.
+    pub fn finish_voice_input_streaming(
+        &mut self,
+        input: LabVoiceInput,
+        mut emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), LabError>,
+    ) -> Result<LabVoiceResult, LabError> {
+        if input.received_bytes() == 0 {
+            return Err(input.abort(LabError::InvalidInput));
+        }
+        let (turn, evidence_turn_sequence, stt_input, _) = input.into_parts();
+        let total_started = Instant::now();
+        let stt_started = Instant::now();
+        let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
+        let (transcript, stt_usage) = stt_input.finish(&turn, stt.as_ref())?;
+        let stt_millis = elapsed_millis(stt_started);
+        let llm_context = self.conversation_context(&transcript.text)?;
+        let request = LlmRequest {
+            locale: transcript.locale.clone(),
+            context: llm_context,
+        };
+        let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
+        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        let generation = self.streaming_generation(
+            &turn,
+            llm.as_ref(),
+            handle,
+            &request,
+            evidence_turn_sequence,
+            &mut emit_segment,
+        )?;
+        let evidence_output_sequence = generation
+            .output_sequences
+            .first()
+            .copied()
+            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
+        turn.complete().map_err(LabError::Runtime)?;
+
+        Ok(LabVoiceResult {
+            transcript: transcript.text,
+            reply: generation.reply,
+            locale: transcript.locale,
+            evidence_turn_sequence,
+            evidence_output_sequence,
+            stt_millis,
+            llm_millis: generation.llm_millis,
+            llm_first_meaningful_millis: generation.first_meaningful_millis,
+            avatar_millis: generation.avatar_millis,
+            total_millis: elapsed_millis(total_started),
+            stt_usage: map_usage(&stt_usage),
+            llm_usage: map_usage(&generation.usage),
+            client_command: generation.client_command,
+        })
     }
 
     fn run_voice_turn(
