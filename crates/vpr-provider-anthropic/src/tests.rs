@@ -48,7 +48,8 @@ fn streams_text_and_usage_from_messages_sse() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "Ответь кратко".into(),
+                instructions: None,
+                user_input: "Ответь кратко".into(),
             },
             &probe,
             &mut sink,
@@ -75,7 +76,8 @@ fn pull_stream_yields_text_before_completion_and_keeps_usage() {
         .open_stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "Коротко".into(),
+                instructions: None,
+                user_input: "Коротко".into(),
             },
             &probe,
         )
@@ -100,7 +102,8 @@ fn rejects_truncated_stream_without_message_stop() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(false)),
             &mut GeneratedTextBuffer::default(),
@@ -116,7 +119,8 @@ fn maps_rate_limit_to_retryable_error() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(false)),
             &mut GeneratedTextBuffer::default(),
@@ -144,7 +148,8 @@ fn pre_cancelled_request_never_starts_network_work() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(true)),
             &mut GeneratedTextBuffer::default(),
