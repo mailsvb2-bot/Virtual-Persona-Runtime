@@ -1,6 +1,7 @@
 mod evidence;
 mod owner_capture;
 mod owner_context;
+mod provider_credentials;
 mod providers;
 mod state;
 
@@ -17,6 +18,12 @@ pub use owner_capture::{
 };
 
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
+
+pub use provider_credentials::ProviderCredentialProfile;
+#[cfg(windows)]
+pub use provider_credentials::{
+    delete_provider_profile, load_provider_profile, save_provider_profile,
+};
 
 pub use state::{
     ConversationReadiness, LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute,
