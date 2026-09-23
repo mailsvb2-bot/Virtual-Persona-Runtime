@@ -259,7 +259,7 @@ impl LlmPort for StreamingVoiceLlm {
             return Err(cancelled());
         }
         self.stats.llm.fetch_add(1, Ordering::SeqCst);
-        assert!(request.context.contains("Как дела?"));
+        assert_eq!(request.user_input, "Как дела?");
         Ok(Box::new(StreamingVoiceStream {
             phase: 0,
             release_tail: Arc::clone(&self.release_tail),
