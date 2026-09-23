@@ -150,7 +150,10 @@ fn prompt_line(prompt: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
 
 #[cfg(windows)]
 fn print_safe_profile(profile: &ProviderCredentialProfile) {
-    println!("  avatar: D-ID Expressive ({})", profile.did_endpoint);
+    println!(
+        "  avatar: D-ID ({}) · legacy fluent disabled",
+        profile.did_endpoint
+    );
     println!(
         "  STT: {} {} ({})",
         profile.stt_provider, profile.stt_model, profile.stt_endpoint

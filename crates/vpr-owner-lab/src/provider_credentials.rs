@@ -36,7 +36,7 @@ impl ProviderCredentialProfile {
             did_api_key,
             did_agent_id,
             did_endpoint: "https://api.d-id.com".into(),
-            did_fluent: true,
+            did_fluent: false,
             stt_provider: "deepgram".into(),
             stt_endpoint: "https://api.deepgram.com/v1/listen".into(),
             stt_api_key: deepgram_api_key,
@@ -120,9 +120,13 @@ mod platform {
             Err(KeyringError::NoEntry) => return Ok(None),
             Err(_) => return Err("Windows Credential Manager read failed".into()),
         };
-        let profile: ProviderCredentialProfile = serde_json::from_str(&raw)
+        let mut profile: ProviderCredentialProfile = serde_json::from_str(&raw)
             .map_err(|_| "Windows Credential Manager contains an invalid VPR provider profile")?;
         profile.validate()?;
+        // The historical working RT0 Windows configuration left VPR_DID_FLUENT unset.
+        // Early secure-profile builds accidentally persisted `true`; normalize those profiles
+        // at read time so existing credentials keep working without re-entry.
+        profile.did_fluent = false;
         Ok(Some(profile))
     }
 
@@ -158,7 +162,7 @@ mod tests {
         assert_eq!(profile.stt_model, "nova-3");
         assert_eq!(profile.llm_provider, "deepseek");
         assert_eq!(profile.llm_model, "deepseek-flash");
-        assert!(profile.did_fluent);
+        assert!(!profile.did_fluent);
         assert!(profile.validate().is_ok());
     }
 
