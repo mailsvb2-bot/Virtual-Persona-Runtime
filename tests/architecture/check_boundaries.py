@@ -656,9 +656,9 @@ for required_live_mic in (
     '"/api/voice/input/cancel"',
     'new AudioContext({ sampleRate: 16_000',
 ):
-    if required_live_mic not in owner_lab_ui:
+    if required_live_mic not in owner_lab_app:
         raise SystemExit(f"Owner Lab live microphone upload missing {required_live_mic}")
-if "ReadableStream<Uint8Array>" in owner_lab_ui or 'duplex: "half"' in owner_lab_ui:
+if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
     raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (
     "MAX_VOICE_SAMPLES" not in owner_lab_ui
