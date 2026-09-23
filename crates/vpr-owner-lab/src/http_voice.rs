@@ -178,10 +178,7 @@ struct VoiceEventsResponse {
     terminal: bool,
 }
 
-pub(super) fn start_input_response(
-    request: &mut Request,
-    state: &Arc<AppState>,
-) -> HttpResponse {
+pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
     if let Err(response) = super::parse_empty_json(request) {
         return response;
     }
@@ -273,10 +270,7 @@ pub(super) fn input_chunk_response(request: &mut Request, state: &AppState) -> H
     }
 }
 
-pub(super) fn finish_input_response(
-    request: &mut Request,
-    state: &Arc<AppState>,
-) -> HttpResponse {
+pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
     if let Err(response) = super::parse_empty_json(request) {
         return response;
     }
