@@ -194,8 +194,10 @@ for required_visitor_boundary in (
 ):
     if required_visitor_boundary not in owner_lab_state:
         raise SystemExit(f"Owner Lab visitor scope missing runtime boundary {required_visitor_boundary}")
-if "VISITOR_PROMPT_PREFIX" not in owner_lab_state or "conversation_context" not in owner_lab_state:
-    raise SystemExit("Owner Lab text/voice turns must share a visitor-specific LLM context boundary")
+if "VISITOR_INSTRUCTIONS" not in owner_lab_state or "conversation_instructions" not in owner_lab_state:
+    raise SystemExit("Owner Lab text/voice turns must share a visitor-specific LLM instruction boundary")
+if "VISITOR_PROMPT_PREFIX" in owner_lab_state or "conversation_context" in owner_lab_state:
+    raise SystemExit("Owner Lab must not collapse visitor policy and user input back into one LLM context")
 if 'option[value="visitor"]' not in owner_lab_app or 'audience' not in owner_lab_app:
     raise SystemExit("Owner Lab browser must expose the visitor test-session selector")
 if 'reviewed_owner_claims: if self.session_audience == Some(LabSessionAudience::Visitor)' not in owner_lab_state:

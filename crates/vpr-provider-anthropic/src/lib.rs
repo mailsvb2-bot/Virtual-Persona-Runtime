@@ -91,9 +91,10 @@ impl AnthropicLlm {
         let body = MessageRequest {
             model: &self.config.model,
             max_tokens: self.config.max_tokens,
+            system: request.instructions.as_deref(),
             messages: [MessageInput {
                 role: "user",
-                content: &request.context,
+                content: &request.user_input,
             }],
             stream: true,
         };
@@ -225,6 +226,8 @@ impl LlmTextStream for AnthropicTextStream {
 struct MessageRequest<'a> {
     model: &'a str,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<&'a str>,
     messages: [MessageInput<'a>; 1],
     stream: bool,
 }

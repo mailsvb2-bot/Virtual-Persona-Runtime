@@ -5,7 +5,10 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmRequest {
     pub locale: String,
-    pub context: String,
+    /// Canonical runtime/Persona instructions that must remain distinct from untrusted user input.
+    pub instructions: Option<String>,
+    /// The participant's current utterance/input. Provider adapters must preserve it as user input.
+    pub user_input: String,
 }
 
 mod sealed {

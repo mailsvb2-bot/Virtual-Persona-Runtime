@@ -2,6 +2,7 @@ use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use vpr_integration::GeneratedTextBuffer;
 
@@ -28,8 +29,53 @@ fn serve_once(status: &str, body: &'static str) -> String {
     });
     format!("http://{address}/v1beta/interactions?alt=sse")
 }
+fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let status = status.to_owned();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let read = stream.read(&mut request).unwrap();
+        tx.send(String::from_utf8_lossy(&request[..read]).into_owned())
+            .unwrap();
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    (format!("http://{address}/v1beta/interactions?alt=sse"), rx)
+}
+
 fn adapter(endpoint: String) -> GeminiLlm {
     GeminiLlm::new(GeminiConfig::new(endpoint, "secret", "gemini-test")).unwrap()
+}
+
+#[test]
+fn preserves_system_instruction_and_user_input_as_distinct_fields() {
+    let body = concat!(
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":\"completed\",\"usage\":{\"total_input_tokens\":1,\"total_output_tokens\":0}}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (endpoint, captured) = serve_once_capture("200 OK", body);
+    let provider = adapter(endpoint);
+    provider
+        .stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: Some("canonical-policy".into()),
+                user_input: "visitor-input".into(),
+            },
+            &Probe(AtomicBool::new(false)),
+            &mut GeneratedTextBuffer::default(),
+        )
+        .unwrap();
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    assert!(request.contains("\"input\":\"visitor-input\""));
+    assert!(request.contains("\"system_instruction\":\"canonical-policy\""));
 }
 
 #[test]
@@ -46,7 +92,8 @@ fn streams_text_and_usage_from_interactions_sse() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "Ответь кратко".into(),
+                instructions: None,
+                user_input: "Ответь кратко".into(),
             },
             &Probe(AtomicBool::new(false)),
             &mut sink,
@@ -71,7 +118,8 @@ fn pull_stream_yields_text_before_completion_and_keeps_usage() {
         .open_stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "Коротко".into(),
+                instructions: None,
+                user_input: "Коротко".into(),
             },
             &probe,
         )
@@ -93,7 +141,8 @@ fn rejects_incomplete_stream_without_completed_and_done() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(false)),
             &mut GeneratedTextBuffer::default(),
@@ -110,7 +159,8 @@ fn maps_rate_limit_to_retryable_error() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(false)),
             &mut GeneratedTextBuffer::default(),
@@ -139,7 +189,8 @@ fn pre_cancelled_request_never_starts_network_work() {
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: "test".into(),
+                instructions: None,
+                user_input: "test".into(),
             },
             &Probe(AtomicBool::new(true)),
             &mut GeneratedTextBuffer::default(),

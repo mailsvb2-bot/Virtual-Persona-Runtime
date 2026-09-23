@@ -27,8 +27,9 @@ fn serve_once(status: &str, body: &'static str) -> String {
         );
         stream.write_all(response.as_bytes()).unwrap();
     });
-    format!("http://{address}/v1/messages")
+    format!("http://{address}/v1/chat/completions")
 }
+
 fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -38,54 +39,61 @@ fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiv
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = [0_u8; 8192];
         let read = stream.read(&mut request).unwrap();
-        tx.send(String::from_utf8_lossy(&request[..read]).into_owned())
-            .unwrap();
+        let _ = tx.send(String::from_utf8_lossy(&request[..read]).into_owned());
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
         );
         stream.write_all(response.as_bytes()).unwrap();
     });
-    (format!("http://{address}/v1/messages"), rx)
+    (format!("http://{address}/v1/chat/completions"), rx)
 }
 
-fn adapter(endpoint: String) -> AnthropicLlm {
-    AnthropicLlm::new(AnthropicConfig::new(endpoint, "secret", "claude-test")).unwrap()
+fn adapter(endpoint: String) -> OpenAiCompatibleLlm {
+    OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
+        endpoint,
+        "secret",
+        "test-model",
+    ))
+    .unwrap()
 }
 
 #[test]
-fn preserves_system_instruction_and_user_input_as_distinct_fields() {
-    let body = concat!(
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
-        "data: {\"type\":\"message_stop\"}\n\n"
-    );
-    let (endpoint, captured) = serve_once_capture("200 OK", body);
-    let provider = adapter(endpoint);
+fn optional_realtime_generation_controls_are_sent_only_when_configured() {
+    let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\n\n");
+    let provider = OpenAiCompatibleLlm::new(
+        OpenAiCompatibleConfig::new(endpoint, "secret", "test-model")
+            .with_reasoning_effort("none")
+            .with_thinking_disabled()
+            .with_max_tokens(96),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
     provider
         .stream(
             &LlmRequest {
                 locale: "ru-RU".into(),
                 instructions: Some("canonical-policy".into()),
-                user_input: "visitor-input".into(),
+                user_input: "Коротко".into(),
             },
-            &Probe(AtomicBool::new(false)),
+            &probe,
             &mut GeneratedTextBuffer::default(),
         )
         .unwrap();
-    let request = captured
-        .recv_timeout(std::time::Duration::from_secs(2))
-        .unwrap();
-    assert!(request.contains("\"system\":\"canonical-policy\""));
-    assert!(request.contains("\"messages\":[{\"role\":\"user\",\"content\":\"visitor-input\"}]"));
+    let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(request.contains("\"max_tokens\":96"));
+    assert!(request.contains("\"reasoning_effort\":\"none\""));
+    assert!(request.contains("\"thinking\":{\"type\":\"disabled\"}"));
+    assert!(request.contains("\"role\":\"system\",\"content\":\"canonical-policy\""));
+    assert!(request.contains("\"role\":\"user\",\"content\":\"Коротко\""));
 }
 
 #[test]
-fn streams_text_and_usage_from_messages_sse() {
+fn streams_text_and_usage_from_openai_compatible_sse() {
     let body = concat!(
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":9,\"output_tokens\":1}}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"При\"}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"вет\"}}\n\n",
-        "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\n",
-        "data: {\"type\":\"message_stop\"}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Привет\"}}],\"usage\":null}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}],\"usage\":null}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":2}}\n\n",
+        "data: [DONE]\n\n"
     );
     let provider = adapter(serve_once("200 OK", body));
     let probe = Probe(AtomicBool::new(false));
@@ -101,20 +109,20 @@ fn streams_text_and_usage_from_messages_sse() {
             &mut sink,
         )
         .unwrap();
-    assert_eq!(sink.as_str(), "Привет");
-    assert_eq!(usage.input_units, Some(9));
+    assert_eq!(sink.as_str(), "Привет!");
+    assert_eq!(usage.input_units, Some(7));
     assert_eq!(usage.input_unit, Some(UsageUnit::Token));
-    assert_eq!(usage.output_units, Some(4));
+    assert_eq!(usage.output_units, Some(2));
     assert_eq!(usage.output_unit, Some(UsageUnit::Token));
 }
 
 #[test]
-fn pull_stream_yields_text_before_completion_and_keeps_usage() {
+fn pull_stream_exposes_early_chunks_and_final_usage() {
     let body = concat!(
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":6,\"output_tokens\":0}}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Первая.\"}}\n\n",
-        "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":2}}\n\n",
-        "data: {\"type\":\"message_stop\"}\n\n"
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Первая фраза.\"}}],\"usage\":null}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\" Вторая.\"}}],\"usage\":null}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":4}}\n\n",
+        "data: [DONE]\n\n"
     );
     let provider = adapter(serve_once("200 OK", body));
     let probe = Probe(AtomicBool::new(false));
@@ -130,37 +138,21 @@ fn pull_stream_yields_text_before_completion_and_keeps_usage() {
         .unwrap();
     assert_eq!(
         stream.next_chunk(&probe).unwrap().as_deref(),
-        Some("Первая.")
+        Some("Первая фраза.")
+    );
+    assert_eq!(
+        stream.next_chunk(&probe).unwrap().as_deref(),
+        Some(" Вторая.")
     );
     assert_eq!(stream.next_chunk(&probe).unwrap(), None);
-    assert_eq!(stream.usage().input_units, Some(6));
-    assert_eq!(stream.usage().output_units, Some(2));
+    assert_eq!(stream.usage().input_units, Some(5));
+    assert_eq!(stream.usage().output_units, Some(4));
 }
 
 #[test]
-fn rejects_truncated_stream_without_message_stop() {
-    let body = concat!(
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
-        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n"
-    );
-    let provider = adapter(serve_once("200 OK", body));
-    let error = provider
-        .stream(
-            &LlmRequest {
-                locale: "ru-RU".into(),
-                instructions: None,
-                user_input: "test".into(),
-            },
-            &Probe(AtomicBool::new(false)),
-            &mut GeneratedTextBuffer::default(),
-        )
-        .unwrap_err();
-    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-    assert!(!error.retryable);
-}
-#[test]
-fn maps_rate_limit_to_retryable_error() {
+fn maps_rate_limit_to_typed_retryable_error() {
     let provider = adapter(serve_once("429 Too Many Requests", "rate limited"));
+    let probe = Probe(AtomicBool::new(false));
     let error = provider
         .stream(
             &LlmRequest {
@@ -168,7 +160,7 @@ fn maps_rate_limit_to_retryable_error() {
                 instructions: None,
                 user_input: "test".into(),
             },
-            &Probe(AtomicBool::new(false)),
+            &probe,
             &mut GeneratedTextBuffer::default(),
         )
         .unwrap_err();
@@ -177,19 +169,9 @@ fn maps_rate_limit_to_retryable_error() {
 }
 
 #[test]
-fn rejects_external_plain_http() {
-    let error = AnthropicLlm::new(AnthropicConfig::new(
-        "http://example.com/v1/messages",
-        "secret",
-        "claude-test",
-    ))
-    .err()
-    .expect("external plaintext endpoint must be rejected");
-    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
-}
-#[test]
-fn pre_cancelled_request_never_starts_network_work() {
-    let provider = adapter("http://127.0.0.1:1/v1/messages".to_owned());
+fn pre_cancelled_request_never_requires_provider_success() {
+    let probe = Probe(AtomicBool::new(true));
+    let provider = adapter("http://127.0.0.1:1/v1/chat/completions".to_owned());
     let error = provider
         .stream(
             &LlmRequest {
@@ -197,22 +179,52 @@ fn pre_cancelled_request_never_starts_network_work() {
                 instructions: None,
                 user_input: "test".into(),
             },
-            &Probe(AtomicBool::new(true)),
+            &probe,
             &mut GeneratedTextBuffer::default(),
         )
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!error.retryable);
+}
+
+#[test]
+fn rejects_truncated_stream_without_done_marker() {
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}],\"usage\":null}\n\n";
+    let provider = adapter(serve_once("200 OK", body));
+    let probe = Probe(AtomicBool::new(false));
+    let error = provider
+        .stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "test".into(),
+            },
+            &probe,
+            &mut GeneratedTextBuffer::default(),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    assert!(!error.retryable);
+}
+
+#[test]
+fn rejects_plain_http_for_non_loopback_endpoint() {
+    let error = OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
+        "http://example.com/v1/chat/completions",
+        "secret",
+        "model-x",
+    ))
+    .err()
+    .expect("plain external HTTP must be rejected");
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(!error.retryable);
 }
 
 #[test]
 fn descriptor_does_not_expose_secret() {
-    let config = AnthropicConfig::new(
-        "https://api.anthropic.com/v1/messages",
-        "super-secret",
-        "claude-test",
-    );
+    let config = OpenAiCompatibleConfig::new("https://example.invalid", "super-secret", "model-x");
     let descriptor = config.descriptor();
-    assert_eq!(descriptor.provider, "anthropic");
-    assert_eq!(descriptor.model, "claude-test");
+    assert_eq!(descriptor.provider, "openai-compatible");
+    assert_eq!(descriptor.model, "model-x");
     assert_eq!(descriptor.representation, None);
 }

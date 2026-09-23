@@ -78,7 +78,8 @@ impl GeminiLlm {
         }
         let body = InteractionRequest {
             model: &self.config.model,
-            input: &request.context,
+            input: &request.user_input,
+            system_instruction: request.instructions.as_deref(),
             stream: true,
         };
         self.client
@@ -229,6 +230,8 @@ impl LlmTextStream for GeminiTextStream {
 struct InteractionRequest<'a> {
     model: &'a str,
     input: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_instruction: Option<&'a str>,
     stream: bool,
 }
 

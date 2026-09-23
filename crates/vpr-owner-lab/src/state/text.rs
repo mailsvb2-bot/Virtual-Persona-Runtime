@@ -101,14 +101,15 @@ impl OwnerLabEngine {
         let turn = self.new_turn()?;
         let evidence_turn_sequence = self.turn_counter;
         register_interrupt(turn.interrupt_handle());
-        let context = self.conversation_context(input)?;
+        let instructions = self.conversation_instructions()?;
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let llm_usage = turn
             .execute_llm(
                 llm.as_ref(),
                 &LlmRequest {
                     locale: "ru-RU".to_owned(),
-                    context,
+                    instructions: Some(instructions),
+                    user_input: input.to_owned(),
                 },
                 &mut generated,
             )
