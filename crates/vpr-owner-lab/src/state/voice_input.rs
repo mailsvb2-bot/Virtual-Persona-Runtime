@@ -48,6 +48,15 @@ impl LabVoiceInput {
     pub fn abort(self, error: LabError) -> LabError {
         terminalize_failed_turn(&self.turn, error)
     }
+
+    pub(super) fn into_parts(self) -> (Arc<ActiveTurn>, u64, VoiceSttInput, usize) {
+        (
+            self.turn,
+            self.evidence_turn_sequence,
+            self.stt_input,
+            self.received_bytes,
+        )
+    }
 }
 
 impl OwnerLabEngine {
