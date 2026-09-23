@@ -6,15 +6,18 @@ use vpr_domain::{Rt0ReasonCode, TurnState};
 pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
 pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
-    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
-    TimedGeneratedTextBuffer, UsageEvidence,
+    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TimedGeneratedTextBuffer,
+    UsageEvidence,
 };
 use vpr_runtime::{
     ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarHandle,
     RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
-use super::{LabClientCommand, LabError, OwnerLabEngine, map_provider_execution};
+use super::{
+    LabClientCommand, LabError, OwnerLabEngine, map_provider_execution,
+    voice_stt::transcribe_voice_audio,
+};
 
 const VOICE_SAMPLE_RATE_HZ: u32 = 16_000;
 const VOICE_CHANNELS: u16 = 1;
@@ -153,15 +156,7 @@ impl OwnerLabEngine {
 
         let total_started = Instant::now();
         let stt_started = Instant::now();
-        let (transcript, stt_usage) = turn
-            .execute_stt(
-                stt.as_ref(),
-                &SttRequest {
-                    audio,
-                    locale_hint: Some("ru-RU".to_owned()),
-                },
-            )
-            .map_err(|error| terminalize_provider_error(&turn, error))?;
+        let (transcript, stt_usage) = transcribe_voice_audio(&turn, stt.as_ref(), &audio)?;
         let stt_millis = elapsed_millis(stt_started);
         let llm_context = self.conversation_context(&transcript.text)?;
         let request = LlmRequest {

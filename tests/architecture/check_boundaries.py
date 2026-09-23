@@ -596,6 +596,7 @@ for required_text_http in (
         raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
 
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_stt = (owner_lab_src / "state" / "voice_stt.rs").read_text(encoding="utf-8")
 owner_lab_http_voice = (owner_lab_src / "http_voice.rs").read_text(encoding="utf-8")
 owner_lab_voice_http_boundary = owner_lab_main + "\n" + owner_lab_http_voice
 owner_lab_voice_providers = owner_lab_providers
@@ -603,13 +604,18 @@ owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
 if not owner_lab_mic_worklet.is_file():
     raise SystemExit("Owner Lab push-to-talk must retain a versioned AudioWorklet processor")
 for required_voice_runtime in (
-    "execute_stt",
     "execute_llm",
     "deliver_realtime_avatar_text",
     "interrupt_handle",
 ):
     if required_voice_runtime not in owner_lab_voice:
         raise SystemExit(f"Owner Lab voice path must remain canonical: {required_voice_runtime}")
+for required_stt_runtime in ("open_stt_stream", "execute_stt"):
+    if required_stt_runtime not in owner_lab_voice_stt:
+        raise SystemExit(f"Owner Lab STT path must remain canonical: {required_stt_runtime}")
+for forbidden_direct_stt in (".open_stream(", ".transcribe("):
+    if forbidden_direct_stt in owner_lab_voice_stt:
+        raise SystemExit(f"Owner Lab STT must not bypass ActiveTurn: {forbidden_direct_stt}")
 for required_voice_http in (
     "/api/voice/turn",
     "application/octet-stream",

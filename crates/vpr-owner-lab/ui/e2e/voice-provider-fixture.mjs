@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import http from "node:http";
 
 const port = 18_790;
@@ -206,6 +207,126 @@ const server = http.createServer(async (request, response) => {
   }
 
   return sendJson(response, 404, { ok: false, code: "NOT_FOUND" });
+});
+
+const websocketFrame = (opcode, payload = Buffer.alloc(0)) => {
+  const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
+  if (body.length < 126) {
+    return Buffer.concat([Buffer.from([0x80 | opcode, body.length]), body]);
+  }
+  const header = Buffer.alloc(4);
+  header[0] = 0x80 | opcode;
+  header[1] = 126;
+  header.writeUInt16BE(body.length, 2);
+  return Buffer.concat([header, body]);
+};
+
+const decodeClientFrames = (buffer) => {
+  const frames = [];
+  let offset = 0;
+  while (buffer.length - offset >= 2) {
+    const first = buffer[offset];
+    const second = buffer[offset + 1];
+    let length = second & 0x7f;
+    let cursor = offset + 2;
+    if (length === 126) {
+      if (buffer.length - cursor < 2) break;
+      length = buffer.readUInt16BE(cursor);
+      cursor += 2;
+    } else if (length === 127) {
+      throw new Error("fixture does not accept oversized websocket frames");
+    }
+    const masked = (second & 0x80) !== 0;
+    let mask = null;
+    if (masked) {
+      if (buffer.length - cursor < 4) break;
+      mask = buffer.subarray(cursor, cursor + 4);
+      cursor += 4;
+    }
+    if (buffer.length - cursor < length) break;
+    const payload = Buffer.from(buffer.subarray(cursor, cursor + length));
+    if (mask) {
+      for (let index = 0; index < payload.length; index += 1) {
+        payload[index] ^= mask[index % 4];
+      }
+    }
+    frames.push({ opcode: first & 0x0f, payload });
+    offset = cursor + length;
+  }
+  return { frames, remainder: buffer.subarray(offset) };
+};
+
+server.on("upgrade", (request, socket) => {
+  const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
+  if (url.pathname !== "/v1/listen") {
+    socket.destroy();
+    return;
+  }
+  const key = request.headers["sec-websocket-key"];
+  if (typeof key !== "string") {
+    socket.destroy();
+    return;
+  }
+  const accept = crypto
+    .createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write([
+    "HTTP/1.1 101 Switching Protocols",
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    `Sec-WebSocket-Accept: ${accept}`,
+    "",
+    "",
+  ].join("\r\n"));
+
+  let pending = Buffer.alloc(0);
+  let audioBytes = 0;
+  socket.on("data", (chunk) => {
+    pending = Buffer.concat([pending, chunk]);
+    const decoded = decodeClientFrames(pending);
+    pending = Buffer.from(decoded.remainder);
+    for (const frame of decoded.frames) {
+      if (frame.opcode === 0x2) {
+        audioBytes += frame.payload.length;
+        continue;
+      }
+      if (frame.opcode !== 0x1 || frame.payload.toString("utf8") !== '{"type":"CloseStream"}') {
+        continue;
+      }
+      sttSequence += 1;
+      requests.push({
+        kind: "stt",
+        method: "WEBSOCKET",
+        path: url.pathname,
+        query: url.search,
+        authorization: request.headers.authorization ?? null,
+        contentType: null,
+        bodyLength: audioBytes,
+        bodyText: "",
+      });
+      const transcript = sttSequence === 1
+        ? "Привет из браузера"
+        : "Что думает владелец?";
+      socket.write(websocketFrame(
+        0x1,
+        JSON.stringify({
+          type: "Results",
+          is_final: false,
+          channel: { alternatives: [{ transcript: "Привет" }] },
+        }),
+      ));
+      socket.write(websocketFrame(
+        0x1,
+        JSON.stringify({
+          type: "Results",
+          is_final: true,
+          channel: { alternatives: [{ transcript }] },
+        }),
+      ));
+      socket.end(websocketFrame(0x8));
+    }
+  });
 });
 
 server.listen(port, "127.0.0.1", () => {
