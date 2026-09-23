@@ -116,12 +116,20 @@ impl OpenAiCompatibleLlm {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
+        let mut messages = Vec::with_capacity(2);
+        if let Some(instructions) = request.instructions.as_deref() {
+            messages.push(ChatMessage {
+                role: "system",
+                content: instructions,
+            });
+        }
+        messages.push(ChatMessage {
+            role: "user",
+            content: &request.user_input,
+        });
         let body = ChatRequest {
             model: &self.config.model,
-            messages: [ChatMessage {
-                role: "user",
-                content: &request.context,
-            }],
+            messages,
             stream: true,
             stream_options: StreamOptions {
                 include_usage: true,
@@ -255,7 +263,7 @@ impl LlmTextStream for OpenAiTextStream {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    messages: [ChatMessage<'a>; 1],
+    messages: Vec<ChatMessage<'a>>,
     stream: bool,
     stream_options: StreamOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
