@@ -81,9 +81,8 @@ fn batch_adapter_does_not_claim_streaming_support() {
         sample_format: PcmSampleFormat::S16Le,
         locale_hint: Some("ru-RU".to_owned()),
     };
-    let error = match provider.open_stream(&request, &probe) {
-        Ok(_) => panic!("batch Deepgram adapter must not expose a fake streaming session"),
-        Err(error) => error,
+    let Err(error) = provider.open_stream(&request, &probe) else {
+        panic!("batch Deepgram adapter must not expose a fake streaming session");
     };
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(!error.retryable);
