@@ -6,15 +6,17 @@ use std::time::{Duration, Instant};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
     ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest,
-    Transcript, UsageEvidence, WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, SttAudioStream, SttPort,
+    SttRequest, SttStreamEvent, SttStreamRequest, Transcript, UsageEvidence, WebRtcIceServer,
+    WebRtcSessionDescription,
 };
 
 use super::{LabError, OwnerLabEngine, OwnerLabStartRequest};
 
 #[derive(Default)]
 struct StreamingStats {
-    stt: AtomicUsize,
+    stt_stream: AtomicUsize,
+    stt_batch: AtomicUsize,
     llm: AtomicUsize,
     avatar_text: AtomicUsize,
 }
@@ -102,9 +104,79 @@ struct StreamingStt {
     stats: Arc<StreamingStats>,
 }
 
+struct StreamingSttSession {
+    phase: u8,
+    finished: bool,
+    bytes: usize,
+}
+
+impl SttAudioStream for StreamingSttSession {
+    fn push_audio(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() || self.finished || pcm.is_empty() || pcm.len() % 2 != 0 {
+            return Err(cancelled());
+        }
+        self.bytes = self.bytes.saturating_add(pcm.len());
+        Ok(())
+    }
+
+    fn finish_input(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() || self.bytes == 0 {
+            return Err(cancelled());
+        }
+        self.finished = true;
+        Ok(())
+    }
+
+    fn next_event(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<SttStreamEvent>, ProviderError> {
+        if cancellation.is_cancelled() || !self.finished {
+            return Err(cancelled());
+        }
+        let event = match self.phase {
+            0 => Some(SttStreamEvent::Interim(Transcript {
+                text: "Как".into(),
+                locale: "ru-RU".into(),
+            })),
+            1 => Some(SttStreamEvent::Final(Transcript {
+                text: "Как дела?".into(),
+                locale: "ru-RU".into(),
+            })),
+            _ => None,
+        };
+        self.phase = self.phase.saturating_add(1);
+        Ok(event)
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence::default()
+    }
+}
+
 impl SttPort for StreamingStt {
     fn descriptor(&self) -> ProviderDescriptor {
         descriptor("streaming-stt")
+    }
+
+    fn open_stream(
+        &self,
+        request: &SttStreamRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn SttAudioStream>, ProviderError> {
+        if cancellation.is_cancelled() || !request.is_well_formed() {
+            return Err(cancelled());
+        }
+        self.stats.stt_stream.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(StreamingSttSession {
+            phase: 0,
+            finished: false,
+            bytes: 0,
+        }))
     }
 
     fn transcribe(
@@ -115,10 +187,10 @@ impl SttPort for StreamingStt {
         if cancellation.is_cancelled() || !request.audio.is_well_formed() {
             return Err(cancelled());
         }
-        self.stats.stt.fetch_add(1, Ordering::SeqCst);
+        self.stats.stt_batch.fetch_add(1, Ordering::SeqCst);
         Ok((
             Transcript {
-                text: "Как дела?".into(),
+                text: "batch fallback".into(),
                 locale: "ru-RU".into(),
             },
             UsageEvidence::default(),
@@ -276,7 +348,8 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
     worker.join().unwrap();
     assert_eq!(result.reply, "Первая фраза. Вторая фраза.");
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 2);
-    assert_eq!(stats.stt.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.stt_stream.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.stt_batch.load(Ordering::SeqCst), 0);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
 }
 
