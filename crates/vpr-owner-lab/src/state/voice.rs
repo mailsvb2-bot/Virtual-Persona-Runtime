@@ -146,10 +146,11 @@ impl OwnerLabEngine {
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
         let (transcript, stt_usage) = stt_input.finish(&turn, stt.as_ref())?;
         let stt_millis = elapsed_millis(stt_started);
-        let llm_context = self.conversation_context(&transcript.text)?;
+        let instructions = self.conversation_instructions()?;
         let request = LlmRequest {
             locale: transcript.locale.clone(),
-            context: llm_context,
+            instructions: Some(instructions),
+            user_input: transcript.text.clone(),
         };
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
@@ -216,10 +217,11 @@ impl OwnerLabEngine {
         let stt_started = Instant::now();
         let (transcript, stt_usage) = transcribe_voice_audio(&turn, stt.as_ref(), &audio)?;
         let stt_millis = elapsed_millis(stt_started);
-        let llm_context = self.conversation_context(&transcript.text)?;
+        let instructions = self.conversation_instructions()?;
         let request = LlmRequest {
             locale: transcript.locale.clone(),
-            context: llm_context,
+            instructions: Some(instructions),
+            user_input: transcript.text.clone(),
         };
 
         let generation = match &mut output_mode {
