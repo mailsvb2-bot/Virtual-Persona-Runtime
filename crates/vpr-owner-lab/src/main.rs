@@ -96,6 +96,40 @@ struct SpeakBody {
     text: String,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LaunchOptions {
+    allow_egress: bool,
+    show_help: bool,
+}
+
+fn parse_launch_options<I, S>(args: I) -> Result<LaunchOptions, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut options = LaunchOptions::default();
+    for arg in args {
+        match arg.as_ref() {
+            "--allow-egress" => options.allow_egress = true,
+            "--help" | "-h" => options.show_help = true,
+            other => return Err(format!("unsupported argument `{other}`")),
+        }
+    }
+    Ok(options)
+}
+
+fn resolve_egress_enabled(options: &LaunchOptions, env_value: Option<&str>) -> bool {
+    options.allow_egress || env_value == Some("true")
+}
+
+fn print_usage() {
+    println!("Usage: vpr-owner-lab [--allow-egress]");
+    println!("  --allow-egress  Enable external provider calls for this process only.");
+    println!(
+        "                  Without this flag (or VPR_OWNER_LAB_ALLOW_EGRESS=true), egress stays disabled."
+    );
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -104,7 +138,15 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let egress_enabled = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").is_ok_and(|value| value == "true");
+    let launch_options = parse_launch_options(env::args().skip(1))
+        .map_err(|error| format!("invalid owner-lab launch options: {error}"))?;
+    if launch_options.show_help {
+        print_usage();
+        return Ok(());
+    }
+
+    let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
+    let egress_enabled = resolve_egress_enabled(&launch_options, egress_env.as_deref());
     let port = env::var("VPR_OWNER_LAB_PORT")
         .ok()
         .map(|value| value.parse::<u16>())
@@ -555,4 +597,45 @@ fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {
         token.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     Ok(token)
+}
+
+#[cfg(test)]
+mod launch_option_tests {
+    use super::{LaunchOptions, parse_launch_options, resolve_egress_enabled};
+
+    #[test]
+    fn owner_lab_stays_fail_closed_by_default() {
+        let options = parse_launch_options(std::iter::empty::<&str>()).unwrap();
+        assert_eq!(options, LaunchOptions::default());
+        assert!(!resolve_egress_enabled(&options, None));
+        assert!(!resolve_egress_enabled(&options, Some("false")));
+    }
+
+    #[test]
+    fn explicit_cli_flag_enables_egress_for_this_launch() {
+        let options = parse_launch_options(["--allow-egress"]).unwrap();
+        assert!(options.allow_egress);
+        assert!(!options.show_help);
+        assert!(resolve_egress_enabled(&options, None));
+    }
+
+    #[test]
+    fn legacy_environment_opt_in_remains_supported() {
+        let options = parse_launch_options(std::iter::empty::<&str>()).unwrap();
+        assert!(resolve_egress_enabled(&options, Some("true")));
+    }
+
+    #[test]
+    fn help_is_explicit_and_does_not_enable_egress() {
+        let options = parse_launch_options(["--help"]).unwrap();
+        assert!(options.show_help);
+        assert!(!options.allow_egress);
+        assert!(!resolve_egress_enabled(&options, None));
+    }
+
+    #[test]
+    fn unknown_launch_argument_is_rejected() {
+        let error = parse_launch_options(["--persist-egress"]).unwrap_err();
+        assert_eq!(error, "unsupported argument `--persist-egress`");
+    }
 }
