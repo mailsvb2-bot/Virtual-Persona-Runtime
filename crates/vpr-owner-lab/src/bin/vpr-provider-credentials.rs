@@ -11,7 +11,9 @@ use vpr_owner_lab::{
     save_provider_profile,
 };
 #[cfg(windows)]
-use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
+use vpr_provider_did_agent_streams::{
+    DidAgentStreamsAvatar, DidAgentStreamsConfig, DidRuntimeAccessProbe,
+};
 
 fn main() {
     if let Err(error) = run() {
@@ -137,15 +139,21 @@ fn probe_did() -> Result<(), Box<dyn Error + Send + Sync>> {
     )
     .map_err(|_| "D-ID provider configuration rejected")?;
 
-    match provider.probe_presenter_type() {
-        Ok(presenter) => {
+    match provider.probe_runtime_access() {
+        Ok(DidRuntimeAccessProbe::Presenter(presenter)) => {
             println!("D-ID credential probe: OK (presenter={presenter})");
+            Ok(())
+        }
+        Ok(DidRuntimeAccessProbe::LegacyStreamFallback) => {
+            println!(
+                "D-ID credential probe: OK (legacy stream fallback; agent metadata GET returned 403)"
+            );
             Ok(())
         }
         Err(error) => {
             let message = match error.kind {
                 ProviderErrorKind::PolicyDenied => {
-                    "D-ID credential probe: AUTH_OR_PERMISSION_DENIED (provider returned authorization/policy denial)"
+                    "D-ID credential probe: AUTH_OR_PERMISSION_DENIED (provider denied both the canonical lookup or required runtime access)"
                 }
                 ProviderErrorKind::RateLimited => "D-ID credential probe: RATE_LIMITED",
                 ProviderErrorKind::Timeout => "D-ID credential probe: TIMEOUT",

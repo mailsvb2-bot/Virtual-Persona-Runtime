@@ -1,25 +1,29 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcSessionDescription,
+    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
+    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod client_control;
 mod protocol;
+mod provider_error;
 
 use client_control::DidClientControlRegistry;
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
     CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
     SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+};
+use provider_error::{
+    cancelled, expect_success, invalid_response, map_transport_error, policy_denied, unavailable,
+    validate_audio_url, validate_endpoint,
 };
 
 pub struct DidAgentStreamsConfig {
@@ -65,6 +69,28 @@ impl DidAgentStreamsConfig {
             model: "agents-streams".to_owned(),
             representation: Some(self.agent_id.clone()),
         }
+    }
+}
+
+/// Safe result of checking the D-ID access path used by RT0 without exposing credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DidRuntimeAccessProbe {
+    /// Agent metadata is readable; contains the normalized presenter type.
+    Presenter(String),
+    /// Agent metadata GET is forbidden, but the historical legacy stream path is authorized.
+    LegacyStreamFallback,
+}
+
+enum PresenterLookupError {
+    MetadataForbidden,
+    Provider(ProviderError),
+}
+
+struct NeverCancelled;
+
+impl CancellationProbe for NeverCancelled {
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
@@ -155,16 +181,24 @@ impl DidAgentStreamsAvatar {
         }
     }
 
-    fn presenter_type(&self) -> Result<String, ProviderError> {
+    fn presenter_type(&self) -> Result<String, PresenterLookupError> {
         let response = self
-            .authorized(self.client.get(self.agent_url()?))
+            .authorized(
+                self.client
+                    .get(self.agent_url().map_err(PresenterLookupError::Provider)?),
+            )
             .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
-        let body: AgentResponse = response.json().map_err(|_| invalid_response())?;
+            .map_err(|error| PresenterLookupError::Provider(map_transport_error(&error)))?;
+        if response.status().as_u16() == 403 {
+            return Err(PresenterLookupError::MetadataForbidden);
+        }
+        let response = expect_success(response).map_err(PresenterLookupError::Provider)?;
+        let body: AgentResponse = response
+            .json()
+            .map_err(|_| PresenterLookupError::Provider(invalid_response()))?;
         let presenter_type = body.presenter.kind.trim().to_ascii_lowercase();
         if presenter_type.is_empty() {
-            Err(invalid_response())
+            Err(PresenterLookupError::Provider(invalid_response()))
         } else {
             Ok(presenter_type)
         }
@@ -174,9 +208,30 @@ impl DidAgentStreamsAvatar {
     /// only the non-secret presenter type. This performs no session creation and exposes no key.
     ///
     /// # Errors
-    /// Returns the same typed provider failure used by normal session discovery.
+    /// Returns a typed provider failure when presenter metadata cannot be read.
     pub fn probe_presenter_type(&self) -> Result<String, ProviderError> {
-        self.presenter_type()
+        self.presenter_type().map_err(|error| match error {
+            PresenterLookupError::MetadataForbidden => policy_denied(),
+            PresenterLookupError::Provider(provider) => provider,
+        })
+    }
+
+    /// Probes the same D-ID access path used by runtime. If agent metadata is forbidden with 403,
+    /// it validates the historical RT0 stream endpoint by creating and immediately closing one
+    /// legacy WebRTC session. No provider secret is exposed.
+    ///
+    /// # Errors
+    /// Returns the typed provider failure from metadata discovery or the legacy stream endpoint.
+    pub fn probe_runtime_access(&self) -> Result<DidRuntimeAccessProbe, ProviderError> {
+        match self.presenter_type() {
+            Ok(presenter) => Ok(DidRuntimeAccessProbe::Presenter(presenter)),
+            Err(PresenterLookupError::MetadataForbidden) => {
+                let session = self.create_webrtc_session(&NeverCancelled)?;
+                self.close_session(&session)?;
+                Ok(DidRuntimeAccessProbe::LegacyStreamFallback)
+            }
+            Err(PresenterLookupError::Provider(provider)) => Err(provider),
+        }
     }
 
     fn create_webrtc_session(
@@ -191,7 +246,7 @@ impl DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
+        let response = expect_success(response)?;
         let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
         let client_interrupt = body.fluent && body.interrupt_enabled;
         let session: RealtimeAvatarSession = body.try_into()?;
@@ -210,7 +265,7 @@ impl DidAgentStreamsAvatar {
             .authorized(self.client.post(self.v2_sessions_url()?))
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
+        let response = expect_success(response)?;
         let body: CreateV2SessionResponse = response.json().map_err(|_| invalid_response())?;
         body.try_into()
     }
@@ -226,14 +281,6 @@ impl DidAgentStreamsAvatar {
             Err(cancelled())
         } else {
             Ok(())
-        }
-    }
-
-    fn expect_success(response: Response) -> Result<Response, ProviderError> {
-        if response.status().is_success() {
-            Ok(response)
-        } else {
-            Err(map_status(response.status().as_u16()))
         }
     }
 }
@@ -255,10 +302,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
-        if self.presenter_type()? == "expressive" {
-            self.create_livekit_session(cancellation)
-        } else {
-            self.create_webrtc_session(cancellation)
+        match self.presenter_type() {
+            Ok(presenter) if presenter == "expressive" => self.create_livekit_session(cancellation),
+            Ok(_) | Err(PresenterLookupError::MetadataForbidden) => {
+                self.create_webrtc_session(cancellation)
+            }
+            Err(PresenterLookupError::Provider(provider)) => Err(provider),
         }
     }
 
@@ -290,7 +339,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn submit_ice_candidate(
@@ -317,7 +366,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn speak_text(
@@ -345,7 +394,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn speak_audio_url(
@@ -371,7 +420,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn client_control(
@@ -474,106 +523,10 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                     })
                     .send()
                     .map_err(|error| map_transport_error(&error))?;
-                Self::expect_success(response)?;
+                expect_success(response)?;
                 self.client_control.forget(session)
             }
         }
-    }
-}
-
-fn validate_audio_url(audio_url: &str) -> Result<(), ProviderError> {
-    let parsed = reqwest::Url::parse(audio_url).map_err(|_| invalid_response())?;
-    let has_host = parsed
-        .host_str()
-        .is_some_and(|host| !host.trim().is_empty());
-    let has_userinfo = !parsed.username().is_empty() || parsed.password().is_some();
-    if parsed.scheme() == "https" && has_host && !has_userinfo {
-        Ok(())
-    } else {
-        Err(policy_denied())
-    }
-}
-
-fn validate_endpoint(endpoint: &str) -> Result<reqwest::Url, ProviderError> {
-    let parsed = reqwest::Url::parse(endpoint).map_err(|_| invalid_response())?;
-    let loopback = parsed.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
-    let secure_scheme = parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback);
-    let clean_authority = parsed.username().is_empty() && parsed.password().is_none();
-    if secure_scheme
-        && clean_authority
-        && parsed.host_str().is_some()
-        && parsed.query().is_none()
-        && parsed.fragment().is_none()
-    {
-        Ok(parsed)
-    } else {
-        Err(policy_denied())
-    }
-}
-
-fn map_status(status: u16) -> ProviderError {
-    match status {
-        401 | 403 => policy_denied(),
-        408 => ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        },
-        429 => ProviderError {
-            kind: ProviderErrorKind::RateLimited,
-            retryable: true,
-        },
-        500..=599 => ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        },
-        _ => invalid_response(),
-    }
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        }
-    } else {
-        ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        }
-    }
-}
-
-const fn cancelled() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::Cancelled,
-        retryable: false,
-    }
-}
-
-const fn invalid_response() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::InvalidResponse,
-        retryable: false,
-    }
-}
-
-const fn unavailable() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: false,
-    }
-}
-
-const fn policy_denied() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::PolicyDenied,
-        retryable: false,
     }
 }
 
