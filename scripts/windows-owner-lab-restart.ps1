@@ -132,6 +132,27 @@ function Assert-ExpectedListener {
     return $listenerPid
 }
 
+function Clear-ProviderEnvironmentOverrides {
+    $names = @(
+        'VPR_DID_ENDPOINT',
+        'VPR_DID_API_KEY',
+        'VPR_DID_AGENT_ID',
+        'VPR_DID_FLUENT',
+        'VPR_OWNER_LAB_STT_PROVIDER',
+        'VPR_OWNER_LAB_STT_ENDPOINT',
+        'VPR_OWNER_LAB_STT_API_KEY',
+        'VPR_OWNER_LAB_STT_MODEL',
+        'VPR_OWNER_LAB_LLM_PROVIDER',
+        'VPR_OWNER_LAB_LLM_ENDPOINT',
+        'VPR_OWNER_LAB_LLM_API_KEY',
+        'VPR_OWNER_LAB_LLM_MODEL'
+    )
+    foreach ($name in $names) {
+        Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+    }
+    Write-Host "Cleared inherited provider env overrides; canonical Windows credential profile is authoritative."
+}
+
 function Restore-ReviewedPersona {
     param([Parameter(Mandatory = $true)]$Profile)
 
@@ -204,6 +225,7 @@ try {
         throw "Owner Lab executable was not produced: $exe"
     }
 
+    Clear-ProviderEnvironmentOverrides
     $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && `"$exe`" --allow-egress"
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
     Wait-LabUp
