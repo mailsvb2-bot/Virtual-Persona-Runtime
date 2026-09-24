@@ -33,8 +33,8 @@ impl ProviderCredentialProfile {
     ) -> Self {
         Self {
             schema_version: PROFILE_SCHEMA.into(),
-            did_api_key,
-            did_agent_id,
+            did_api_key: normalize_did_api_key(did_api_key),
+            did_agent_id: did_agent_id.trim().to_owned(),
             did_endpoint: "https://api.d-id.com".into(),
             did_fluent: false,
             stt_provider: "deepgram".into(),
@@ -46,6 +46,13 @@ impl ProviderCredentialProfile {
             llm_api_key: deepseek_api_key,
             llm_model: "deepseek-flash".into(),
         }
+    }
+
+    /// Replaces only D-ID credentials while preserving STT and LLM credentials.
+    pub fn replace_did_credentials(&mut self, did_api_key: String, did_agent_id: String) {
+        self.did_api_key = normalize_did_api_key(did_api_key);
+        self.did_agent_id = did_agent_id.trim().to_owned();
+        self.did_fluent = false;
     }
 
     /// Validates that the stored profile is complete and has the expected schema.
@@ -74,6 +81,16 @@ impl ProviderCredentialProfile {
         }
         Ok(())
     }
+}
+
+fn normalize_did_api_key(value: String) -> String {
+    let value = value.trim();
+    value
+        .strip_prefix("Basic ")
+        .or_else(|| value.strip_prefix("basic "))
+        .unwrap_or(value)
+        .trim()
+        .to_owned()
 }
 
 #[cfg(windows)]
@@ -122,6 +139,8 @@ mod platform {
         };
         let mut profile: ProviderCredentialProfile = serde_json::from_str(&raw)
             .map_err(|_| "Windows Credential Manager contains an invalid VPR provider profile")?;
+        profile.did_api_key = normalize_did_api_key(profile.did_api_key);
+        profile.did_agent_id = profile.did_agent_id.trim().to_owned();
         profile.validate()?;
         // The historical working RT0 Windows configuration left VPR_DID_FLUENT unset.
         // Early secure-profile builds accidentally persisted `true`; normalize those profiles
@@ -164,6 +183,34 @@ mod tests {
         assert_eq!(profile.llm_model, "deepseek-flash");
         assert!(!profile.did_fluent);
         assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn did_key_accepts_accidental_basic_prefix_without_persisting_it() {
+        let profile = ProviderCredentialProfile::canonical_rt0(
+            "Basic user:password".into(),
+            " agent-7 ".into(),
+            "deepgram-secret".into(),
+            "deepseek-secret".into(),
+        );
+        assert_eq!(profile.did_api_key, "user:password");
+        assert_eq!(profile.did_agent_id, "agent-7");
+    }
+
+    #[test]
+    fn replacing_did_credentials_preserves_voice_provider_secrets() {
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "old-user:old-password".into(),
+            "old-agent".into(),
+            "deepgram-secret".into(),
+            "deepseek-secret".into(),
+        );
+        profile.replace_did_credentials("Basic new-user:new-password".into(), "new-agent".into());
+        assert_eq!(profile.did_api_key, "new-user:new-password");
+        assert_eq!(profile.did_agent_id, "new-agent");
+        assert_eq!(profile.stt_api_key, "deepgram-secret");
+        assert_eq!(profile.llm_api_key, "deepseek-secret");
+        assert!(!profile.did_fluent);
     }
 
     #[test]
