@@ -68,9 +68,12 @@ impl DidAgentStreamsConfig {
     }
 }
 
+/// Safe result of checking the D-ID access path used by RT0 without exposing credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DidRuntimeAccessProbe {
+    /// Agent metadata is readable; contains the normalized presenter type.
     Presenter(String),
+    /// Agent metadata GET is forbidden, but the historical legacy stream path is authorized.
     LegacyStreamFallback,
 }
 
