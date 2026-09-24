@@ -366,14 +366,14 @@ fn unauthorized_presenter_metadata_does_not_fall_back_to_stream_creation() {
 }
 
 #[test]
-fn account_auth_probe_is_read_only_and_uses_basic_authorization() {
+fn account_auth_probe_uses_account_credits_and_basic_authorization() {
     let (endpoint, captured) = serve(vec![("200 OK", "[]".to_owned())]);
     let provider = adapter(endpoint);
 
     provider.probe_account_auth_detailed().unwrap();
 
     let request = captured.recv().unwrap();
-    assert!(request.starts_with("GET /tools?limit=1 "));
+    assert!(request.starts_with("GET /credits "));
     assert!(
         request
             .to_ascii_lowercase()
@@ -390,7 +390,7 @@ fn account_auth_probe_preserves_unauthorized_status() {
         provider.probe_account_auth_detailed().unwrap_err(),
         DidRuntimeAccessFailure::Unauthorized
     );
-    assert!(captured.recv().unwrap().starts_with("GET /tools?limit=1 "));
+    assert!(captured.recv().unwrap().starts_with("GET /credits "));
 }
 
 #[test]
