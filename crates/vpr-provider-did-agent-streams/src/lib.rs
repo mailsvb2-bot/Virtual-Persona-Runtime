@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, ProviderDescriptor, ProviderError,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
     RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
@@ -14,12 +14,17 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod client_control;
 mod protocol;
+mod provider_error;
 
 use client_control::DidClientControlRegistry;
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
     CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
     SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+};
+use provider_error::{
+    cancelled, expect_success, invalid_response, map_transport_error, policy_denied, unavailable,
+    validate_audio_url, validate_endpoint,
 };
 
 pub struct DidAgentStreamsConfig {
@@ -186,7 +191,7 @@ impl DidAgentStreamsAvatar {
             return Err(PresenterLookupError::MetadataForbidden);
         }
         let response =
-            Self::expect_success(response).map_err(PresenterLookupError::Provider)?;
+            expect_success(response).map_err(PresenterLookupError::Provider)?;
         let body: AgentResponse = response
             .json()
             .map_err(|_| PresenterLookupError::Provider(invalid_response()))?;
@@ -240,7 +245,7 @@ impl DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
+        let response = expect_success(response)?;
         let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
         let client_interrupt = body.fluent && body.interrupt_enabled;
         let session: RealtimeAvatarSession = body.try_into()?;
@@ -259,7 +264,7 @@ impl DidAgentStreamsAvatar {
             .authorized(self.client.post(self.v2_sessions_url()?))
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
+        let response = expect_success(response)?;
         let body: CreateV2SessionResponse = response.json().map_err(|_| invalid_response())?;
         body.try_into()
     }
@@ -278,13 +283,6 @@ impl DidAgentStreamsAvatar {
         }
     }
 
-    fn expect_success(response: Response) -> Result<Response, ProviderError> {
-        if response.status().is_success() {
-            Ok(response)
-        } else {
-            Err(map_status(response.status().as_u16()))
-        }
-    }
 }
 
 impl RealtimeAvatarPort for DidAgentStreamsAvatar {
@@ -341,7 +339,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn submit_ice_candidate(
@@ -368,7 +366,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn speak_text(
@@ -396,7 +394,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn speak_audio_url(
@@ -422,7 +420,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             })
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        Self::expect_success(response).map(|_| ())
+        expect_success(response).map(|_| ())
     }
 
     fn client_control(
@@ -525,106 +523,10 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                     })
                     .send()
                     .map_err(|error| map_transport_error(&error))?;
-                Self::expect_success(response)?;
+                expect_success(response)?;
                 self.client_control.forget(session)
             }
         }
-    }
-}
-
-fn validate_audio_url(audio_url: &str) -> Result<(), ProviderError> {
-    let parsed = reqwest::Url::parse(audio_url).map_err(|_| invalid_response())?;
-    let has_host = parsed
-        .host_str()
-        .is_some_and(|host| !host.trim().is_empty());
-    let has_userinfo = !parsed.username().is_empty() || parsed.password().is_some();
-    if parsed.scheme() == "https" && has_host && !has_userinfo {
-        Ok(())
-    } else {
-        Err(policy_denied())
-    }
-}
-
-fn validate_endpoint(endpoint: &str) -> Result<reqwest::Url, ProviderError> {
-    let parsed = reqwest::Url::parse(endpoint).map_err(|_| invalid_response())?;
-    let loopback = parsed.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
-    let secure_scheme = parsed.scheme() == "https" || (parsed.scheme() == "http" && loopback);
-    let clean_authority = parsed.username().is_empty() && parsed.password().is_none();
-    if secure_scheme
-        && clean_authority
-        && parsed.host_str().is_some()
-        && parsed.query().is_none()
-        && parsed.fragment().is_none()
-    {
-        Ok(parsed)
-    } else {
-        Err(policy_denied())
-    }
-}
-
-fn map_status(status: u16) -> ProviderError {
-    match status {
-        401 | 403 => policy_denied(),
-        408 => ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        },
-        429 => ProviderError {
-            kind: ProviderErrorKind::RateLimited,
-            retryable: true,
-        },
-        500..=599 => ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        },
-        _ => invalid_response(),
-    }
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        }
-    } else {
-        ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        }
-    }
-}
-
-const fn cancelled() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::Cancelled,
-        retryable: false,
-    }
-}
-
-const fn invalid_response() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::InvalidResponse,
-        retryable: false,
-    }
-}
-
-const fn unavailable() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: false,
-    }
-}
-
-const fn policy_denied() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::PolicyDenied,
-        retryable: false,
     }
 }
 
