@@ -225,6 +225,13 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
     if (request.method() === "GET" && path === "/api/evidence/session") {
       return json(route, { session_state: state.sessionState, fixture: true });
     }
+    if (request.method() === "POST" && path === "/api/evidence/session/export") {
+      const participantRole = state.startAudiences.at(-1) ?? "owner";
+      return json(route, {
+        session_sequence: Math.max(state.startAudiences.length, 1),
+        participant_role: participantRole,
+      });
+    }
 
     const body = request.postDataJSON() as Record<string, unknown>;
     if (path === "/api/persona/create") {
@@ -495,8 +502,9 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
     const fakeWindow = window as typeof window & { __vprFakeLiveKitDisconnect?: () => void };
     fakeWindow.__vprFakeLiveKitDisconnect?.();
   });
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  await expect(page.locator("#status")).toContainText("evidence snapshot сохранён");
   await expect.poll(() => state.sessionState).toBe("closed");
+  await expect.poll(() => state.apiPaths.includes("POST /api/evidence/session/export")).toBe(true);
   expect(state.apiPaths).toContain("POST /api/session/close");
 });
 

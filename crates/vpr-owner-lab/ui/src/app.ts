@@ -1,3 +1,4 @@
+import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 
@@ -789,28 +790,42 @@ const closePeerTransport = (): void => {
   capabilities.clear();
 };
 
-const handleUnexpectedLiveKitDisconnect = async (room: LiveKitRoom): Promise<void> => {
+const handleUnexpectedLiveKitDisconnect = async (
+  room: LiveKitRoom,
+  reason?: unknown,
+): Promise<void> => {
   if (liveKitRoom !== room) return;
+  const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
   liveKitRoom = null;
   stopMicrophoneCapture();
   stopRemoteEvidence();
   clearRealtimeMedia();
-  setStatus("LiveKit отключен. Завершаю зависшую сессию…", "error");
+  setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
   try {
     await api<{ ok: true }>("/api/session/close", {});
     await syncStatus();
     await refreshSessionEvidence();
-    setStatus(
-      "LiveKit отключен. Сессия закрыта — сохраните evidence snapshot и подключитесь снова.",
-      "error",
-    );
+    try {
+      await downloadSessionEvidence();
+      setStatus(
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`,
+        "error",
+      );
+    } catch (exportError) {
+      setStatus(
+        exportError instanceof Error
+          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+          : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`,
+        "error",
+      );
+    }
   } catch (error) {
     await syncStatus().catch(() => undefined);
     setStatus(
       error instanceof Error
-        ? `LiveKit отключен; cleanup: ${error.message}`
-        : "LiveKit отключен; cleanup failed",
+        ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
+        : `LiveKit отключен${reasonSuffix}; cleanup failed`,
       "error",
     );
   }
@@ -930,8 +945,8 @@ const connectLiveKitTransport = async (
         .catch(() => undefined);
     }
   });
-  room.on(sdk.RoomEvent.Disconnected, () => {
-    void handleUnexpectedLiveKitDisconnect(room);
+  room.on(sdk.RoomEvent.Disconnected, (reason?: unknown) => {
+    void handleUnexpectedLiveKitDisconnect(room, reason);
   });
   await room.connect(transport.server_url, transport.token);
   realtimeReadiness.control = true;
@@ -1331,10 +1346,21 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
     await syncStatus();
     await refreshSessionEvidence();
-    setStatus(
-      kind === "revoke" ? "Доступ отозван. Сессию можно закрыть." : "Сессия закрыта",
-      "idle",
-    );
+    if (kind === "revoke") {
+      setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
+    } else {
+      try {
+        await downloadSessionEvidence();
+        setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+      } catch (exportError) {
+        setStatus(
+          exportError instanceof Error
+            ? `Сессия закрыта; evidence export: ${exportError.message}`
+            : "Сессия закрыта; evidence export failed",
+          "error",
+        );
+      }
+    }
   } catch (error) {
     await syncStatus().catch(() => undefined);
     setStatus(error instanceof Error ? `${error.message}; повторите завершение` : "Ошибка завершения", "error");
