@@ -9,8 +9,8 @@ use super::{DidAgentStreamsAvatar, DidRuntimeAccessProbe, PresenterLookupError};
 impl DidAgentStreamsAvatar {
     /// Verifies that D-ID accepts the configured account API key without touching an Agent.
     ///
-    /// The probe uses the read-only `GET /tools?limit=1` endpoint and does not inspect or expose
-    /// response data.
+    /// The probe uses the read-only account-level `GET /credits` endpoint and does not inspect
+    /// or expose response data.
     ///
     /// # Errors
     /// Preserves 401 versus 403 for safe operator diagnostics.
@@ -21,10 +21,8 @@ impl DidAgentStreamsAvatar {
                 .path_segments_mut()
                 .map_err(|()| DidRuntimeAccessFailure::Provider(invalid_response()))?;
             segments.pop_if_empty();
-            segments.push("tools");
+            segments.push("credits");
         }
-        url.query_pairs_mut().append_pair("limit", "1");
-
         let response = self
             .authorized(self.client.get(url))
             .send()
