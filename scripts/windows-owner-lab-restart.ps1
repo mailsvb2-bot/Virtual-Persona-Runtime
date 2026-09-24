@@ -214,18 +214,27 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'git switch main failed' }
         git pull --ff-only
         if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed' }
-        cargo build -p vpr-owner-lab --bin vpr-owner-lab
-        if ($LASTEXITCODE -ne 0) { throw 'Owner Lab build failed' }
+        cargo build -p vpr-owner-lab --bins
+        if ($LASTEXITCODE -ne 0) { throw 'Owner Lab binaries build failed' }
     } finally {
         Pop-Location
     }
 
     $exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
+    $credentialsExe = Join-Path $repoRoot 'target\debug\vpr-provider-credentials.exe'
     if (-not (Test-Path -LiteralPath $exe)) {
         throw "Owner Lab executable was not produced: $exe"
     }
+    if (-not (Test-Path -LiteralPath $credentialsExe)) {
+        throw "Provider credential diagnostic was not produced: $credentialsExe"
+    }
 
     Clear-ProviderEnvironmentOverrides
+    & $credentialsExe probe-did
+    if ($LASTEXITCODE -ne 0) {
+        throw 'D-ID credential preflight failed; Owner Lab was not started'
+    }
+
     $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && `"$exe`" --allow-egress"
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
     Wait-LabUp
