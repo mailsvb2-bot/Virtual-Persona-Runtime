@@ -1,3 +1,4 @@
+import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
@@ -635,7 +636,15 @@ const handleUnexpectedLiveKitDisconnect = async (room) => {
         await api("/api/session/close", {});
         await syncStatus();
         await refreshSessionEvidence();
-        setStatus("LiveKit отключен. Сессия закрыта — сохраните evidence snapshot и подключитесь снова.", "error");
+        try {
+            await downloadSessionEvidence();
+            setStatus("LiveKit отключен. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.", "error");
+        }
+        catch (exportError) {
+            setStatus(exportError instanceof Error
+                ? `LiveKit отключен. Сессия закрыта; evidence export: ${exportError.message}`
+                : "LiveKit отключен. Сессия закрыта; evidence export failed", "error");
+        }
     }
     catch (error) {
         await syncStatus().catch(() => undefined);
@@ -1135,7 +1144,17 @@ const endSession = async (kind) => {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
         await refreshSessionEvidence();
-        setStatus(kind === "revoke" ? "Доступ отозван. Сессию можно закрыть." : "Сессия закрыта", "idle");
+        try {
+            await downloadSessionEvidence();
+            setStatus(kind === "revoke"
+                ? "Доступ отозван. Evidence snapshot сохранён; сессию можно закрыть."
+                : "Сессия закрыта. Evidence snapshot сохранён.", "idle");
+        }
+        catch (exportError) {
+            setStatus(exportError instanceof Error
+                ? `Сессия завершена; evidence export: ${exportError.message}`
+                : "Сессия завершена; evidence export failed", "error");
+        }
     }
     catch (error) {
         await syncStatus().catch(() => undefined);
