@@ -372,8 +372,8 @@ mod tests {
 
     fn profile() -> ProviderCredentialProfile {
         ProviderCredentialProfile::canonical_rt0(
-            "did-secret".into(),
-            "did-agent".into(),
+            "did-secret",
+            "did-agent",
             "deepgram-secret".into(),
             "deepseek-secret".into(),
         )
