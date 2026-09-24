@@ -480,8 +480,6 @@ const updateAudienceMode = () => {
 const updateControls = () => {
     const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
-    // Microphone input is an independent canonical STT path. It must not wait for the
-    // avatar provider's remote output-audio track to be published or recovered.
     const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? providerPlaybackId !== null
@@ -933,12 +931,12 @@ const startMicrophone = async () => {
         throw new Error("MIC_UNAVAILABLE");
     try {
         micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            channelCount: 1,
-            sampleRate: 16_000,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            audio: {
+                channelCount: 1,
+                sampleRate: 16_000,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
             },
         });
     }
