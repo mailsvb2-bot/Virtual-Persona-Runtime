@@ -88,6 +88,30 @@ fn expressive_agent_body() -> String {
     r#"{"presenter":{"type":"expressive"}}"#.to_owned()
 }
 
+
+#[test]
+fn presenter_probe_is_read_only_and_uses_authorization() {
+    let (endpoint, captured) = serve(vec![("200 OK", expressive_agent_body())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(provider.probe_presenter_type().unwrap(), "expressive");
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /agents/agent-7 "));
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("authorization: basic secret-key"));
+}
+
+#[test]
+fn presenter_probe_reports_provider_policy_denial_without_creating_session() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    let error = provider.probe_presenter_type().unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+}
+
 fn session() -> RealtimeAvatarSession {
     RealtimeAvatarSession {
         provider_resource_id: "stream-1".to_owned(),
