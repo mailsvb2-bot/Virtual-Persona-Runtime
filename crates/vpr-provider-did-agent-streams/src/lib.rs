@@ -68,6 +68,25 @@ impl DidAgentStreamsConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DidRuntimeAccessProbe {
+    Presenter(String),
+    LegacyStreamFallback,
+}
+
+enum PresenterLookupError {
+    MetadataForbidden,
+    Provider(ProviderError),
+}
+
+struct NeverCancelled;
+
+impl CancellationProbe for NeverCancelled {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
 pub struct DidAgentStreamsAvatar {
     client: Client,
     config: DidAgentStreamsConfig,
@@ -155,16 +174,22 @@ impl DidAgentStreamsAvatar {
         }
     }
 
-    fn presenter_type(&self) -> Result<String, ProviderError> {
+    fn presenter_type(&self) -> Result<String, PresenterLookupError> {
         let response = self
-            .authorized(self.client.get(self.agent_url()?))
+            .authorized(self.client.get(self.agent_url().map_err(PresenterLookupError::Provider)?))
             .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = Self::expect_success(response)?;
-        let body: AgentResponse = response.json().map_err(|_| invalid_response())?;
+            .map_err(|error| PresenterLookupError::Provider(map_transport_error(&error)))?;
+        if response.status().as_u16() == 403 {
+            return Err(PresenterLookupError::MetadataForbidden);
+        }
+        let response =
+            Self::expect_success(response).map_err(PresenterLookupError::Provider)?;
+        let body: AgentResponse = response
+            .json()
+            .map_err(|_| PresenterLookupError::Provider(invalid_response()))?;
         let presenter_type = body.presenter.kind.trim().to_ascii_lowercase();
         if presenter_type.is_empty() {
-            Err(invalid_response())
+            Err(PresenterLookupError::Provider(invalid_response()))
         } else {
             Ok(presenter_type)
         }
@@ -174,9 +199,30 @@ impl DidAgentStreamsAvatar {
     /// only the non-secret presenter type. This performs no session creation and exposes no key.
     ///
     /// # Errors
-    /// Returns the same typed provider failure used by normal session discovery.
+    /// Returns a typed provider failure when presenter metadata cannot be read.
     pub fn probe_presenter_type(&self) -> Result<String, ProviderError> {
-        self.presenter_type()
+        self.presenter_type().map_err(|error| match error {
+            PresenterLookupError::MetadataForbidden => policy_denied(),
+            PresenterLookupError::Provider(provider) => provider,
+        })
+    }
+
+    /// Probes the same D-ID access path used by runtime. If agent metadata is forbidden with 403,
+    /// it validates the historical RT0 stream endpoint by creating and immediately closing one
+    /// legacy WebRTC session. No provider secret is exposed.
+    ///
+    /// # Errors
+    /// Returns the typed provider failure from metadata discovery or the legacy stream endpoint.
+    pub fn probe_runtime_access(&self) -> Result<DidRuntimeAccessProbe, ProviderError> {
+        match self.presenter_type() {
+            Ok(presenter) => Ok(DidRuntimeAccessProbe::Presenter(presenter)),
+            Err(PresenterLookupError::MetadataForbidden) => {
+                let session = self.create_webrtc_session(&NeverCancelled)?;
+                self.close_session(&session)?;
+                Ok(DidRuntimeAccessProbe::LegacyStreamFallback)
+            }
+            Err(PresenterLookupError::Provider(provider)) => Err(provider),
+        }
     }
 
     fn create_webrtc_session(
@@ -255,10 +301,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
-        if self.presenter_type()? == "expressive" {
-            self.create_livekit_session(cancellation)
-        } else {
-            self.create_webrtc_session(cancellation)
+        match self.presenter_type() {
+            Ok(presenter) if presenter == "expressive" => self.create_livekit_session(cancellation),
+            Ok(_) | Err(PresenterLookupError::MetadataForbidden) => {
+                self.create_webrtc_session(cancellation)
+            }
+            Err(PresenterLookupError::Provider(provider)) => Err(provider),
         }
     }
 
