@@ -170,6 +170,15 @@ impl DidAgentStreamsAvatar {
         }
     }
 
+    /// Verifies that the configured D-ID credential can read the configured agent and returns
+    /// only the non-secret presenter type. This performs no session creation and exposes no key.
+    ///
+    /// # Errors
+    /// Returns the same typed provider failure used by normal session discovery.
+    pub fn probe_presenter_type(&self) -> Result<String, ProviderError> {
+        self.presenter_type()
+    }
+
     fn create_webrtc_session(
         &self,
         cancellation: &dyn CancellationProbe,

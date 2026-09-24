@@ -4,10 +4,14 @@ use std::error::Error;
 #[cfg(windows)]
 use std::io::{self, Write};
 #[cfg(windows)]
+use vpr_integration::ProviderErrorKind;
+#[cfg(windows)]
 use vpr_owner_lab::{
     ProviderCredentialProfile, delete_provider_profile, load_provider_profile,
     save_provider_profile,
 };
+#[cfg(windows)]
+use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
 
 fn main() {
     if let Err(error) = run() {
@@ -34,8 +38,9 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "set" => set_profile(),
         "import-env" => import_env_profile(),
         "status" => status(),
+        "probe-did" => probe_did(),
         "clear" => clear(),
-        _ => Err("usage: vpr-provider-credentials <set|import-env|status|clear>".into()),
+        _ => Err("usage: vpr-provider-credentials <set|import-env|status|probe-did|clear>".into()),
     }
 }
 
@@ -116,6 +121,41 @@ fn status() -> Result<(), Box<dyn Error + Send + Sync>> {
         None => println!("Secure VPR provider profile: not configured"),
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn probe_did() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let profile = load_provider_profile()?
+        .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(
+            profile.did_endpoint.clone(),
+            profile.did_api_key.clone(),
+            profile.did_agent_id.clone(),
+        )
+        .with_fluent(profile.did_fluent),
+    )
+    .map_err(|_| "D-ID provider configuration rejected")?;
+
+    match provider.probe_presenter_type() {
+        Ok(presenter) => {
+            println!("D-ID credential probe: OK (presenter={presenter})");
+            Ok(())
+        }
+        Err(error) => {
+            let message = match error.kind {
+                ProviderErrorKind::PolicyDenied => {
+                    "D-ID credential probe: AUTH_OR_PERMISSION_DENIED (provider returned authorization/policy denial)"
+                }
+                ProviderErrorKind::RateLimited => "D-ID credential probe: RATE_LIMITED",
+                ProviderErrorKind::Timeout => "D-ID credential probe: TIMEOUT",
+                ProviderErrorKind::Unavailable => "D-ID credential probe: UNAVAILABLE",
+                ProviderErrorKind::Cancelled => "D-ID credential probe: CANCELLED",
+                ProviderErrorKind::InvalidResponse => "D-ID credential probe: INVALID_RESPONSE",
+            };
+            Err(message.into())
+        }
+    }
 }
 
 #[cfg(windows)]
