@@ -172,6 +172,35 @@ fn probe_profile_did(
     )
     .map_err(|_| "D-ID provider configuration rejected")?;
 
+    match provider.probe_account_auth_detailed() {
+        Ok(()) => println!("D-ID account authentication: OK"),
+        Err(DidRuntimeAccessFailure::Unauthorized) => {
+            return Err(
+                "D-ID account authentication: UNAUTHORIZED_401 (D-ID rejected the API key itself)"
+                    .into(),
+            );
+        }
+        Err(DidRuntimeAccessFailure::Forbidden) => {
+            return Err(
+                "D-ID account authentication: FORBIDDEN_403 (the key reached D-ID but account-level API access was denied)"
+                    .into(),
+            );
+        }
+        Err(DidRuntimeAccessFailure::Provider(error)) => {
+            let message = match error.kind {
+                ProviderErrorKind::PolicyDenied => "D-ID account authentication: POLICY_DENIED",
+                ProviderErrorKind::RateLimited => "D-ID account authentication: RATE_LIMITED",
+                ProviderErrorKind::Timeout => "D-ID account authentication: TIMEOUT",
+                ProviderErrorKind::Unavailable => "D-ID account authentication: UNAVAILABLE",
+                ProviderErrorKind::Cancelled => "D-ID account authentication: CANCELLED",
+                ProviderErrorKind::InvalidResponse => {
+                    "D-ID account authentication: INVALID_RESPONSE"
+                }
+            };
+            return Err(message.into());
+        }
+    }
+
     match provider.probe_runtime_access_detailed() {
         Ok(DidRuntimeAccessProbe::Presenter(presenter)) => {
             println!("D-ID credential probe: OK (presenter={presenter})");
