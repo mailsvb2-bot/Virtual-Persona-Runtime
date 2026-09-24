@@ -1118,12 +1118,12 @@ const startMicrophone = async (): Promise<void> => {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      sampleRate: 16_000,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
       },
     });
   } catch (error) {
