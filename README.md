@@ -79,7 +79,7 @@ To replace only D-ID credentials while preserving the stored Deepgram and DeepSe
 cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set-did
 ```
 
-The replacement is probed before it overwrites the existing D-ID credentials. The probe first validates the API key against a read-only account-level D-ID endpoint, then validates access to the configured Agent/runtime path. A failed probe leaves the previous secure profile unchanged.
+The replacement is probed before it overwrites the existing D-ID credentials. The probe first validates the API key against D-ID's read-only account-level `GET /credits` endpoint, then validates access to the configured Agent/runtime path. A failed probe leaves the previous secure profile unchanged.
 
 Check configuration without revealing keys:
 
