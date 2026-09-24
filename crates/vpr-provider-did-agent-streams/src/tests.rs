@@ -311,6 +311,57 @@ fn malformed_client_playback_event_fails_closed() {
 }
 
 #[test]
+fn forbidden_presenter_metadata_falls_back_to_historical_stream_path() {
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("201 Created", create_body.to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+    let live = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap();
+
+    assert!(matches!(live.transport, RealtimeAvatarTransport::WebRtc { .. }));
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+}
+
+#[test]
+fn runtime_access_probe_uses_legacy_stream_only_when_metadata_is_forbidden() {
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("201 Created", create_body.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access().unwrap(),
+        DidRuntimeAccessProbe::LegacyStreamFallback
+    );
+    let requests: Vec<String> = (0..3).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+    assert!(requests[2].starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+}
+
+#[test]
+fn unauthorized_presenter_metadata_does_not_fall_back_to_stream_creation() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
 fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
