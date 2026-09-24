@@ -71,7 +71,15 @@ Otherwise run the secure setup once:
 cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set
 ```
 
-The setup asks for the D-ID API key, D-ID agent ID, Deepgram API key, and DeepSeek API key. Secret values are entered without terminal echo. The saved profile selects D-ID with the historical RT0 `VPR_DID_FLUENT` behavior (disabled/unset), Deepgram `nova-3`, and DeepSeek `deepseek-flash`.
+The setup asks for the D-ID API key, D-ID agent ID, Deepgram API key, and DeepSeek API key. Secret values are entered without terminal echo. D-ID is validated before the profile is saved. The raw D-ID key format is `API_USERNAME:API_PASSWORD`; an accidental leading `Basic ` prefix is stripped before storage. The saved profile selects D-ID with the historical RT0 `VPR_DID_FLUENT` behavior (disabled/unset), Deepgram `nova-3`, and DeepSeek `deepseek-flash`.
+
+To replace only D-ID credentials while preserving the stored Deepgram and DeepSeek keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set-did
+```
+
+The replacement is probed before it overwrites the existing D-ID credentials. A failed probe leaves the previous secure profile unchanged.
 
 Check configuration without revealing keys:
 
@@ -93,7 +101,7 @@ For the Windows RT0 operator path, use the safe launcher:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
 ```
 
-The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a read-only D-ID credential/agent preflight, pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
+The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a safe D-ID credential/agent preflight (metadata lookup first; if metadata access is forbidden, it may create and immediately close one legacy stream to verify the historical runtime path), pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
 
 For deliberate manual runs, the lower-level process-scoped opt-in is still available:
 
