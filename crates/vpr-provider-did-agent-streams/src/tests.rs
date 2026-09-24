@@ -366,6 +366,34 @@ fn unauthorized_presenter_metadata_does_not_fall_back_to_stream_creation() {
 }
 
 #[test]
+fn account_auth_probe_is_read_only_and_uses_basic_authorization() {
+    let (endpoint, captured) = serve(vec![("200 OK", "[]".to_owned())]);
+    let provider = adapter(endpoint);
+
+    provider.probe_account_auth_detailed().unwrap();
+
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /tools?limit=1 "));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
+}
+
+#[test]
+fn account_auth_probe_preserves_unauthorized_status() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_account_auth_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Unauthorized
+    );
+    assert!(captured.recv().unwrap().starts_with("GET /tools?limit=1 "));
+}
+
+#[test]
 fn detailed_probe_reports_401_without_stream_fallback() {
     let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
     let provider = adapter(endpoint);
