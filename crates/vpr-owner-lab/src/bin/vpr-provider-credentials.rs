@@ -77,7 +77,9 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
     println!("Replace only D-ID credentials; Deepgram and DeepSeek credentials are preserved.");
-    println!("Enter the raw D-ID key as API_USERNAME:API_PASSWORD; an accidental Basic prefix is stripped.");
+    println!(
+        "Enter the raw D-ID key as API_USERNAME:API_PASSWORD; an accidental Basic prefix is stripped."
+    );
     let did_api_key = prompt_secret("D-ID API key: ")?;
     let did_agent_id = prompt_line("D-ID agent ID: ")?;
     profile.replace_did_credentials(did_api_key, did_agent_id);
