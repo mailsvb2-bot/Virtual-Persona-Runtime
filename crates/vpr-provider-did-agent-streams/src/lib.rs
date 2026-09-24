@@ -88,14 +88,6 @@ enum PresenterLookupError {
     Provider(ProviderError),
 }
 
-struct NeverCancelled;
-
-impl CancellationProbe for NeverCancelled {
-    fn is_cancelled(&self) -> bool {
-        false
-    }
-}
-
 pub struct DidAgentStreamsAvatar {
     client: Client,
     config: DidAgentStreamsConfig,
