@@ -1,6 +1,17 @@
 use reqwest::blocking::Response;
 use vpr_integration::{ProviderError, ProviderErrorKind};
 
+/// D-ID-specific access failure used only for safe credential diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DidRuntimeAccessFailure {
+    /// D-ID returned HTTP 401.
+    Unauthorized,
+    /// D-ID returned HTTP 403 for the runtime access path.
+    Forbidden,
+    /// A non-authentication provider failure occurred.
+    Provider(ProviderError),
+}
+
 pub(super) fn validate_audio_url(audio_url: &str) -> Result<(), ProviderError> {
     let parsed = reqwest::Url::parse(audio_url).map_err(|_| invalid_response())?;
     let has_host = parsed
