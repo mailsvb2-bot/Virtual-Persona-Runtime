@@ -93,7 +93,7 @@ For the Windows RT0 operator path, use the safe launcher:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
 ```
 
-The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents an old or wrong-port Owner Lab instance from masquerading as the newly launched process.
+The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a read-only D-ID credential/agent preflight, pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
 
 For deliberate manual runs, the lower-level process-scoped opt-in is still available:
 
