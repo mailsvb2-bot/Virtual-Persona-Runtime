@@ -70,6 +70,12 @@ mod windows_restart_script_tests {
         assert!(script.contains("VPR_OWNER_LAB_PORT=$Port"));
         assert!(script.contains("--allow-egress"));
         assert!(script.contains("Assert-ExpectedListener"));
+        assert!(script.contains("Clear-ProviderEnvironmentOverrides"));
+        assert!(script.contains("Remove-Item -Path \"Env:$name\""));
+        assert!(script.contains("VPR_DID_API_KEY"));
+        assert!(script.contains("VPR_DID_AGENT_ID"));
+        assert!(script.contains("VPR_OWNER_LAB_STT_API_KEY"));
+        assert!(script.contains("VPR_OWNER_LAB_LLM_API_KEY"));
         assert!(script.contains("bootstrap.egress_enabled"));
         assert!(script.contains("status.egress_enabled"));
     }
