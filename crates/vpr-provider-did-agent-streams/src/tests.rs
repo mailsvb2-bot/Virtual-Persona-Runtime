@@ -323,7 +323,10 @@ fn forbidden_presenter_metadata_falls_back_to_historical_stream_path() {
         .create_session(&Probe(AtomicBool::new(false)))
         .unwrap();
 
-    assert!(matches!(live.transport, RealtimeAvatarTransport::WebRtc { .. }));
+    assert!(matches!(
+        live.transport,
+        RealtimeAvatarTransport::WebRtc { .. }
+    ));
     let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
     assert!(requests[0].starts_with("GET /agents/agent-7 "));
     assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
