@@ -50,7 +50,7 @@ mod windows_restart_script_tests {
     #[test]
     fn safe_restart_script_parses_in_windows_powershell() {
         let script = script_path();
-        let escaped = script.to_string_lossy().replace(''', "''");
+        let escaped = script.to_string_lossy().replace('\'', "''");
         let command = format!(
             "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile('{escaped}',[ref]$tokens,[ref]$errors) | Out-Null; if($errors.Count -gt 0) {{ $errors | ForEach-Object {{ Write-Error $_.Message }}; exit 1 }}"
         );
