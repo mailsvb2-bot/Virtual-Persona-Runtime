@@ -3,11 +3,10 @@ use std::time::Duration;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcSessionDescription,
+    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
+    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -184,14 +183,16 @@ impl DidAgentStreamsAvatar {
 
     fn presenter_type(&self) -> Result<String, PresenterLookupError> {
         let response = self
-            .authorized(self.client.get(self.agent_url().map_err(PresenterLookupError::Provider)?))
+            .authorized(
+                self.client
+                    .get(self.agent_url().map_err(PresenterLookupError::Provider)?),
+            )
             .send()
             .map_err(|error| PresenterLookupError::Provider(map_transport_error(&error)))?;
         if response.status().as_u16() == 403 {
             return Err(PresenterLookupError::MetadataForbidden);
         }
-        let response =
-            expect_success(response).map_err(PresenterLookupError::Provider)?;
+        let response = expect_success(response).map_err(PresenterLookupError::Provider)?;
         let body: AgentResponse = response
             .json()
             .map_err(|_| PresenterLookupError::Provider(invalid_response()))?;
@@ -282,7 +283,6 @@ impl DidAgentStreamsAvatar {
             Ok(())
         }
     }
-
 }
 
 impl RealtimeAvatarPort for DidAgentStreamsAvatar {
