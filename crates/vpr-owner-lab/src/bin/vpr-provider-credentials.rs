@@ -193,7 +193,9 @@ fn probe_profile_did(
                 ProviderErrorKind::Timeout => "D-ID account authentication: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID account authentication: UNAVAILABLE",
                 ProviderErrorKind::Cancelled => "D-ID account authentication: CANCELLED",
-                ProviderErrorKind::InvalidResponse => "D-ID account authentication: INVALID_RESPONSE",
+                ProviderErrorKind::InvalidResponse => {
+                    "D-ID account authentication: INVALID_RESPONSE"
+                }
             };
             return Err(message.into());
         }
