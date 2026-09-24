@@ -88,7 +88,6 @@ fn expressive_agent_body() -> String {
     r#"{"presenter":{"type":"expressive"}}"#.to_owned()
 }
 
-
 #[test]
 fn presenter_probe_is_read_only_and_uses_authorization() {
     let (endpoint, captured) = serve(vec![("200 OK", expressive_agent_body())]);
@@ -97,9 +96,11 @@ fn presenter_probe_is_read_only_and_uses_authorization() {
     assert_eq!(provider.probe_presenter_type().unwrap(), "expressive");
     let request = captured.recv().unwrap();
     assert!(request.starts_with("GET /agents/agent-7 "));
-    assert!(request
-        .to_ascii_lowercase()
-        .contains("authorization: basic secret-key"));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
 }
 
 #[test]
