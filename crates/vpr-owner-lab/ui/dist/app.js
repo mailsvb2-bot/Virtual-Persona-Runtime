@@ -480,8 +480,9 @@ const updateAudienceMode = () => {
 const updateControls = () => {
     const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
-    const voiceReady = backendStatus.conversation_readiness === "text_and_voice"
-        && realtimeReadiness.audio;
+    // Microphone input is an independent canonical STT path. It must not wait for the
+    // avatar provider's remote output-audio track to be published or recovered.
+    const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? providerPlaybackId !== null
         : true;
@@ -580,8 +581,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
         detachLiveKitTrack(track, avatarAudio);
         liveKitAudioTrack = null;
         realtimeReadiness.audio = false;
-        stopMicrophoneCapture();
-        setStatus("Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.", "error");
+        setStatus("Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…", "error");
         if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
             void interruptAvatar();
         }
@@ -911,16 +911,40 @@ const flushMicrophonePcm = () => {
     queueMicrophoneChunk(micPendingPcm);
     micPendingPcm = new Uint8Array(0);
 };
+const microphoneCaptureError = (error) => {
+    if (!(error instanceof DOMException)) {
+        return error instanceof Error ? error : new Error("MIC_CAPTURE_FAILED");
+    }
+    switch (error.name) {
+        case "NotAllowedError":
+            return new Error("MIC_PERMISSION_DENIED");
+        case "NotFoundError":
+            return new Error("MIC_DEVICE_NOT_FOUND");
+        case "NotReadableError":
+            return new Error("MIC_DEVICE_UNAVAILABLE");
+        case "SecurityError":
+            return new Error("MIC_SECURITY_DENIED");
+        default:
+            return new Error(`MIC_CAPTURE_FAILED:${error.name}`);
+    }
+};
 const startMicrophone = async () => {
-    micStream = await navigator.mediaDevices.getUserMedia({
+    if (!navigator.mediaDevices?.getUserMedia)
+        throw new Error("MIC_UNAVAILABLE");
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
             channelCount: 1,
             sampleRate: 16_000,
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
-        },
-    });
+            },
+        });
+    }
+    catch (error) {
+        throw microphoneCaptureError(error);
+    }
     audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
     if (audioContext.sampleRate !== 16_000) {
         stopMicrophoneCapture();
