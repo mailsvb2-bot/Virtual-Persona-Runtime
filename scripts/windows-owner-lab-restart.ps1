@@ -100,12 +100,36 @@ function Stop-PortListener {
     $pids = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)
     foreach ($processId in $pids) {
         if ($processId -and $processId -ne $PID) {
+            Write-Host "Stopping stale Owner Lab listener PID $processId on port $Port."
             Stop-Process -Id $processId -Force -ErrorAction Stop
         }
     }
     if ($pids.Count -gt 0) {
         Wait-LabDown
     }
+}
+
+function Assert-ExpectedListener {
+    param([Parameter(Mandatory = $true)][string]$ExpectedExe)
+
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -ne 1) {
+        throw "Expected exactly one listener on port $Port, found $($listeners.Count)"
+    }
+
+    $listenerPid = $listeners[0].OwningProcess
+    $process = Get-Process -Id $listenerPid -ErrorAction Stop
+    $actualExe = $process.Path
+    if ([string]::IsNullOrWhiteSpace($actualExe)) {
+        throw "Could not resolve executable for listener PID $listenerPid"
+    }
+
+    $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
+    $actualPath = [System.IO.Path]::GetFullPath($actualExe)
+    if (-not [string]::Equals($expectedPath, $actualPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Port $Port is owned by unexpected process: $actualPath"
+    }
+    return $listenerPid
 }
 
 function Restore-ReviewedPersona {
@@ -180,10 +204,11 @@ try {
         throw "Owner Lab executable was not produced: $exe"
     }
 
-    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && `"$exe`""
+    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && `"$exe`" --allow-egress"
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
     Wait-LabUp
 
+    $listenerPid = Assert-ExpectedListener -ExpectedExe $exe
     $bootstrap = Get-Bootstrap
     $status = Get-LabStatus
     if (-not $bootstrap.egress_enabled -or -not $status.egress_enabled) {
@@ -198,7 +223,7 @@ try {
     }
 
     $status = Get-LabStatus
-    Write-Host "Owner Lab ready: egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
+    Write-Host "Owner Lab ready: pid=$listenerPid port=$Port egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
     if (-not $NoBrowser) {
         Start-Process $baseUrl
     }
