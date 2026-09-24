@@ -35,7 +35,6 @@ pub use state::{
 
 pub use providers::{ProviderBundle, ProviderDescriptor};
 
-
 #[cfg(all(test, windows))]
 mod windows_restart_script_tests {
     use std::fs;
@@ -58,7 +57,10 @@ mod windows_restart_script_tests {
             .args(["-NoProfile", "-NonInteractive", "-Command", &command])
             .status()
             .expect("Windows PowerShell must be available on the Windows RT0 operator path");
-        assert!(status.success(), "Owner Lab restart script must parse cleanly");
+        assert!(
+            status.success(),
+            "Owner Lab restart script must parse cleanly"
+        );
     }
 
     #[test]
