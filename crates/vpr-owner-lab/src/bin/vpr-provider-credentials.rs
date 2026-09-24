@@ -60,8 +60,8 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     let deepseek_api_key = prompt_secret("DeepSeek API key: ")?;
 
     let profile = ProviderCredentialProfile::canonical_rt0(
-        did_api_key,
-        did_agent_id,
+        &did_api_key,
+        &did_agent_id,
         deepgram_api_key,
         deepseek_api_key,
     );
@@ -82,7 +82,7 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     );
     let did_api_key = prompt_secret("D-ID API key: ")?;
     let did_agent_id = prompt_line("D-ID agent ID: ")?;
-    profile.replace_did_credentials(did_api_key, did_agent_id);
+    profile.replace_did_credentials(&did_api_key, &did_agent_id);
     probe_profile_did(&profile)?;
     save_provider_profile(&profile)?;
     println!("Updated D-ID credentials securely for the current Windows user.");
@@ -94,9 +94,11 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn import_env_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     require_canonical_provider_if_set("VPR_OWNER_LAB_STT_PROVIDER", "deepgram")?;
     require_canonical_provider_if_set("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek")?;
+    let did_api_key = required_process_value("VPR_DID_API_KEY")?;
+    let did_agent_id = required_process_value("VPR_DID_AGENT_ID")?;
     let profile = ProviderCredentialProfile::canonical_rt0(
-        required_process_value("VPR_DID_API_KEY")?,
-        required_process_value("VPR_DID_AGENT_ID")?,
+        &did_api_key,
+        &did_agent_id,
         required_process_value("VPR_OWNER_LAB_STT_API_KEY")?,
         required_process_value("VPR_OWNER_LAB_LLM_API_KEY")?,
     );
