@@ -81,7 +81,19 @@ pub enum DidRuntimeAccessProbe {
     LegacyStreamFallback,
 }
 
+/// D-ID-specific access failure used only for safe credential diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DidRuntimeAccessFailure {
+    /// D-ID returned HTTP 401.
+    Unauthorized,
+    /// D-ID returned HTTP 403 for the runtime access path.
+    Forbidden,
+    /// A non-authentication provider failure occurred.
+    Provider(ProviderError),
+}
+
 enum PresenterLookupError {
+    Unauthorized,
     MetadataForbidden,
     Provider(ProviderError),
 }
@@ -189,8 +201,10 @@ impl DidAgentStreamsAvatar {
             )
             .send()
             .map_err(|error| PresenterLookupError::Provider(map_transport_error(&error)))?;
-        if response.status().as_u16() == 403 {
-            return Err(PresenterLookupError::MetadataForbidden);
+        match response.status().as_u16() {
+            401 => return Err(PresenterLookupError::Unauthorized),
+            403 => return Err(PresenterLookupError::MetadataForbidden),
+            _ => {}
         }
         let response = expect_success(response).map_err(PresenterLookupError::Provider)?;
         let body: AgentResponse = response
@@ -211,7 +225,9 @@ impl DidAgentStreamsAvatar {
     /// Returns a typed provider failure when presenter metadata cannot be read.
     pub fn probe_presenter_type(&self) -> Result<String, ProviderError> {
         self.presenter_type().map_err(|error| match error {
-            PresenterLookupError::MetadataForbidden => policy_denied(),
+            PresenterLookupError::Unauthorized | PresenterLookupError::MetadataForbidden => {
+                policy_denied()
+            }
             PresenterLookupError::Provider(provider) => provider,
         })
     }
@@ -223,15 +239,62 @@ impl DidAgentStreamsAvatar {
     /// # Errors
     /// Returns the typed provider failure from metadata discovery or the legacy stream endpoint.
     pub fn probe_runtime_access(&self) -> Result<DidRuntimeAccessProbe, ProviderError> {
+        self.probe_runtime_access_detailed().map_err(|error| match error {
+            DidRuntimeAccessFailure::Unauthorized | DidRuntimeAccessFailure::Forbidden => {
+                policy_denied()
+            }
+            DidRuntimeAccessFailure::Provider(provider) => provider,
+        })
+    }
+
+    /// Probes the runtime D-ID access path while preserving HTTP 401 versus 403 for diagnostics.
+    ///
+    /// # Errors
+    /// Returns a D-ID-specific access failure without exposing credentials or response bodies.
+    pub fn probe_runtime_access_detailed(
+        &self,
+    ) -> Result<DidRuntimeAccessProbe, DidRuntimeAccessFailure> {
         match self.presenter_type() {
             Ok(presenter) => Ok(DidRuntimeAccessProbe::Presenter(presenter)),
+            Err(PresenterLookupError::Unauthorized) => Err(DidRuntimeAccessFailure::Unauthorized),
             Err(PresenterLookupError::MetadataForbidden) => {
-                let session = self.create_webrtc_session(&NeverCancelled)?;
-                self.close_session(&session)?;
+                self.probe_legacy_stream_access()?;
                 Ok(DidRuntimeAccessProbe::LegacyStreamFallback)
             }
-            Err(PresenterLookupError::Provider(provider)) => Err(provider),
+            Err(PresenterLookupError::Provider(provider)) => {
+                Err(DidRuntimeAccessFailure::Provider(provider))
+            }
         }
+    }
+
+    fn probe_legacy_stream_access(&self) -> Result<(), DidRuntimeAccessFailure> {
+        let response = self
+            .authorized(self.client.post(
+                self.streams_url()
+                    .map_err(DidRuntimeAccessFailure::Provider)?,
+            ))
+            .json(&CreateStreamRequest {
+                fluent: self.config.fluent,
+            })
+            .send()
+            .map_err(|error| {
+                DidRuntimeAccessFailure::Provider(map_transport_error(&error))
+            })?;
+        match response.status().as_u16() {
+            401 => return Err(DidRuntimeAccessFailure::Unauthorized),
+            403 => return Err(DidRuntimeAccessFailure::Forbidden),
+            _ => {}
+        }
+        let response =
+            expect_success(response).map_err(DidRuntimeAccessFailure::Provider)?;
+        let body: CreateStreamResponse = response
+            .json()
+            .map_err(|_| DidRuntimeAccessFailure::Provider(invalid_response()))?;
+        let session: RealtimeAvatarSession = body
+            .try_into()
+            .map_err(DidRuntimeAccessFailure::Provider)?;
+        self.close_session(&session)
+            .map_err(DidRuntimeAccessFailure::Provider)
     }
 
     fn create_webrtc_session(
@@ -307,6 +370,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             Ok(_) | Err(PresenterLookupError::MetadataForbidden) => {
                 self.create_webrtc_session(cancellation)
             }
+            Err(PresenterLookupError::Unauthorized) => Err(policy_denied()),
             Err(PresenterLookupError::Provider(provider)) => Err(provider),
         }
     }
