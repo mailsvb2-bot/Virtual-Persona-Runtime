@@ -87,10 +87,18 @@ cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
 
 Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority, so CI and deliberate per-process overrides keep their existing behavior. API-key values are never printed or included in provider descriptors or evidence.
 
-Launch Owner Lab with an explicit process-scoped egress opt-in:
+For the Windows RT0 operator path, use the safe launcher:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
+```
+
+The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents an old or wrong-port Owner Lab instance from masquerading as the newly launched process.
+
+For deliberate manual runs, the lower-level process-scoped opt-in is still available:
 
 ```powershell
 cargo run -p vpr-owner-lab -- --allow-egress
 ```
 
-This flag enables external provider calls only for that Owner Lab process. Closing the process returns to the fail-closed default; the permission is not stored with provider credentials. The existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` environment variable remains supported for automation and deliberate scripted runs.
+Closing the process returns to the fail-closed default; egress permission is not stored with provider credentials. The existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` environment variable remains supported for automation.
