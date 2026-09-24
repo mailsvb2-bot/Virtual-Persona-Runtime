@@ -7,6 +7,7 @@ mod http_owner_capture;
 mod http_security_tests;
 mod http_text;
 mod http_voice;
+mod launch;
 
 use std::env;
 use std::error::Error;
@@ -104,7 +105,15 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let egress_enabled = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").is_ok_and(|value| value == "true");
+    let launch_options = launch::parse_launch_options(env::args().skip(1))
+        .map_err(|error| format!("invalid owner-lab launch options: {error}"))?;
+    if launch_options.show_help {
+        launch::print_usage();
+        return Ok(());
+    }
+
+    let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
+    let egress_enabled = launch::resolve_egress_enabled(&launch_options, egress_env.as_deref());
     let port = env::var("VPR_OWNER_LAB_PORT")
         .ok()
         .map(|value| value.parse::<u16>())
