@@ -123,7 +123,9 @@ pub fn delete_provider_profile() -> Result<(), String> {
 
 #[cfg(windows)]
 mod platform {
-    use super::{ProviderCredentialProfile, WINDOWS_PROFILE_ACCOUNT, WINDOWS_SERVICE};
+    use super::{
+        ProviderCredentialProfile, WINDOWS_PROFILE_ACCOUNT, WINDOWS_SERVICE, normalize_did_api_key,
+    };
     use keyring::{Entry, Error as KeyringError};
 
     fn entry() -> Result<Entry, String> {
