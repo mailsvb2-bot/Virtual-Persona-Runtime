@@ -1,5 +1,4 @@
-use reqwest::blocking::RequestBuilder;
-use vpr_integration::{ProviderError, RealtimeAvatarSession};
+use vpr_integration::{ProviderError, RealtimeAvatarPort, RealtimeAvatarSession};
 
 use super::protocol::{CreateStreamRequest, CreateStreamResponse};
 use super::provider_error::{expect_success, invalid_response, map_transport_error, policy_denied};
@@ -88,9 +87,5 @@ impl DidAgentStreamsAvatar {
             body.try_into().map_err(DidRuntimeAccessFailure::Provider)?;
         self.close_session(&session)
             .map_err(DidRuntimeAccessFailure::Provider)
-    }
-
-    pub(super) fn authorized_for_probe(&self, request: RequestBuilder) -> RequestBuilder {
-        self.authorized(request)
     }
 }
