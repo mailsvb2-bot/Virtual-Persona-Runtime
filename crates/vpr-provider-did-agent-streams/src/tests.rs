@@ -366,6 +366,36 @@ fn unauthorized_presenter_metadata_does_not_fall_back_to_stream_creation() {
 }
 
 #[test]
+fn detailed_probe_reports_401_without_stream_fallback() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Unauthorized
+    );
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn detailed_probe_reports_403_when_legacy_stream_is_forbidden() {
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("403 Forbidden", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Forbidden
+    );
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+}
+
+#[test]
 fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
