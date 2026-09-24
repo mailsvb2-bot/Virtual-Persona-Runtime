@@ -203,8 +203,10 @@ for required in (
         raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
-if '&& realtimeReadiness.audio' not in app:
-    raise SystemExit("Owner Lab voice readiness must require the realtime audio modality")
+if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice";' not in app:
+    raise SystemExit("Owner Lab microphone readiness must follow canonical voice-provider readiness")
+if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice"\n    && realtimeReadiness.audio' in app:
+    raise SystemExit("Owner Lab microphone input must not depend on the avatar output-audio track")
 if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
     raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
 for required in (
