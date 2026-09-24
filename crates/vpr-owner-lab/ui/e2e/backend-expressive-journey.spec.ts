@@ -426,10 +426,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     const fakeWindow = window as typeof window & { __vprExpressiveLoseAudio?: () => void };
     fakeWindow.__vprExpressiveLoseAudio?.();
   });
-  await expect(voiceButton).toBeDisabled();
+  await expect(voiceButton).toBeEnabled();
   await expect(page.locator("#speak")).toBeEnabled();
   await expect(page.locator("#status")).toContainText(
-    "Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.",
+    "Аудиопоток аватара потерян. Микрофон и текст остаются доступны",
   );
 
   await page.evaluate(() => {
