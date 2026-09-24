@@ -2,12 +2,12 @@ mod http_avatar_input;
 mod http_client_control;
 mod http_evidence;
 mod http_json;
-mod launch;
 mod http_owner_capture;
 #[cfg(test)]
 mod http_security_tests;
 mod http_text;
 mod http_voice;
+mod launch;
 
 use std::env;
 use std::error::Error;
