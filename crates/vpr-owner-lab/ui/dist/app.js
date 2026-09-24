@@ -1144,16 +1144,19 @@ const endSession = async (kind) => {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
         await refreshSessionEvidence();
-        try {
-            await downloadSessionEvidence();
-            setStatus(kind === "revoke"
-                ? "Доступ отозван. Evidence snapshot сохранён; сессию можно закрыть."
-                : "Сессия закрыта. Evidence snapshot сохранён.", "idle");
+        if (kind === "revoke") {
+            setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
         }
-        catch (exportError) {
-            setStatus(exportError instanceof Error
-                ? `Сессия завершена; evidence export: ${exportError.message}`
-                : "Сессия завершена; evidence export failed", "error");
+        else {
+            try {
+                await downloadSessionEvidence();
+                setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+            }
+            catch (exportError) {
+                setStatus(exportError instanceof Error
+                    ? `Сессия закрыта; evidence export: ${exportError.message}`
+                    : "Сессия закрыта; evidence export failed", "error");
+            }
         }
     }
     catch (error) {
