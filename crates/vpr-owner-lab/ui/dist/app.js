@@ -622,14 +622,15 @@ const closePeerTransport = () => {
     pendingIce = [];
     capabilities.clear();
 };
-const handleUnexpectedLiveKitDisconnect = async (room) => {
+const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
+    const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
     liveKitRoom = null;
     stopMicrophoneCapture();
     stopRemoteEvidence();
     clearRealtimeMedia();
-    setStatus("LiveKit отключен. Завершаю зависшую сессию…", "error");
+    setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
     try {
@@ -638,19 +639,19 @@ const handleUnexpectedLiveKitDisconnect = async (room) => {
         await refreshSessionEvidence();
         try {
             await downloadSessionEvidence();
-            setStatus("LiveKit отключен. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.", "error");
+            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`, "error");
         }
         catch (exportError) {
             setStatus(exportError instanceof Error
-                ? `LiveKit отключен. Сессия закрыта; evidence export: ${exportError.message}`
-                : "LiveKit отключен. Сессия закрыта; evidence export failed", "error");
+                ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+                : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`, "error");
         }
     }
     catch (error) {
         await syncStatus().catch(() => undefined);
         setStatus(error instanceof Error
-            ? `LiveKit отключен; cleanup: ${error.message}`
-            : "LiveKit отключен; cleanup failed", "error");
+            ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
+            : `LiveKit отключен${reasonSuffix}; cleanup failed`, "error");
     }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
@@ -768,8 +769,8 @@ const connectLiveKitTransport = async (transport) => {
                 .catch(() => undefined);
         }
     });
-    room.on(sdk.RoomEvent.Disconnected, () => {
-        void handleUnexpectedLiveKitDisconnect(room);
+    room.on(sdk.RoomEvent.Disconnected, (reason) => {
+        void handleUnexpectedLiveKitDisconnect(room, reason);
     });
     await room.connect(transport.server_url, transport.token);
     realtimeReadiness.control = true;
