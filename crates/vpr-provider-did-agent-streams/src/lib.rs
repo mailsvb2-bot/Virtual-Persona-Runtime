@@ -21,6 +21,7 @@ use protocol::{
     CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
     SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
 };
+pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
     cancelled, expect_success, invalid_response, map_transport_error, policy_denied, unavailable,
     validate_audio_url, validate_endpoint,
@@ -79,17 +80,6 @@ pub enum DidRuntimeAccessProbe {
     Presenter(String),
     /// Agent metadata GET is forbidden, but the historical legacy stream path is authorized.
     LegacyStreamFallback,
-}
-
-/// D-ID-specific access failure used only for safe credential diagnostics.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DidRuntimeAccessFailure {
-    /// D-ID returned HTTP 401.
-    Unauthorized,
-    /// D-ID returned HTTP 403 for the runtime access path.
-    Forbidden,
-    /// A non-authentication provider failure occurred.
-    Provider(ProviderError),
 }
 
 enum PresenterLookupError {
@@ -239,12 +229,13 @@ impl DidAgentStreamsAvatar {
     /// # Errors
     /// Returns the typed provider failure from metadata discovery or the legacy stream endpoint.
     pub fn probe_runtime_access(&self) -> Result<DidRuntimeAccessProbe, ProviderError> {
-        self.probe_runtime_access_detailed().map_err(|error| match error {
-            DidRuntimeAccessFailure::Unauthorized | DidRuntimeAccessFailure::Forbidden => {
-                policy_denied()
-            }
-            DidRuntimeAccessFailure::Provider(provider) => provider,
-        })
+        self.probe_runtime_access_detailed()
+            .map_err(|error| match error {
+                DidRuntimeAccessFailure::Unauthorized | DidRuntimeAccessFailure::Forbidden => {
+                    policy_denied()
+                }
+                DidRuntimeAccessFailure::Provider(provider) => provider,
+            })
     }
 
     /// Probes the runtime D-ID access path while preserving HTTP 401 versus 403 for diagnostics.
@@ -269,30 +260,28 @@ impl DidAgentStreamsAvatar {
 
     fn probe_legacy_stream_access(&self) -> Result<(), DidRuntimeAccessFailure> {
         let response = self
-            .authorized(self.client.post(
-                self.streams_url()
-                    .map_err(DidRuntimeAccessFailure::Provider)?,
-            ))
+            .authorized(
+                self.client.post(
+                    self.streams_url()
+                        .map_err(DidRuntimeAccessFailure::Provider)?,
+                ),
+            )
             .json(&CreateStreamRequest {
                 fluent: self.config.fluent,
             })
             .send()
-            .map_err(|error| {
-                DidRuntimeAccessFailure::Provider(map_transport_error(&error))
-            })?;
+            .map_err(|error| DidRuntimeAccessFailure::Provider(map_transport_error(&error)))?;
         match response.status().as_u16() {
             401 => return Err(DidRuntimeAccessFailure::Unauthorized),
             403 => return Err(DidRuntimeAccessFailure::Forbidden),
             _ => {}
         }
-        let response =
-            expect_success(response).map_err(DidRuntimeAccessFailure::Provider)?;
+        let response = expect_success(response).map_err(DidRuntimeAccessFailure::Provider)?;
         let body: CreateStreamResponse = response
             .json()
             .map_err(|_| DidRuntimeAccessFailure::Provider(invalid_response()))?;
-        let session: RealtimeAvatarSession = body
-            .try_into()
-            .map_err(DidRuntimeAccessFailure::Provider)?;
+        let session: RealtimeAvatarSession =
+            body.try_into().map_err(DidRuntimeAccessFailure::Provider)?;
         self.close_session(&session)
             .map_err(DidRuntimeAccessFailure::Provider)
     }
