@@ -139,3 +139,11 @@ The aggregate can support browser-observed first-audio, interruption-stop, first
 For the canonical local Windows operator path, run `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set` once. If the operator still has the historical CMD session containing the previous `VPR_*` values, `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env` migrates those current-process values without displaying or retyping the secrets. VPR stores the D-ID, Deepgram, and DeepSeek credentials in Windows Credential Manager for the current Windows user together with the canonical non-secret RT0 provider settings.
 
 `ProviderBundle` resolves explicit process environment first and then the matching Windows credential profile. A stored secret therefore cannot silently override an explicitly selected different provider. The same fallback is used by Owner Lab and `vpr-live-proof`, while provider-state and evidence remain secret-free.
+
+For an interactive Owner Lab evidence session, prefer the explicit per-process opt-in:
+
+```powershell
+cargo run -p vpr-owner-lab -- --allow-egress
+```
+
+The flag is intentionally not persisted in Windows Credential Manager. A new process is fail-closed again unless the operator explicitly supplies `--allow-egress` (or the existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` automation override).
