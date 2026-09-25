@@ -129,6 +129,7 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       private tracks: FakeTrack[];
       constructor(tracks: FakeTrack[] = []) { this.tracks = [...tracks]; }
       getTracks(): FakeTrack[] { return [...this.tracks]; }
+      getAudioTracks(): FakeTrack[] { return this.tracks.filter((track) => track.kind === "audio"); }
       addTrack(track: FakeTrack): void { this.tracks.push(track); }
     }
 
