@@ -319,6 +319,9 @@ impl OwnerLabEngine {
         let mut stream = turn
             .open_llm_stream(llm, request)
             .map_err(|error| terminalize_provider_error(turn, error))?;
+        let client_text = handle
+            .client_control()
+            .is_some_and(|control| control.text_input);
         let mut reply = String::new();
         let mut first_meaningful = None;
         let mut phrases = RealtimePhraseBuffer::default();
@@ -334,6 +337,11 @@ impl OwnerLabEngine {
                 first_meaningful = Some(elapsed_millis(llm_started));
             }
             reply.push_str(&chunk);
+
+            if client_text {
+                continue;
+            }
+
             for phrase in phrases.push(&chunk) {
                 if !output_started {
                     turn.begin_output().map_err(LabError::Runtime)?;
@@ -358,7 +366,27 @@ impl OwnerLabEngine {
             }
         }
 
-        if let Some(phrase) = phrases.finish() {
+        if client_text {
+            let phrase = reply.trim();
+            if phrase.is_empty() {
+                return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
+            }
+            turn.begin_output().map_err(LabError::Runtime)?;
+            let avatar_started = Instant::now();
+            let (delivery, client_command) =
+                deliver_phrase(turn, self.provider.as_ref(), handle, phrase)?;
+            avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
+            let output_sequence =
+                self.voice_playback
+                    .register_delivery(evidence_turn_sequence, turn, delivery)?;
+            emit_segment(LabVoiceSegment {
+                evidence_turn_sequence,
+                evidence_output_sequence: output_sequence,
+                client_command,
+            })
+            .map_err(|error| terminalize_failed_turn(turn, error))?;
+            output_sequences.push(output_sequence);
+        } else if let Some(phrase) = phrases.finish() {
             if !output_started {
                 turn.begin_output().map_err(LabError::Runtime)?;
             }
