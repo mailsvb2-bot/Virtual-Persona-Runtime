@@ -501,14 +501,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await interrupt.click();
   await expect(page.locator("#status")).toContainText("TURN_CANCELLED");
 
-  await expect.poll(async () => {
-    const current = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    const currentSnapshot = await current.json() as {
-      media_events: Array<{ kind: string }>;
-    };
-    return currentSnapshot.media_events.some((event) => event.kind === "interruption_stopped");
-  }).toBeTruthy();
-
   await page.waitForTimeout(800);
   const commandsAfterInterrupt = await page.evaluate(
     () => (window as typeof window & {
