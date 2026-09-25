@@ -116,18 +116,20 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     class FakeTrack {
       id: string;
       kind: "audio";
-      constructor(kind: "audio" = "audio") {
+      constructor(kind: "audio" = "audio", readonly deviceId = "builtin-mic") {
         trackSequence += 1;
         this.id = `fake-track-${trackSequence}`;
         this.kind = kind;
       }
       stop(): void {}
+      getSettings(): MediaTrackSettings { return { deviceId: this.deviceId }; }
     }
 
     class FakeMediaStream {
       private tracks: FakeTrack[];
       constructor(tracks: FakeTrack[] = []) { this.tracks = [...tracks]; }
       getTracks(): FakeTrack[] { return [...this.tracks]; }
+      getAudioTracks(): FakeTrack[] { return this.tracks.filter((track) => track.kind === "audio"); }
       addTrack(track: FakeTrack): void { this.tracks.push(track); }
     }
 
@@ -140,9 +142,25 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       get() { return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null; },
       set(value: unknown) { (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value; },
     });
+    const requestedMicrophones: string[] = [];
+    (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones = requestedMicrophones;
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
-      value: { getUserMedia: async () => new FakeMediaStream([new FakeTrack()]) },
+      value: {
+        enumerateDevices: async () => [
+          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
+          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
+        ],
+        getUserMedia: async (constraints: MediaStreamConstraints) => {
+          const audio = typeof constraints.audio === "object" && constraints.audio !== null ? constraints.audio : {};
+          const requested = typeof audio.deviceId === "object" && audio.deviceId !== null && "exact" in audio.deviceId
+            ? String(audio.deviceId.exact)
+            : "builtin-mic";
+          requestedMicrophones.push(requested);
+          return new FakeMediaStream([new FakeTrack("audio", requested)]);
+        },
+        addEventListener: () => undefined,
+      },
     });
 
     class FakeAnalyser {
@@ -293,6 +311,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
+  const microphone = page.getByLabel("Микрофон");
+  await expect(microphone.locator("option")).toHaveCount(3);
+  await microphone.selectOption("headset-mic");
 
   await recordTextTurn(
     page,
@@ -304,6 +325,9 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Привет из браузера",
     "Голосовой ответ владельцу",
   );
+  await expect.poll(() => page.evaluate(
+    () => (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones ?? [],
+  )).toContain("headset-mic");
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
