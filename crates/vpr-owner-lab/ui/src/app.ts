@@ -160,6 +160,8 @@ const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
 const microphoneSelect = byId<HTMLSelectElement>("microphone-device");
+const microphoneLevel = byId<HTMLMeterElement>("microphone-level");
+const microphoneLevelText = byId<HTMLElement>("microphone-level-text");
 const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 const metricStt = byId<HTMLElement>("metric-stt");
@@ -1052,6 +1054,8 @@ const stopMicrophoneCapture = (): void => {
   micStream = null;
   audioContext = null;
   recording = false;
+  microphoneLevel.value = 0;
+  microphoneLevelText.textContent = "Сигнал появится во время записи.";
   updateControls();
 };
 
@@ -1210,6 +1214,13 @@ const startMicrophone = async (): Promise<void> => {
   micWorklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
     if (!recording) return;
     const samples = new Float32Array(event.data);
+    let energy = 0;
+    for (const sample of samples) energy += sample * sample;
+    const rms = samples.length === 0 ? 0 : Math.sqrt(energy / samples.length);
+    microphoneLevel.value = Math.min(1, rms * 8);
+    microphoneLevelText.textContent = rms < 0.001
+      ? "Сигнал почти нулевой — браузер не получает слышимый звук с выбранного микрофона."
+      : `Сигнал есть · RMS ${rms.toFixed(4)}`;
     const remaining = MAX_VOICE_SAMPLES - micSamplesSent;
     if (remaining <= 0) {
       void finishMicrophoneTurn();

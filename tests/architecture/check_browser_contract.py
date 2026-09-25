@@ -175,6 +175,8 @@ for required in (
 for required in (
     'id="microphone-device"',
     "Системный микрофон по умолчанию",
+    'id="microphone-level"',
+    'id="microphone-level-text"',
 ):
     if required not in index_html:
         raise SystemExit(f"Owner Lab microphone selection DOM missing: {required}")
@@ -185,6 +187,9 @@ for required in (
     'deviceId: { exact: selectedDeviceId }',
     "getAudioTracks",
     '"devicechange"',
+    "microphoneLevel.value",
+    "Сигнал почти нулевой",
+    "RMS",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab microphone device selection missing: {required}")
