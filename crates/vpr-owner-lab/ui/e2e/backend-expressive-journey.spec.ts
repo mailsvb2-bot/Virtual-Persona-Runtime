@@ -484,9 +484,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
 
-  // Start a second streamed voice turn and interrupt it while the LLM tail is still open.
-  // The browser must stop both provider playback and the canonical voice turn, so no later
-  // generated phrase may leak through to did.speak after the user barge-in.
+  // Start a second voice turn and interrupt it while the LLM tail is still open.
+  // Client-text avatars receive only a complete generated reply, so the interrupted turn must
+  // never emit even a partial did.speak command.
   await voiceButton.click();
   await expect(voiceButton).toHaveText("Остановить и отправить");
   await voiceButton.click();
@@ -494,7 +494,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(4);
+  )).toBe(1);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
@@ -515,7 +515,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
-  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(4);
+  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(1);
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
   await page.evaluate(() => {
