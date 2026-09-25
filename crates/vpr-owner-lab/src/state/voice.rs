@@ -367,24 +367,16 @@ impl OwnerLabEngine {
         }
 
         if client_text {
-            let phrase = reply.trim();
-            if phrase.is_empty() {
-                return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
-            }
-            turn.begin_output().map_err(LabError::Runtime)?;
-            let avatar_started = Instant::now();
-            let (delivery, client_command) =
-                deliver_phrase(turn, self.provider.as_ref(), handle, phrase)?;
-            avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
-            let output_sequence =
-                self.voice_playback
-                    .register_delivery(evidence_turn_sequence, turn, delivery)?;
-            emit_segment(LabVoiceSegment {
+            let (output_sequence, elapsed_avatar) = emit_client_text_reply(
+                turn,
+                self.provider.as_ref(),
+                handle,
+                &reply,
                 evidence_turn_sequence,
-                evidence_output_sequence: output_sequence,
-                client_command,
-            })
-            .map_err(|error| terminalize_failed_turn(turn, error))?;
+                &self.voice_playback,
+                emit_segment,
+            )?;
+            avatar_millis = avatar_millis.saturating_add(elapsed_avatar);
             output_sequences.push(output_sequence);
         } else if let Some(phrase) = phrases.finish() {
             if !output_started {
@@ -461,6 +453,33 @@ impl OwnerLabEngine {
         self.voice_playback
             .acknowledge_voice_playback(evidence_turn_sequence, evidence_output_sequence)
     }
+}
+
+fn emit_client_text_reply(
+    turn: &Arc<ActiveTurn>,
+    provider: &dyn vpr_integration::RealtimeAvatarPort,
+    handle: &RealtimeAvatarHandle,
+    reply: &str,
+    evidence_turn_sequence: u64,
+    playback: &super::voice_playback::LabVoicePlaybackRegistry,
+    emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
+) -> Result<(u64, u64), LabError> {
+    let phrase = reply.trim();
+    if phrase.is_empty() {
+        return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
+    }
+    turn.begin_output().map_err(LabError::Runtime)?;
+    let avatar_started = Instant::now();
+    let (delivery, client_command) = deliver_phrase(turn, provider, handle, phrase)?;
+    let avatar_millis = elapsed_millis(avatar_started);
+    let output_sequence = playback.register_delivery(evidence_turn_sequence, turn, delivery)?;
+    emit_segment(LabVoiceSegment {
+        evidence_turn_sequence,
+        evidence_output_sequence: output_sequence,
+        client_command,
+    })
+    .map_err(|error| terminalize_failed_turn(turn, error))?;
+    Ok((output_sequence, avatar_millis))
 }
 
 fn deliver_phrase(
