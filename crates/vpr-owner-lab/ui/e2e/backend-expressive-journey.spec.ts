@@ -89,11 +89,14 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
 
     class FakeTrack {
       id: string;
-      constructor(readonly kind: "audio" | "video") {
+      constructor(readonly kind: "audio" | "video", readonly deviceId = "expressive-mic") {
         trackSequence += 1;
         this.id = `expressive-track-${trackSequence}`;
       }
       stop(): void {}
+      getSettings(): MediaTrackSettings {
+        return this.kind === "audio" ? { deviceId: this.deviceId } : {};
+      }
     }
 
     class FakeMediaStream {
@@ -103,6 +106,9 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       }
       getTracks(): FakeTrack[] {
         return [...this.tracks];
+      }
+      getAudioTracks(): FakeTrack[] {
+        return this.tracks.filter((track) => track.kind === "audio");
       }
       addTrack(track: FakeTrack): void {
         this.tracks.push(track);
@@ -116,7 +122,11 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
-        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio")]),
+        enumerateDevices: async () => [
+          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
+        ],
+        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]),
+        addEventListener: () => undefined,
       },
     });
 
