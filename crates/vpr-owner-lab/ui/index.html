@@ -90,6 +90,9 @@
         <option value="">Системный микрофон по умолчанию</option>
       </select>
       <p class="hint">Выберите конкретное устройство ввода, если Chrome использует не тот микрофон. Названия устройств могут появиться только после разрешения доступа к микрофону.</p>
+      <label for="microphone-level">Уровень входного сигнала</label>
+      <meter id="microphone-level" min="0" max="1" value="0"></meter>
+      <p id="microphone-level-text" class="hint">Сигнал появится во время записи.</p>
       <label>Голосовой разговор</label>
       <p class="hint">Push-to-talk: микрофон обрабатывается в браузере и отправляется как PCM только после остановки записи.</p>
       <div class="row">
