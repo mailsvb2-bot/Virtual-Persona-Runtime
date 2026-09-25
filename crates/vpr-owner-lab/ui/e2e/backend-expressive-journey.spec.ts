@@ -479,12 +479,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }).__vprLiveKitCommands ?? [],
   );
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak).toHaveLength(3);
-  expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
-    "Сначала уточню один важный момент,",
-    "затем продолжу.",
-    "Третья фраза.",
-  ]);
+  expect(speak).toHaveLength(1);
+  expect(JSON.parse(speak[0]?.text ?? "{}").script.input).toBe(
+    "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
+  );
 
   // Start a second streamed voice turn and interrupt it while the LLM tail is still open.
   // The browser must stop both provider playback and the canonical voice turn, so no later
