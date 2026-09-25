@@ -159,6 +159,7 @@ const interruptButton = byId<HTMLButtonElement>("interrupt");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
+const microphoneSelect = byId<HTMLSelectElement>("microphone-device");
 const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 const metricStt = byId<HTMLElement>("metric-stt");
@@ -218,6 +219,7 @@ let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
+const MICROPHONE_STORAGE_KEY = "vpr.owner-lab.microphone-device-id";
 const AV_SYNC_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
@@ -1096,6 +1098,48 @@ const flushMicrophonePcm = (): void => {
   micPendingPcm = new Uint8Array(0);
 };
 
+const storedMicrophoneDeviceId = (): string => {
+  try {
+    return window.localStorage.getItem(MICROPHONE_STORAGE_KEY)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+};
+
+const rememberMicrophoneDeviceId = (deviceId: string): void => {
+  try {
+    if (deviceId) window.localStorage.setItem(MICROPHONE_STORAGE_KEY, deviceId);
+    else window.localStorage.removeItem(MICROPHONE_STORAGE_KEY);
+  } catch {
+    // Device preference is a convenience only; capture must not depend on storage access.
+  }
+};
+
+const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<void> => {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  let devices: MediaDeviceInfo[];
+  try {
+    devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "audioinput");
+  } catch {
+    return;
+  }
+
+  const requested = (preferredDeviceId ?? microphoneSelect.value ?? storedMicrophoneDeviceId()).trim();
+  microphoneSelect.replaceChildren();
+  microphoneSelect.add(new Option("Системный микрофон по умолчанию", ""));
+  devices.forEach((device, index) => {
+    microphoneSelect.add(new Option(device.label || `Микрофон ${index + 1}`, device.deviceId));
+  });
+
+  if (requested && devices.some((device) => device.deviceId === requested)) {
+    microphoneSelect.value = requested;
+  } else {
+    microphoneSelect.value = "";
+    if (requested) rememberMicrophoneDeviceId("");
+  }
+};
+
 const microphoneCaptureError = (error: unknown): Error => {
   if (!(error instanceof DOMException)) {
     return error instanceof Error ? error : new Error("MIC_CAPTURE_FAILED");
@@ -1117,8 +1161,10 @@ const microphoneCaptureError = (error: unknown): Error => {
 const startMicrophone = async (): Promise<void> => {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
+    const selectedDeviceId = microphoneSelect.value.trim();
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: {
+        ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         channelCount: 1,
         sampleRate: 16_000,
         echoCancellation: true,
@@ -1126,6 +1172,12 @@ const startMicrophone = async (): Promise<void> => {
         autoGainControl: true,
       },
     });
+    const activeDeviceId = micStream.getAudioTracks()[0]?.getSettings().deviceId ?? selectedDeviceId;
+    await refreshMicrophoneDevices(activeDeviceId);
+    if (activeDeviceId) {
+      microphoneSelect.value = activeDeviceId;
+      rememberMicrophoneDeviceId(activeDeviceId);
+    }
   } catch (error) {
     throw microphoneCaptureError(error);
   }
@@ -1425,8 +1477,15 @@ interruptButton.addEventListener("click", () => void interruptAvatar());
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
+microphoneSelect.addEventListener("change", () => {
+  rememberMicrophoneDeviceId(microphoneSelect.value.trim());
+});
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  void refreshMicrophoneDevices();
+});
 window.addEventListener("pagehide", closeBackendOnUnload);
 
+void refreshMicrophoneDevices(storedMicrophoneDeviceId());
 void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
