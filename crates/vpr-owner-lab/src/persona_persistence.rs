@@ -163,10 +163,7 @@ mod tests {
     fn windows_credential_manager_round_trips_reviewed_persona() {
         use keyring::Error as KeyringError;
 
-        let account = format!(
-            "owner-lab-reviewed-persona-test-{}",
-            std::process::id()
-        );
+        let account = format!("owner-lab-reviewed-persona-test-{}", std::process::id());
         let entry = platform::entry_for(&account).expect("test credential entry must initialize");
         match entry.delete_credential() {
             Ok(()) | Err(KeyringError::NoEntry) => {}
