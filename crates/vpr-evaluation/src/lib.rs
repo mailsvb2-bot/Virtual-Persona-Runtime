@@ -1,8 +1,8 @@
 mod binding;
 mod exit;
-mod exit_cost;
 mod exit_assembly;
 mod exit_context;
+mod exit_cost;
 mod exit_support;
 mod exit_validation;
 mod golden;
