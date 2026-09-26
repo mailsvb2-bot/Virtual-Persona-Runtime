@@ -79,7 +79,10 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ("ci-evidence.json", pretty(&automated("failed"))),
         ("e2e-evidence.json", pretty(&automated("failed"))),
     ];
-    files.extend(rt0_runtime_supporting_scaffold(candidate_sha, provider_state_sha256));
+    files.extend(rt0_runtime_supporting_scaffold(
+        candidate_sha,
+        provider_state_sha256,
+    ));
     files.extend(vec![
         (
             "acceptance.json",
