@@ -148,19 +148,19 @@ function Invoke-MigrationSelfTest {
         claims = @(
             [pscustomobject]@{
                 claim_id = 'identity-self-description'
-                statement = 'Сергей, предприниматель'
+                statement = 'owner identity self test'
                 kind = 'factual'
                 owner_approved = $true
             },
             [pscustomobject]@{
                 claim_id = 'preference-communication-style'
-                statement = 'Кратко и по существу'
+                statement = 'concise communication'
                 kind = 'preference'
                 owner_approved = $true
             },
             [pscustomobject]@{
                 claim_id = 'ignored-unapproved'
-                statement = 'Не переносить это утверждение'
+                statement = 'must not be imported'
                 kind = 'opinion'
                 owner_approved = $false
             }
