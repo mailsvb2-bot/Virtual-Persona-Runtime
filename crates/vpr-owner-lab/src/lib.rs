@@ -1,6 +1,7 @@
 mod evidence;
 mod owner_capture;
 mod owner_context;
+mod persona_persistence;
 mod provider_credentials;
 mod providers;
 mod state;
@@ -18,6 +19,8 @@ pub use owner_capture::{
 };
 
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
+
+pub use persona_persistence::{load_reviewed_persona, save_reviewed_persona};
 
 pub use provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
