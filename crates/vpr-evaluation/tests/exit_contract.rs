@@ -1002,6 +1002,21 @@ fn runtime_evidence_is_exact_candidate_provider_bound_and_fail_closed() {
         Err(Rt0ExitEvidenceError::RuntimeEvidenceDigestMismatch)
     );
 
+    let mut detached_cost = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    detached_cost.cost.measured_duration_millis += 1;
+    assert_eq!(
+        evaluate_with_runtime(
+            &detached_cost,
+            (&golden, &golden_bytes),
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+            (&probe, &probe_bytes),
+            (&base_conversation, &base_session, &base_session_bytes),
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+    );
+
     let mut conversation: serde_json::Value = serde_json::from_slice(&base_conversation).unwrap();
     conversation["candidate_sha"] = serde_json::json!("2".repeat(40));
     let conversation_bytes = serde_json::to_vec(&conversation).unwrap();
@@ -1417,3 +1432,5 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
         expected_cost.provider_charge_microunits
     );
 }
+
+[executed on device: 7557405-me744613.twc1.net (f78fb5c4-85ce-49a2-ae2f-bfed9c352431)]
