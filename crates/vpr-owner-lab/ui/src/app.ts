@@ -39,7 +39,7 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -553,8 +553,13 @@ const monitorRemoteAudio = (): void => {
       if (!voice.audioStarted) {
         voice.audioStarted = true;
         voice.audioStartedElapsed = performance.now() - voice.startedAt;
-        void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
-          .catch(() => undefined);
+        const audioStartedEvidence = postMediaEvidence(
+          "audio_started",
+          voice.audioStartedElapsed,
+          voice.requestSequence,
+        );
+        voice.audioStartedEvidence = audioStartedEvidence;
+        void audioStartedEvidence.catch(() => undefined);
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -1279,6 +1284,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     startedAt: performance.now(),
     audioStarted: false,
     audioStartedElapsed: null,
+    audioStartedEvidence: null,
     responseComplete: false,
     speaking: false,
     silentFrames: 0,
@@ -1320,8 +1326,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
+      if (voice.audioStartedEvidence) {
+        await voice.audioStartedEvidence;
+      }
       if (voice.audioStartedElapsed !== null) {
-        await collectAvSyncEvidence(requestSequence).catch(() => undefined);
+        await collectAvSyncEvidence(requestSequence);
       }
     }
     await refreshSessionEvidence();
