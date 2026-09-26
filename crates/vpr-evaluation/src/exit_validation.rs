@@ -413,6 +413,7 @@ pub(crate) fn validate_session_quality_binding(
     evidence: &Rt0ExitEvidence,
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
+    validate_quality_latencies(&evidence.quality)?;
     let expected = quality_evidence_from_aggregate(aggregate)?;
     if evidence.quality.text_first_meaningful_response != expected.text_first_meaningful_response
         || evidence.quality.first_meaningful_audio != expected.first_meaningful_audio
