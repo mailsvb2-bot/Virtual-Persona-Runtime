@@ -9,6 +9,9 @@ $baseUrl = "http://127.0.0.1:$Port"
 $origin = $baseUrl
 $tempRoot = Join-Path $env:TEMP ("vpr-owner-lab-restart-" + [guid]::NewGuid().ToString('N'))
 $personaPath = Join-Path $tempRoot 'reviewed-persona.json'
+$profileCacheRoot = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\owner-lab'
+$profileCachePath = Join-Path $profileCacheRoot 'reviewed-persona.dpapi'
+$legacyProfilePath = 'C:\VPR-RT0\reviewed-profile.json'
 $preservedPersona = $null
 
 function Get-Bootstrap {
@@ -67,9 +70,67 @@ function Wait-LabDown {
     throw "Old Owner Lab is still listening on $baseUrl"
 }
 
+function Save-ReviewedPersonaCache {
+    param([Parameter(Mandatory = $true)]$Profile)
+
+    New-Item -ItemType Directory -Force -Path $profileCacheRoot | Out-Null
+    $json = $Profile | ConvertTo-Json -Compress -Depth 20
+    $plain = [System.Text.Encoding]::UTF8.GetBytes($json)
+    $protected = [System.Security.Cryptography.ProtectedData]::Protect(
+        $plain,
+        $null,
+        [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    [System.IO.File]::WriteAllBytes($profileCachePath, $protected)
+    Write-Host "Cached reviewed Persona with Windows DPAPI for restart recovery."
+}
+
+function Read-ReviewedPersonaCache {
+    if (-not (Test-Path -LiteralPath $profileCachePath)) {
+        return $null
+    }
+
+    try {
+        $protected = [System.IO.File]::ReadAllBytes($profileCachePath)
+        $plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
+            $protected,
+            $null,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+        $json = [System.Text.Encoding]::UTF8.GetString($plain)
+        return $json | ConvertFrom-Json
+    } catch {
+        throw "Reviewed Persona cache exists but could not be decrypted for the current Windows user"
+    }
+}
+
+function Read-LegacyReviewedPersona {
+    if (-not (Test-Path -LiteralPath $legacyProfilePath)) {
+        return $null
+    }
+
+    try {
+        $profile = Get-Content -LiteralPath $legacyProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+        Write-Host "Recovered reviewed Persona from legacy $legacyProfilePath."
+        Save-ReviewedPersonaCache -Profile $profile
+        return $profile
+    } catch {
+        throw "Legacy reviewed Persona exists at $legacyProfilePath but is invalid JSON"
+    }
+}
+
+function Get-CachedReviewedPersona {
+    $cached = Read-ReviewedPersonaCache
+    if ($null -ne $cached) {
+        Write-Host "Recovered reviewed Persona from the persistent Windows user cache."
+        return $cached
+    }
+    return Read-LegacyReviewedPersona
+}
+
 function Export-ReviewedPersonaIfPresent {
     if (-not (Test-LabReachable)) {
-        return $null
+        return Get-CachedReviewedPersona
     }
 
     $status = Get-LabStatus
@@ -77,7 +138,7 @@ function Export-ReviewedPersonaIfPresent {
         throw "Owner Lab has an active/non-terminal session ($($status.session_state)); refusing to force-restart and lose session evidence"
     }
     if ($status.owner_context_state -ne 'reviewed') {
-        return $null
+        return Get-CachedReviewedPersona
     }
 
     $bootstrap = Get-Bootstrap
@@ -91,7 +152,8 @@ function Export-ReviewedPersonaIfPresent {
 
     New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
     $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $personaPath -Encoding UTF8
-    Write-Host "Preserved reviewed Persona in a temporary local file."
+    Save-ReviewedPersonaCache -Profile $profile
+    Write-Host "Preserved reviewed Persona for this restart and future restarts."
     return $profile
 }
 
@@ -201,6 +263,7 @@ function Restore-ReviewedPersona {
             throw "Restored Persona claim $claimId does not match the preserved profile"
         }
     }
+    Save-ReviewedPersonaCache -Profile $restored
     Write-Host "Restored reviewed Persona $($restored.persona_id), version $($restored.persona_version)."
 }
 
