@@ -1285,7 +1285,6 @@ fn incomplete_human_dimensions_fail_exit_without_corrupting_evidence_structure()
     );
 }
 
-
 #[test]
 fn runtime_supporting_projection_matches_exit_runtime_claims() {
     let fixture = golden_fixture();
@@ -1305,7 +1304,10 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
     let expected_visitor = conversation(ParticipantRole::Visitor);
     assert_eq!(projection.conversations.owner.origin, EvidenceOrigin::Real);
     assert_eq!(projection.conversations.owner.role, expected_owner.role);
-    assert_eq!(projection.conversations.owner.russian, expected_owner.russian);
+    assert_eq!(
+        projection.conversations.owner.russian,
+        expected_owner.russian
+    );
     assert_eq!(projection.conversations.owner.voice, expected_owner.voice);
     assert_eq!(projection.conversations.owner.video, expected_owner.video);
     assert_eq!(
@@ -1316,11 +1318,23 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
         projection.conversations.owner.interruption_exercised,
         expected_owner.interruption_exercised
     );
-    assert_eq!(projection.conversations.visitor.origin, EvidenceOrigin::Real);
+    assert_eq!(
+        projection.conversations.visitor.origin,
+        EvidenceOrigin::Real
+    );
     assert_eq!(projection.conversations.visitor.role, expected_visitor.role);
-    assert_eq!(projection.conversations.visitor.russian, expected_visitor.russian);
-    assert_eq!(projection.conversations.visitor.voice, expected_visitor.voice);
-    assert_eq!(projection.conversations.visitor.video, expected_visitor.video);
+    assert_eq!(
+        projection.conversations.visitor.russian,
+        expected_visitor.russian
+    );
+    assert_eq!(
+        projection.conversations.visitor.voice,
+        expected_visitor.voice
+    );
+    assert_eq!(
+        projection.conversations.visitor.video,
+        expected_visitor.video
+    );
     assert_eq!(
         projection.conversations.visitor.completed_turns,
         expected_visitor.completed_turns
@@ -1330,7 +1344,8 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
         expected_visitor.interruption_exercised
     );
 
-    let expected_quality = passing_evidence(b"projection-fixture", &fixture.provider_state_bytes).quality;
+    let expected_quality =
+        passing_evidence(b"projection-fixture", &fixture.provider_state_bytes).quality;
     assert_eq!(projection.quality.origin, EvidenceOrigin::Real);
     assert_eq!(
         projection.quality.text_first_meaningful_response,
