@@ -94,7 +94,8 @@ fn save_file(path: &Path, snapshot: &ReviewedOwnerContextSnapshot) -> Result<(),
         .map_err(|_| "reviewed Persona serialization failed")?;
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, raw).map_err(|_| "reviewed Persona file store write failed")?;
-    fs::rename(&temporary, path).map_err(|_| "reviewed Persona file store commit failed")
+    fs::rename(&temporary, path)
+        .map_err(|_| "reviewed Persona file store commit failed".to_string())
 }
 
 #[cfg(windows)]
