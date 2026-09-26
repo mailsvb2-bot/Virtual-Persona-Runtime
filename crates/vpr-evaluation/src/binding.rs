@@ -101,6 +101,32 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{digest:x}")
 }
 
+/// Validates one exact Git candidate identifier using the same fail-closed syntax as release evidence.
+///
+/// # Errors
+/// Returns `EvidenceBindingError::InvalidCandidateSha` for malformed identifiers.
+pub fn validate_candidate_sha(value: &str) -> Result<(), EvidenceBindingError> {
+    if valid_git_sha(value) {
+        Ok(())
+    } else {
+        Err(EvidenceBindingError::InvalidCandidateSha)
+    }
+}
+
+/// Validates the RT0 provider-state schema and the required STT/LLM/avatar bindings.
+///
+/// # Errors
+/// Returns a stable `EvidenceBindingError` when the schema is unsupported, a required provider
+/// role is missing/duplicated, a descriptor is blank, or a configuration fingerprint is invalid.
+pub fn validate_provider_state_manifest(
+    provider_state: &ProviderStateManifest,
+) -> Result<(), EvidenceBindingError> {
+    if provider_state.schema_version != RT0_PROVIDER_STATE_SCHEMA {
+        return Err(EvidenceBindingError::UnsupportedProviderStateSchema);
+    }
+    Ok(())
+}
+
 /// Verifies exact-candidate, artifact and provider-state binding, then evaluates the Golden Set.
 ///
 /// # Errors
@@ -139,12 +165,9 @@ fn validate_binding(
     if binding.schema_version != RT0_EVIDENCE_BINDING_SCHEMA {
         return Err(EvidenceBindingError::UnsupportedBindingSchema);
     }
-    if provider_state.schema_version != RT0_PROVIDER_STATE_SCHEMA {
-        return Err(EvidenceBindingError::UnsupportedProviderStateSchema);
-    }
-    if !valid_git_sha(exact_candidate_sha) || !valid_git_sha(&binding.candidate_sha) {
-        return Err(EvidenceBindingError::InvalidCandidateSha);
-    }
+    validate_provider_state_manifest(provider_state)?;
+    validate_candidate_sha(exact_candidate_sha)?;
+    validate_candidate_sha(&binding.candidate_sha)?;
     for digest in [
         &binding.release_spec_sha256,
         &binding.suite_sha256,
