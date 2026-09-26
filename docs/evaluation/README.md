@@ -75,6 +75,33 @@ Replace those placeholders only from reviewed observations for the exact candida
 Until then, `vpr-rt0-supporting-preflight` must fail. The scaffold exists to eliminate filename,
 binding and field-shape mistakes, not to manufacture evidence.
 
+## RT0 runtime-backed supporting projection
+
+After the exact owner/visitor browser sessions have been exported and bound, derive the three
+supporting claims that are mechanically supported by runtime evidence instead of copying them by
+hand:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-runtime-supporting -- \
+  /secure/evidence/rt0-candidate/supporting \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/conversation-attempt.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/rt0-candidate/session-owner.json \
+  /secure/evidence/rt0-candidate/session-visitor.json
+```
+
+The command recomputes the bound session aggregate from the exact raw snapshots and refuses stale,
+cross-candidate, cross-provider or detached inputs. It writes only
+`owner-conversation.json`, `visitor-conversation.json` and `quality.json`, refuses to overwrite
+existing files, and uses the same canonical derivation logic as the exit verifier for Russian
+locale, completed turns, canonical playback/voice, rendered video, owner interruption and all six
+session-backed QualityContract latency distributions.
+
+This command is intentionally non-promoting. It does not infer acceptance, privacy/permission,
+cost, Golden or human-review results because those require separate real observations or review.
+
 ## RT0 supporting-evidence preflight
 
 Before assembling `exit-evidence.json`, `vpr-rt0-supporting-preflight` can validate the ten
