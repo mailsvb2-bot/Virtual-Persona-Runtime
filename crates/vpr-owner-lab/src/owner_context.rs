@@ -49,8 +49,8 @@ impl ReviewedOwnerContext {
         }
         let initial_version = PersonaVersion::new(snapshot.persona_version - 1)
             .ok_or(OwnerContextError::ProfileNotReviewed)?;
-        let persona_id =
-            PersonaId::new(snapshot.persona_id).map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        let persona_id = PersonaId::new(snapshot.persona_id.clone())
+            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
         let identity = PersonaIdentity::new(persona_id, initial_version, PersonaMode::DigitalTwin);
         let mut profile =
             PersonaProfile::new(identity, ConstitutionBoundary::strict_digital_twin());
