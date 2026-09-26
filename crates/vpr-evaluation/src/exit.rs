@@ -302,10 +302,14 @@ pub fn evaluate_rt0_exit_evidence(
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
 
-    let estimated_cost_per_minute_microunits =
-        cost_per_minute(evidence.cost.estimated_cost_microunits, evidence.cost.measured_duration_millis);
-    let provider_charge_per_minute_microunits =
-        cost_per_minute(evidence.cost.provider_charge_microunits, evidence.cost.measured_duration_millis);
+    let estimated_cost_per_minute_microunits = cost_per_minute(
+        evidence.cost.estimated_cost_microunits,
+        evidence.cost.measured_duration_millis,
+    );
+    let provider_charge_per_minute_microunits = cost_per_minute(
+        evidence.cost.provider_charge_microunits,
+        evidence.cost.measured_duration_millis,
+    );
     Ok(Rt0ExitReport {
         schema_version: RT0_EXIT_REPORT_SCHEMA.into(),
         candidate_sha: evidence.candidate_sha.clone(),
