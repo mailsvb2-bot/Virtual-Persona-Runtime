@@ -84,7 +84,8 @@
   },
   "cost": {
     "origin": "synthetic",
-    "covered_provider_roles": [],
+    "estimated_cost_covered_provider_roles": [],
+    "provider_charge_covered_provider_roles": [],
     "measured_duration_millis": 60000,
     "estimated_cost_microunits": 0,
     "provider_charge_microunits": null,

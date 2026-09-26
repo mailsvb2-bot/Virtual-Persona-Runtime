@@ -7,7 +7,7 @@ use crate::binding::{
     valid_sha256, validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
-use crate::exit_cost::{cost_per_minute, evaluate_cost};
+use crate::exit_cost::{estimated_cost_per_minute, evaluate_cost, provider_charge_per_minute};
 use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
@@ -108,7 +108,8 @@ pub struct QualityEvidence {
 #[serde(deny_unknown_fields)]
 pub struct CostEvidence {
     pub origin: EvidenceOrigin,
-    pub covered_provider_roles: Vec<ProviderRole>,
+    pub estimated_cost_covered_provider_roles: Vec<ProviderRole>,
+    pub provider_charge_covered_provider_roles: Vec<ProviderRole>,
     pub measured_duration_millis: u64,
     pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
@@ -305,10 +306,8 @@ pub fn evaluate_rt0_exit_evidence(
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
 
-    let estimated_cost_per_minute_microunits =
-        cost_per_minute(&evidence.cost, evidence.cost.estimated_cost_microunits);
-    let provider_charge_per_minute_microunits =
-        cost_per_minute(&evidence.cost, evidence.cost.provider_charge_microunits);
+    let estimated_cost_per_minute_microunits = estimated_cost_per_minute(&evidence.cost);
+    let provider_charge_per_minute_microunits = provider_charge_per_minute(&evidence.cost);
     Ok(Rt0ExitReport {
         schema_version: RT0_EXIT_REPORT_SCHEMA.into(),
         candidate_sha: evidence.candidate_sha.clone(),

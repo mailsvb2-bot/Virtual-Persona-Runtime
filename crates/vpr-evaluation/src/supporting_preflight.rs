@@ -117,7 +117,8 @@ struct QualitySupportingClaim {
 #[serde(deny_unknown_fields)]
 struct CostSupportingClaim {
     origin: EvidenceOrigin,
-    covered_provider_roles: Vec<ProviderRole>,
+    estimated_cost_covered_provider_roles: Vec<ProviderRole>,
+    provider_charge_covered_provider_roles: Vec<ProviderRole>,
     measured_duration_millis: u64,
     estimated_cost_microunits: Option<u64>,
     provider_charge_microunits: Option<u64>,
@@ -340,7 +341,8 @@ fn validate_cost(
         provider_state_sha256,
     )?;
     let _ = (
-        claim.covered_provider_roles,
+        claim.estimated_cost_covered_provider_roles,
+        claim.provider_charge_covered_provider_roles,
         claim.measured_duration_millis,
         claim.estimated_cost_microunits,
         claim.provider_charge_microunits,
