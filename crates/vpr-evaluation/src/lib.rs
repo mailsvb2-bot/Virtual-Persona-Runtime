@@ -13,6 +13,7 @@ mod session_evidence;
 mod session_statistics;
 mod session_types;
 mod supporting_preflight;
+mod supporting_scaffold;
 
 pub use binding::{
     BoundGoldenReport, EvidenceBinding, EvidenceBindingError, EvidenceVerificationContext,
@@ -65,6 +66,8 @@ pub use session_evidence::{
     aggregate_owner_lab_session_evidence,
 };
 pub use session_types::{LabTextAttemptEvidence, LabTextAttemptStatus, SessionUsageEvidence};
+
+pub use supporting_scaffold::{RT0_RUNTIME_SUPPORTING_FILES, rt0_runtime_supporting_scaffold};
 
 pub use supporting_preflight::{
     RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,

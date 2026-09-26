@@ -94,8 +94,9 @@ cargo run -p vpr-evaluation --bin vpr-rt0-runtime-supporting -- \
 
 The command recomputes the bound session aggregate from the exact raw snapshots and refuses stale,
 cross-candidate, cross-provider or detached inputs. It writes only
-`owner-conversation.json`, `visitor-conversation.json` and `quality.json`, refuses to overwrite
-existing files, and uses the same canonical derivation logic as the exit verifier for Russian
+`owner-conversation.json`, `visitor-conversation.json` and `quality.json`. If those files still
+match the exact synthetic scaffold bytes for the same candidate/provider state, the command replaces
+only those placeholders. Any modified, reviewed or real existing file is never overwritten. and uses the same canonical derivation logic as the exit verifier for Russian
 locale, completed turns, canonical playback/voice, rendered video, owner interruption and all six
 session-backed QualityContract latency distributions.
 
