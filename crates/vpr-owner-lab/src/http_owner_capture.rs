@@ -4,8 +4,8 @@ use tiny_http::Request;
 use vpr_capture::CaptureError;
 use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
 use vpr_owner_lab::{
-    OwnerCaptureError, OwnerContextState, ReviewedOwnerClaimSnapshot,
-    ReviewedOwnerContextSnapshot, Rt0OwnerCapture, save_reviewed_persona,
+    OwnerCaptureError, OwnerContextState, ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot,
+    Rt0OwnerCapture, save_reviewed_persona,
 };
 
 use crate::{
