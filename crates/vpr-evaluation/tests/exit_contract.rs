@@ -196,7 +196,8 @@ fn session_snapshot_bytes_with_av_sync(
         }),
     ];
     media_events.extend(interruption);
-    serde_json::to_vec(&serde_json::json!({        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -395,7 +396,8 @@ fn evaluate_with_probe(
     golden: &BoundGoldenReport,
     golden_bytes: &[u8],
     fixture: &support::GoldenFixture,
-    release_spec: &[u8],    candidate: &str,
+    release_spec: &[u8],
+    candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let conversation_attempt_bytes = conversation_attempt_bytes(&fixture.provider_state_bytes);
@@ -591,6 +593,7 @@ fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
     assert_eq!(report.estimated_cost_per_minute_microunits, None);
     assert_eq!(report.provider_charge_per_minute_microunits, Some(9_000));
 }
+
 fn session_snapshot_bytes_with_text_timing(
     role: ParticipantRole,
     session_sequence: u64,
@@ -790,7 +793,8 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
 }
 
 #[test]
-fn every_session_quality_metric_must_match_recomputed_session_distribution() {    let fixture = golden_fixture();
+fn every_session_quality_metric_must_match_recomputed_session_distribution() {
+    let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
 
@@ -989,6 +993,7 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
         ),
         Err(Rt0ExitEvidenceError::LiveProviderProbeProviderStateMismatch)
     );
+
     let mut empty_output = probe.clone();
     empty_output.stt.transcript_chars = 0;
     empty_output.llm.output_chars = 0;
@@ -1188,7 +1193,8 @@ fn malformed_structural_evidence_is_rejected_before_exit_decision() {
     evidence.quality.interruption_stop.samples = 0;
     assert_eq!(
         evaluate(
-            &evidence,            &golden,
+            &evidence,
+            &golden,
             &golden_bytes,
             &fixture,
             RELEASE_SPEC,
@@ -1387,7 +1393,8 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
     let bound = bound_session_aggregate(&fixture.provider_state_bytes);
     let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
     let projection = derive_rt0_runtime_supporting_projection(
-        &conversation_attempt,        &bound,
+        &conversation_attempt,
+        &bound,
         &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
         &fixture.provider_state_bytes,
         CANDIDATE,
