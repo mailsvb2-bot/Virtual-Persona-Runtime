@@ -1,6 +1,7 @@
 param(
     [int]$Port = 8787,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$MigrationSelfTest
 )
 
 $ErrorActionPreference = 'Stop'
@@ -140,6 +141,48 @@ function Convert-ToImportableReviewedPersona {
     }
 }
 
+function Invoke-MigrationSelfTest {
+    $legacy = [pscustomobject]@{
+        persona_id = 'legacy-owner-self-test'
+        owner_review_confirmed = $true
+        claims = @(
+            [pscustomobject]@{
+                claim_id = 'identity-self-description'
+                statement = 'Сергей, предприниматель'
+                kind = 'factual'
+                owner_approved = $true
+            },
+            [pscustomobject]@{
+                claim_id = 'preference-communication-style'
+                statement = 'Кратко и по существу'
+                kind = 'preference'
+                owner_approved = $true
+            },
+            [pscustomobject]@{
+                claim_id = 'ignored-unapproved'
+                statement = 'Не переносить это утверждение'
+                kind = 'opinion'
+                owner_approved = $false
+            }
+        )
+    }
+
+    $converted = Convert-ToImportableReviewedPersona -Profile $legacy
+    if ($converted.persona_id -ne 'legacy-owner-self-test') {
+        throw 'Migration self-test changed persona_id'
+    }
+    if (@($converted.claims).Count -ne 2) {
+        throw "Migration self-test expected 2 approved claims, got $(@($converted.claims).Count)"
+    }
+    if (@($converted.claims | Where-Object { $_.claim_id -eq 'ignored-unapproved' }).Count -ne 0) {
+        throw 'Migration self-test imported an unapproved legacy claim'
+    }
+    if (@($converted.claims | Where-Object { $_.claim_id -eq 'identity-self-description' }).Count -ne 1) {
+        throw 'Migration self-test lost identity claim'
+    }
+    Write-Host 'Reviewed Persona migration self-test passed.'
+}
+
 function Read-LegacyReviewedPersona {
     foreach ($legacyProfilePath in $legacyProfilePaths) {
         if (-not (Test-Path -LiteralPath $legacyProfilePath)) {
@@ -277,6 +320,11 @@ function Restore-ReviewedPersona {
     Write-Host "Restored reviewed Persona $($restored.persona_id), version $($restored.persona_version), claims=$(@($restored.claims).Count)."
 }
 
+if ($MigrationSelfTest) {
+    Invoke-MigrationSelfTest
+    exit 0
+}
+
 try {
     $preservedPersona = Export-ReviewedPersonaIfPresent
     Stop-PortListener
@@ -327,8 +375,9 @@ try {
     }
 
     $status = Get-LabStatus
-    if ($status.owner_context_state -ne 'reviewed' -or $status.reviewed_owner_claims -lt 1) {
-        throw 'Owner Lab started without a reviewed Persona; refusing to open a broken qualification UI'
+    if ($null -ne $preservedPersona -and
+        ($status.owner_context_state -ne 'reviewed' -or $status.reviewed_owner_claims -lt 1)) {
+        throw 'Reviewed Persona was found before restart but was not restored; refusing to open the qualification UI'
     }
 
     $status = Get-LabStatus
