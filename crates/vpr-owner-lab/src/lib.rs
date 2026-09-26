@@ -78,6 +78,12 @@ mod windows_restart_script_tests {
         assert!(script.contains("VPR_OWNER_LAB_LLM_API_KEY"));
         assert!(script.contains("vpr-provider-credentials.exe"));
         assert!(script.contains("probe-did"));
+        assert!(script.contains("ProtectedData]::Protect"));
+        assert!(script.contains("ProtectedData]::Unprotect"));
+        assert!(script.contains("DataProtectionScope]::CurrentUser"));
+        assert!(script.contains("reviewed-persona.dpapi"));
+        assert!(script.contains("C:\\VPR-RT0\\reviewed-profile.json"));
+        assert!(script.contains("Get-CachedReviewedPersona"));
         assert!(script.contains("bootstrap.egress_enabled"));
         assert!(script.contains("status.egress_enabled"));
     }
