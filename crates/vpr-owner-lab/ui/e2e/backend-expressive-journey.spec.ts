@@ -436,12 +436,23 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    if (!evidence.ok()) {
+      return false;
+    }
     const snapshot = await evidence.json() as {
       canonical_playback_proven: boolean;
       av_sync_proven: boolean;
+      voice_attempts: Array<{
+        status: string;
+        canonical_playback_confirmed: boolean;
+      }>;
     };
-    return snapshot.canonical_playback_proven && snapshot.av_sync_proven;
-  }).toBeTruthy();
+    return snapshot.canonical_playback_proven
+      && snapshot.av_sync_proven
+      && snapshot.voice_attempts.some((attempt) =>
+        attempt.status === "completed" && attempt.canonical_playback_confirmed
+      );
+  }, { timeout: 10_000 }).toBeTruthy();
 
   const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   const snapshot = await evidence.json() as {
