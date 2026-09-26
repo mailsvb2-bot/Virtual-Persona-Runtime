@@ -111,9 +111,13 @@ mod platform {
     use super::{PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_ACCOUNT, WINDOWS_SERVICE};
     use keyring::{Entry, Error as KeyringError};
 
-    fn entry() -> Result<Entry, String> {
-        Entry::new(WINDOWS_SERVICE, WINDOWS_ACCOUNT)
+    pub(super) fn entry_for(account: &str) -> Result<Entry, String> {
+        Entry::new(WINDOWS_SERVICE, account)
             .map_err(|_| "Windows reviewed Persona store initialization failed".into())
+    }
+
+    fn entry() -> Result<Entry, String> {
+        entry_for(WINDOWS_ACCOUNT)
     }
 
     pub(super) fn load() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
@@ -151,6 +155,36 @@ mod tests {
                 kind: "preference".into(),
                 revision: 3,
             }],
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_credential_manager_round_trips_reviewed_persona() {
+        use keyring::Error as KeyringError;
+
+        let account = format!("owner-lab-reviewed-persona-test-{}", std::process::id());
+        let entry = platform::entry_for(&account).expect("test credential entry must initialize");
+        match entry.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => {}
+            Err(error) => panic!("failed to clear test credential before round-trip: {error}"),
+        }
+
+        let raw =
+            serde_json::to_string(&PersistedPersona::new(sample())).expect("sample must serialize");
+        entry
+            .set_password(&raw)
+            .expect("Windows Credential Manager must accept reviewed Persona");
+        let restored_raw = entry
+            .get_password()
+            .expect("Windows Credential Manager must return reviewed Persona");
+        let restored: PersistedPersona =
+            serde_json::from_str(&restored_raw).expect("stored Persona must decode");
+        assert_eq!(restored.validate().unwrap(), sample());
+
+        match entry.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => {}
+            Err(error) => panic!("failed to remove test credential after round-trip: {error}"),
         }
     }
 
