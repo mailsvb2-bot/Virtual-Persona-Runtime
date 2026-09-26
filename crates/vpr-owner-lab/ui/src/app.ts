@@ -668,6 +668,7 @@ const ownerCapture = mountOwnerCapture({
   onStateChange: (state) => {
     ownerCaptureReviewed = state.reviewed;
     updateControls();
+    void syncStatus().catch(() => undefined);
   },
 });
 
