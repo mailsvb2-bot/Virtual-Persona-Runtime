@@ -3,7 +3,9 @@ use serde::Deserialize;
 use tiny_http::Request;
 use vpr_capture::CaptureError;
 use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
-use vpr_owner_lab::{OwnerCaptureError, OwnerContextState, Rt0OwnerCapture};
+use vpr_owner_lab::{
+    OwnerCaptureError, OwnerContextState, Rt0OwnerCapture, save_reviewed_persona,
+};
 
 use crate::{
     AppState, HttpResponse, error_response, json_response, lab_error_response, parse_empty_json,
@@ -155,6 +157,7 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
     engine
         .correct_owner_claim(&id, body.statement, kind)
         .map_err(|error| lab_error_response(&error))?;
+    persist_reviewed_persona(&engine)?;
     Ok(json_response(200, &engine.status()))
 }
 
@@ -199,7 +202,18 @@ fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpRespon
     engine
         .bind_reviewed_profile(reviewed.into_profile())
         .map_err(|error| lab_error_response(&error))?;
+    persist_reviewed_persona(&engine)?;
     Ok(json_response(200, &engine.status()))
+}
+
+fn persist_reviewed_persona(
+    engine: &vpr_owner_lab::OwnerLabEngine,
+) -> Result<(), HttpResponse> {
+    let snapshot = engine
+        .reviewed_owner_context_snapshot()
+        .map_err(|error| lab_error_response(&error))?;
+    save_reviewed_persona(&snapshot)
+        .map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))
 }
 
 fn with_capture<T>(
