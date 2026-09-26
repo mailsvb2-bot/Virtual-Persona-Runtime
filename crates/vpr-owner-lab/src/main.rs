@@ -131,7 +131,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     if let Some(snapshot) = load_reviewed_persona()? {
         engine
-            .restore_reviewed_owner_context_snapshot(snapshot)
+            .restore_reviewed_owner_context_snapshot(&snapshot)
             .map_err(|_| "persisted reviewed Persona is invalid")?;
         println!("Restored reviewed Persona from persistent store.");
     }
