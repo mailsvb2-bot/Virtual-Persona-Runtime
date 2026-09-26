@@ -5,9 +5,8 @@ use serde::Deserialize;
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
     BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, ConversationPairEvidence,
-    EvidenceOrigin, LabMediaEvidenceKind,
-    LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
-    LatencyDistributionMillis, ParticipantRole, QualityEvidence,
+    EvidenceOrigin, LabMediaEvidenceKind, LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole, QualityEvidence,
     RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
     RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
@@ -415,8 +414,7 @@ pub(crate) fn validate_session_quality_binding(
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<(), Rt0ExitEvidenceError> {
     let expected = quality_evidence_from_aggregate(aggregate)?;
-    if evidence.quality.text_first_meaningful_response
-        != expected.text_first_meaningful_response
+    if evidence.quality.text_first_meaningful_response != expected.text_first_meaningful_response
         || evidence.quality.first_meaningful_audio != expected.first_meaningful_audio
         || evidence.quality.interruption_stop != expected.interruption_stop
         || evidence.quality.first_useful_video != expected.first_useful_video
