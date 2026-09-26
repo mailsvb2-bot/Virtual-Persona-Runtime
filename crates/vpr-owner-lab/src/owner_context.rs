@@ -1,9 +1,9 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use vpr_domain::{
     ClaimId, ClaimKind, PersonaCaptureState, PersonaIdentity, PersonaMode, PersonaProfile,
 };
 
-#[derive(Clone, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ReviewedOwnerClaimSnapshot {
     pub claim_id: String,
     pub statement: String,
@@ -11,7 +11,7 @@ pub struct ReviewedOwnerClaimSnapshot {
     pub revision: u64,
 }
 
-#[derive(Clone, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ReviewedOwnerContextSnapshot {
     pub persona_id: String,
     pub persona_version: u64,
@@ -38,6 +38,68 @@ impl ReviewedOwnerContext {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
         Ok(Self { profile })
+    }
+
+    pub(crate) fn from_snapshot(
+        snapshot: ReviewedOwnerContextSnapshot,
+    ) -> Result<Self, OwnerContextError> {
+        if snapshot.persona_version < 2 || snapshot.claims.is_empty() {
+            return Err(OwnerContextError::ProfileNotReviewed);
+        }
+        let initial_version = PersonaVersion::new(snapshot.persona_version - 1)
+            .ok_or(OwnerContextError::ProfileNotReviewed)?;
+        let persona_id =
+            PersonaId::new(snapshot.persona_id).map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        let identity = PersonaIdentity::new(persona_id, initial_version, PersonaMode::DigitalTwin);
+        let mut profile =
+            PersonaProfile::new(identity, ConstitutionBoundary::strict_digital_twin());
+
+        for claim in &snapshot.claims {
+            if claim.revision < 2 || claim.revision > 10_000 {
+                return Err(OwnerContextError::ProfileNotReviewed);
+            }
+            let claim_id = ClaimId::new(claim.claim_id.clone())
+                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            let kind = claim_kind_from_api_label(&claim.kind)
+                .ok_or(OwnerContextError::ProfileNotReviewed)?;
+            let record = vpr_domain::OwnerClaimRecord::capture(
+                claim_id,
+                vpr_domain::OwnerClaim {
+                    statement: claim.statement.clone(),
+                    kind,
+                    source: vpr_domain::SourceKind::Owner,
+                    verification: vpr_domain::VerificationState::Unverified,
+                    derivation: vpr_domain::DerivationKind::Direct,
+                },
+            )
+            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            profile
+                .add_captured_claim(record)
+                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        }
+
+        profile
+            .mark_capture_complete()
+            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        for claim in &snapshot.claims {
+            let claim_id = ClaimId::new(claim.claim_id.clone())
+                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            let kind = claim_kind_from_api_label(&claim.kind)
+                .ok_or(OwnerContextError::ProfileNotReviewed)?;
+            for _ in 1..claim.revision {
+                profile
+                    .correct_claim(&claim_id, claim.statement.clone(), kind)
+                    .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            }
+        }
+        profile
+            .approve_initial_review()
+            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        let restored = Self::new(profile)?;
+        if restored.snapshot() != snapshot {
+            return Err(OwnerContextError::ProfileNotReviewed);
+        }
+        Ok(restored)
     }
 
     pub(crate) fn identity(&self) -> &PersonaIdentity {
@@ -102,6 +164,17 @@ pub(crate) enum OwnerContextError {
     CorrectionRejected,
 }
 
+fn claim_kind_from_api_label(value: &str) -> Option<ClaimKind> {
+    match value {
+        "factual" => Some(ClaimKind::Factual),
+        "opinion" => Some(ClaimKind::Opinion),
+        "preference" => Some(ClaimKind::Preference),
+        "prediction" => Some(ClaimKind::Prediction),
+        "value_judgment" => Some(ClaimKind::ValueJudgment),
+        _ => None,
+    }
+}
+
 const fn claim_kind_api_label(kind: ClaimKind) -> &'static str {
     match kind {
         ClaimKind::Factual => "factual",
@@ -163,6 +236,22 @@ mod tests {
         profile.approve_claim(&id).unwrap();
         profile.approve_initial_review().unwrap();
         profile
+    }
+
+    #[test]
+    fn reviewed_snapshot_round_trips_exact_current_state() {
+        let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
+        let id = ClaimId::new("opinion-working-style").unwrap();
+        context
+            .correct_claim(
+                &id,
+                "Предпочитаю короткие циклы проверки",
+                ClaimKind::Opinion,
+            )
+            .unwrap();
+        let snapshot = context.snapshot();
+        let restored = ReviewedOwnerContext::from_snapshot(snapshot.clone()).unwrap();
+        assert_eq!(restored.snapshot(), snapshot);
     }
 
     #[test]
