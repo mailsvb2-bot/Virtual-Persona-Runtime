@@ -83,5 +83,10 @@ mod windows_restart_script_tests {
         assert!(script.contains("probe-did"));
         assert!(script.contains("bootstrap.egress_enabled"));
         assert!(script.contains("status.egress_enabled"));
+        assert!(script.contains("Assert-SafeToRestart"));
+        assert!(!script.contains("Export-ReviewedPersonaIfPresent"));
+        assert!(!script.contains("Restore-ReviewedPersona"));
+        assert!(!script.contains("/api/persona/create"));
+        assert!(!script.contains("/api/persona/reviewed"));
     }
 }
