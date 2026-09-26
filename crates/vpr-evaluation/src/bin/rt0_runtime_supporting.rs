@@ -3,14 +3,9 @@ use std::{env, fs, path::Path, process};
 use serde::Serialize;
 use vpr_evaluation::{
     BoundLabSessionEvidenceAggregate, ConversationEvidence, QualityEvidence,
-    derive_rt0_runtime_supporting_projection, sha256_hex,
+    RT0_RUNTIME_SUPPORTING_FILES, derive_rt0_runtime_supporting_projection,
+    rt0_runtime_supporting_scaffold, sha256_hex,
 };
-
-const OUTPUTS: [&str; 3] = [
-    "owner-conversation.json",
-    "visitor-conversation.json",
-    "quality.json",
-];
 
 #[derive(Serialize)]
 struct ConversationSupportingClaim<'a> {
@@ -82,11 +77,9 @@ fn run(args: &[String]) -> Result<(), String> {
         return Err("output path exists and is not a directory".into());
     }
     fs::create_dir_all(output_dir).map_err(|_| "output directory could not be created")?;
-    if OUTPUTS.iter().any(|name| output_dir.join(name).exists()) {
-        return Err("refusing to overwrite an existing runtime supporting-evidence file".into());
-    }
-
     let provider_state_sha256 = sha256_hex(&provider_state);
+    let scaffold = rt0_runtime_supporting_scaffold(candidate_sha, &provider_state_sha256);
+    validate_existing_outputs(output_dir, &scaffold)?;
     write_json(
         &output_dir.join("owner-conversation.json"),
         &conversation_claim(
@@ -114,6 +107,30 @@ fn run(args: &[String]) -> Result<(), String> {
          review remain separate real evidence.",
         output_dir.display()
     );
+    Ok(())
+}
+
+fn validate_existing_outputs(
+    output_dir: &Path,
+    scaffold: &[(&'static str, String)],
+) -> Result<(), String> {
+    for name in RT0_RUNTIME_SUPPORTING_FILES {
+        let path = output_dir.join(name);
+        if !path.exists() {
+            continue;
+        }
+        let existing = fs::read(&path)
+            .map_err(|_| "existing runtime supporting-evidence file could not be read")?;
+        let expected = scaffold
+            .iter()
+            .find_map(|(candidate, content)| (*candidate == name).then_some(content.as_bytes()))
+            .ok_or_else(|| "canonical runtime scaffold entry is missing".to_string())?;
+        if existing != expected {
+            return Err(format!(
+                "refusing to overwrite non-scaffold runtime supporting-evidence file: {name}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -161,4 +178,33 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| "JSON serialization failed")?;
     bytes.push(b'\n');
     fs::write(path, bytes).map_err(|_| "runtime supporting-evidence write failed".to_string())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("vpr-runtime-supporting-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn exact_scaffold_placeholders_are_replaceable_but_modified_files_are_not() {
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let scaffold = rt0_runtime_supporting_scaffold(&candidate, &provider);
+        let dir = temp_dir("replaceable");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for (name, content) in &scaffold {
+            fs::write(dir.join(name), content).unwrap();
+        }
+        assert!(validate_existing_outputs(&dir, &scaffold).is_ok());
+
+        fs::write(dir.join("quality.json"), b"{}\n").unwrap();
+        assert!(validate_existing_outputs(&dir, &scaffold).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use vpr_evaluation::{
-    ProviderStateManifest, sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
+    ProviderStateManifest, rt0_runtime_supporting_scaffold, sha256_hex, validate_candidate_sha,
+    validate_provider_state_manifest,
 };
 
 const FILES: [&str; 10] = [
@@ -74,26 +75,12 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
             "candidate_sha": candidate_sha,
         })
     };
-    let conversation = |role: &str| {
-        json!({
-            "origin": "synthetic",
-            "role": role,
-            "russian": "failed",
-            "voice": "failed",
-            "video": "failed",
-            "completed_turns": 0,
-            "interruption_exercised": "failed",
-            "candidate_sha": candidate_sha,
-            "provider_state_sha256": provider_state_sha256,
-        })
-    };
-    let latency = || json!({"samples": 1, "p50": 0, "p95": 0});
-
-    vec![
+    let mut files = vec![
         ("ci-evidence.json", pretty(&automated("failed"))),
         ("e2e-evidence.json", pretty(&automated("failed"))),
-        ("owner-conversation.json", pretty(&conversation("owner"))),
-        ("visitor-conversation.json", pretty(&conversation("visitor"))),
+    ];
+    files.extend(rt0_runtime_supporting_scaffold(candidate_sha, provider_state_sha256));
+    files.extend(vec![
         (
             "acceptance.json",
             pretty(&json!({
@@ -103,20 +90,6 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
                 "correction_path": "failed",
                 "failure_recovery_path": "failed",
                 "revoke_deny_path": "failed",
-                "candidate_sha": candidate_sha,
-                "provider_state_sha256": provider_state_sha256,
-            })),
-        ),
-        (
-            "quality.json",
-            pretty(&json!({
-                "origin": "synthetic",
-                "text_first_meaningful_response": latency(),
-                "first_meaningful_audio": latency(),
-                "interruption_stop": latency(),
-                "first_useful_video": latency(),
-                "av_sync_absolute_offset": latency(),
-                "recoverable_reconnect": latency(),
                 "candidate_sha": candidate_sha,
                 "provider_state_sha256": provider_state_sha256,
             })),
@@ -168,7 +141,8 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
             "RT0-Review-Status: failed\n\n             Scaffold only. Replace this text with the reviewed known limitations for the exact              candidate before any exit-gate attempt.\n"
                 .into(),
         ),
-    ]
+    ]);
+    files
 }
 
 fn pretty(value: &Value) -> String {
