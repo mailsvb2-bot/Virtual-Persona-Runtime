@@ -160,5 +160,5 @@ fn read(path: &str, label: &str) -> Result<Vec<u8>, String> {
 fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| "JSON serialization failed")?;
     bytes.push(b'\n');
-    fs::write(path, bytes).map_err(|_| "runtime supporting-evidence write failed")
+    fs::write(path, bytes).map_err(|_| "runtime supporting-evidence write failed".to_string())
 }
