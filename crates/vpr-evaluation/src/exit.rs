@@ -7,6 +7,7 @@ use crate::binding::{
     validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
+use crate::exit_cost::{cost_per_minute, evaluate_cost};
 use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
@@ -540,18 +541,6 @@ fn evaluate_quality(evidence: &QualityEvidence, failures: &mut Vec<Rt0ExitFailur
     }
 }
 
-fn evaluate_cost(evidence: &CostEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::CostEvidenceNotReal);
-    }
-    if evidence.measured_duration_millis == 0
-        || (evidence.estimated_cost_microunits.is_none()
-            && evidence.provider_charge_microunits.is_none())
-    {
-        failures.push(Rt0ExitFailureCode::CostNotMeasured);
-    }
-}
-
 fn evaluate_privacy(evidence: &PrivacyPermissionEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::PrivacyEvidenceNotReal);
@@ -591,12 +580,3 @@ fn evaluate_human(evidence: &HumanEvaluationEvidence, failures: &mut Vec<Rt0Exit
     }
 }
 
-fn cost_per_minute(cost: Option<u64>, measured_duration_millis: u64) -> Option<u64> {
-    let cost = cost?;
-    if measured_duration_millis == 0 {
-        return None;
-    }
-    let numerator = u128::from(cost).checked_mul(60_000)?;
-    let value = numerator / u128::from(measured_duration_millis);
-    u64::try_from(value).ok()
-}
