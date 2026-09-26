@@ -6,10 +6,10 @@ use vpr_evaluation::{
     ConversationPairEvidence, CostEvidence, EvidenceOrigin, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, HumanDimensions, HumanEvaluationEvidence,
     KnownLimitationsEvidence, LatencyDistributionMillis, LiveProviderProbeReceipt,
-    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
-    RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
-    Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
-    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, ProviderRole,
+    QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus,
+    Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext,
+    SttProbeEvidence, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
 
@@ -264,6 +264,22 @@ fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEviden
     .unwrap()
 }
 
+fn passing_cost_evidence() -> CostEvidence {
+    CostEvidence {
+        origin: EvidenceOrigin::Real,
+        estimated_cost_covered_provider_roles: vec![
+            ProviderRole::Stt,
+            ProviderRole::Llm,
+            ProviderRole::Avatar,
+        ],
+        provider_charge_covered_provider_roles: Vec::new(),
+        measured_duration_millis: 30_000,
+        estimated_cost_microunits: Some(3_000),
+        provider_charge_microunits: None,
+        artifact_sha256: digest('3'),
+    }
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
@@ -327,13 +343,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             },
             artifact_sha256: digest('2'),
         },
-        cost: CostEvidence {
-            origin: EvidenceOrigin::Real,
-            measured_duration_millis: 30_000,
-            estimated_cost_microunits: Some(3_000),
-            provider_charge_microunits: None,
-            artifact_sha256: digest('3'),
-        },
+        cost: passing_cost_evidence(),
         privacy_permissions: PrivacyPermissionEvidence {
             origin: EvidenceOrigin::Real,
             permission_suite: CheckStatus::Passed,
@@ -498,13 +508,75 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
 }
 
 #[test]
+fn partial_provider_cost_coverage_never_closes_rt0() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.estimated_cost_covered_provider_roles =
+        vec![ProviderRole::Stt, ProviderRole::Llm];
+
+    let report = evaluate(
+        &evidence,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    assert!(!report.ready);
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::CostProviderCoverageIncomplete)
+    );
+    assert_eq!(report.estimated_cost_per_minute_microunits, None);
+}
+
+#[test]
+fn mixed_partial_cost_coverages_do_not_combine_into_a_complete_signal() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.estimated_cost_covered_provider_roles =
+        vec![ProviderRole::Stt, ProviderRole::Llm];
+    evidence.cost.provider_charge_microunits = Some(1_000);
+    evidence.cost.provider_charge_covered_provider_roles = vec![ProviderRole::Avatar];
+
+    let report = evaluate(
+        &evidence,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    assert!(!report.ready);
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::CostProviderCoverageIncomplete)
+    );
+    assert_eq!(report.estimated_cost_per_minute_microunits, None);
+    assert_eq!(report.provider_charge_per_minute_microunits, None);
+}
+
+#[test]
 fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
     let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
     let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
     evidence.cost.estimated_cost_microunits = None;
+    evidence.cost.estimated_cost_covered_provider_roles.clear();
     evidence.cost.provider_charge_microunits = Some(4_500);
+    evidence.cost.provider_charge_covered_provider_roles =
+        vec![ProviderRole::Stt, ProviderRole::Llm, ProviderRole::Avatar];
 
     let report = evaluate(
         &evidence,
@@ -776,6 +848,8 @@ fn mock_or_incomplete_evidence_never_closes_rt0() {
     evidence.acceptance.origin = EvidenceOrigin::Mock;
     evidence.quality.origin = EvidenceOrigin::Mock;
     evidence.cost.origin = EvidenceOrigin::Synthetic;
+    evidence.cost.estimated_cost_covered_provider_roles.clear();
+    evidence.cost.provider_charge_covered_provider_roles.clear();
     evidence.cost.estimated_cost_microunits = None;
     evidence.privacy_permissions.origin = EvidenceOrigin::Mock;
     evidence
@@ -802,6 +876,7 @@ fn mock_or_incomplete_evidence_never_closes_rt0() {
         Rt0ExitFailureCode::AcceptanceEvidenceNotReal,
         Rt0ExitFailureCode::QualityEvidenceNotReal,
         Rt0ExitFailureCode::CostEvidenceNotReal,
+        Rt0ExitFailureCode::CostProviderCoverageIncomplete,
         Rt0ExitFailureCode::CostNotMeasured,
         Rt0ExitFailureCode::PrivacyEvidenceNotReal,
         Rt0ExitFailureCode::PrivateContextLeakageAccepted,
