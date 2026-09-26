@@ -28,7 +28,10 @@ pub fn rt0_runtime_supporting_scaffold(
 
     vec![
         ("owner-conversation.json", pretty(&conversation("owner"))),
-        ("visitor-conversation.json", pretty(&conversation("visitor"))),
+        (
+            "visitor-conversation.json",
+            pretty(&conversation("visitor")),
+        ),
         (
             "quality.json",
             pretty(&json!({
