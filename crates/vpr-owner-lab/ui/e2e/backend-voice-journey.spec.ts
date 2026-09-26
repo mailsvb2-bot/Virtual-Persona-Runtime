@@ -294,6 +294,30 @@ const recordVoiceTurn = async (
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 };
 
+const waitForCanonicalPlaybackEvidence = async (
+  request: APIRequestContext,
+): Promise<void> => {
+  await expect.poll(async () => {
+    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    if (!evidence.ok()) {
+      return false;
+    }
+    const snapshot = await evidence.json() as {
+      canonical_playback_proven: boolean;
+      av_sync_proven: boolean;
+      voice_attempts: Array<{
+        status: string;
+        canonical_playback_confirmed: boolean;
+      }>;
+    };
+    return snapshot.canonical_playback_proven
+      && snapshot.av_sync_proven
+      && snapshot.voice_attempts.some((attempt) =>
+        attempt.status === "completed" && attempt.canonical_playback_confirmed
+      );
+  }).toBeTruthy();
+};
+
 test("owner and visitor voice turns cross the real backend with different context scopes", async ({
   page,
   request,
@@ -325,6 +349,7 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Привет из браузера",
     "Голосовой ответ владельцу",
   );
+  await waitForCanonicalPlaybackEvidence(request);
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones ?? [],
   )).toContain("headset-mic");
@@ -488,6 +513,7 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Что думает владелец?",
     "В visitor scope нет подтверждённых данных владельца",
   );
+  await waitForCanonicalPlaybackEvidence(request);
 
   const visitorEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(visitorEvidence.ok()).toBeTruthy();
