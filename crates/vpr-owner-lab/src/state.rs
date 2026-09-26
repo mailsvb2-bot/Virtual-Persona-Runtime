@@ -562,6 +562,7 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 }
 
 mod client_control;
+mod persistence;
 mod text;
 mod voice;
 mod voice_input;
