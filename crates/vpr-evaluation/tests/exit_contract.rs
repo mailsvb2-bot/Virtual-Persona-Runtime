@@ -9,8 +9,8 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
-    bind_owner_lab_session_evidence, evaluate_bound_golden_suite, evaluate_rt0_exit_evidence,
-    sha256_hex,
+    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
@@ -1282,5 +1282,78 @@ fn incomplete_human_dimensions_fail_exit_without_corrupting_evidence_structure()
     assert_eq!(
         report.failures,
         vec![Rt0ExitFailureCode::HumanEvaluationIncomplete]
+    );
+}
+
+
+#[test]
+fn runtime_supporting_projection_matches_exit_runtime_claims() {
+    let fixture = golden_fixture();
+    let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
+    let bound = bound_session_aggregate(&fixture.provider_state_bytes);
+    let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
+    let projection = derive_rt0_runtime_supporting_projection(
+        &conversation_attempt,
+        &bound,
+        &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
+        &fixture.provider_state_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    let expected_owner = conversation(ParticipantRole::Owner);
+    let expected_visitor = conversation(ParticipantRole::Visitor);
+    assert_eq!(projection.conversations.owner.origin, EvidenceOrigin::Real);
+    assert_eq!(projection.conversations.owner.role, expected_owner.role);
+    assert_eq!(projection.conversations.owner.russian, expected_owner.russian);
+    assert_eq!(projection.conversations.owner.voice, expected_owner.voice);
+    assert_eq!(projection.conversations.owner.video, expected_owner.video);
+    assert_eq!(
+        projection.conversations.owner.completed_turns,
+        expected_owner.completed_turns
+    );
+    assert_eq!(
+        projection.conversations.owner.interruption_exercised,
+        expected_owner.interruption_exercised
+    );
+    assert_eq!(projection.conversations.visitor.origin, EvidenceOrigin::Real);
+    assert_eq!(projection.conversations.visitor.role, expected_visitor.role);
+    assert_eq!(projection.conversations.visitor.russian, expected_visitor.russian);
+    assert_eq!(projection.conversations.visitor.voice, expected_visitor.voice);
+    assert_eq!(projection.conversations.visitor.video, expected_visitor.video);
+    assert_eq!(
+        projection.conversations.visitor.completed_turns,
+        expected_visitor.completed_turns
+    );
+    assert_eq!(
+        projection.conversations.visitor.interruption_exercised,
+        expected_visitor.interruption_exercised
+    );
+
+    let expected_quality = passing_evidence(b"projection-fixture", &fixture.provider_state_bytes).quality;
+    assert_eq!(projection.quality.origin, EvidenceOrigin::Real);
+    assert_eq!(
+        projection.quality.text_first_meaningful_response,
+        expected_quality.text_first_meaningful_response
+    );
+    assert_eq!(
+        projection.quality.first_meaningful_audio,
+        expected_quality.first_meaningful_audio
+    );
+    assert_eq!(
+        projection.quality.interruption_stop,
+        expected_quality.interruption_stop
+    );
+    assert_eq!(
+        projection.quality.first_useful_video,
+        expected_quality.first_useful_video
+    );
+    assert_eq!(
+        projection.quality.av_sync_absolute_offset,
+        expected_quality.av_sync_absolute_offset
+    );
+    assert_eq!(
+        projection.quality.recoverable_reconnect,
+        expected_quality.recoverable_reconnect
     );
 }
