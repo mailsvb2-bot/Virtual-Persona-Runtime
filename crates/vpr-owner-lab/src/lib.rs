@@ -82,8 +82,12 @@ mod windows_restart_script_tests {
         assert!(script.contains("ProtectedData]::Unprotect"));
         assert!(script.contains("DataProtectionScope]::CurrentUser"));
         assert!(script.contains("reviewed-persona.dpapi"));
+        assert!(script.contains("C:\\VPR-RT0\\input\\reviewed-profile.json"));
         assert!(script.contains("C:\\VPR-RT0\\reviewed-profile.json"));
         assert!(script.contains("Get-CachedReviewedPersona"));
+        assert!(script.contains("Convert-ToImportableReviewedPersona"));
+        assert!(script.contains("/api/persona/reviewed/import"));
+        assert!(script.contains("refusing to open a broken qualification UI"));
         assert!(script.contains("bootstrap.egress_enabled"));
         assert!(script.contains("status.egress_enabled"));
     }
