@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use vpr_evaluation::{ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA, sha256_hex};
@@ -38,8 +38,8 @@ fn run(args: Vec<String>) -> Result<(), String> {
 
     let provider_bytes =
         fs::read(&provider_state_path).map_err(|_| "provider-state file could not be read")?;
-    let provider: ProviderStateManifest = serde_json::from_slice(&provider_bytes)
-        .map_err(|_| "provider-state JSON is invalid")?;
+    let provider: ProviderStateManifest =
+        serde_json::from_slice(&provider_bytes).map_err(|_| "provider-state JSON is invalid")?;
     if provider.schema_version != RT0_PROVIDER_STATE_SCHEMA {
         return Err("provider-state schema is not supported".into());
     }
