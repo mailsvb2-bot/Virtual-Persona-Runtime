@@ -517,7 +517,11 @@ fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
     .unwrap();
 
     assert!(report.ready);
-    assert!(!report.failures.contains(&Rt0ExitFailureCode::CostNotMeasured));
+    assert!(
+        !report
+            .failures
+            .contains(&Rt0ExitFailureCode::CostNotMeasured)
+    );
     assert_eq!(report.estimated_cost_per_minute_microunits, None);
     assert_eq!(report.provider_charge_per_minute_microunits, Some(9_000));
 }
