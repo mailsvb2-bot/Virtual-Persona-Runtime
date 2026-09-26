@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use vpr_domain::{
-    ClaimId, ClaimKind, PersonaCaptureState, PersonaIdentity, PersonaMode, PersonaProfile,
+    ClaimId, ClaimKind, ConstitutionBoundary, PersonaCaptureState, PersonaId, PersonaIdentity,
+    PersonaMode, PersonaProfile, PersonaVersion,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
