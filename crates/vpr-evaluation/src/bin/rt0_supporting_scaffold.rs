@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use vpr_evaluation::{
-    ProviderStateManifest, sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
+    ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA, sha256_hex, validate_candidate_sha,
+    validate_provider_state_manifest,
 };
 
 const FILES: [&str; 10] = [
@@ -226,4 +227,30 @@ mod tests {
         assert!(validate_candidate_sha("not-a-sha").is_err());
         assert!(validate_candidate_sha(&"A".repeat(40)).is_err());
     }
+
+    #[test]
+    fn provider_manifest_validation_is_fail_closed() {
+        use vpr_evaluation::{ProviderRole, ProviderStateBinding};
+
+        let manifest = ProviderStateManifest {
+            schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
+            providers: vec![
+                ProviderStateBinding {
+                    role: ProviderRole::Stt,
+                    provider: "deepgram".into(),
+                    model_or_representation: "nova-3".into(),
+                    configuration_fingerprint_sha256: "a".repeat(64),
+                },
+                ProviderStateBinding {
+                    role: ProviderRole::Llm,
+                    provider: "deepseek".into(),
+                    model_or_representation: "deepseek-flash".into(),
+                    configuration_fingerprint_sha256: "b".repeat(64),
+                },
+            ],
+        };
+
+        assert!(validate_provider_state_manifest(&manifest).is_err());
+    }
+
 }
