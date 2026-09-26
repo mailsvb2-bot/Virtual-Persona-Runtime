@@ -89,10 +89,10 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
     let latency = || json!({"samples": 1, "p50": 0, "p95": 0});
 
     vec![
-        ("ci-evidence.json", pretty(automated("failed"))),
-        ("e2e-evidence.json", pretty(automated("failed"))),
-        ("owner-conversation.json", pretty(conversation("owner"))),
-        ("visitor-conversation.json", pretty(conversation("visitor"))),
+        ("ci-evidence.json", pretty(&automated("failed"))),
+        ("e2e-evidence.json", pretty(&automated("failed"))),
+        ("owner-conversation.json", pretty(&conversation("owner"))),
+        ("visitor-conversation.json", pretty(&conversation("visitor"))),
         (
             "acceptance.json",
             pretty(&json!({
