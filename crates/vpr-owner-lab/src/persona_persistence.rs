@@ -111,7 +111,7 @@ mod platform {
     use super::{PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_ACCOUNT, WINDOWS_SERVICE};
     use keyring::{Entry, Error as KeyringError};
 
-    fn entry_for(account: &str) -> Result<Entry, String> {
+    pub(super) fn entry_for(account: &str) -> Result<Entry, String> {
         Entry::new(WINDOWS_SERVICE, account)
             .map_err(|_| "Windows reviewed Persona store initialization failed".into())
     }
