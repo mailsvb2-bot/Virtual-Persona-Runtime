@@ -11,7 +11,10 @@ $tempRoot = Join-Path $env:TEMP ("vpr-owner-lab-restart-" + [guid]::NewGuid().To
 $personaPath = Join-Path $tempRoot 'reviewed-persona.json'
 $profileCacheRoot = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\owner-lab'
 $profileCachePath = Join-Path $profileCacheRoot 'reviewed-persona.dpapi'
-$legacyProfilePath = 'C:\VPR-RT0\reviewed-profile.json'
+$legacyProfilePaths = @(
+    'C:\VPR-RT0\input\reviewed-profile.json',
+    'C:\VPR-RT0\reviewed-profile.json'
+)
 $preservedPersona = $null
 
 function Get-Bootstrap {
@@ -104,19 +107,59 @@ function Read-ReviewedPersonaCache {
     }
 }
 
-function Read-LegacyReviewedPersona {
-    if (-not (Test-Path -LiteralPath $legacyProfilePath)) {
-        return $null
+function Convert-ToImportableReviewedPersona {
+    param([Parameter(Mandatory = $true)]$Profile)
+
+    if ([string]::IsNullOrWhiteSpace([string]$Profile.persona_id)) {
+        throw 'Reviewed Persona is missing persona_id'
     }
 
-    try {
-        $profile = Get-Content -LiteralPath $legacyProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
-        Write-Host "Recovered reviewed Persona from legacy $legacyProfilePath."
-        Save-ReviewedPersonaCache -Profile $profile
-        return $profile
-    } catch {
-        throw "Legacy reviewed Persona exists at $legacyProfilePath but is invalid JSON"
+    $claims = @()
+    foreach ($claim in @($Profile.claims)) {
+        if ([string]::IsNullOrWhiteSpace([string]$claim.claim_id) -or
+            [string]::IsNullOrWhiteSpace([string]$claim.statement) -or
+            [string]::IsNullOrWhiteSpace([string]$claim.kind)) {
+            throw 'Reviewed Persona contains an incomplete claim'
+        }
+        if ($null -ne $claim.owner_approved -and -not [bool]$claim.owner_approved) {
+            continue
+        }
+        $claims += [pscustomobject]@{
+            claim_id = [string]$claim.claim_id
+            statement = [string]$claim.statement
+            kind = [string]$claim.kind
+        }
     }
+    if ($claims.Count -eq 0) {
+        throw 'Reviewed Persona contains no owner-approved claims'
+    }
+
+    return [pscustomobject]@{
+        persona_id = [string]$Profile.persona_id
+        claims = $claims
+    }
+}
+
+function Read-LegacyReviewedPersona {
+    foreach ($legacyProfilePath in $legacyProfilePaths) {
+        if (-not (Test-Path -LiteralPath $legacyProfilePath)) {
+            continue
+        }
+
+        try {
+            $profile = Get-Content -LiteralPath $legacyProfilePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($null -ne $profile.owner_review_confirmed -and -not [bool]$profile.owner_review_confirmed) {
+                throw 'legacy owner review was not confirmed'
+            }
+            $importable = Convert-ToImportableReviewedPersona -Profile $profile
+            Write-Host "Recovered reviewed Persona from legacy $legacyProfilePath."
+            Save-ReviewedPersonaCache -Profile $importable
+            return $importable
+        } catch {
+            throw "Legacy reviewed Persona exists at $legacyProfilePath but could not be migrated: $($_.Exception.Message)"
+        }
+    }
+    return $null
 }
 
 function Get-CachedReviewedPersona {
@@ -143,18 +186,12 @@ function Export-ReviewedPersonaIfPresent {
 
     $bootstrap = Get-Bootstrap
     $profile = Invoke-LabPost -Path '/api/persona/reviewed' -Body @{} -CsrfToken $bootstrap.csrf_token
-    if ($profile.persona_version -ne 2) {
-        throw "Reviewed Persona version $($profile.persona_version) cannot be losslessly replayed by the RT0 restart bridge; leaving the current process untouched"
-    }
-    if (@($profile.claims).Count -ne 3) {
-        throw "Reviewed Persona does not contain the canonical 3 RT0 claims; leaving the current process untouched"
-    }
-
+    $importable = Convert-ToImportableReviewedPersona -Profile $profile
     New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-    $profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $personaPath -Encoding UTF8
-    Save-ReviewedPersonaCache -Profile $profile
+    $importable | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $personaPath -Encoding UTF8
+    Save-ReviewedPersonaCache -Profile $importable
     Write-Host "Preserved reviewed Persona for this restart and future restarts."
-    return $profile
+    return $importable
 }
 
 function Stop-PortListener {
@@ -218,53 +255,26 @@ function Clear-ProviderEnvironmentOverrides {
 function Restore-ReviewedPersona {
     param([Parameter(Mandatory = $true)]$Profile)
 
-    $claimsById = @{}
-    foreach ($claim in @($Profile.claims)) {
-        $claimsById[$claim.claim_id] = $claim
-    }
-
-    $orderedIds = @(
-        'identity-self-description',
-        'preference-communication-style',
-        'opinion-core-principle'
-    )
-    foreach ($claimId in $orderedIds) {
-        if (-not $claimsById.ContainsKey($claimId)) {
-            throw "Preserved Persona is missing canonical claim $claimId"
-        }
-    }
-
+    $importable = Convert-ToImportableReviewedPersona -Profile $Profile
     $bootstrap = Get-Bootstrap
     $csrf = $bootstrap.csrf_token
-    $null = Invoke-LabPost -Path '/api/persona/create' -Body @{ persona_id = $Profile.persona_id } -CsrfToken $csrf
-    foreach ($claimId in $orderedIds) {
-        $claim = $claimsById[$claimId]
-        $null = Invoke-LabPost -Path '/api/persona/capture/answer' -Body @{ answer = $claim.statement } -CsrfToken $csrf
-    }
-    $null = Invoke-LabPost -Path '/api/persona/capture/finish' -Body @{} -CsrfToken $csrf
-    foreach ($claimId in $orderedIds) {
-        $claim = $claimsById[$claimId]
-        $null = Invoke-LabPost -Path '/api/persona/claims/correct' -Body @{
-            claim_id = $claimId
-            statement = $claim.statement
-            kind = $claim.kind
-        } -CsrfToken $csrf
-    }
-    $null = Invoke-LabPost -Path '/api/persona/review/complete' -Body @{} -CsrfToken $csrf
+    $null = Invoke-LabPost -Path '/api/persona/reviewed/import' -Body $importable -CsrfToken $csrf
 
     $restored = Invoke-LabPost -Path '/api/persona/reviewed' -Body @{} -CsrfToken $csrf
-    if ($restored.persona_id -ne $Profile.persona_id -or $restored.persona_version -ne 2) {
-        throw 'Restored Persona identity/version does not match the preserved profile'
+    if ($restored.persona_id -ne $importable.persona_id) {
+        throw 'Restored Persona identity does not match the preserved profile'
     }
-    foreach ($claimId in $orderedIds) {
-        $before = $claimsById[$claimId]
-        $after = @($restored.claims | Where-Object { $_.claim_id -eq $claimId })[0]
-        if ($null -eq $after -or $after.statement -ne $before.statement -or $after.kind -ne $before.kind) {
-            throw "Restored Persona claim $claimId does not match the preserved profile"
+    if (@($restored.claims).Count -ne @($importable.claims).Count) {
+        throw 'Restored Persona claim count does not match the preserved profile'
+    }
+    foreach ($claim in @($importable.claims)) {
+        $after = @($restored.claims | Where-Object { $_.claim_id -eq $claim.claim_id })[0]
+        if ($null -eq $after -or $after.statement -ne $claim.statement -or $after.kind -ne $claim.kind) {
+            throw "Restored Persona claim $($claim.claim_id) does not match the preserved profile"
         }
     }
-    Save-ReviewedPersonaCache -Profile $restored
-    Write-Host "Restored reviewed Persona $($restored.persona_id), version $($restored.persona_version)."
+    Save-ReviewedPersonaCache -Profile $importable
+    Write-Host "Restored reviewed Persona $($restored.persona_id), version $($restored.persona_version), claims=$(@($restored.claims).Count)."
 }
 
 try {
@@ -314,6 +324,11 @@ try {
 
     if ($null -ne $preservedPersona) {
         Restore-ReviewedPersona -Profile $preservedPersona
+    }
+
+    $status = Get-LabStatus
+    if ($status.owner_context_state -ne 'reviewed' -or $status.reviewed_owner_claims -lt 1) {
+        throw 'Owner Lab started without a reviewed Persona; refusing to open a broken qualification UI'
     }
 
     $status = Get-LabStatus
