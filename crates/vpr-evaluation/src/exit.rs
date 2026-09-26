@@ -7,6 +7,7 @@ use crate::binding::{
     validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
+use crate::exit_cost::{cost_per_minute, evaluate_cost};
 use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
@@ -14,8 +15,8 @@ use crate::{
     RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.3";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.3";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.4";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.4";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -108,7 +109,7 @@ pub struct QualityEvidence {
 pub struct CostEvidence {
     pub origin: EvidenceOrigin,
     pub measured_duration_millis: u64,
-    pub measured_cost_microunits: Option<u64>,
+    pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
     pub artifact_sha256: String,
 }
@@ -234,7 +235,8 @@ pub struct Rt0ExitReport {
     pub exit_evidence_input_sha256: String,
     pub ready: bool,
     pub failures: Vec<Rt0ExitFailureCode>,
-    pub measured_cost_per_minute_microunits: Option<u64>,
+    pub estimated_cost_per_minute_microunits: Option<u64>,
+    pub provider_charge_per_minute_microunits: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -301,7 +303,14 @@ pub fn evaluate_rt0_exit_evidence(
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
 
-    let measured_cost_per_minute_microunits = cost_per_minute(&evidence.cost);
+    let estimated_cost_per_minute_microunits = cost_per_minute(
+        evidence.cost.estimated_cost_microunits,
+        evidence.cost.measured_duration_millis,
+    );
+    let provider_charge_per_minute_microunits = cost_per_minute(
+        evidence.cost.provider_charge_microunits,
+        evidence.cost.measured_duration_millis,
+    );
     Ok(Rt0ExitReport {
         schema_version: RT0_EXIT_REPORT_SCHEMA.into(),
         candidate_sha: evidence.candidate_sha.clone(),
@@ -314,7 +323,8 @@ pub fn evaluate_rt0_exit_evidence(
         exit_evidence_input_sha256: sha256_hex(context.exit_evidence_bytes),
         ready: failures.is_empty(),
         failures,
-        measured_cost_per_minute_microunits,
+        estimated_cost_per_minute_microunits,
+        provider_charge_per_minute_microunits,
     })
 }
 
@@ -531,15 +541,6 @@ fn evaluate_quality(evidence: &QualityEvidence, failures: &mut Vec<Rt0ExitFailur
     }
 }
 
-fn evaluate_cost(evidence: &CostEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::CostEvidenceNotReal);
-    }
-    if evidence.measured_duration_millis == 0 || evidence.measured_cost_microunits.is_none() {
-        failures.push(Rt0ExitFailureCode::CostNotMeasured);
-    }
-}
-
 fn evaluate_privacy(evidence: &PrivacyPermissionEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::PrivacyEvidenceNotReal);
@@ -577,14 +578,4 @@ fn evaluate_human(evidence: &HumanEvaluationEvidence, failures: &mut Vec<Rt0Exit
     if evidence.usable_for_continuation != CheckStatus::Passed {
         failures.push(Rt0ExitFailureCode::HumanEvaluationNotUsable);
     }
-}
-
-fn cost_per_minute(evidence: &CostEvidence) -> Option<u64> {
-    let cost = evidence.measured_cost_microunits?;
-    if evidence.measured_duration_millis == 0 {
-        return None;
-    }
-    let numerator = u128::from(cost).checked_mul(60_000)?;
-    let value = numerator / u128::from(evidence.measured_duration_millis);
-    u64::try_from(value).ok()
 }

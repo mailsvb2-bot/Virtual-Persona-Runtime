@@ -126,7 +126,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
             pretty(&json!({
                 "origin": "synthetic",
                 "measured_duration_millis": 0,
-                "measured_cost_microunits": Value::Null,
+                "estimated_cost_microunits": Value::Null,
                 "provider_charge_microunits": Value::Null,
                 "candidate_sha": candidate_sha,
                 "provider_state_sha256": provider_state_sha256,

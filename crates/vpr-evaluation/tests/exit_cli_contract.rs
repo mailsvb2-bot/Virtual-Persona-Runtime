@@ -61,7 +61,7 @@ fn exit_evidence(
         })
     };
     json!({
-        "schema_version":"rt0-exit-evidence-0.3",
+        "schema_version":"rt0-exit-evidence-0.4",
         "candidate_sha":CANDIDATE,
         "release_spec_sha256":sha256_hex(RELEASE_SPEC),
         "golden_report_sha256":sha256_hex(golden_bytes),
@@ -93,7 +93,7 @@ fn exit_evidence(
             "artifact_sha256":supporting_artifact_sha256
         },
         "cost":{
-            "origin":"real","measured_duration_millis":60000,"measured_cost_microunits":1234,
+            "origin":"real","measured_duration_millis":60000,"estimated_cost_microunits":1234,
             "provider_charge_microunits":null,"artifact_sha256":supporting_artifact_sha256
         },
         "privacy_permissions":{

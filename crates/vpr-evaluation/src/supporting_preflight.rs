@@ -118,7 +118,7 @@ struct QualitySupportingClaim {
 struct CostSupportingClaim {
     origin: EvidenceOrigin,
     measured_duration_millis: u64,
-    measured_cost_microunits: Option<u64>,
+    estimated_cost_microunits: Option<u64>,
     provider_charge_microunits: Option<u64>,
     candidate_sha: String,
     provider_state_sha256: String,
@@ -340,7 +340,7 @@ fn validate_cost(
     )?;
     let _ = (
         claim.measured_duration_millis,
-        claim.measured_cost_microunits,
+        claim.estimated_cost_microunits,
         claim.provider_charge_microunits,
     );
     Ok(())

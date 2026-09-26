@@ -74,7 +74,7 @@ impl SupportingFixture {
             cost: bytes(&json!({
                 "origin":"real",
                 "measured_duration_millis":60000,
-                "measured_cost_microunits":null,
+                "estimated_cost_microunits":null,
                 "provider_charge_microunits":null,
                 "candidate_sha":CANDIDATE,
                 "provider_state_sha256":provider_state_sha256

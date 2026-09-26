@@ -1,5 +1,5 @@
 {
-  "schema_version": "rt0-exit-evidence-0.3",
+  "schema_version": "rt0-exit-evidence-0.4",
   "candidate_sha": "0000000000000000000000000000000000000000",
   "release_spec_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "golden_report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -85,7 +85,7 @@
   "cost": {
     "origin": "synthetic",
     "measured_duration_millis": 60000,
-    "measured_cost_microunits": 0,
+    "estimated_cost_microunits": 0,
     "provider_charge_microunits": null,
     "artifact_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
   },
