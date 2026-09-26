@@ -493,7 +493,33 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
     assert!(report.ready);
     assert!(report.failures.is_empty());
     assert_eq!(report.estimated_cost_per_minute_microunits, Some(6_000));
+    assert_eq!(report.provider_charge_per_minute_microunits, None);
     assert_eq!(report.golden_report_sha256, sha256_hex(&golden_bytes));
+}
+
+#[test]
+fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.estimated_cost_microunits = None;
+    evidence.cost.provider_charge_microunits = Some(4_500);
+
+    let report = evaluate(
+        &evidence,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    assert!(report.ready);
+    assert!(!report.failures.contains(&Rt0ExitFailureCode::CostNotMeasured));
+    assert_eq!(report.estimated_cost_per_minute_microunits, None);
+    assert_eq!(report.provider_charge_per_minute_microunits, Some(9_000));
 }
 
 fn session_snapshot_bytes_with_text_timing(
