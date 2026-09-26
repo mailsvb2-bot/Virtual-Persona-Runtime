@@ -6,8 +6,8 @@ use vpr_evaluation::{
     ConversationPairEvidence, CostEvidence, EvidenceOrigin, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, HumanDimensions, HumanEvaluationEvidence,
     KnownLimitationsEvidence, LatencyDistributionMillis, LiveProviderProbeReceipt,
-    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, QualityEvidence,
-    RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
+    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, ProviderRole,
+    QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
     bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
@@ -329,6 +329,11 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
         },
         cost: CostEvidence {
             origin: EvidenceOrigin::Real,
+            covered_provider_roles: vec![
+                ProviderRole::Stt,
+                ProviderRole::Llm,
+                ProviderRole::Avatar,
+            ],
             measured_duration_millis: 30_000,
             estimated_cost_microunits: Some(3_000),
             provider_charge_microunits: None,
@@ -495,6 +500,33 @@ fn exact_threshold_real_evidence_can_pass_without_inventing_provider_charge() {
     assert_eq!(report.estimated_cost_per_minute_microunits, Some(6_000));
     assert_eq!(report.provider_charge_per_minute_microunits, None);
     assert_eq!(report.golden_report_sha256, sha256_hex(&golden_bytes));
+}
+
+#[test]
+fn partial_provider_cost_coverage_never_closes_rt0() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.covered_provider_roles = vec![ProviderRole::Stt, ProviderRole::Llm];
+
+    let report = evaluate(
+        &evidence,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    assert!(!report.ready);
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::CostProviderCoverageIncomplete)
+    );
+    assert_eq!(report.estimated_cost_per_minute_microunits, None);
 }
 
 #[test]
@@ -776,6 +808,7 @@ fn mock_or_incomplete_evidence_never_closes_rt0() {
     evidence.acceptance.origin = EvidenceOrigin::Mock;
     evidence.quality.origin = EvidenceOrigin::Mock;
     evidence.cost.origin = EvidenceOrigin::Synthetic;
+    evidence.cost.covered_provider_roles.clear();
     evidence.cost.estimated_cost_microunits = None;
     evidence.privacy_permissions.origin = EvidenceOrigin::Mock;
     evidence
@@ -802,6 +835,7 @@ fn mock_or_incomplete_evidence_never_closes_rt0() {
         Rt0ExitFailureCode::AcceptanceEvidenceNotReal,
         Rt0ExitFailureCode::QualityEvidenceNotReal,
         Rt0ExitFailureCode::CostEvidenceNotReal,
+        Rt0ExitFailureCode::CostProviderCoverageIncomplete,
         Rt0ExitFailureCode::CostNotMeasured,
         Rt0ExitFailureCode::PrivacyEvidenceNotReal,
         Rt0ExitFailureCode::PrivateContextLeakageAccepted,

@@ -4,8 +4,8 @@ use crate::binding::{valid_git_sha, validate_provider_state};
 use crate::exit_validation::validate_quality_latencies;
 use crate::known_limitations::parse_known_limitations_review_status;
 use crate::{
-    CheckStatus, EvidenceOrigin, HumanDimensions, ParticipantRole, ProviderStateManifest,
-    QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
+    CheckStatus, EvidenceOrigin, HumanDimensions, ParticipantRole, ProviderRole,
+    ProviderStateManifest, QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
 };
 
 pub const RT0_SUPPORTING_PREFLIGHT_SCHEMA: &str = "rt0-supporting-evidence-preflight-0.1";
@@ -117,6 +117,7 @@ struct QualitySupportingClaim {
 #[serde(deny_unknown_fields)]
 struct CostSupportingClaim {
     origin: EvidenceOrigin,
+    covered_provider_roles: Vec<ProviderRole>,
     measured_duration_millis: u64,
     estimated_cost_microunits: Option<u64>,
     provider_charge_microunits: Option<u64>,
@@ -339,6 +340,7 @@ fn validate_cost(
         provider_state_sha256,
     )?;
     let _ = (
+        claim.covered_provider_roles,
         claim.measured_duration_millis,
         claim.estimated_cost_microunits,
         claim.provider_charge_microunits,

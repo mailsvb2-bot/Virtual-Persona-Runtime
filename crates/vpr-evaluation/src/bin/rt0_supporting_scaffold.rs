@@ -101,6 +101,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
             "cost.json",
             pretty(&json!({
                 "origin": "synthetic",
+                "covered_provider_roles": [],
                 "measured_duration_millis": 0,
                 "estimated_cost_microunits": Value::Null,
                 "provider_charge_microunits": Value::Null,

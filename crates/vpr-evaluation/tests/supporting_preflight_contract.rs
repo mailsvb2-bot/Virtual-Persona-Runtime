@@ -80,6 +80,7 @@ impl Fixture {
             })),
             cost: bytes(&json!({
                 "origin":"real",
+                "covered_provider_roles":["stt","llm","avatar"],
                 "measured_duration_millis":60000,
                 "estimated_cost_microunits":null,
                 "provider_charge_microunits":null,

@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::binding::{
-    EvidenceVerificationContext, evaluate_bound_golden_suite, valid_git_sha, valid_sha256,
-    validate_provider_state,
+    EvidenceVerificationContext, ProviderRole, evaluate_bound_golden_suite, valid_git_sha,
+    valid_sha256, validate_provider_state,
 };
 use crate::exit_context::Rt0ExitVerificationContext;
 use crate::exit_cost::{cost_per_minute, evaluate_cost};
@@ -15,8 +15,8 @@ use crate::{
     RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.4";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.4";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.5";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.5";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -108,6 +108,7 @@ pub struct QualityEvidence {
 #[serde(deny_unknown_fields)]
 pub struct CostEvidence {
     pub origin: EvidenceOrigin,
+    pub covered_provider_roles: Vec<ProviderRole>,
     pub measured_duration_millis: u64,
     pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
@@ -208,6 +209,7 @@ pub enum Rt0ExitFailureCode {
     AvSyncExceeded,
     ReconnectLatencyExceeded,
     CostEvidenceNotReal,
+    CostProviderCoverageIncomplete,
     CostNotMeasured,
     PrivacyEvidenceNotReal,
     PermissionSuiteNotPassed,
@@ -303,14 +305,10 @@ pub fn evaluate_rt0_exit_evidence(
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
 
-    let estimated_cost_per_minute_microunits = cost_per_minute(
-        evidence.cost.estimated_cost_microunits,
-        evidence.cost.measured_duration_millis,
-    );
-    let provider_charge_per_minute_microunits = cost_per_minute(
-        evidence.cost.provider_charge_microunits,
-        evidence.cost.measured_duration_millis,
-    );
+    let estimated_cost_per_minute_microunits =
+        cost_per_minute(&evidence.cost, evidence.cost.estimated_cost_microunits);
+    let provider_charge_per_minute_microunits =
+        cost_per_minute(&evidence.cost, evidence.cost.provider_charge_microunits);
     Ok(Rt0ExitReport {
         schema_version: RT0_EXIT_REPORT_SCHEMA.into(),
         candidate_sha: evidence.candidate_sha.clone(),
