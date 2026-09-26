@@ -142,6 +142,16 @@ fn partial_cost_never_becomes_a_fake_complete_total() {
 }
 
 #[test]
+fn zero_duration_snapshot_fails_closed() {
+    let mut invalid = snapshot(49, 1, 100);
+    invalid.session_duration_millis = 0;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[invalid]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+}
+
+#[test]
 fn text_attempts_are_exact_and_fail_closed() {
     let mut pending = snapshot(50, 1, 100);
     pending.text_attempts[0].status = LabTextAttemptStatus::Pending;
@@ -315,3 +325,5 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
         Err(LabSessionAggregateError::InvalidMediaEvidence)
     );
 }
+
+[executed on device: 7557405-me744613.twc1.net (f78fb5c4-85ce-49a2-ae2f-bfed9c352431)]
