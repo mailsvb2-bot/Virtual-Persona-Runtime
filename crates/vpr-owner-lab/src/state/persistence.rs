@@ -22,7 +22,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
         let context =
-            ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
+            ReviewedOwnerContext::from_snapshot(&snapshot).map_err(map_owner_context_error)?;
         self.reviewed_owner_context = Some(context);
         Ok(())
     }
