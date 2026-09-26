@@ -100,9 +100,7 @@ fn save_file(path: &Path, snapshot: &ReviewedOwnerContextSnapshot) -> Result<(),
 
 #[cfg(windows)]
 mod platform {
-    use super::{
-        PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_ACCOUNT, WINDOWS_SERVICE,
-    };
+    use super::{PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_ACCOUNT, WINDOWS_SERVICE};
     use keyring::{Entry, Error as KeyringError};
 
     fn entry() -> Result<Entry, String> {
