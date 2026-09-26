@@ -367,6 +367,16 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBrowserFakes(page);
+  await page.route("**/api/evidence/media", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      const body = request.postDataJSON() as { kind?: string } | null;
+      if (body?.kind === "audio_started") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      }
+    }
+    await route.continue();
+  });
   await page.goto("/");
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
