@@ -180,14 +180,16 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     fs::write(path, bytes).map_err(|_| "runtime supporting-evidence write failed".to_string())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("vpr-runtime-supporting-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "vpr-runtime-supporting-{name}-{}",
+            std::process::id()
+        ))
     }
 
     #[test]
