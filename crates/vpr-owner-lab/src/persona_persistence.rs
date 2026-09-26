@@ -173,8 +173,8 @@ mod tests {
             Err(error) => panic!("failed to clear test credential before round-trip: {error}"),
         }
 
-        let raw = serde_json::to_string(&PersistedPersona::new(sample()))
-            .expect("sample must serialize");
+        let raw =
+            serde_json::to_string(&PersistedPersona::new(sample())).expect("sample must serialize");
         entry
             .set_password(&raw)
             .expect("Windows Credential Manager must accept reviewed Persona");
