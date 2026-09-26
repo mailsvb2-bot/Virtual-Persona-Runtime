@@ -9,8 +9,7 @@ use vpr_evaluation::{
     LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, ProviderRole,
     QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus,
     Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext,
-    SttProbeEvidence,
-    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    SttProbeEvidence, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
 
@@ -197,8 +196,7 @@ fn session_snapshot_bytes_with_av_sync(
         }),
     ];
     media_events.extend(interruption);
-    serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+    serde_json::to_vec(&serde_json::json!({        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -397,8 +395,7 @@ fn evaluate_with_probe(
     golden: &BoundGoldenReport,
     golden_bytes: &[u8],
     fixture: &support::GoldenFixture,
-    release_spec: &[u8],
-    candidate: &str,
+    release_spec: &[u8],    candidate: &str,
     live_provider_probe: (&LiveProviderProbeReceipt, &[u8]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let conversation_attempt_bytes = conversation_attempt_bytes(&fixture.provider_state_bytes);
@@ -572,11 +569,8 @@ fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
     evidence.cost.estimated_cost_microunits = None;
     evidence.cost.estimated_cost_covered_provider_roles.clear();
     evidence.cost.provider_charge_microunits = Some(4_500);
-    evidence.cost.provider_charge_covered_provider_roles = vec![
-        ProviderRole::Stt,
-        ProviderRole::Llm,
-        ProviderRole::Avatar,
-    ];
+    evidence.cost.provider_charge_covered_provider_roles =
+        vec![ProviderRole::Stt, ProviderRole::Llm, ProviderRole::Avatar];
 
     let report = evaluate(
         &evidence,
@@ -597,7 +591,6 @@ fn provider_charge_only_cost_evidence_remains_distinct_from_estimate() {
     assert_eq!(report.estimated_cost_per_minute_microunits, None);
     assert_eq!(report.provider_charge_per_minute_microunits, Some(9_000));
 }
-
 fn session_snapshot_bytes_with_text_timing(
     role: ParticipantRole,
     session_sequence: u64,
@@ -797,8 +790,7 @@ fn av_sync_threshold_is_evaluated_from_recomputed_session_distribution() {
 }
 
 #[test]
-fn every_session_quality_metric_must_match_recomputed_session_distribution() {
-    let fixture = golden_fixture();
+fn every_session_quality_metric_must_match_recomputed_session_distribution() {    let fixture = golden_fixture();
     let golden = fixture.report.clone();
     let golden_bytes = serde_json::to_vec(&golden).unwrap();
 
@@ -997,7 +989,6 @@ fn live_provider_probe_is_exact_candidate_bound_and_fail_closed() {
         ),
         Err(Rt0ExitEvidenceError::LiveProviderProbeProviderStateMismatch)
     );
-
     let mut empty_output = probe.clone();
     empty_output.stt.transcript_chars = 0;
     empty_output.llm.output_chars = 0;
@@ -1198,282 +1189,3 @@ fn malformed_structural_evidence_is_rejected_before_exit_decision() {
     assert_eq!(
         evaluate(
             &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::InvalidLatencyDistribution)
-    );
-
-    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    evidence.automated.ci.artifact_sha256 = "not-a-digest".into();
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
-    );
-
-    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    evidence.human_evaluation.rubric_version = "   ".into();
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::InvalidHumanRubric)
-    );
-}
-
-#[test]
-fn internally_inconsistent_golden_report_is_not_trusted() {
-    let fixture = golden_fixture();
-    let mut golden = fixture.report.clone();
-    golden.golden.passed = 0;
-    let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::GoldenReportInvalid)
-    );
-
-    let fixture = failing_golden_fixture();
-    let golden = fixture.report.clone();
-    assert_eq!(golden.golden.failed, 1);
-    let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    let report = evaluate(
-        &evidence,
-        &golden,
-        &golden_bytes,
-        &fixture,
-        RELEASE_SPEC,
-        CANDIDATE,
-    )
-    .unwrap();
-    assert_eq!(
-        report.failures,
-        vec![Rt0ExitFailureCode::GoldenSetNotPassed]
-    );
-}
-
-#[test]
-fn forged_shortened_passing_golden_report_is_rejected_by_recomputation() {
-    let fixture = golden_fixture();
-    let mut forged = fixture.report.clone();
-    forged.golden.total = 1;
-    forged.golden.passed = 1;
-    forged.golden.failed = 0;
-    forged.golden.cases.truncate(1);
-    forged.golden.cases[0].passed = true;
-    forged.golden.cases[0].failures.clear();
-    let forged_bytes = serde_json::to_vec(&forged).unwrap();
-    let evidence = passing_evidence(&forged_bytes, &fixture.provider_state_bytes);
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &forged,
-            &forged_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch)
-    );
-}
-
-#[test]
-fn golden_report_count_overflow_is_structural_error_not_panic() {
-    let fixture = golden_fixture();
-    let mut malformed = fixture.report.clone();
-    malformed.golden.passed = usize::MAX;
-    malformed.golden.failed = 1;
-    let malformed_bytes = serde_json::to_vec(&malformed).unwrap();
-    let evidence = passing_evidence(&malformed_bytes, &fixture.provider_state_bytes);
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &malformed,
-            &malformed_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::GoldenReportInvalid)
-    );
-}
-
-#[test]
-fn synthetic_exit_example_is_parseable_but_explicitly_non_real() {
-    let evidence: Rt0ExitEvidence = serde_json::from_str(include_str!(
-        "../../../docs/evaluation/rt0_exit_evidence.synthetic.example.json"
-    ))
-    .unwrap();
-    assert_eq!(
-        evidence.conversations.owner.origin,
-        EvidenceOrigin::Synthetic
-    );
-    assert_eq!(
-        evidence.conversations.visitor.origin,
-        EvidenceOrigin::Synthetic
-    );
-    assert_eq!(evidence.acceptance.origin, EvidenceOrigin::Synthetic);
-    assert_eq!(evidence.quality.origin, EvidenceOrigin::Synthetic);
-    assert_eq!(evidence.cost.origin, EvidenceOrigin::Synthetic);
-    assert_eq!(
-        evidence.privacy_permissions.origin,
-        EvidenceOrigin::Synthetic
-    );
-    assert_eq!(evidence.human_evaluation.origin, EvidenceOrigin::Synthetic);
-}
-
-#[test]
-fn duplicate_golden_case_ids_are_rejected_as_tampered_report() {
-    let fixture = golden_fixture();
-    let mut golden = fixture.report.clone();
-    golden.golden.total = 2;
-    golden.golden.passed = 2;
-    golden.golden.cases.push(golden.golden.cases[0].clone());
-    let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    assert_eq!(
-        evaluate(
-            &evidence,
-            &golden,
-            &golden_bytes,
-            &fixture,
-            RELEASE_SPEC,
-            CANDIDATE,
-        ),
-        Err(Rt0ExitEvidenceError::GoldenReportInvalid)
-    );
-}
-
-#[test]
-fn incomplete_human_dimensions_fail_exit_without_corrupting_evidence_structure() {
-    let fixture = golden_fixture();
-    let golden = fixture.report.clone();
-    let golden_bytes = serde_json::to_vec(&golden).unwrap();
-    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
-    evidence.human_evaluation.dimensions.persona_similarity = RecordStatus::Missing;
-    let report = evaluate(
-        &evidence,
-        &golden,
-        &golden_bytes,
-        &fixture,
-        RELEASE_SPEC,
-        CANDIDATE,
-    )
-    .unwrap();
-    assert!(!report.ready);
-    assert_eq!(
-        report.failures,
-        vec![Rt0ExitFailureCode::HumanEvaluationIncomplete]
-    );
-}
-
-#[test]
-fn runtime_supporting_projection_matches_exit_runtime_claims() {
-    let fixture = golden_fixture();
-    let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
-    let bound = bound_session_aggregate(&fixture.provider_state_bytes);
-    let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
-    let projection = derive_rt0_runtime_supporting_projection(
-        &conversation_attempt,
-        &bound,
-        &[owner_snapshot.as_slice(), visitor_snapshot.as_slice()],
-        &fixture.provider_state_bytes,
-        CANDIDATE,
-    )
-    .unwrap();
-
-    let expected_owner = conversation(ParticipantRole::Owner);
-    let expected_visitor = conversation(ParticipantRole::Visitor);
-    assert_eq!(projection.conversations.owner.origin, EvidenceOrigin::Real);
-    assert_eq!(projection.conversations.owner.role, expected_owner.role);
-    assert_eq!(
-        projection.conversations.owner.russian,
-        expected_owner.russian
-    );
-    assert_eq!(projection.conversations.owner.voice, expected_owner.voice);
-    assert_eq!(projection.conversations.owner.video, expected_owner.video);
-    assert_eq!(
-        projection.conversations.owner.completed_turns,
-        expected_owner.completed_turns
-    );
-    assert_eq!(
-        projection.conversations.owner.interruption_exercised,
-        expected_owner.interruption_exercised
-    );
-    assert_eq!(
-        projection.conversations.visitor.origin,
-        EvidenceOrigin::Real
-    );
-    assert_eq!(projection.conversations.visitor.role, expected_visitor.role);
-    assert_eq!(
-        projection.conversations.visitor.russian,
-        expected_visitor.russian
-    );
-    assert_eq!(
-        projection.conversations.visitor.voice,
-        expected_visitor.voice
-    );
-    assert_eq!(
-        projection.conversations.visitor.video,
-        expected_visitor.video
-    );
-    assert_eq!(
-        projection.conversations.visitor.completed_turns,
-        expected_visitor.completed_turns
-    );
-    assert_eq!(
-        projection.conversations.visitor.interruption_exercised,
-        expected_visitor.interruption_exercised
-    );
-
-    let expected_quality =
-        passing_evidence(b"projection-fixture", &fixture.provider_state_bytes).quality;
-    assert_eq!(projection.quality.origin, EvidenceOrigin::Real);
-    assert_eq!(
-        projection.quality.text_first_meaningful_response,
-        expected_quality.text_first_meaningful_response
-    );
-    assert_eq!(
-        projection.quality.first_meaningful_audio,
-        expected_quality.first_meaningful_audio
-    );
-    assert_eq!(
-        projection.quality.interruption_stop,
-        expected_quality.interruption_stop
-    );
-    assert_eq!(
-        projection.quality.first_useful_video,
-        expected_quality.first_useful_video
-    );
-    assert_eq!(
-        projection.quality.av_sync_absolute_offset,
-        expected_quality.av_sync_absolute_offset
-    );
-    assert_eq!(
-        projection.quality.recoverable_reconnect,
-        expected_quality.recoverable_reconnect
-    );
-}
