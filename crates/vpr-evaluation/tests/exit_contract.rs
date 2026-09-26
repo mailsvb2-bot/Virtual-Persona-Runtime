@@ -264,6 +264,22 @@ fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEviden
     .unwrap()
 }
 
+fn passing_cost_evidence() -> CostEvidence {
+    CostEvidence {
+        origin: EvidenceOrigin::Real,
+        estimated_cost_covered_provider_roles: vec![
+            ProviderRole::Stt,
+            ProviderRole::Llm,
+            ProviderRole::Avatar,
+        ],
+        provider_charge_covered_provider_roles: Vec::new(),
+        measured_duration_millis: 30_000,
+        estimated_cost_microunits: Some(3_000),
+        provider_charge_microunits: None,
+        artifact_sha256: digest('3'),
+    }
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
@@ -327,19 +343,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             },
             artifact_sha256: digest('2'),
         },
-        cost: CostEvidence {
-            origin: EvidenceOrigin::Real,
-            estimated_cost_covered_provider_roles: vec![
-                ProviderRole::Stt,
-                ProviderRole::Llm,
-                ProviderRole::Avatar,
-            ],
-            provider_charge_covered_provider_roles: Vec::new(),
-            measured_duration_millis: 30_000,
-            estimated_cost_microunits: Some(3_000),
-            provider_charge_microunits: None,
-            artifact_sha256: digest('3'),
-        },
+        cost: passing_cost_evidence(),
         privacy_permissions: PrivacyPermissionEvidence {
             origin: EvidenceOrigin::Real,
             permission_suite: CheckStatus::Passed,
