@@ -52,6 +52,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
         participant_role: ParticipantRole::Owner,
+        session_duration_millis: 30_000,
         canonical_playback_proven: true,
         av_sync_proven: true,
         text_attempts: vec![completed_text(request, base)],
@@ -106,6 +107,7 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     let aggregate =
         aggregate_owner_lab_session_evidence(&[snapshot(1, 1, 100), snapshot(2, 1, 300)]).unwrap();
     assert_eq!(aggregate.sessions, 2);
+    assert_eq!(aggregate.session_duration_millis, 60_000);
     assert_eq!(aggregate.completed_text_attempts, 2);
     assert_eq!(aggregate.failed_text_attempts, 0);
     assert_eq!(aggregate.completed_voice_attempts, 2);

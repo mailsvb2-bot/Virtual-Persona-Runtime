@@ -45,10 +45,11 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+        "schema_version":"rt0-owner-lab-session-evidence-0.7",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
+            "session_duration_millis":15000,
         "canonical_playback_proven":true,
         "av_sync_proven":false,
         "text_attempts":[{

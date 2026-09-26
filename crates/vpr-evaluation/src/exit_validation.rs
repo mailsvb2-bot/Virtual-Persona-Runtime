@@ -5,7 +5,7 @@ use serde::Deserialize;
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
     BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, ConversationPairEvidence,
-    EvidenceOrigin, LabMediaEvidenceKind, LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
+    CostEvidence, EvidenceOrigin, LabMediaEvidenceKind, LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
     LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole, QualityEvidence,
     RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
     RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence,
@@ -53,13 +53,14 @@ struct RoleConversationProof {
 pub struct Rt0RuntimeSupportingProjection {
     pub conversations: ConversationPairEvidence,
     pub quality: QualityEvidence,
+    pub cost: CostEvidence,
 }
 
-/// Derives the runtime-backed RT0 conversation and quality claims from exact evidence artifacts.
+/// Derives the runtime-backed RT0 conversation, quality and cost claims from exact evidence artifacts.
 ///
 /// The projection is intentionally non-promoting: it derives only facts that are mechanically
 /// supported by the credentialed conversation receipt plus exact raw Owner Lab snapshots. It does
-/// not create acceptance, privacy, cost, human-review, Golden, or release-readiness evidence.
+/// not create acceptance, privacy, human-review, Golden, or release-readiness evidence.
 ///
 /// # Errors
 /// Returns a runtime-evidence error when any input is malformed, stale, cross-candidate/provider,
@@ -111,9 +112,11 @@ pub fn derive_rt0_runtime_supporting_projection(
         ),
     };
     let quality = quality_evidence_from_aggregate(&recomputed.aggregate)?;
+    let cost = cost_evidence_from_aggregate(&recomputed.aggregate);
     Ok(Rt0RuntimeSupportingProjection {
         conversations,
         quality,
+        cost,
     })
 }
 
@@ -163,7 +166,8 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
-    validate_session_quality_binding(evidence, &recomputed.aggregate)
+    validate_session_quality_binding(evidence, &recomputed.aggregate)?;
+    validate_session_cost_binding(evidence, &recomputed.aggregate)
 }
 
 /// Validates that real-conversation claims are derived from the credentialed conversation receipt
@@ -371,6 +375,16 @@ fn is_russian_locale(locale: &str) -> bool {
     normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
+fn cost_evidence_from_aggregate(aggregate: &LabSessionEvidenceAggregate) -> CostEvidence {
+    CostEvidence {
+        origin: EvidenceOrigin::Real,
+        measured_duration_millis: aggregate.session_duration_millis,
+        estimated_cost_microunits: aggregate.estimated_cost_microunits,
+        provider_charge_microunits: aggregate.provider_charge_microunits,
+        artifact_sha256: String::new(),
+    }
+}
+
 fn quality_evidence_from_aggregate(
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Result<QualityEvidence, Rt0ExitEvidenceError> {
@@ -427,6 +441,20 @@ pub(crate) fn validate_session_quality_binding(
     Ok(())
 }
 
+fn validate_session_cost_binding(
+    evidence: &Rt0ExitEvidence,
+    aggregate: &LabSessionEvidenceAggregate,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let expected = cost_evidence_from_aggregate(aggregate);
+    if evidence.cost.measured_duration_millis != expected.measured_duration_millis
+        || evidence.cost.estimated_cost_microunits != expected.estimated_cost_microunits
+        || evidence.cost.provider_charge_microunits != expected.provider_charge_microunits
+    {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_bound_session_aggregate(
     bound: &BoundLabSessionEvidenceAggregate,
     exact_candidate_sha: &str,
@@ -439,6 +467,7 @@ pub(crate) fn validate_bound_session_aggregate(
         || bound.aggregate.schema_version != RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA
         || bound.aggregate.source_schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
         || bound.aggregate.sessions == 0
+        || bound.aggregate.session_duration_millis == 0
         || usize::try_from(bound.aggregate.sessions).ok() != Some(bound.snapshot_sha256.len())
     {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);

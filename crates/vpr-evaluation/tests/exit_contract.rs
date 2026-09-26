@@ -197,10 +197,11 @@ fn session_snapshot_bytes_with_av_sync(
     ];
     media_events.extend(interruption);
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+        "schema_version":"rt0-owner-lab-session-evidence-0.7",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
+            "session_duration_millis":15000,
         "canonical_playback_proven":true,
         "av_sync_proven":true,
         "text_attempts":[{
@@ -1400,5 +1401,19 @@ fn runtime_supporting_projection_matches_exit_runtime_claims() {
     assert_eq!(
         projection.quality.recoverable_reconnect,
         expected_quality.recoverable_reconnect
+    );
+    let expected_cost = passing_evidence(b"projection-fixture", &fixture.provider_state_bytes).cost;
+    assert_eq!(projection.cost.origin, EvidenceOrigin::Real);
+    assert_eq!(
+        projection.cost.measured_duration_millis,
+        expected_cost.measured_duration_millis
+    );
+    assert_eq!(
+        projection.cost.estimated_cost_microunits,
+        expected_cost.estimated_cost_microunits
+    );
+    assert_eq!(
+        projection.cost.provider_charge_microunits,
+        expected_cost.provider_charge_microunits
     );
 }

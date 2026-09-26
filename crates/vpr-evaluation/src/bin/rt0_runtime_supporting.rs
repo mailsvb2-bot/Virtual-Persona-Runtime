@@ -2,14 +2,15 @@ use std::{env, fs, path::Path, process};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundLabSessionEvidenceAggregate, ConversationEvidence, QualityEvidence,
+    BoundLabSessionEvidenceAggregate, ConversationEvidence, CostEvidence, QualityEvidence,
     derive_rt0_runtime_supporting_projection, sha256_hex,
 };
 
-const OUTPUTS: [&str; 3] = [
+const OUTPUTS: [&str; 4] = [
     "owner-conversation.json",
     "visitor-conversation.json",
     "quality.json",
+    "cost.json",
 ];
 
 #[derive(Serialize)]
@@ -34,6 +35,16 @@ struct QualitySupportingClaim<'a> {
     first_useful_video: vpr_evaluation::LatencyDistributionMillis,
     av_sync_absolute_offset: vpr_evaluation::LatencyDistributionMillis,
     recoverable_reconnect: vpr_evaluation::LatencyDistributionMillis,
+    candidate_sha: &'a str,
+    provider_state_sha256: &'a str,
+}
+
+#[derive(Serialize)]
+struct CostSupportingClaim<'a> {
+    origin: vpr_evaluation::EvidenceOrigin,
+    measured_duration_millis: u64,
+    estimated_cost_microunits: Option<u64>,
+    provider_charge_microunits: Option<u64>,
     candidate_sha: &'a str,
     provider_state_sha256: &'a str,
 }
@@ -107,10 +118,14 @@ fn run(args: &[String]) -> Result<(), String> {
         &output_dir.join("quality.json"),
         &quality_claim(&projection.quality, candidate_sha, &provider_state_sha256),
     )?;
+    write_json(
+        &output_dir.join("cost.json"),
+        &cost_claim(&projection.cost, candidate_sha, &provider_state_sha256),
+    )?;
 
     println!(
         "RT0 runtime supporting claims created at {}. \
-         Only conversation and quality claims were derived; acceptance, privacy, cost and human \
+         Conversation, quality and cost claims were derived; acceptance, privacy and human \
          review remain separate real evidence.",
         output_dir.display()
     );
@@ -148,6 +163,21 @@ fn quality_claim<'a>(
         first_useful_video: evidence.first_useful_video,
         av_sync_absolute_offset: evidence.av_sync_absolute_offset,
         recoverable_reconnect: evidence.recoverable_reconnect,
+        candidate_sha,
+        provider_state_sha256,
+    }
+}
+
+fn cost_claim<'a>(
+    evidence: &CostEvidence,
+    candidate_sha: &'a str,
+    provider_state_sha256: &'a str,
+) -> CostSupportingClaim<'a> {
+    CostSupportingClaim {
+        origin: evidence.origin,
+        measured_duration_millis: evidence.measured_duration_millis,
+        estimated_cost_microunits: evidence.estimated_cost_microunits,
+        provider_charge_microunits: evidence.provider_charge_microunits,
         candidate_sha,
         provider_state_sha256,
     }

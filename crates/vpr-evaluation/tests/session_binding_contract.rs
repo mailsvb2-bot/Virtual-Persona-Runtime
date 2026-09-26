@@ -33,10 +33,11 @@ fn provider_state() -> Vec<u8> {
 
 fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+        "schema_version":"rt0-owner-lab-session-evidence-0.7",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
+            "session_duration_millis":15000,
         "canonical_playback_proven":true,
         "av_sync_proven":false,
         "text_attempts":[{

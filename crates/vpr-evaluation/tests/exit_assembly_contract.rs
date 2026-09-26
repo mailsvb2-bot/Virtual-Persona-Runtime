@@ -235,10 +235,11 @@ fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
 
 fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
     let snapshot = bytes(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.6",
+        "schema_version":"rt0-owner-lab-session-evidence-0.7",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":1,
         "participant_role":"owner",
+            "session_duration_millis":15000,
         "canonical_playback_proven":true,
         "av_sync_proven":true,
         "text_attempts":[{

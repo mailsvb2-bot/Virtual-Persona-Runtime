@@ -1,5 +1,7 @@
 use super::*;
 use crate::{LabTextResult, LabVoiceSegment, LabVoiceUsage};
+use std::thread;
+use std::time::Duration;
 
 fn text_result() -> LabTextResult {
     LabTextResult {
@@ -123,7 +125,15 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     assert!(!json.contains("приватный транскрипт"));
     assert!(!json.contains("приватный ответ"));
     assert!(!json.contains("приватный текстовый ответ"));
+    thread::sleep(Duration::from_millis(2));
     recorder.seal_session();
+    let sealed_duration = recorder.snapshot().unwrap().session_duration_millis;
+    assert!(sealed_duration > 0);
+    thread::sleep(Duration::from_millis(2));
+    assert_eq!(
+        recorder.snapshot().unwrap().session_duration_millis,
+        sealed_duration
+    );
     assert_eq!(
         recorder.begin_text_request(2),
         Err(LabEvidenceError::InvalidState)
@@ -146,6 +156,8 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     assert!(reset.text_attempts.is_empty());
     assert!(reset.voice_attempts.is_empty());
     assert_eq!(reset.participant_role, ParticipantRole::Visitor);
+    assert!(recorder.session_started.is_some());
+    assert!(recorder.sealed_duration_millis.is_none());
 }
 
 #[test]
