@@ -18,13 +18,14 @@ const FILES: [&str; 10] = [
 ];
 
 fn main() {
-    if let Err(error) = run(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Err(error) = run(&args) {
         eprintln!("{error}");
         std::process::exit(2);
     }
 }
 
-fn run(args: Vec<String>) -> Result<(), String> {
+fn run(args: &[String]) -> Result<(), String> {
     if args.len() != 3 {
         return Err(
             "usage: vpr-rt0-supporting-scaffold <output-dir> <provider-state.json> <candidate-sha>"
@@ -94,7 +95,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ("visitor-conversation.json", pretty(conversation("visitor"))),
         (
             "acceptance.json",
-            pretty(json!({
+            pretty(&json!({
                 "origin": "synthetic",
                 "owner_happy_path": "failed",
                 "visitor_happy_path": "failed",
@@ -107,7 +108,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ),
         (
             "quality.json",
-            pretty(json!({
+            pretty(&json!({
                 "origin": "synthetic",
                 "text_first_meaningful_response": latency(),
                 "first_meaningful_audio": latency(),
@@ -121,7 +122,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ),
         (
             "cost.json",
-            pretty(json!({
+            pretty(&json!({
                 "origin": "synthetic",
                 "measured_duration_millis": 0,
                 "measured_cost_microunits": Value::Null,
@@ -132,7 +133,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ),
         (
             "privacy-permissions.json",
-            pretty(json!({
+            pretty(&json!({
                 "origin": "synthetic",
                 "permission_suite": "failed",
                 "accepted_private_context_leakage": 0,
@@ -145,7 +146,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
         ),
         (
             "human-evaluation.json",
-            pretty(json!({
+            pretty(&json!({
                 "origin": "synthetic",
                 "rubric_version": "UNREVIEWED",
                 "reviewer_count": 0,
@@ -169,7 +170,7 @@ fn scaffold(candidate_sha: &str, provider_state_sha256: &str) -> Vec<(&'static s
     ]
 }
 
-fn pretty(value: Value) -> String {
+fn pretty(value: &Value) -> String {
     let mut text = serde_json::to_string_pretty(&value).expect("JSON scaffold serialization");
     text.push('\n');
     text
