@@ -3,8 +3,7 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use vpr_evaluation::{
-    ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA, sha256_hex, validate_candidate_sha,
-    validate_provider_state_manifest,
+    ProviderStateManifest, sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
 };
 
 const FILES: [&str; 10] = [
@@ -230,7 +229,7 @@ mod tests {
 
     #[test]
     fn provider_manifest_validation_is_fail_closed() {
-        use vpr_evaluation::{ProviderRole, ProviderStateBinding};
+        use vpr_evaluation::{ProviderRole, ProviderStateBinding, RT0_PROVIDER_STATE_SCHEMA};
 
         let manifest = ProviderStateManifest {
             schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
@@ -252,5 +251,4 @@ mod tests {
 
         assert!(validate_provider_state_manifest(&manifest).is_err());
     }
-
 }
