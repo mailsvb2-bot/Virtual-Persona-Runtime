@@ -12,7 +12,7 @@ impl OwnerLabEngine {
     /// the same reviewed current state exactly.
     pub fn restore_reviewed_owner_context_snapshot(
         &mut self,
-        snapshot: ReviewedOwnerContextSnapshot,
+        snapshot: &ReviewedOwnerContextSnapshot,
     ) -> Result<(), LabError> {
         if self
             .session
@@ -22,7 +22,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
         let context =
-            ReviewedOwnerContext::from_snapshot(&snapshot).map_err(map_owner_context_error)?;
+            ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
         self.reviewed_owner_context = Some(context);
         Ok(())
     }
