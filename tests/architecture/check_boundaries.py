@@ -702,6 +702,7 @@ for required_shared_evidence in (
     "canonical_playback_proven",
     "canonical_output_sequence",
     "canonical_playback_confirmed",
+    "session_duration_millis",
     "av_sync_proven",
 ):
     if required_shared_evidence not in evaluation_session_evidence:
@@ -892,3 +893,5 @@ for src_dir in CRATES.glob("*/src"):
 
 print("architecture-boundaries: PASS")
 sys.exit(0)
+
+[executed on device: 7557405-me744613.twc1.net (f78fb5c4-85ce-49a2-ae2f-bfed9c352431)]
