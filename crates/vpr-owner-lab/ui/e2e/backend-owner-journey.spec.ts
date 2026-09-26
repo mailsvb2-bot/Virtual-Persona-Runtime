@@ -65,6 +65,8 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#evidence")).toContainText('"owner_context_state": "reviewed"');
+  await expect(page.locator("#evidence")).toContainText('"reviewed_owner_claims": 3');
 
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
