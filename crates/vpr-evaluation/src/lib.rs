@@ -17,7 +17,7 @@ pub use binding::{
     BoundGoldenReport, EvidenceBinding, EvidenceBindingError, EvidenceVerificationContext,
     GoldenEvidenceBundle, ProviderRole, ProviderStateBinding, ProviderStateManifest,
     RT0_EVIDENCE_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, evaluate_bound_golden_suite,
-    sha256_hex,
+    sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
 };
 
 pub use golden::{
