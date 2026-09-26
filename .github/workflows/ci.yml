@@ -38,6 +38,10 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked --workspace --all-targets
+      - name: Owner Lab Persona full process restart E2E
+        run: |
+          cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+          python3 tests/e2e/test_owner_lab_persona_restart.py
 
 
   windows-owner-lab-credentials:
