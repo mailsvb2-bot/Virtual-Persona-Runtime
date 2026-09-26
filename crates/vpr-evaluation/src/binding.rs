@@ -124,7 +124,7 @@ pub fn validate_provider_state_manifest(
     if provider_state.schema_version != RT0_PROVIDER_STATE_SCHEMA {
         return Err(EvidenceBindingError::UnsupportedProviderStateSchema);
     }
-    Ok(())
+    validate_provider_state(&provider_state.providers)
 }
 
 /// Verifies exact-candidate, artifact and provider-state binding, then evaluates the Golden Set.
