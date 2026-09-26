@@ -42,7 +42,7 @@ impl ReviewedOwnerContext {
     }
 
     pub(crate) fn from_snapshot(
-        snapshot: ReviewedOwnerContextSnapshot,
+        snapshot: &ReviewedOwnerContextSnapshot,
     ) -> Result<Self, OwnerContextError> {
         if snapshot.persona_version < 2 || snapshot.claims.is_empty() {
             return Err(OwnerContextError::ProfileNotReviewed);
@@ -97,7 +97,7 @@ impl ReviewedOwnerContext {
             .approve_initial_review()
             .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
         let restored = Self::new(profile)?;
-        if restored.snapshot() != snapshot {
+        if restored.snapshot() != *snapshot {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
         Ok(restored)
@@ -251,7 +251,7 @@ mod tests {
             )
             .unwrap();
         let snapshot = context.snapshot();
-        let restored = ReviewedOwnerContext::from_snapshot(snapshot.clone()).unwrap();
+        let restored = ReviewedOwnerContext::from_snapshot(&snapshot).unwrap();
         assert_eq!(restored.snapshot(), snapshot);
     }
 
