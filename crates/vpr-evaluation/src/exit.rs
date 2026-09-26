@@ -579,4 +579,3 @@ fn evaluate_human(evidence: &HumanEvaluationEvidence, failures: &mut Vec<Rt0Exit
         failures.push(Rt0ExitFailureCode::HumanEvaluationNotUsable);
     }
 }
-
