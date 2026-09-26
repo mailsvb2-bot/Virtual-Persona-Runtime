@@ -2,7 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
-use vpr_evaluation::{ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA, sha256_hex};
+use vpr_evaluation::{
+    ProviderStateManifest, sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
+};
 
 const FILES: [&str; 10] = [
     "ci-evidence.json",
@@ -35,15 +37,14 @@ fn run(args: &[String]) -> Result<(), String> {
     let output = PathBuf::from(&args[0]);
     let provider_state_path = PathBuf::from(&args[1]);
     let candidate_sha = args[2].trim();
-    validate_candidate(candidate_sha)?;
+    validate_candidate_sha(candidate_sha).map_err(|_| "candidate SHA is invalid")?;
 
     let provider_bytes =
         fs::read(&provider_state_path).map_err(|_| "provider-state file could not be read")?;
     let provider: ProviderStateManifest =
         serde_json::from_slice(&provider_bytes).map_err(|_| "provider-state JSON is invalid")?;
-    if provider.schema_version != RT0_PROVIDER_STATE_SCHEMA {
-        return Err("provider-state schema is not supported".into());
-    }
+    validate_provider_state_manifest(&provider)
+        .map_err(|_| "provider-state manifest is invalid or incomplete")?;
     let provider_state_sha256 = sha256_hex(&provider_bytes);
 
     if output.exists() && !output.is_dir() {
@@ -176,14 +177,6 @@ fn pretty(value: &Value) -> String {
     text
 }
 
-fn validate_candidate(value: &str) -> Result<(), String> {
-    if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Ok(())
-    } else {
-        Err("candidate SHA must be exactly 40 hexadecimal characters".into())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,7 +222,8 @@ mod tests {
 
     #[test]
     fn candidate_validation_is_fail_closed() {
-        assert!(validate_candidate(&"a".repeat(40)).is_ok());
-        assert!(validate_candidate("not-a-sha").is_err());
+        assert!(validate_candidate_sha(&"a".repeat(40)).is_ok());
+        assert!(validate_candidate_sha("not-a-sha").is_err());
+        assert!(validate_candidate_sha(&"A".repeat(40)).is_err());
     }
 }
