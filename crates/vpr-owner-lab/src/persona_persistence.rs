@@ -36,6 +36,10 @@ impl PersistedPersona {
     }
 }
 
+/// Loads the reviewed Persona from durable storage when one exists.
+///
+/// # Errors
+/// Returns a redacted error when the selected store cannot be read, decoded, or validated.
 pub fn load_reviewed_persona() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
     if let Some(path) = explicit_store_path() {
         return load_file(&path);
@@ -52,6 +56,10 @@ pub fn load_reviewed_persona() -> Result<Option<ReviewedOwnerContextSnapshot>, S
     }
 }
 
+/// Persists the reviewed Persona to the canonical durable store.
+///
+/// # Errors
+/// Returns a redacted error when serialization or the selected store write fails.
 pub fn save_reviewed_persona(snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
     if let Some(path) = explicit_store_path() {
         return save_file(&path, snapshot);
