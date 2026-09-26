@@ -193,7 +193,8 @@ fn import_reviewed_profile(
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
 
-    let profile = build_reviewed_profile(body).map_err(|_| error_response(400, "INVALID_INPUT"))?;
+    let profile =
+        build_reviewed_profile(body).map_err(|()| error_response(400, "INVALID_INPUT"))?;
     engine
         .bind_reviewed_profile(profile)
         .map_err(|error| lab_error_response(&error))?;
