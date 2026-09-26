@@ -4,7 +4,8 @@ use serde::Deserialize;
 
 use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
-    BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, LabMediaEvidenceKind,
+    BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, ConversationPairEvidence,
+    EvidenceOrigin, LabMediaEvidenceKind,
     LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
     LatencyDistributionMillis, ParticipantRole, QualityEvidence,
     RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
@@ -47,6 +48,74 @@ struct RoleConversationProof {
     playback_sessions: u32,
     video_sessions: u32,
     interruption_exercised: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rt0RuntimeSupportingProjection {
+    pub conversations: ConversationPairEvidence,
+    pub quality: QualityEvidence,
+}
+
+/// Derives the runtime-backed RT0 conversation and quality claims from exact evidence artifacts.
+///
+/// The projection is intentionally non-promoting: it derives only facts that are mechanically
+/// supported by the credentialed conversation receipt plus exact raw Owner Lab snapshots. It does
+/// not create acceptance, privacy, cost, human-review, Golden, or release-readiness evidence.
+///
+/// # Errors
+/// Returns a runtime-evidence error when any input is malformed, stale, cross-candidate/provider,
+/// detached from the supplied bound aggregate, or incomplete for the mandatory quality projection.
+pub fn derive_rt0_runtime_supporting_projection(
+    conversation_attempt_bytes: &[u8],
+    bound_session_aggregate: &BoundLabSessionEvidenceAggregate,
+    session_snapshot_artifacts: &[&[u8]],
+    provider_state_bytes: &[u8],
+    exact_candidate_sha: &str,
+) -> Result<Rt0RuntimeSupportingProjection, Rt0ExitEvidenceError> {
+    let provider_state_digest = sha256_hex(provider_state_bytes);
+    let conversation: ConversationAttemptBinding =
+        serde_json::from_slice(conversation_attempt_bytes)
+            .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    validate_conversation_attempt_binding(
+        &conversation,
+        exact_candidate_sha,
+        &provider_state_digest,
+    )?;
+    validate_bound_session_aggregate(
+        bound_session_aggregate,
+        exact_candidate_sha,
+        &provider_state_digest,
+    )?;
+    let recomputed = bind_owner_lab_session_evidence(
+        session_snapshot_artifacts,
+        provider_state_bytes,
+        exact_candidate_sha,
+    )
+    .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+    if recomputed != *bound_session_aggregate {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+
+    let snapshots = parse_role_bound_snapshots(session_snapshot_artifacts)?;
+    let owner_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Owner)?;
+    let visitor_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Visitor)?;
+    let conversations = ConversationPairEvidence {
+        owner: conversation_evidence_from(
+            &conversation.owner,
+            ParticipantRole::Owner,
+            &owner_proof,
+        ),
+        visitor: conversation_evidence_from(
+            &conversation.visitor,
+            ParticipantRole::Visitor,
+            &visitor_proof,
+        ),
+    };
+    let quality = quality_evidence_from_aggregate(&recomputed.aggregate)?;
+    Ok(Rt0RuntimeSupportingProjection {
+        conversations,
+        quality,
+    })
 }
 
 pub(crate) fn validate_rt0_conversation_attempt_artifact(
@@ -254,22 +323,40 @@ fn derive_role_conversation_proof(
     Ok(proof)
 }
 
+fn conversation_evidence_from(
+    turn: &ConversationTurnBinding,
+    role: ParticipantRole,
+    proof: &RoleConversationProof,
+) -> ConversationEvidence {
+    let voice_proven =
+        proof.completed_turns > 0 && proof.playback_sessions == proof.sessions_with_completed_turns;
+    let video_proven =
+        proof.completed_turns > 0 && proof.video_sessions == proof.sessions_with_completed_turns;
+    ConversationEvidence {
+        origin: EvidenceOrigin::Real,
+        role,
+        russian: check_status(is_russian_locale(&turn.locale)),
+        voice: check_status(voice_proven),
+        video: check_status(video_proven),
+        completed_turns: proof.completed_turns,
+        interruption_exercised: check_status(proof.interruption_exercised),
+        artifact_sha256: String::new(),
+    }
+}
+
 fn conversation_claim_matches(
     claim: &ConversationEvidence,
     turn: &ConversationTurnBinding,
     role: ParticipantRole,
     proof: &RoleConversationProof,
 ) -> bool {
-    let voice_proven =
-        proof.completed_turns > 0 && proof.playback_sessions == proof.sessions_with_completed_turns;
-    let video_proven =
-        proof.completed_turns > 0 && proof.video_sessions == proof.sessions_with_completed_turns;
-    claim.role == role
-        && claim.completed_turns == proof.completed_turns
-        && claim.russian == check_status(is_russian_locale(&turn.locale))
-        && claim.voice == check_status(voice_proven)
-        && claim.video == check_status(video_proven)
-        && claim.interruption_exercised == check_status(proof.interruption_exercised)
+    let expected = conversation_evidence_from(turn, role, proof);
+    claim.role == expected.role
+        && claim.completed_turns == expected.completed_turns
+        && claim.russian == expected.russian
+        && claim.voice == expected.voice
+        && claim.video == expected.video
+        && claim.interruption_exercised == expected.interruption_exercised
 }
 
 fn check_status(passed: bool) -> CheckStatus {
@@ -285,18 +372,16 @@ fn is_russian_locale(locale: &str) -> bool {
     normalized == "ru" || normalized.starts_with("ru-") || normalized.starts_with("ru_")
 }
 
-pub(crate) fn validate_session_quality_binding(
-    evidence: &Rt0ExitEvidence,
+fn quality_evidence_from_aggregate(
     aggregate: &LabSessionEvidenceAggregate,
-) -> Result<(), Rt0ExitEvidenceError> {
-    validate_quality_latencies(&evidence.quality)?;
+) -> Result<QualityEvidence, Rt0ExitEvidenceError> {
     let (
-        Some(first_text),
-        Some(first_audio),
+        Some(text_first_meaningful_response),
+        Some(first_meaningful_audio),
         Some(interruption_stop),
-        Some(first_video),
-        Some(av_sync),
-        Some(reconnect),
+        Some(first_useful_video),
+        Some(av_sync_absolute_offset),
+        Some(recoverable_reconnect),
     ) = (
         aggregate.text_first_meaningful_response,
         aggregate.first_meaningful_audio,
@@ -308,13 +393,35 @@ pub(crate) fn validate_session_quality_binding(
     else {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     };
-    if !aggregate.av_sync_proven
-        || first_text != evidence.quality.text_first_meaningful_response
-        || first_audio != evidence.quality.first_meaningful_audio
-        || interruption_stop != evidence.quality.interruption_stop
-        || first_video != evidence.quality.first_useful_video
-        || av_sync != evidence.quality.av_sync_absolute_offset
-        || reconnect != evidence.quality.recoverable_reconnect
+    if !aggregate.av_sync_proven {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    let quality = QualityEvidence {
+        origin: EvidenceOrigin::Real,
+        text_first_meaningful_response,
+        first_meaningful_audio,
+        interruption_stop,
+        first_useful_video,
+        av_sync_absolute_offset,
+        recoverable_reconnect,
+        artifact_sha256: String::new(),
+    };
+    validate_quality_latencies(&quality)?;
+    Ok(quality)
+}
+
+pub(crate) fn validate_session_quality_binding(
+    evidence: &Rt0ExitEvidence,
+    aggregate: &LabSessionEvidenceAggregate,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let expected = quality_evidence_from_aggregate(aggregate)?;
+    if evidence.quality.text_first_meaningful_response
+        != expected.text_first_meaningful_response
+        || evidence.quality.first_meaningful_audio != expected.first_meaningful_audio
+        || evidence.quality.interruption_stop != expected.interruption_stop
+        || evidence.quality.first_useful_video != expected.first_useful_video
+        || evidence.quality.av_sync_absolute_offset != expected.av_sync_absolute_offset
+        || evidence.quality.recoverable_reconnect != expected.recoverable_reconnect
     {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
