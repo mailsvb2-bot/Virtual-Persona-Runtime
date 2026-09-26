@@ -408,8 +408,9 @@ const monitorRemoteAudio = () => {
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
-                void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
-                    .catch(() => undefined);
+                const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence);
+                voice.audioStartedEvidence = audioStartedEvidence;
+                void audioStartedEvidence.catch(() => undefined);
             }
         }
         else if (voice?.speaking) {
@@ -1086,6 +1087,7 @@ const finishMicrophoneTurn = async () => {
         startedAt: performance.now(),
         audioStarted: false,
         audioStartedElapsed: null,
+        audioStartedEvidence: null,
         responseComplete: false,
         speaking: false,
         silentFrames: 0,
@@ -1123,8 +1125,11 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
+            if (voice.audioStartedEvidence) {
+                await voice.audioStartedEvidence;
+            }
             if (voice.audioStartedElapsed !== null) {
-                await collectAvSyncEvidence(requestSequence).catch(() => undefined);
+                await collectAvSyncEvidence(requestSequence);
             }
         }
         await refreshSessionEvidence();
