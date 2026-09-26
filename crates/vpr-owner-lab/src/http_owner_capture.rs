@@ -193,8 +193,7 @@ fn import_reviewed_profile(
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
 
-    let profile =
-        build_reviewed_profile(body).map_err(|_| error_response(400, "INVALID_INPUT"))?;
+    let profile = build_reviewed_profile(body).map_err(|_| error_response(400, "INVALID_INPUT"))?;
     engine
         .bind_reviewed_profile(profile)
         .map_err(|error| lab_error_response(&error))?;
@@ -343,7 +342,10 @@ mod tests {
 
         let profile = build_reviewed_profile(body).expect("legacy import must be accepted");
         assert_eq!(profile.identity().version().get(), 2);
-        assert_eq!(profile.capture_state(), vpr_domain::PersonaCaptureState::Reviewed);
+        assert_eq!(
+            profile.capture_state(),
+            vpr_domain::PersonaCaptureState::Reviewed
+        );
         assert_eq!(profile.claims().len(), 2);
         assert!(
             profile
