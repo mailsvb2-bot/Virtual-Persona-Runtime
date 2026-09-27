@@ -9,8 +9,8 @@ use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
-use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
+use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
@@ -140,8 +140,8 @@ fn provider_config_complete_with(
 fn build_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
-    let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
-        .unwrap_or_else(|| "did".to_owned());
+    let name =
+        optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER").unwrap_or_else(|| "did".to_owned());
     match name.as_str() {
         "did" | "d-id" | "did-agent-streams" => {
             let endpoint = resolved_value(
