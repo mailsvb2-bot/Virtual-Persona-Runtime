@@ -27,6 +27,7 @@ pub enum ProviderErrorKind {
     Cancelled,
     InvalidResponse,
     PolicyDenied,
+    InsufficientCredits,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
