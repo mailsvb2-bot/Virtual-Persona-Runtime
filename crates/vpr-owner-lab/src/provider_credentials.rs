@@ -66,11 +66,7 @@ impl ProviderCredentialProfile {
     }
 
     /// Selects the self-hosted avatar worker while preserving D-ID as a fallback provider.
-    pub fn select_local_avatar(
-        &mut self,
-        endpoint: &str,
-        api_token: &str,
-    ) -> Result<(), String> {
+    pub fn select_local_avatar(&mut self, endpoint: &str, api_token: &str) -> Result<(), String> {
         let endpoint = endpoint.trim();
         let api_token = api_token.trim();
         if endpoint.is_empty() || api_token.is_empty() {
@@ -124,7 +120,9 @@ impl ProviderCredentialProfile {
                         .as_deref()
                         .is_none_or(|value| value.trim().is_empty())
                 {
-                    return Err("secure provider profile local avatar configuration is incomplete".into());
+                    return Err(
+                        "secure provider profile local avatar configuration is incomplete".into(),
+                    );
                 }
             }
             _ => return Err("secure provider profile avatar provider is unsupported".into()),
