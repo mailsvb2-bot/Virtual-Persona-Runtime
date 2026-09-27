@@ -609,7 +609,7 @@ mod voice_phrase;
 mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
-pub use readiness::{LabModalityReadiness, LabModalityState};
+pub use readiness::LabModalityReadiness;
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
 pub use voice_input::LabVoiceInput;
