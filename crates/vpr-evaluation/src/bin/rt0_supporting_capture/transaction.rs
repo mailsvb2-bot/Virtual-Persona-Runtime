@@ -233,9 +233,27 @@ fn recover_stale_lock(
 fn create_journal_file(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
     let mut bytes = serde_json::to_vec(journal).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
-    let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
-    file.write_all(&bytes)?;
-    file.sync_all()
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("journal path has no parent"))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("journal path has no file name"))?
+        .to_string_lossy();
+    let temp = parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        process::id(),
+        transaction_nonce()
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new().create_new(true).write(true).open(&temp)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::hard_link(&temp, path)?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(&temp);
+    result
 }
 
 fn read_journal(path: &Path) -> Result<TransactionJournal, i32> {
