@@ -45,7 +45,7 @@ impl LocalOpenSourceAvatar {
     /// Builds the self-hosted realtime avatar adapter.
     ///
     /// The worker contract is intentionally provider-neutral: the remote GPU worker may run
-    /// MuseTalk, LivePortrait, or another local renderer behind the same WebRTC API.
+    /// `MuseTalk`, `LivePortrait`, or another local renderer behind the same WebRTC API.
     ///
     /// # Errors
     /// Returns a typed provider error for invalid endpoints, missing authentication, or HTTP setup.
