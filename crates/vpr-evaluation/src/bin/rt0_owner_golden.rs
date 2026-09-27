@@ -1,6 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, process};
 
 use serde::Serialize;
@@ -117,7 +118,7 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), i32> {
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| emit_code("OUTPUT_PATH_INVALID"))?;
-    let temp_path: PathBuf = parent.join(format!(".{file_name}.tmp"));
+    let temp_path = unique_temp_path(parent, file_name);
     let mut file = OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -137,6 +138,18 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), i32> {
         return fail("OUTPUT_TEMP_CLEANUP_FAILED");
     }
     Ok(())
+}
+
+fn unique_temp_path(parent: &Path, file_name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    parent.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        process::id(),
+        nanos
+    ))
 }
 
 fn emit_code<T: Serialize>(code: T) -> i32 {
