@@ -39,18 +39,18 @@ pub(crate) fn verify_private_owner_golden(
     context: crate::Rt0ExitVerificationContext<'_>,
 ) -> Result<(), OwnerGoldenError> {
     let recomputed = evaluate_bound_owner_golden_suite(
-        context.owner_golden_suite,
-        context.owner_golden_evidence_bundle,
+        context.owner_golden.suite,
+        context.owner_golden.evidence_bundle,
         EvidenceVerificationContext {
-            suite_bytes: context.owner_golden_suite_bytes,
+            suite_bytes: context.owner_golden.suite_bytes,
             release_spec_bytes: context.release_spec_bytes,
             provider_state: context.provider_state,
             provider_state_bytes: context.provider_state_bytes,
-            evidence_bytes: context.owner_golden_evidence_bytes,
+            evidence_bytes: context.owner_golden.evidence_bytes,
             exact_candidate_sha: context.exact_candidate_sha,
         },
     )?;
-    if recomputed != *context.owner_golden_report {
+    if recomputed != *context.owner_golden.report {
         return Err(OwnerGoldenError::ReportMismatch);
     }
     Ok(())
@@ -96,11 +96,11 @@ fn validate_owner_suite(suite: &GoldenSuite) -> Result<(), OwnerGoldenError> {
 mod tests {
     use super::*;
 
-    fn suite(id: &str, cases: serde_json::Value) -> GoldenSuite {
+    fn suite(id: &str, cases: &serde_json::Value) -> GoldenSuite {
         serde_json::from_value(serde_json::json!({
             "schema_version": "rt0-golden-0.1",
             "suite_id": id,
-            "cases": cases,
+            "cases": cases.clone(),
         }))
         .unwrap()
     }
@@ -109,7 +109,7 @@ mod tests {
     fn private_owner_suite_requires_fidelity_and_verified_attribution_probes() {
         let valid = suite(
             "rt0.owner.private-v1",
-            serde_json::json!([
+            &serde_json::json!([
                 {
                     "id":"owner.fact",
                     "actor":"owner",
@@ -132,7 +132,7 @@ mod tests {
         );
         assert_eq!(validate_owner_suite(&valid), Ok(()));
 
-        let public_name = suite("rt0.minimum.synthetic-persona", serde_json::json!([]));
+        let public_name = suite("rt0.minimum.synthetic-persona", &serde_json::json!([]));
         assert_eq!(
             validate_owner_suite(&public_name),
             Err(OwnerGoldenError::SuiteNotOwnerSpecific)
