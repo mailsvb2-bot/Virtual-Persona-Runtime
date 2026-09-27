@@ -1,5 +1,6 @@
 mod support;
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -70,7 +71,7 @@ fn owner_golden_cli_writes_exact_bound_report() {
             spec.as_os_str(),
             provider.as_os_str(),
             output.as_os_str(),
-            CANDIDATE.as_ref(),
+            OsStr::new(CANDIDATE),
         ])
         .output()
         .unwrap();
@@ -104,7 +105,7 @@ fn owner_golden_cli_rejects_public_baseline_suite() {
             spec.as_os_str(),
             provider.as_os_str(),
             output.as_os_str(),
-            CANDIDATE.as_ref(),
+            OsStr::new(CANDIDATE),
         ])
         .output()
         .unwrap();
@@ -147,7 +148,7 @@ fn owner_golden_cli_never_overwrites_existing_report() {
             spec.as_os_str(),
             provider.as_os_str(),
             output.as_os_str(),
-            CANDIDATE.as_ref(),
+            OsStr::new(CANDIDATE),
         ])
         .output()
         .unwrap();
