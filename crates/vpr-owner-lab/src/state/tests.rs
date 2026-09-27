@@ -1,6 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use vpr_domain::{
+    ConstitutionBoundary, DerivationKind, OwnerClaim, OwnerClaimRecord, SourceKind,
+    VerificationState,
+};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
@@ -143,6 +147,37 @@ fn engine(egress_enabled: bool) -> (OwnerLabEngine, Arc<Stats>) {
     engine_with_failures(egress_enabled, 0, 0)
 }
 
+fn reviewed_profile() -> PersonaProfile {
+    let mut profile = PersonaProfile::new(
+        PersonaIdentity::new(
+            PersonaId::new("owner-readiness").unwrap(),
+            PersonaVersion::new(1).unwrap(),
+            PersonaMode::DigitalTwin,
+        ),
+        ConstitutionBoundary::strict_digital_twin(),
+    );
+    let id = ClaimId::new("owner-fact").unwrap();
+    profile
+        .add_captured_claim(
+            OwnerClaimRecord::capture(
+                id.clone(),
+                OwnerClaim {
+                    statement: "Факт владельца".into(),
+                    kind: ClaimKind::Factual,
+                    source: SourceKind::Owner,
+                    verification: VerificationState::Unverified,
+                    derivation: DerivationKind::Direct,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    profile.mark_capture_complete().unwrap();
+    profile.approve_claim(&id).unwrap();
+    profile.approve_initial_review().unwrap();
+    profile
+}
+
 #[test]
 fn start_requires_process_egress_gate_and_explicit_consent() {
     let (mut disabled, disabled_stats) = engine(false);
@@ -264,4 +299,70 @@ fn repeated_revoke_retries_failed_remote_cleanup_without_reauthorizing() {
     assert_eq!(engine.status().session_state, "revoked");
     assert!(!engine.status().avatar_open);
     assert_eq!(stats.close.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn reviewed_persona_readiness_tracks_media_and_resets_after_correction() {
+    let (mut engine, _) = engine(true);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+
+    let initial = engine.status().modality_readiness;
+    assert_eq!(initial.text, LabModalityState::Ready);
+    assert_eq!(initial.voice, LabModalityState::NotReady);
+    assert_eq!(initial.video, LabModalityState::NotReady);
+
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    let preparing = engine.status().modality_readiness;
+    assert_eq!(preparing.voice, LabModalityState::Preparing);
+    assert_eq!(preparing.video, LabModalityState::Preparing);
+
+    engine.mark_video_ready_from_media().unwrap();
+    assert_eq!(
+        engine.status().modality_readiness.video,
+        LabModalityState::Ready
+    );
+    assert_eq!(
+        engine.status().modality_readiness.voice,
+        LabModalityState::Preparing
+    );
+    engine.mark_voice_ready_from_media().unwrap();
+    assert_eq!(
+        engine.status().modality_readiness.voice,
+        LabModalityState::Ready
+    );
+
+    engine.close().unwrap();
+    let claim = ClaimId::new("owner-fact").unwrap();
+    engine
+        .correct_owner_claim(&claim, "Исправленный факт", ClaimKind::Factual)
+        .unwrap();
+    let corrected = engine.status().modality_readiness;
+    assert_eq!(corrected.text, LabModalityState::Ready);
+    assert_eq!(corrected.voice, LabModalityState::NotReady);
+    assert_eq!(corrected.video, LabModalityState::NotReady);
+    assert_eq!(engine.status().persona_version, 3);
+}
+
+#[test]
+fn provider_create_failure_marks_only_media_preparation_failed_and_allows_retry() {
+    let (mut engine, _) = engine_with_failures(true, 1, 0);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+
+    assert!(matches!(
+        engine.start(OwnerLabStartRequest { consent: true }),
+        Err(LabError::Provider(Rt0ReasonCode::ProviderUnavailable))
+    ));
+    let failed = engine.status().modality_readiness;
+    assert_eq!(failed.text, LabModalityState::Ready);
+    assert_eq!(failed.voice, LabModalityState::Failed);
+    assert_eq!(failed.video, LabModalityState::Failed);
+
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    let retry = engine.status().modality_readiness;
+    assert_eq!(retry.voice, LabModalityState::Preparing);
+    assert_eq!(retry.video, LabModalityState::Preparing);
 }
