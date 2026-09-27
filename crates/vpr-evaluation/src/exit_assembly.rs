@@ -9,15 +9,19 @@ use crate::exit_validation::{
 use crate::live_provider::validate_live_provider_probe;
 use crate::{
     AutomatedEvidence, BoundGoldenReport, BoundLabSessionEvidenceAggregate,
-    ConversationPairEvidence, KnownLimitationsEvidence, LiveProviderProbeReceipt,
+    ConversationPairEvidence, EvidenceVerificationContext, GoldenEvidenceBundle, GoldenSuite, KnownLimitationsEvidence, LiveProviderProbeReceipt,
     ProviderStateManifest, RT0_EVIDENCE_BINDING_SCHEMA, RT0_EXIT_EVIDENCE_SCHEMA, Rt0ExitEvidence,
-    Rt0SupportingPreflightArtifacts, preflight_rt0_supporting_artifacts, sha256_hex,
+    Rt0SupportingPreflightArtifacts, evaluate_bound_owner_golden_suite,
+    preflight_rt0_supporting_artifacts, sha256_hex,
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rt0ExitAssemblyInputs<'a> {
     pub supporting: Rt0SupportingPreflightArtifacts<'a>,
     pub bound_golden_report_bytes: &'a [u8],
+    pub owner_golden_suite_bytes: &'a [u8],
+    pub owner_golden_evidence_bytes: &'a [u8],
+    pub owner_golden_report_bytes: &'a [u8],
     pub provider_state_bytes: &'a [u8],
     pub live_provider_probe_bytes: &'a [u8],
     pub conversation_attempt_bytes: &'a [u8],
@@ -31,6 +35,7 @@ pub struct Rt0ExitAssemblyInputs<'a> {
 pub enum Rt0ExitAssemblyError {
     SupportingEvidenceInvalid,
     GoldenReportInvalid,
+    OwnerGoldenInvalid,
     GoldenCandidateMismatch,
     GoldenReleaseSpecMismatch,
     GoldenProviderStateMismatch,
@@ -96,6 +101,9 @@ pub fn assemble_rt0_exit_evidence(
         candidate_sha: inputs.exact_candidate_sha.into(),
         release_spec_sha256: sha256_hex(inputs.release_spec_bytes),
         golden_report_sha256: sha256_hex(inputs.bound_golden_report_bytes),
+        owner_golden_suite_sha256: sha256_hex(inputs.owner_golden_suite_bytes),
+        owner_golden_evidence_sha256: sha256_hex(inputs.owner_golden_evidence_bytes),
+        owner_golden_report_sha256: sha256_hex(inputs.owner_golden_report_bytes),
         provider_state_sha256: supporting.provider_state_sha256,
         live_provider_probe_sha256: sha256_hex(inputs.live_provider_probe_bytes),
         conversation_attempt_sha256: sha256_hex(inputs.conversation_attempt_bytes),
@@ -158,6 +166,30 @@ fn validate_core_artifacts(
         || golden.provider_state != provider_state
     {
         return Err(Rt0ExitAssemblyError::GoldenProviderStateMismatch);
+    }
+
+    let owner_suite: GoldenSuite = serde_json::from_slice(inputs.owner_golden_suite_bytes)
+        .map_err(|_| Rt0ExitAssemblyError::OwnerGoldenInvalid)?;
+    let owner_bundle: GoldenEvidenceBundle =
+        serde_json::from_slice(inputs.owner_golden_evidence_bytes)
+            .map_err(|_| Rt0ExitAssemblyError::OwnerGoldenInvalid)?;
+    let owner_report: BoundGoldenReport = serde_json::from_slice(inputs.owner_golden_report_bytes)
+        .map_err(|_| Rt0ExitAssemblyError::OwnerGoldenInvalid)?;
+    let owner_recomputed = evaluate_bound_owner_golden_suite(
+        &owner_suite,
+        &owner_bundle,
+        EvidenceVerificationContext {
+            suite_bytes: inputs.owner_golden_suite_bytes,
+            release_spec_bytes: inputs.release_spec_bytes,
+            provider_state: &provider_state,
+            provider_state_bytes: inputs.provider_state_bytes,
+            evidence_bytes: inputs.owner_golden_evidence_bytes,
+            exact_candidate_sha: inputs.exact_candidate_sha,
+        },
+    )
+    .map_err(|_| Rt0ExitAssemblyError::OwnerGoldenInvalid)?;
+    if owner_recomputed != owner_report {
+        return Err(Rt0ExitAssemblyError::OwnerGoldenInvalid);
     }
 
     let probe: LiveProviderProbeReceipt = serde_json::from_slice(inputs.live_provider_probe_bytes)
