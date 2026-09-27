@@ -129,6 +129,30 @@ A successful report emits exact SHA-256 digests for all ten supporting artifacts
 acceptance/privacy/usability results into passes. The final exit gate remains responsible for the
 substantive RT0 thresholds and for binding these artifact bytes to `exit-evidence.json`.
 
+## RT0 private owner-specific Golden report
+
+The mandatory private owner-specific Golden suite is runtime input, not repository content. After the
+owner-specific suite and its exact bound evidence bundle have been prepared for the same candidate,
+ReleaseSpec and provider state as the rest of the RT0 evidence, generate the sanitized bound report
+through the canonical owner-specific evaluator:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-owner-golden -- \
+  /secure/evidence/rt0-candidate/owner-golden-suite.json \
+  /secure/evidence/rt0-candidate/owner-golden-evidence.json \
+  docs/releases/RT0_RELEASE_SPEC.md \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/owner-golden-report.json \
+  "$(git rev-parse HEAD)"
+```
+
+The command refuses a suite that is not explicitly owner-specific, reuses the normal exact-candidate,
+ReleaseSpec and provider-state binding checks, writes only the sanitized `BoundGoldenReport`, and
+never overwrites an existing report. Exit `0` means every owner-specific Golden case passed; exit
+`1` means the report was validly generated but one or more cases failed; exit `2` means the suite,
+binding, input or output operation was invalid. Raw owner prompts, expected private tokens and
+observations remain in the private suite/evidence inputs and are not copied into the report.
+
 ## RT0 exit-manifest assembler
 
 After the core and supporting artifacts have been captured, use the non-promoting assembler instead
