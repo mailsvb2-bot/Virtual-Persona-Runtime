@@ -292,6 +292,43 @@ fn owner_golden_digests(provider_state_bytes: &[u8]) -> (String, String, String)
     )
 }
 
+fn passing_quality_evidence() -> QualityEvidence {
+    QualityEvidence {
+        origin: EvidenceOrigin::Real,
+        text_first_meaningful_response: LatencyDistributionMillis {
+            samples: 2,
+            p50: 1_000,
+            p95: 2_500,
+        },
+        first_meaningful_audio: LatencyDistributionMillis {
+            samples: 2,
+            p50: 500,
+            p95: 500,
+        },
+        interruption_stop: LatencyDistributionMillis {
+            samples: 1,
+            p50: 250,
+            p95: 250,
+        },
+        first_useful_video: LatencyDistributionMillis {
+            samples: 2,
+            p50: 700,
+            p95: 700,
+        },
+        av_sync_absolute_offset: LatencyDistributionMillis {
+            samples: 6,
+            p50: 60,
+            p95: 120,
+        },
+        recoverable_reconnect: LatencyDistributionMillis {
+            samples: 2,
+            p50: 800,
+            p95: 800,
+        },
+        artifact_sha256: digest('2'),
+    }
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     let (owner_suite_sha, owner_evidence_sha, owner_report_sha) =
         owner_golden_digests(provider_state_bytes);
@@ -326,40 +363,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             revoke_deny_path: CheckStatus::Passed,
             artifact_sha256: digest('1'),
         },
-        quality: QualityEvidence {
-            origin: EvidenceOrigin::Real,
-            text_first_meaningful_response: LatencyDistributionMillis {
-                samples: 2,
-                p50: 1_000,
-                p95: 2_500,
-            },
-            first_meaningful_audio: LatencyDistributionMillis {
-                samples: 2,
-                p50: 500,
-                p95: 500,
-            },
-            interruption_stop: LatencyDistributionMillis {
-                samples: 1,
-                p50: 250,
-                p95: 250,
-            },
-            first_useful_video: LatencyDistributionMillis {
-                samples: 2,
-                p50: 700,
-                p95: 700,
-            },
-            av_sync_absolute_offset: LatencyDistributionMillis {
-                samples: 6,
-                p50: 60,
-                p95: 120,
-            },
-            recoverable_reconnect: LatencyDistributionMillis {
-                samples: 2,
-                p50: 800,
-                p95: 800,
-            },
-            artifact_sha256: digest('2'),
-        },
+        quality: passing_quality_evidence(),
         cost: passing_cost_evidence(),
         privacy_permissions: PrivacyPermissionEvidence {
             origin: EvidenceOrigin::Real,
