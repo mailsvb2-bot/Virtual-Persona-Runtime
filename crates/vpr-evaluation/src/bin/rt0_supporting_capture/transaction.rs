@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use vpr_evaluation::{RT0_MANUAL_SUPPORTING_FILES, sha256_hex};
@@ -13,7 +13,6 @@ use super::fail;
 const LOCK_FILE: &str = ".rt0-supporting-capture.lock";
 const COMMIT_MARKER: &str = ".rt0-supporting-capture.commit";
 const STAGE_PREFIX: &str = ".rt0-supporting-capture.stage.";
-const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
 const JOURNAL_SCHEMA: &str = "rt0-manual-supporting-capture-journal-0.1";
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -49,7 +48,7 @@ pub(super) enum LockOutcome {
 }
 
 pub(super) struct CaptureLock {
-    path: PathBuf,
+    file: File,
 }
 
 impl CaptureLock {
@@ -59,36 +58,75 @@ impl CaptureLock {
         expected: &[(&'static str, String)],
         artifacts: &[(&'static str, Vec<u8>)],
     ) -> Result<LockOutcome, i32> {
-        Self::acquire_with_timeout(root, journal, expected, artifacts, STALE_LOCK_AFTER)
-    }
+        let path = root.join(LOCK_FILE);
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(path)
+            .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
 
-    fn acquire_with_timeout(
-        root: &Path,
-        journal: &TransactionJournal,
-        expected: &[(&'static str, String)],
-        artifacts: &[(&'static str, Vec<u8>)],
-        stale_after: Duration,
-    ) -> Result<LockOutcome, i32> {
-        match create_journal_file(&root.join(LOCK_FILE), journal) {
-            Ok(()) => {
-                let lock = Self {
-                    path: root.join(LOCK_FILE),
-                };
-                recover_commit_marker_under_lock(root, journal, expected)?;
-                Ok(LockOutcome::Acquired(lock))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                recover_stale_lock(root, journal, expected, artifacts, stale_after)
-            }
-            Err(_) => Err(fail("CAPTURE_LOCK_FAILED")),
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => return Err(fail("CAPTURE_IN_PROGRESS")),
+            Err(TryLockError::Error(_)) => return Err(fail("CAPTURE_LOCK_FAILED")),
+        }
+
+        let mut lock = Self { file };
+        let recovery = recover_under_lock(root, journal, expected, artifacts)?;
+        write_lock_journal(&mut lock.file, journal)?;
+        match recovery {
+            RecoveryOutcome::Ready => Ok(LockOutcome::Acquired(lock)),
+            RecoveryOutcome::AlreadyCommitted => Ok(LockOutcome::AlreadyCommitted),
         }
     }
 }
 
-impl Drop for CaptureLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+enum RecoveryOutcome {
+    Ready,
+    AlreadyCommitted,
+}
+
+fn recover_under_lock(
+    root: &Path,
+    journal: &TransactionJournal,
+    expected: &[(&'static str, String)],
+    artifacts: &[(&'static str, Vec<u8>)],
+) -> Result<RecoveryOutcome, i32> {
+    let marker = root.join(COMMIT_MARKER);
+    if marker.exists() {
+        let marker_journal = read_journal(&marker)?;
+        if marker_journal != *journal {
+            return Err(fail("STALE_CAPTURE_MISMATCH"));
+        }
+        if !restore_scaffold(root, expected) {
+            return Err(fail("STALE_CAPTURE_RECOVERY_FAILED"));
+        }
+        cleanup_staged_files(root);
+        fs::remove_file(marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
+        return Ok(RecoveryOutcome::Ready);
     }
+
+    if artifacts_match(root, artifacts) {
+        cleanup_staged_files(root);
+        return Ok(RecoveryOutcome::AlreadyCommitted);
+    }
+    if scaffold_matches(root, expected) {
+        cleanup_staged_files(root);
+        return Ok(RecoveryOutcome::Ready);
+    }
+    Err(fail("STALE_CAPTURE_AMBIGUOUS"))
+}
+
+fn write_lock_journal(file: &mut File, journal: &TransactionJournal) -> Result<(), i32> {
+    let mut bytes = serde_json::to_vec(journal).map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
+    bytes.push(b'\n');
+    file.set_len(0).map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| fail("CAPTURE_LOCK_FAILED"))
 }
 
 pub(super) fn artifact_digests(artifacts: &[(&'static str, Vec<u8>)]) -> BTreeMap<String, String> {
@@ -107,6 +145,10 @@ pub(super) fn write_artifacts_transactional(
     let nonce = transaction_nonce();
     let mut staged = Vec::with_capacity(artifacts.len());
     for (index, (name, bytes)) in artifacts.iter().enumerate() {
+        if !RT0_MANUAL_SUPPORTING_FILES.contains(name) {
+            cleanup_paths(&staged);
+            return Err(fail("INTERNAL_ERROR"));
+        }
         let path = root.join(format!(
             "{STAGE_PREFIX}{}.{}.{}.tmp",
             process::id(),
@@ -118,10 +160,6 @@ pub(super) fn write_artifacts_transactional(
             return Err(code);
         }
         staged.push(path);
-        if !RT0_MANUAL_SUPPORTING_FILES.contains(name) {
-            cleanup_paths(&staged);
-            return Err(fail("INTERNAL_ERROR"));
-        }
     }
 
     let marker = root.join(COMMIT_MARKER);
@@ -160,77 +198,9 @@ pub(super) fn write_artifacts_transactional(
             }));
         }
     }
+
     cleanup_paths(&staged);
     fs::remove_file(marker).map_err(|_| fail("OUTPUT_COMMIT_FINALIZE_FAILED"))
-}
-
-fn recover_commit_marker_under_lock(
-    root: &Path,
-    journal: &TransactionJournal,
-    expected: &[(&'static str, String)],
-) -> Result<(), i32> {
-    let marker = root.join(COMMIT_MARKER);
-    if !marker.exists() {
-        return Ok(());
-    }
-    let stale = read_journal(&marker)?;
-    if stale != *journal {
-        return Err(fail("STALE_CAPTURE_MISMATCH"));
-    }
-    if !restore_scaffold(root, expected) {
-        return Err(fail("STALE_CAPTURE_RECOVERY_FAILED"));
-    }
-    cleanup_staged_files(root);
-    fs::remove_file(marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))
-}
-
-fn recover_stale_lock(
-    root: &Path,
-    journal: &TransactionJournal,
-    expected: &[(&'static str, String)],
-    artifacts: &[(&'static str, Vec<u8>)],
-    stale_after: Duration,
-) -> Result<LockOutcome, i32> {
-    let lock_path = root.join(LOCK_FILE);
-    let metadata = fs::metadata(&lock_path).map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
-    let modified = metadata
-        .modified()
-        .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
-    let age = SystemTime::now()
-        .duration_since(modified)
-        .unwrap_or_default();
-    if age < stale_after {
-        return Err(fail("CAPTURE_IN_PROGRESS"));
-    }
-
-    let stale = read_journal(&lock_path)?;
-    if stale != *journal {
-        return Err(fail("STALE_CAPTURE_MISMATCH"));
-    }
-
-    let marker = root.join(COMMIT_MARKER);
-    if marker.exists() {
-        let marker_journal = read_journal(&marker)?;
-        if marker_journal != *journal || !restore_scaffold(root, expected) {
-            return Err(fail("STALE_CAPTURE_RECOVERY_FAILED"));
-        }
-        cleanup_staged_files(root);
-        fs::remove_file(&marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        return CaptureLock::acquire_with_timeout(root, journal, expected, artifacts, stale_after);
-    }
-
-    if artifacts_match(root, artifacts) {
-        cleanup_staged_files(root);
-        fs::remove_file(lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        return Ok(LockOutcome::AlreadyCommitted);
-    }
-    if scaffold_matches(root, expected) {
-        cleanup_staged_files(root);
-        fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        return CaptureLock::acquire_with_timeout(root, journal, expected, artifacts, stale_after);
-    }
-    Err(fail("STALE_CAPTURE_AMBIGUOUS"))
 }
 
 fn create_journal_file(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
@@ -248,6 +218,7 @@ fn create_journal_file(path: &Path, journal: &TransactionJournal) -> std::io::Re
         process::id(),
         transaction_nonce()
     ));
+
     let result = (|| {
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -359,6 +330,12 @@ fn transaction_nonce() -> u128 {
 mod tests {
     use super::*;
 
+    struct Fixtures {
+        expected: Vec<(&'static str, String)>,
+        artifacts: Vec<(&'static str, Vec<u8>)>,
+        journal: TransactionJournal,
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "vpr-supporting-capture-{name}-{}-{}",
@@ -367,12 +344,6 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
-    }
-
-    struct Fixtures {
-        expected: Vec<(&'static str, String)>,
-        artifacts: Vec<(&'static str, Vec<u8>)>,
-        journal: TransactionJournal,
     }
 
     fn fixtures() -> Fixtures {
@@ -392,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_serializes_concurrent_writers() {
+    fn os_lock_serializes_concurrent_writers() {
         let root = temp_dir("lock");
         let Fixtures {
             expected,
@@ -402,64 +373,22 @@ mod tests {
         for (name, content) in &expected {
             fs::write(root.join(name), content).unwrap();
         }
-        let first = match CaptureLock::acquire_with_timeout(
-            &root,
-            &journal,
-            &expected,
-            &artifacts,
-            Duration::from_secs(60),
-        )
-        .unwrap()
-        {
+
+        let first = match CaptureLock::acquire(&root, &journal, &expected, &artifacts).unwrap() {
             LockOutcome::Acquired(lock) => lock,
             LockOutcome::AlreadyCommitted => panic!("unexpected committed recovery"),
         };
         assert_eq!(
-            CaptureLock::acquire_with_timeout(
-                &root,
-                &journal,
-                &expected,
-                &artifacts,
-                Duration::from_secs(60),
-            )
-            .err(),
+            CaptureLock::acquire(&root, &journal, &expected, &artifacts).err(),
             Some(2)
         );
         drop(first);
+        assert!(CaptureLock::acquire(&root, &journal, &expected, &artifacts).is_ok());
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn stale_mid_commit_is_restored_and_reacquired_for_same_input() {
-        let root = temp_dir("stale-mid-commit");
-        let Fixtures {
-            expected,
-            artifacts,
-            journal,
-        } = fixtures();
-        for (name, content) in &expected {
-            fs::write(root.join(name), content).unwrap();
-        }
-        create_journal_file(&root.join(LOCK_FILE), &journal).unwrap();
-        create_journal_file(&root.join(COMMIT_MARKER), &journal).unwrap();
-        fs::write(root.join(artifacts[0].0), &artifacts[0].1).unwrap();
-
-        let recovered = CaptureLock::acquire_with_timeout(
-            &root,
-            &journal,
-            &expected,
-            &artifacts,
-            Duration::ZERO,
-        )
-        .unwrap();
-        assert!(matches!(recovered, LockOutcome::Acquired(_)));
-        assert!(scaffold_matches(&root, &expected));
-        drop(recovered);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn orphan_commit_marker_is_recovered_only_after_lock_claim() {
+    fn orphan_commit_marker_is_recovered_under_os_lock() {
         let root = temp_dir("orphan-marker");
         let Fixtures {
             expected,
@@ -472,16 +401,8 @@ mod tests {
         create_journal_file(&root.join(COMMIT_MARKER), &journal).unwrap();
         fs::write(root.join(artifacts[0].0), &artifacts[0].1).unwrap();
 
-        let recovered = CaptureLock::acquire_with_timeout(
-            &root,
-            &journal,
-            &expected,
-            &artifacts,
-            Duration::ZERO,
-        )
-        .unwrap();
+        let recovered = CaptureLock::acquire(&root, &journal, &expected, &artifacts).unwrap();
         assert!(matches!(recovered, LockOutcome::Acquired(_)));
-        assert!(root.join(LOCK_FILE).exists());
         assert!(!root.join(COMMIT_MARKER).exists());
         assert!(scaffold_matches(&root, &expected));
         drop(recovered);
@@ -489,8 +410,8 @@ mod tests {
     }
 
     #[test]
-    fn stale_completed_capture_returns_without_rewriting() {
-        let root = temp_dir("stale-complete");
+    fn completed_capture_is_recognized_after_process_lock_release() {
+        let root = temp_dir("complete");
         let Fixtures {
             expected,
             artifacts,
@@ -499,19 +420,11 @@ mod tests {
         for (name, bytes) in &artifacts {
             fs::write(root.join(name), bytes).unwrap();
         }
-        create_journal_file(&root.join(LOCK_FILE), &journal).unwrap();
 
-        let recovered = CaptureLock::acquire_with_timeout(
-            &root,
-            &journal,
-            &expected,
-            &artifacts,
-            Duration::ZERO,
-        )
-        .unwrap();
+        let recovered = CaptureLock::acquire(&root, &journal, &expected, &artifacts).unwrap();
         assert!(matches!(recovered, LockOutcome::AlreadyCommitted));
         assert!(artifacts_match(&root, &artifacts));
-        assert!(!root.join(LOCK_FILE).exists());
+        drop(recovered);
         let _ = fs::remove_dir_all(root);
     }
 }
