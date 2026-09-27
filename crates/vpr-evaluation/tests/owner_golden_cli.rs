@@ -293,4 +293,3 @@ fn owner_golden_cli_ignores_stale_temp_from_interrupted_prior_run() {
     assert_eq!(actual, owner.report);
     assert_eq!(fs::read(stale_temp).unwrap(), b"stale interrupted artifact");
 }
-
