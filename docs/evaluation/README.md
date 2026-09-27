@@ -103,6 +103,41 @@ session-backed QualityContract latency distributions.
 This command is intentionally non-promoting. It does not infer acceptance, privacy/permission,
 cost, Golden or human-review results because those require separate real observations or review.
 
+## RT0 reviewed manual supporting capture
+
+After the real acceptance/privacy/cost review and human evaluation have been completed, do not edit
+their canonical supporting JSON bindings by hand. Put the reviewed observations in one private input
+file and run:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-supporting-capture -- \
+  /secure/input/rt0-reviewed-observations.json \
+  /secure/evidence/rt0-candidate/supporting \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  "$(git rev-parse HEAD)"
+```
+
+The input schema is `rt0-manual-supporting-observations-0.1` and requires
+`attestation="reviewed_real_observations"`. The command derives the exact candidate and
+provider-state bindings itself, emits `origin="real"` only from that explicit reviewed-observation
+attestation, preserves every passed/failed observation unchanged, requires all five human-review
+dimensions to have actually been recorded, and rejects duplicate cost-role declarations. It also
+constructs the known-limitations review marker instead of trusting a hand-edited marker in the body.
+
+The command replaces only the exact untouched synthetic placeholders previously created by
+`vpr-rt0-supporting-scaffold`. If any of those five files has already been edited or reviewed, it
+fails closed rather than overwriting it. Capture is serialized by a safe cross-platform process-lifetime file lock via `fs2::FileExt`.
+The underlying operating-system lock remains held for the lifetime of the open file handle, so a
+live or suspended owner cannot lose ownership merely because time passes, while process/handle exit
+releases ownership automatically. All five new files are staged before replacement, and an ordinary write
+failure rolls back earlier replacements to the exact scaffold bytes before the transaction marker is
+released. A bound commit journal is published atomically before replacement; after an interrupted
+process, the single recovery owner either restores the exact scaffold and safely retries a mid-commit
+transaction, or recognizes that all five intended bytes were already committed and re-emits the
+receipt path without rewriting them. A different candidate, provider state, private input or output
+digest fails closed instead of silently recovering another transaction. This is a capture/shape/binding tool only: it does not infer
+that an observation passed and cannot make RT0 release-ready.
+
 ## RT0 supporting-evidence preflight
 
 Before assembling `exit-evidence.json`, `vpr-rt0-supporting-preflight` can validate the ten

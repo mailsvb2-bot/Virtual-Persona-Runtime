@@ -71,7 +71,10 @@ pub use session_evidence::{
 };
 pub use session_types::{LabTextAttemptEvidence, LabTextAttemptStatus, SessionUsageEvidence};
 
-pub use supporting_scaffold::{RT0_RUNTIME_SUPPORTING_FILES, rt0_runtime_supporting_scaffold};
+pub use supporting_scaffold::{
+    RT0_MANUAL_SUPPORTING_FILES, RT0_RUNTIME_SUPPORTING_FILES, rt0_manual_supporting_scaffold,
+    rt0_runtime_supporting_scaffold,
+};
 
 pub use supporting_preflight::{
     RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,
