@@ -20,6 +20,7 @@ allowed_internal_dependencies = {
     "vpr-provider-openai-speech": {"vpr-integration"},
     "vpr-provider-elevenlabs-tts": {"vpr-integration"},
     "vpr-provider-did-agent-streams": {"vpr-integration"},
+    "vpr-provider-local-open-source": {"vpr-integration"},
     "vpr-evaluation": {"vpr-domain"},
     "vpr-live-proof": {"vpr-domain", "vpr-evaluation", "vpr-integration", "vpr-owner-lab", "vpr-policy", "vpr-runtime"},
     "vpr-owner-lab": {
@@ -31,6 +32,7 @@ allowed_internal_dependencies = {
         "vpr-provider-anthropic",
         "vpr-provider-deepgram-stt",
         "vpr-provider-did-agent-streams",
+        "vpr-provider-local-open-source",
         "vpr-provider-elevenlabs-tts",
         "vpr-provider-gemini",
         "vpr-provider-openai-compatible",

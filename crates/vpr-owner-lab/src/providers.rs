@@ -10,6 +10,7 @@ use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_did_agent_streams::{DidAgentStreamsAvatar, DidAgentStreamsConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
+use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
@@ -47,44 +48,7 @@ impl ProviderBundle {
         };
         #[cfg(not(windows))]
         let profile: Option<ProviderCredentialProfile> = None;
-        let did_endpoint = resolved_value(
-            "VPR_DID_ENDPOINT",
-            profile
-                .as_ref()
-                .map(|profile| profile.did_endpoint.as_str()),
-        )
-        .unwrap_or_else(|| "https://api.d-id.com".into());
-        let did_api_key = required_value(
-            "VPR_DID_API_KEY",
-            profile.as_ref().map(|profile| profile.did_api_key.as_str()),
-        )?;
-        let did_agent_id = required_value(
-            "VPR_DID_AGENT_ID",
-            profile
-                .as_ref()
-                .map(|profile| profile.did_agent_id.as_str()),
-        )?;
-        let did_fluent = resolved_bool(
-            "VPR_DID_FLUENT",
-            profile.as_ref().map(|profile| profile.did_fluent),
-            false,
-        )?;
-
-        let avatar = DidAgentStreamsAvatar::new(
-            DidAgentStreamsConfig::new(did_endpoint.clone(), did_api_key, did_agent_id.clone())
-                .with_fluent(did_fluent),
-        )
-        .map_err(|_| "D-ID provider configuration rejected".to_string())?;
-        let avatar_descriptor = descriptor(
-            "avatar",
-            "did-agent-streams",
-            "configured-agent",
-            &[
-                &did_endpoint,
-                &did_agent_id,
-                if did_fluent { "fluent" } else { "legacy" },
-            ],
-        );
+        let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
             profile
@@ -115,7 +79,7 @@ impl ProviderBundle {
             }
         };
         Ok(Self {
-            avatar: Box::new(avatar),
+            avatar,
             stt,
             llm,
             avatar_descriptor,
@@ -135,7 +99,20 @@ fn provider_config_complete_with(
     require_voice: bool,
     mut get: impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
-    if get("VPR_DID_API_KEY").is_none() || get("VPR_DID_AGENT_ID").is_none() {
+    let avatar = get("VPR_OWNER_LAB_AVATAR_PROVIDER")
+        .unwrap_or_else(|| "did".into())
+        .to_ascii_lowercase();
+    let avatar_complete = match avatar.as_str() {
+        "did" | "d-id" | "did-agent-streams" => {
+            get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some()
+        }
+        "local" | "local-open-source" => {
+            get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
+                && get("VPR_LOCAL_AVATAR_API_TOKEN").is_some()
+        }
+        _ => false,
+    };
+    if !avatar_complete {
         return false;
     }
 
@@ -158,6 +135,72 @@ fn provider_config_complete_with(
     ]
     .into_iter()
     .all(|name| get(name).is_some())
+}
+
+fn build_avatar(
+    profile: Option<&ProviderCredentialProfile>,
+) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
+    let name =
+        optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER").unwrap_or_else(|| "did".to_owned());
+    match name.as_str() {
+        "did" | "d-id" | "did-agent-streams" => {
+            let endpoint = resolved_value(
+                "VPR_DID_ENDPOINT",
+                profile.map(|profile| profile.did_endpoint.as_str()),
+            )
+            .unwrap_or_else(|| "https://api.d-id.com".into());
+            let api_key = required_value(
+                "VPR_DID_API_KEY",
+                profile.map(|profile| profile.did_api_key.as_str()),
+            )?;
+            let agent_id = required_value(
+                "VPR_DID_AGENT_ID",
+                profile.map(|profile| profile.did_agent_id.as_str()),
+            )?;
+            let fluent = resolved_bool(
+                "VPR_DID_FLUENT",
+                profile.map(|profile| profile.did_fluent),
+                false,
+            )?;
+            let provider = DidAgentStreamsAvatar::new(
+                DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone())
+                    .with_fluent(fluent),
+            )
+            .map_err(|_| "D-ID provider configuration rejected".to_string())?;
+            Ok((
+                Box::new(provider),
+                descriptor(
+                    "avatar",
+                    "did-agent-streams",
+                    "configured-agent",
+                    &[
+                        &endpoint,
+                        &agent_id,
+                        if fluent { "fluent" } else { "legacy" },
+                    ],
+                ),
+            ))
+        }
+        "local" | "local-open-source" => {
+            let endpoint = required_value("VPR_LOCAL_AVATAR_ENDPOINT", None)?;
+            let api_token = required_value("VPR_LOCAL_AVATAR_API_TOKEN", None)?;
+            let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+                endpoint.clone(),
+                api_token,
+            ))
+            .map_err(|_| "local open-source avatar provider configuration rejected".to_string())?;
+            Ok((
+                Box::new(provider),
+                descriptor(
+                    "avatar",
+                    "local-open-source",
+                    "realtime-worker-v1",
+                    &[&endpoint, "musetalk-liveportrait-compatible"],
+                ),
+            ))
+        }
+        _ => Err(format!("unsupported avatar provider: {name}")),
+    }
 }
 
 fn matching_stt_profile<'a>(
@@ -395,6 +438,28 @@ mod tests {
         ];
         assert!(provider_config_complete_with(true, |name| {
             values.contains(&name).then(|| "configured".into())
+        }));
+    }
+
+    #[test]
+    fn local_avatar_environment_can_replace_did_without_changing_voice_stack() {
+        let values = [
+            ("VPR_OWNER_LAB_AVATAR_PROVIDER", "local-open-source"),
+            ("VPR_LOCAL_AVATAR_ENDPOINT", "https://avatar.example.test"),
+            ("VPR_LOCAL_AVATAR_API_TOKEN", "worker-token"),
+            ("VPR_OWNER_LAB_STT_PROVIDER", "deepgram"),
+            ("VPR_OWNER_LAB_STT_ENDPOINT", "https://stt.example.test"),
+            ("VPR_OWNER_LAB_STT_API_KEY", "stt-secret"),
+            ("VPR_OWNER_LAB_STT_MODEL", "nova-3"),
+            ("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek"),
+            ("VPR_OWNER_LAB_LLM_ENDPOINT", "https://llm.example.test"),
+            ("VPR_OWNER_LAB_LLM_API_KEY", "llm-secret"),
+            ("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash"),
+        ];
+        assert!(provider_config_complete_with(true, |name| {
+            values
+                .iter()
+                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
         }));
     }
 
