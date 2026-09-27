@@ -99,7 +99,9 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn set_local_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    println!("Configure self-hosted realtime avatar worker; D-ID credentials remain stored as fallback.");
+    println!(
+        "Configure self-hosted realtime avatar worker; D-ID credentials remain stored as fallback."
+    );
     let endpoint = prompt_line("Local avatar HTTPS endpoint: ")?;
     let api_token = prompt_secret("Local avatar API token: ")?;
     profile.select_local_avatar(&endpoint, &api_token)?;
@@ -349,7 +351,10 @@ fn print_safe_profile(profile: &ProviderCredentialProfile) {
     match profile.avatar_provider.as_str() {
         "local" | "local-open-source" => println!(
             "  avatar: local-open-source ({}) · token stored",
-            profile.local_avatar_endpoint.as_deref().unwrap_or("<missing>")
+            profile
+                .local_avatar_endpoint
+                .as_deref()
+                .unwrap_or("<missing>")
         ),
         _ => println!(
             "  avatar: D-ID ({}) · agent={} · legacy fluent disabled",
