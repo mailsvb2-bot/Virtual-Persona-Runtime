@@ -15,9 +15,10 @@ use vpr_integration::{
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
+use super::readiness::{LabModalityReadiness, LabModalityState};
 use super::{
-    LabError, LabSessionAudience, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
+    ConversationReadiness, LabError, LabSessionAudience, OwnerContextState, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 #[derive(Default)]
