@@ -133,7 +133,9 @@ fn file_age(path: &Path) -> Result<Duration, i32> {
     let modified = fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .map_err(|_| fail("CAPTURE_RECOVERY_CLAIM_FAILED"))?;
-    Ok(SystemTime::now().duration_since(modified).unwrap_or_default())
+    Ok(SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_default())
 }
 
 fn recover_commit_marker_under_lock(
@@ -171,13 +173,7 @@ fn recover_stale_lock(
     let recovery_claim = RecoveryClaim::acquire(root, stale_after)?;
     if !lock_path.exists() {
         drop(recovery_claim);
-        return CaptureLock::acquire_with_timeout(
-            root,
-            journal,
-            expected,
-            artifacts,
-            stale_after,
-        );
+        return CaptureLock::acquire_with_timeout(root, journal, expected, artifacts, stale_after);
     }
     if file_age(&lock_path)? < stale_after {
         return Err(fail("CAPTURE_IN_PROGRESS"));
