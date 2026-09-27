@@ -8,6 +8,7 @@ mod exit_validation;
 mod golden;
 mod known_limitations;
 mod live_provider;
+mod owner_golden;
 mod session_binding;
 mod session_evidence;
 mod session_statistics;
@@ -34,6 +35,8 @@ pub use live_provider::{
     LlmProbeEvidence, ProbeUsage, RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
     validate_live_provider_probe,
 };
+
+pub use owner_golden::{OwnerGoldenError, evaluate_bound_owner_golden_suite};
 
 pub use exit::{
     AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, CheckStatus,
