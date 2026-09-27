@@ -1,6 +1,6 @@
 use crate::{
-    BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle, LiveProviderProbeReceipt,
-    ProviderStateManifest,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle, GoldenSuite,
+    LiveProviderProbeReceipt, ProviderStateManifest,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -9,6 +9,12 @@ pub struct Rt0ExitVerificationContext<'a> {
     pub golden_report_bytes: &'a [u8],
     pub golden_evidence_bundle: &'a GoldenEvidenceBundle,
     pub golden_evidence_bytes: &'a [u8],
+    pub owner_golden_suite: &'a GoldenSuite,
+    pub owner_golden_suite_bytes: &'a [u8],
+    pub owner_golden_report: &'a BoundGoldenReport,
+    pub owner_golden_report_bytes: &'a [u8],
+    pub owner_golden_evidence_bundle: &'a GoldenEvidenceBundle,
+    pub owner_golden_evidence_bytes: &'a [u8],
     pub provider_state: &'a ProviderStateManifest,
     pub provider_state_bytes: &'a [u8],
     pub live_provider_probe: &'a LiveProviderProbeReceipt,
