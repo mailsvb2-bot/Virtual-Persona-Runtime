@@ -71,12 +71,10 @@ fn run() -> Result<(), i32> {
             exact_candidate_sha: candidate_sha,
         },
     )
-    .map_err(|error| {
-        match error {
-            OwnerGoldenError::SuiteNotOwnerSpecific => emit_code("OWNER_GOLDEN_SUITE_INVALID"),
-            OwnerGoldenError::ReportMismatch => emit_code("OWNER_GOLDEN_REPORT_MISMATCH"),
-            OwnerGoldenError::Binding(code) => emit_code(code),
-        }
+    .map_err(|error| match error {
+        OwnerGoldenError::SuiteNotOwnerSpecific => emit_code("OWNER_GOLDEN_SUITE_INVALID"),
+        OwnerGoldenError::ReportMismatch => emit_code("OWNER_GOLDEN_REPORT_MISMATCH"),
+        OwnerGoldenError::Binding(code) => emit_code(code),
     })?;
 
     let output_bytes = serde_json::to_vec_pretty(&report).map_err(|_| 2)?;
