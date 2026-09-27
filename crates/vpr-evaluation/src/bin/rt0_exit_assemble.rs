@@ -80,6 +80,9 @@ fn run() -> Result<(), i32> {
     let [
         supporting_dir,
         golden_report_path,
+        owner_golden_suite_path,
+        owner_golden_evidence_path,
+        owner_golden_report_path,
         provider_state_path,
         provider_probe_path,
         conversation_attempt_path,
@@ -90,7 +93,7 @@ fn run() -> Result<(), i32> {
     ] = args.as_slice()
     else {
         eprintln!(
-            "usage: vpr-rt0-exit-assemble <supporting-evidence-dir> <bound-golden-report.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <release-spec.md> <output-exit-evidence.json> <exact-candidate-sha>"
+            "usage: vpr-rt0-exit-assemble <supporting-evidence-dir> <bound-golden-report.json> <private-owner-golden-suite.json> <private-owner-golden-evidence.json> <private-owner-golden-report.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <release-spec.md> <output-exit-evidence.json> <exact-candidate-sha>"
         );
         return Err(2);
     };
@@ -101,6 +104,9 @@ fn run() -> Result<(), i32> {
     }
     let supporting = SupportingArtifactBytes::read(Path::new(supporting_dir))?;
     let golden_report = read_path(Path::new(golden_report_path))?;
+    let owner_golden_suite = read_path(Path::new(owner_golden_suite_path))?;
+    let owner_golden_evidence = read_path(Path::new(owner_golden_evidence_path))?;
+    let owner_golden_report = read_path(Path::new(owner_golden_report_path))?;
     let provider_state = read_path(Path::new(provider_state_path))?;
     let provider_probe = read_path(Path::new(provider_probe_path))?;
     let conversation_attempt = read_path(Path::new(conversation_attempt_path))?;
@@ -110,6 +116,9 @@ fn run() -> Result<(), i32> {
     let evidence = assemble_rt0_exit_evidence(Rt0ExitAssemblyInputs {
         supporting: supporting.as_preflight(),
         bound_golden_report_bytes: &golden_report,
+        owner_golden_suite_bytes: &owner_golden_suite,
+        owner_golden_evidence_bytes: &owner_golden_evidence,
+        owner_golden_report_bytes: &owner_golden_report,
         provider_state_bytes: &provider_state,
         live_provider_probe_bytes: &provider_probe,
         conversation_attempt_bytes: &conversation_attempt,

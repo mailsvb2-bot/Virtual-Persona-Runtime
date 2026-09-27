@@ -129,6 +129,9 @@ impl SupportingFixture {
 
 struct AssemblyFixture {
     golden: Vec<u8>,
+    owner_golden_suite: Vec<u8>,
+    owner_golden_evidence: Vec<u8>,
+    owner_golden_report: Vec<u8>,
     provider_state: Vec<u8>,
     probe: Vec<u8>,
     conversation: Vec<u8>,
@@ -146,12 +149,21 @@ impl AssemblyFixture {
         let provider_state = golden_fixture.provider_state_bytes;
         let provider_digest = sha256_hex(&provider_state);
         let golden = serde_json::to_vec_pretty(&golden_fixture.report).unwrap();
+        let owner_golden = support::owner_fixture(
+            RELEASE_SPEC,
+            CANDIDATE,
+            &golden_fixture.provider_state,
+            &provider_state,
+        );
         let probe = probe_bytes(&provider_digest);
         let conversation = conversation_bytes(&provider_digest);
         let session = session_bytes(&provider_state);
         let supporting = SupportingFixture::new(&provider_digest);
         Self {
             golden,
+            owner_golden_suite: owner_golden.suite_bytes,
+            owner_golden_evidence: owner_golden.bundle_bytes,
+            owner_golden_report: owner_golden.report_bytes,
             provider_state,
             probe,
             conversation,
@@ -164,6 +176,9 @@ impl AssemblyFixture {
         Rt0ExitAssemblyInputs {
             supporting: self.supporting.as_preflight(),
             bound_golden_report_bytes: &self.golden,
+            owner_golden_suite_bytes: &self.owner_golden_suite,
+            owner_golden_evidence_bytes: &self.owner_golden_evidence,
+            owner_golden_report_bytes: &self.owner_golden_report,
             provider_state_bytes: &self.provider_state,
             live_provider_probe_bytes: &self.probe,
             conversation_attempt_bytes: &self.conversation,

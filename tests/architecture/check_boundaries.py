@@ -374,6 +374,8 @@ for required in (
 
 
 exit_source = (evaluation_src / "exit.rs").read_text(encoding="utf-8")
+exit_checks_source = (evaluation_src / "exit_checks.rs").read_text(encoding="utf-8")
+exit_contract_source = exit_source + "\n" + exit_checks_source
 for required in (
     "RT0_EXIT_EVIDENCE_SCHEMA",
     "EvidenceOrigin::Real",
@@ -407,7 +409,7 @@ for required in (
     "5_000",
     "deny_unknown_fields",
 ):
-    if required not in exit_source:
+    if required not in exit_contract_source:
         raise SystemExit(f"RT0 exit evidence evaluator missing mandatory invariant {required}")
 if len(exit_source.splitlines()) > 600:
     raise SystemExit("RT0 exit evidence evaluator became a God File (>600 lines)")

@@ -6,6 +6,9 @@ use crate::binding::{
     EvidenceVerificationContext, ProviderRole, evaluate_bound_golden_suite, valid_git_sha,
     valid_sha256, validate_provider_state,
 };
+use crate::exit_checks::{
+    evaluate_acceptance, evaluate_conversations, evaluate_human, evaluate_privacy, evaluate_quality,
+};
 use crate::exit_context::Rt0ExitVerificationContext;
 use crate::exit_cost::{estimated_cost_per_minute, evaluate_cost, provider_charge_per_minute};
 use crate::exit_validation::validate_runtime_evidence;
@@ -15,8 +18,8 @@ use crate::{
     RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.5";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.5";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.6";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.6";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -175,6 +178,9 @@ pub struct Rt0ExitEvidence {
     pub candidate_sha: String,
     pub release_spec_sha256: String,
     pub golden_report_sha256: String,
+    pub owner_golden_suite_sha256: String,
+    pub owner_golden_evidence_sha256: String,
+    pub owner_golden_report_sha256: String,
     pub provider_state_sha256: String,
     pub live_provider_probe_sha256: String,
     pub conversation_attempt_sha256: String,
@@ -193,6 +199,7 @@ pub struct Rt0ExitEvidence {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Rt0ExitFailureCode {
     GoldenSetNotPassed,
+    OwnerGoldenSetNotPassed,
     CiNotPassed,
     E2eNotPassed,
     OwnerConversationNotReal,
@@ -232,6 +239,8 @@ pub struct Rt0ExitReport {
     pub release_spec_sha256: String,
     pub provider_state_sha256: String,
     pub golden_report_sha256: String,
+    pub owner_golden_suite_sha256: String,
+    pub owner_golden_report_sha256: String,
     pub live_provider_probe_sha256: String,
     pub conversation_attempt_sha256: String,
     pub bound_session_aggregate_sha256: String,
@@ -251,6 +260,9 @@ pub enum Rt0ExitEvidenceError {
     CandidateShaMismatch,
     ReleaseSpecDigestMismatch,
     GoldenReportDigestMismatch,
+    OwnerGoldenDigestMismatch,
+    OwnerGoldenInvalid,
+    OwnerGoldenRecomputeMismatch,
     ProviderStateDigestMismatch,
     ProviderStateMismatch,
     LiveProviderProbeDigestMismatch,
@@ -290,6 +302,11 @@ pub fn evaluate_rt0_exit_evidence(
     {
         failures.push(Rt0ExitFailureCode::GoldenSetNotPassed);
     }
+    if context.owner_golden.report.golden.failed != 0
+        || context.owner_golden.report.golden.passed != context.owner_golden.report.golden.total
+    {
+        failures.push(Rt0ExitFailureCode::OwnerGoldenSetNotPassed);
+    }
     if evidence.automated.ci.status != CheckStatus::Passed {
         failures.push(Rt0ExitFailureCode::CiNotPassed);
     }
@@ -314,6 +331,8 @@ pub fn evaluate_rt0_exit_evidence(
         release_spec_sha256: evidence.release_spec_sha256.clone(),
         provider_state_sha256: evidence.provider_state_sha256.clone(),
         golden_report_sha256: evidence.golden_report_sha256.clone(),
+        owner_golden_suite_sha256: evidence.owner_golden_suite_sha256.clone(),
+        owner_golden_report_sha256: evidence.owner_golden_report_sha256.clone(),
         live_provider_probe_sha256: evidence.live_provider_probe_sha256.clone(),
         conversation_attempt_sha256: evidence.conversation_attempt_sha256.clone(),
         bound_session_aggregate_sha256: evidence.bound_session_aggregate_sha256.clone(),
@@ -339,6 +358,9 @@ fn validate_structure(
     for digest in [
         &evidence.release_spec_sha256,
         &evidence.golden_report_sha256,
+        &evidence.owner_golden_suite_sha256,
+        &evidence.owner_golden_evidence_sha256,
+        &evidence.owner_golden_report_sha256,
         &evidence.provider_state_sha256,
         &evidence.live_provider_probe_sha256,
         &evidence.conversation_attempt_sha256,
@@ -362,12 +384,19 @@ fn validate_structure(
     if evidence.golden_report_sha256 != sha256_hex(context.golden_report_bytes) {
         return Err(Rt0ExitEvidenceError::GoldenReportDigestMismatch);
     }
+    if evidence.owner_golden_suite_sha256 != sha256_hex(context.owner_golden.suite_bytes)
+        || evidence.owner_golden_evidence_sha256 != sha256_hex(context.owner_golden.evidence_bytes)
+        || evidence.owner_golden_report_sha256 != sha256_hex(context.owner_golden.report_bytes)
+    {
+        return Err(Rt0ExitEvidenceError::OwnerGoldenDigestMismatch);
+    }
     if evidence.live_provider_probe_sha256 != sha256_hex(context.live_provider_probe_bytes) {
         return Err(Rt0ExitEvidenceError::LiveProviderProbeDigestMismatch);
     }
     let provider_state_digest = sha256_hex(context.provider_state_bytes);
     if evidence.provider_state_sha256 != provider_state_digest
         || golden_report.binding.provider_state_sha256 != provider_state_digest
+        || context.owner_golden.report.binding.provider_state_sha256 != provider_state_digest
     {
         return Err(Rt0ExitEvidenceError::ProviderStateDigestMismatch);
     }
@@ -392,6 +421,30 @@ fn validate_structure(
         }
     })?;
     validate_runtime_evidence(evidence, context, &provider_state_digest)?;
+    validate_public_golden(golden_report, context)?;
+
+    crate::owner_golden::verify_private_owner_golden(context).map_err(|error| match error {
+        crate::OwnerGoldenError::ReportMismatch => {
+            Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
+        }
+        _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
+    })?;
+    validate_artifact_digests(evidence)?;
+    if evidence.conversations.owner.role != ParticipantRole::Owner
+        || evidence.conversations.visitor.role != ParticipantRole::Visitor
+    {
+        return Err(Rt0ExitEvidenceError::ParticipantRoleMismatch);
+    }
+    if evidence.human_evaluation.rubric_version.trim().is_empty() {
+        return Err(Rt0ExitEvidenceError::InvalidHumanRubric);
+    }
+    Ok(())
+}
+
+fn validate_public_golden(
+    golden_report: &BoundGoldenReport,
+    context: Rt0ExitVerificationContext<'_>,
+) -> Result<(), Rt0ExitEvidenceError> {
     validate_golden_report(golden_report)?;
     let required_suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES)
         .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
@@ -410,15 +463,6 @@ fn validate_structure(
     .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
     if recomputed != *golden_report {
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
-    }
-    validate_artifact_digests(evidence)?;
-    if evidence.conversations.owner.role != ParticipantRole::Owner
-        || evidence.conversations.visitor.role != ParticipantRole::Visitor
-    {
-        return Err(Rt0ExitEvidenceError::ParticipantRoleMismatch);
-    }
-    if evidence.human_evaluation.rubric_version.trim().is_empty() {
-        return Err(Rt0ExitEvidenceError::InvalidHumanRubric);
     }
     Ok(())
 }
@@ -467,112 +511,5 @@ fn validate_artifact_digests(evidence: &Rt0ExitEvidence) -> Result<(), Rt0ExitEv
         Ok(())
     } else {
         Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
-    }
-}
-
-fn evaluate_conversations(
-    evidence: &ConversationPairEvidence,
-    failures: &mut Vec<Rt0ExitFailureCode>,
-) {
-    if evidence.owner.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::OwnerConversationNotReal);
-    }
-    if !conversation_complete(&evidence.owner) {
-        failures.push(Rt0ExitFailureCode::OwnerConversationIncomplete);
-    }
-    if evidence.owner.interruption_exercised != CheckStatus::Passed {
-        failures.push(Rt0ExitFailureCode::OwnerInterruptionNotExercised);
-    }
-    if evidence.visitor.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::VisitorConversationNotReal);
-    }
-    if !conversation_complete(&evidence.visitor) {
-        failures.push(Rt0ExitFailureCode::VisitorConversationIncomplete);
-    }
-}
-
-fn conversation_complete(evidence: &ConversationEvidence) -> bool {
-    evidence.russian == CheckStatus::Passed
-        && evidence.voice == CheckStatus::Passed
-        && evidence.video == CheckStatus::Passed
-        && evidence.completed_turns > 0
-}
-
-fn evaluate_acceptance(evidence: &AcceptanceEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::AcceptanceEvidenceNotReal);
-    }
-    if evidence.owner_happy_path != CheckStatus::Passed
-        || evidence.visitor_happy_path != CheckStatus::Passed
-        || evidence.correction_path != CheckStatus::Passed
-        || evidence.failure_recovery_path != CheckStatus::Passed
-        || evidence.revoke_deny_path != CheckStatus::Passed
-    {
-        failures.push(Rt0ExitFailureCode::AcceptanceMatrixIncomplete);
-    }
-}
-
-fn evaluate_quality(evidence: &QualityEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::QualityEvidenceNotReal);
-    }
-    if evidence.text_first_meaningful_response.p50 > 1_000
-        || evidence.text_first_meaningful_response.p95 > 2_500
-    {
-        failures.push(Rt0ExitFailureCode::TextLatencyExceeded);
-    }
-    if evidence.first_meaningful_audio.p50 > 1_500 || evidence.first_meaningful_audio.p95 > 3_000 {
-        failures.push(Rt0ExitFailureCode::AudioLatencyExceeded);
-    }
-    if evidence.interruption_stop.p95 > 500 {
-        failures.push(Rt0ExitFailureCode::InterruptionLatencyExceeded);
-    }
-    if evidence.first_useful_video.p95 > 2_500 {
-        failures.push(Rt0ExitFailureCode::VideoLatencyExceeded);
-    }
-    if evidence.av_sync_absolute_offset.p95 > 120 {
-        failures.push(Rt0ExitFailureCode::AvSyncExceeded);
-    }
-    if evidence.recoverable_reconnect.p95 > 5_000 {
-        failures.push(Rt0ExitFailureCode::ReconnectLatencyExceeded);
-    }
-}
-
-fn evaluate_privacy(evidence: &PrivacyPermissionEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::PrivacyEvidenceNotReal);
-    }
-    if evidence.permission_suite != CheckStatus::Passed {
-        failures.push(Rt0ExitFailureCode::PermissionSuiteNotPassed);
-    }
-    if evidence.accepted_private_context_leakage != 0 {
-        failures.push(Rt0ExitFailureCode::PrivateContextLeakageAccepted);
-    }
-    if evidence.accepted_false_owner_attribution != 0 {
-        failures.push(Rt0ExitFailureCode::FalseOwnerAttributionAccepted);
-    }
-    if evidence.revocation != CheckStatus::Passed {
-        failures.push(Rt0ExitFailureCode::RevocationNotVerified);
-    }
-    if evidence.egress_denial != CheckStatus::Passed {
-        failures.push(Rt0ExitFailureCode::EgressDenialNotVerified);
-    }
-}
-
-fn evaluate_human(evidence: &HumanEvaluationEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
-    if evidence.origin != EvidenceOrigin::Real {
-        failures.push(Rt0ExitFailureCode::HumanEvaluationNotReal);
-    }
-    if evidence.reviewer_count == 0
-        || evidence.dimensions.voice_similarity != RecordStatus::Recorded
-        || evidence.dimensions.voice_naturalness != RecordStatus::Recorded
-        || evidence.dimensions.appearance_plausibility != RecordStatus::Recorded
-        || evidence.dimensions.persona_similarity != RecordStatus::Recorded
-        || evidence.dimensions.conversation_naturalness != RecordStatus::Recorded
-    {
-        failures.push(Rt0ExitFailureCode::HumanEvaluationIncomplete);
-    }
-    if evidence.usable_for_continuation != CheckStatus::Passed {
-        failures.push(Rt0ExitFailureCode::HumanEvaluationNotUsable);
     }
 }
