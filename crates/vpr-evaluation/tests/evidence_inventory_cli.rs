@@ -88,6 +88,27 @@ fn seed_complete_inventory(dir: &Path) {
         fixture.bundle_bytes,
     )
     .unwrap();
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &fixture.provider_state,
+        &fixture.provider_state_bytes,
+    );
+    fs::write(
+        dir.join("owner-golden-suite.json"),
+        &owner_golden.suite_bytes,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("owner-golden-evidence.json"),
+        &owner_golden.bundle_bytes,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("owner-golden-report.json"),
+        &owner_golden.report_bytes,
+    )
+    .unwrap();
 
     let usage = json!({
         "input_units":1,"input_unit":"token","output_units":1,"output_unit":"token",
@@ -151,6 +172,15 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     evidence["release_spec_sha256"] = json!(sha256_hex(RELEASE_SPEC));
     evidence["golden_report_sha256"] = json!(sha256_hex(
         &fs::read(dir.join("bound-golden-report.json")).unwrap()
+    ));
+    evidence["owner_golden_suite_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("owner-golden-suite.json")).unwrap()
+    ));
+    evidence["owner_golden_evidence_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("owner-golden-evidence.json")).unwrap()
+    ));
+    evidence["owner_golden_report_sha256"] = json!(sha256_hex(
+        &fs::read(dir.join("owner-golden-report.json")).unwrap()
     ));
     evidence["provider_state_sha256"] = json!(provider_digest);
     evidence["live_provider_probe_sha256"] = json!(sha256_hex(
@@ -377,7 +407,7 @@ fn complete_inventory_requires_exact_candidate_and_provider_binding() {
     );
     assert_eq!(
         report["schema_version"],
-        json!("rt0-evidence-inventory-0.7")
+        json!("rt0-evidence-inventory-0.8")
     );
     assert_eq!(report["session_snapshots"]["expected"], json!(2));
     assert_eq!(report["session_snapshots"]["discovered"], json!(2));
