@@ -572,19 +572,10 @@ const fn map_owner_context_error(error: OwnerContextError) -> LabError {
     }
 }
 
-const fn state_name(state: RealtimeSessionState) -> &'static str {
-    match state {
-        RealtimeSessionState::Created => "created",
-        RealtimeSessionState::Active => "active",
-        RealtimeSessionState::Draining => "draining",
-        RealtimeSessionState::Revoked => "revoked",
-        RealtimeSessionState::Closed => "closed",
-    }
-}
-
 mod client_control;
 mod persistence;
 mod readiness;
+mod status;
 mod text;
 mod voice;
 mod voice_input;
@@ -593,6 +584,7 @@ mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
 pub use readiness::LabModalityReadiness;
+use status::state_name;
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
 pub use voice_input::LabVoiceInput;
