@@ -4,17 +4,19 @@ use std::{env, fs, path::Path};
 mod session_snapshots;
 #[path = "rt0_evidence_inventory/supporting.rs"]
 mod supporting;
+#[path = "rt0_evidence_inventory/owner_golden.rs"]
+mod owner_golden;
 
 use serde::{Deserialize, Serialize};
+use owner_golden::recompute_owner_golden_report;
 use session_snapshots::{SessionSnapshotChecks, collect_session_snapshot_checks};
 use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, LiveProviderProbeReceipt, ProviderStateManifest,
     RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite,
-    evaluate_bound_owner_golden_suite, sha256_hex, validate_live_provider_probe,
-    validate_rt0_exit_supporting_artifacts,
+    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite, sha256_hex,
+    validate_live_provider_probe, validate_rt0_exit_supporting_artifacts,
 };
 
 const SCHEMA: &str = "rt0-evidence-inventory-0.8";
@@ -462,35 +464,6 @@ fn recompute_golden_report(parsed: &ParsedBindingArtifacts, candidate_sha: &str)
                 provider_state,
                 provider_state_bytes,
                 evidence_bytes: golden_evidence_bytes,
-                exact_candidate_sha: candidate_sha,
-            },
-        )
-        .is_ok_and(|recomputed| recomputed == *report),
-    )
-}
-
-fn recompute_owner_golden_report(
-    parsed: &ParsedBindingArtifacts,
-    candidate_sha: &str,
-) -> Option<bool> {
-    let suite = parsed.owner_golden_suite.as_ref()?;
-    let report = parsed.owner_golden_report.as_ref()?;
-    let bundle = parsed.owner_golden_evidence.as_ref()?;
-    let provider_state = parsed.provider.as_ref()?;
-    let provider_state_bytes = parsed.provider_state_bytes.as_deref()?;
-    let suite_bytes = parsed.owner_golden_suite_bytes.as_deref()?;
-    let evidence_bytes = parsed.owner_golden_evidence_bytes.as_deref()?;
-    let release_spec_bytes = parsed.release_spec_bytes.as_deref()?;
-    Some(
-        evaluate_bound_owner_golden_suite(
-            suite,
-            bundle,
-            EvidenceVerificationContext {
-                suite_bytes,
-                release_spec_bytes,
-                provider_state,
-                provider_state_bytes,
-                evidence_bytes,
                 exact_candidate_sha: candidate_sha,
             },
         )
