@@ -41,3 +41,7 @@ path = "src/bin/rt0_supporting_scaffold.rs"
 [[bin]]
 name = "vpr-rt0-runtime-supporting"
 path = "src/bin/rt0_runtime_supporting.rs"
+
+[[bin]]
+name = "vpr-rt0-owner-golden"
+path = "src/bin/rt0_owner_golden.rs"
