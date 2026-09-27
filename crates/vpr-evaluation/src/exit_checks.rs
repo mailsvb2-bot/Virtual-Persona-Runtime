@@ -1,7 +1,7 @@
 use crate::{
-    AcceptanceEvidence, CheckStatus, ConversationEvidence, ConversationPairEvidence, EvidenceOrigin,
-    HumanEvaluationEvidence, PrivacyPermissionEvidence, QualityEvidence, RecordStatus,
-    Rt0ExitFailureCode,
+    AcceptanceEvidence, CheckStatus, ConversationEvidence, ConversationPairEvidence,
+    EvidenceOrigin, HumanEvaluationEvidence, PrivacyPermissionEvidence, QualityEvidence,
+    RecordStatus, Rt0ExitFailureCode,
 };
 
 pub(crate) fn evaluate_conversations(
@@ -49,10 +49,7 @@ pub(crate) fn evaluate_acceptance(
     }
 }
 
-pub(crate) fn evaluate_quality(
-    evidence: &QualityEvidence,
-    failures: &mut Vec<Rt0ExitFailureCode>,
-) {
+pub(crate) fn evaluate_quality(evidence: &QualityEvidence, failures: &mut Vec<Rt0ExitFailureCode>) {
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::QualityEvidenceNotReal);
     }
