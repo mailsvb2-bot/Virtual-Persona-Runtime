@@ -78,7 +78,7 @@ impl CaptureLock {
 
         let previous = read_lock_journal(&mut file)?;
         let lock = Self { file };
-        recover_under_lock(root, journal, previous.as_ref(), expected, artifacts)?;
+        recover_under_lock(root, journal, &previous, expected, artifacts)?;
         write_lock_journal(&lock.file, journal)?;
 
         if artifacts_match(root, artifacts) {
@@ -98,7 +98,7 @@ impl Drop for CaptureLock {
 fn recover_under_lock(
     root: &Path,
     journal: &TransactionJournal,
-    previous: Option<&TransactionJournal>,
+    previous: &PreviousJournal,
     expected: &[(&'static str, String)],
     artifacts: &[(&'static str, Vec<u8>)],
 ) -> Result<(), i32> {
@@ -121,24 +121,35 @@ fn recover_under_lock(
         return Ok(());
     }
 
-    if previous.is_some_and(|previous| previous != journal) {
-        return Err(fail("STALE_CAPTURE_MISMATCH"));
+    match previous {
+        PreviousJournal::Valid(previous) if previous != journal => {
+            Err(fail("STALE_CAPTURE_MISMATCH"))
+        }
+        PreviousJournal::Empty | PreviousJournal::Invalid | PreviousJournal::Valid(_) => {
+            Err(fail("STALE_CAPTURE_AMBIGUOUS"))
+        }
     }
-    Err(fail("STALE_CAPTURE_AMBIGUOUS"))
 }
 
-fn read_lock_journal(file: &mut File) -> Result<Option<TransactionJournal>, i32> {
+enum PreviousJournal {
+    Empty,
+    Valid(TransactionJournal),
+    Invalid,
+}
+
+fn read_lock_journal(file: &mut File) -> Result<PreviousJournal, i32> {
     file.seek(SeekFrom::Start(0))
         .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
     if bytes.is_empty() {
-        return Ok(None);
+        return Ok(PreviousJournal::Empty);
     }
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|_| fail("STALE_CAPTURE_JOURNAL_INVALID"))
+    Ok(match serde_json::from_slice(&bytes) {
+        Ok(journal) => PreviousJournal::Valid(journal),
+        Err(_) => PreviousJournal::Invalid,
+    })
 }
 
 fn write_lock_journal(file: &File, journal: &TransactionJournal) -> Result<(), i32> {
@@ -430,6 +441,68 @@ mod tests {
         assert!(!root.join(COMMIT_MARKER).exists());
         assert!(scaffold_matches(&root, &expected));
         drop(recovered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_lock_journal_recovers_when_scaffold_is_unambiguous() {
+        let root = temp_dir("invalid-lock-scaffold");
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        fs::write(root.join(LOCK_FILE), b"{partial").unwrap();
+
+        let recovered = CaptureLock::acquire(&root, &journal, &expected, &artifacts).unwrap();
+        assert!(matches!(recovered, LockOutcome::Acquired(_)));
+        assert!(scaffold_matches(&root, &expected));
+        drop(recovered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_lock_journal_recovers_when_commit_is_unambiguous() {
+        let root = temp_dir("invalid-lock-complete");
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
+        for (name, bytes) in &artifacts {
+            fs::write(root.join(name), bytes).unwrap();
+        }
+        fs::write(root.join(LOCK_FILE), b"{partial").unwrap();
+
+        let recovered = CaptureLock::acquire(&root, &journal, &expected, &artifacts).unwrap();
+        assert!(matches!(recovered, LockOutcome::AlreadyCommitted));
+        assert!(artifacts_match(&root, &artifacts));
+        drop(recovered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_lock_journal_fails_closed_for_ambiguous_artifacts() {
+        let root = temp_dir("invalid-lock-ambiguous");
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        fs::write(root.join(artifacts[0].0), &artifacts[0].1).unwrap();
+        fs::write(root.join(LOCK_FILE), b"{partial").unwrap();
+
+        assert_eq!(
+            CaptureLock::acquire(&root, &journal, &expected, &artifacts).err(),
+            Some(2)
+        );
+        assert_eq!(fs::read(root.join(artifacts[0].0)).unwrap(), artifacts[0].1);
         let _ = fs::remove_dir_all(root);
     }
 
