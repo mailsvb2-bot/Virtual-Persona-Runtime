@@ -414,6 +414,9 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
+  await expect(page.locator("#readiness-text")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
   await page.getByLabel("Идентификатор Persona").fill("owner-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
 
@@ -432,17 +435,24 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeEnabled();
 
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
+  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
+  await expect(page.locator("#readiness-video")).toHaveText("Подготовка…");
   await page.getByLabel("Текстовый разговор").fill("Проверка owner scope");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Owner scoped text reply");
   await expect.poll(() => state.textMessages).toEqual(["owner:Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
 
   const ownerClaim = page.getByLabel("Текущее утверждение opinion-working-style");
   await ownerClaim.fill("Предпочитаю короткие циклы проверки");
@@ -498,6 +508,9 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
 
   const layout = await page.evaluate(() => {
     const stage = document.querySelector<HTMLElement>(".stage");
