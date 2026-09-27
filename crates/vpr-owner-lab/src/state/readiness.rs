@@ -4,7 +4,7 @@ use vpr_domain::{
     PreparationJobId, PreparationJobState,
 };
 
-use super::LabError;
+use super::{LabError, OwnerLabEngine};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -208,6 +208,37 @@ impl LabReadinessState {
             Modality::Video => self.video_job = Some(job),
             Modality::Text => unreachable!("text preparation is rejected before slot access"),
         }
+    }
+}
+
+impl OwnerLabEngine {
+    pub(super) fn begin_avatar_preparation(&mut self) -> Result<(), LabError> {
+        self.readiness.begin_media_preparation()?;
+        self.readiness.begin_media_validation()
+    }
+
+    pub(super) fn fail_avatar_preparation(&mut self) {
+        self.readiness.fail_pending();
+    }
+
+    pub(super) fn cancel_avatar_preparation(&mut self) {
+        self.readiness.cancel_pending();
+    }
+
+    /// Promotes voice readiness only after accepted browser playback evidence.
+    ///
+    /// # Errors
+    /// Fails closed unless the current Persona has a validating voice preparation attempt.
+    pub fn mark_voice_ready_from_media(&mut self) -> Result<(), LabError> {
+        self.readiness.mark_ready(Modality::Voice)
+    }
+
+    /// Promotes video readiness only after accepted browser first-frame evidence.
+    ///
+    /// # Errors
+    /// Fails closed unless the current Persona has a validating video preparation attempt.
+    pub fn mark_video_ready_from_media(&mut self) -> Result<(), LabError> {
+        self.readiness.mark_ready(Modality::Video)
     }
 }
 
