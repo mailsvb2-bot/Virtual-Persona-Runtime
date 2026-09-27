@@ -246,4 +246,3 @@ fn owner_golden_cli_does_not_replace_dangling_output_symlink() {
     assert_eq!(fs::read_link(&output).unwrap(), missing_target);
     assert!(!missing_target.exists());
 }
-
