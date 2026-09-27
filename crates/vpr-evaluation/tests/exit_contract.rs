@@ -283,8 +283,12 @@ fn passing_cost_evidence() -> CostEvidence {
 
 fn owner_golden_digests(provider_state_bytes: &[u8]) -> (String, String, String) {
     let provider_state = serde_json::from_slice(provider_state_bytes).unwrap();
-    let owner_golden =
-        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, provider_state_bytes);
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &provider_state,
+        provider_state_bytes,
+    );
     (
         sha256_hex(&owner_golden.suite_bytes),
         sha256_hex(&owner_golden.bundle_bytes),
