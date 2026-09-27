@@ -345,14 +345,10 @@ fn write_artifacts_transactional(
         }
     }
 
-    let mut replaced = 0_usize;
-    for ((name, _), staged_path) in artifacts.iter().zip(&staged) {
-        let bytes = match fs::read(staged_path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                cleanup_paths(&staged);
-                return Err(fail("OUTPUT_STAGE_FAILED"));
-            }
+    for (replaced, ((name, _), staged_path)) in artifacts.iter().zip(&staged).enumerate() {
+        let Ok(bytes) = fs::read(staged_path) else {
+            cleanup_paths(&staged);
+            return Err(fail("OUTPUT_STAGE_FAILED"));
         };
         if overwrite_synced(&root.join(name), &bytes).is_err() {
             let rollback_ok = rollback(root, expected, replaced);
@@ -363,7 +359,6 @@ fn write_artifacts_transactional(
                 "OUTPUT_ROLLBACK_FAILED"
             }));
         }
-        replaced += 1;
     }
     cleanup_paths(&staged);
     Ok(())
