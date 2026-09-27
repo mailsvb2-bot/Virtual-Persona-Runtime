@@ -551,11 +551,11 @@ mod tests {
         assert!(requests[3].starts_with("POST /v1/avatar/sessions/local-1/speak "));
         assert!(requests[4].starts_with("POST /v1/avatar/sessions/local-1/interrupt "));
         assert!(requests[5].starts_with("DELETE /v1/avatar/sessions/local-1 "));
-        assert!(
-            requests
-                .iter()
-                .all(|request| request.contains("Authorization: Bearer worker-secret"))
-        );
+        assert!(requests.iter().all(|request| {
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer worker-secret")
+        }));
         assert!(requests[3].contains("Привет"));
     }
 
