@@ -126,7 +126,10 @@ constructs the known-limitations review marker instead of trusting a hand-edited
 
 The command replaces only the exact untouched synthetic placeholders previously created by
 `vpr-rt0-supporting-scaffold`. If any of those five files has already been edited or reviewed, it
-fails closed rather than overwriting it. This is a capture/shape/binding tool only: it does not infer
+fails closed rather than overwriting it. Capture is serialized with an exclusive marker, all five
+new files are staged before replacement, and an ordinary write failure rolls back earlier
+replacements to the exact scaffold bytes before the marker is released. This is a
+capture/shape/binding tool only: it does not infer
 that an observation passed and cannot make RT0 release-ready.
 
 ## RT0 supporting-evidence preflight

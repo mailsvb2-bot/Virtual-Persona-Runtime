@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, HashSet};
-use std::{env, fs, path::Path, process};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{env, process};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -12,6 +16,7 @@ use vpr_evaluation::{
 const INPUT_SCHEMA: &str = "rt0-manual-supporting-observations-0.1";
 const RECEIPT_SCHEMA: &str = "rt0-manual-supporting-capture-receipt-0.1";
 const REQUIRED_ATTESTATION: &str = "reviewed_real_observations";
+const LOCK_FILE: &str = ".rt0-supporting-capture.lock";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,10 +127,11 @@ fn run() -> Result<(), i32> {
         return Err(fail("SUPPORTING_DIR_INVALID"));
     }
 
+    let _lock = CaptureLock::acquire(supporting_dir)?;
     let expected = rt0_manual_supporting_scaffold(candidate_sha, &provider_state_sha256);
     validate_exact_placeholders(supporting_dir, &expected)?;
     let artifacts = build_artifacts(&input, candidate_sha, &provider_state_sha256);
-    write_artifacts(supporting_dir, &artifacts)?;
+    write_artifacts_transactional(supporting_dir, &expected, &artifacts)?;
 
     let artifact_sha256 = artifacts
         .iter()
@@ -286,11 +292,121 @@ fn pretty_bytes(value: &Value) -> Vec<u8> {
     bytes
 }
 
-fn write_artifacts(root: &Path, artifacts: &[(&'static str, Vec<u8>)]) -> Result<(), i32> {
-    for (name, bytes) in artifacts {
-        fs::write(root.join(name), bytes).map_err(|_| fail("OUTPUT_WRITE_FAILED"))?;
+struct CaptureLock {
+    path: PathBuf,
+}
+
+impl CaptureLock {
+    fn acquire(root: &Path) -> Result<Self, i32> {
+        let path = root.join(LOCK_FILE);
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .map_err(|_| fail("CAPTURE_IN_PROGRESS"))?;
+        writeln!(file, "{} {}", process::id(), transaction_nonce())
+            .and_then(|()| file.sync_all())
+            .map_err(|_| {
+                let _ = fs::remove_file(&path);
+                fail("CAPTURE_LOCK_FAILED")
+            })?;
+        Ok(Self { path })
+    }
+}
+
+impl Drop for CaptureLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn write_artifacts_transactional(
+    root: &Path,
+    expected: &[(&'static str, String)],
+    artifacts: &[(&'static str, Vec<u8>)],
+) -> Result<(), i32> {
+    let nonce = transaction_nonce();
+    let mut staged = Vec::with_capacity(artifacts.len());
+    for (index, (name, bytes)) in artifacts.iter().enumerate() {
+        let path = root.join(format!(
+            ".rt0-supporting-capture.{}.{}.{}.tmp",
+            process::id(),
+            nonce,
+            index
+        ));
+        if let Err(code) = write_new_synced(&path, bytes) {
+            cleanup_paths(&staged);
+            return Err(code);
+        }
+        staged.push(path);
+        if !RT0_MANUAL_SUPPORTING_FILES.contains(name) {
+            cleanup_paths(&staged);
+            return Err(fail("INTERNAL_ERROR"));
+        }
+    }
+
+    let mut replaced = 0_usize;
+    for ((name, _), staged_path) in artifacts.iter().zip(&staged) {
+        let bytes = match fs::read(staged_path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                cleanup_paths(&staged);
+                return Err(fail("OUTPUT_STAGE_FAILED"));
+            }
+        };
+        if overwrite_synced(&root.join(name), &bytes).is_err() {
+            let rollback_ok = rollback(root, expected, replaced);
+            cleanup_paths(&staged);
+            return Err(fail(if rollback_ok {
+                "OUTPUT_WRITE_FAILED"
+            } else {
+                "OUTPUT_ROLLBACK_FAILED"
+            }));
+        }
+        replaced += 1;
+    }
+    cleanup_paths(&staged);
+    Ok(())
+}
+
+fn rollback(root: &Path, expected: &[(&'static str, String)], replaced: usize) -> bool {
+    expected
+        .iter()
+        .take(replaced)
+        .all(|(name, content)| overwrite_synced(&root.join(name), content.as_bytes()).is_ok())
+}
+
+fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), i32> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| fail("OUTPUT_STAGE_FAILED"))?;
+    if file.write_all(bytes).is_err() || file.sync_all().is_err() {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(fail("OUTPUT_STAGE_FAILED"));
     }
     Ok(())
+}
+
+fn overwrite_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+fn cleanup_paths(paths: &[PathBuf]) {
+    for path in paths {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn transaction_nonce() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
 }
 
 fn read(path: &Path) -> Result<Vec<u8>, i32> {
@@ -305,6 +421,16 @@ fn fail(code: &'static str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let path = env::temp_dir().join(format!(
+            "vpr-supporting-capture-{name}-{}-{}",
+            process::id(),
+            transaction_nonce()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
 
     fn input() -> ManualSupportingInput {
         ManualSupportingInput {
@@ -405,5 +531,45 @@ mod tests {
         value.cost.estimated_cost_covered_provider_roles =
             vec![ProviderRole::Stt, ProviderRole::Stt];
         assert_eq!(validate_input(&value), Err(2));
+    }
+
+    #[test]
+    fn capture_lock_serializes_concurrent_writers() {
+        let root = temp_dir("lock");
+        let first = CaptureLock::acquire(&root).unwrap();
+        assert_eq!(CaptureLock::acquire(&root).err(), Some(2));
+        drop(first);
+        assert!(CaptureLock::acquire(&root).is_ok());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transactional_write_rolls_back_prior_replacements_on_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("rollback");
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let expected = rt0_manual_supporting_scaffold(&candidate, &provider);
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        let cost_path = root.join("cost.json");
+        fs::set_permissions(&cost_path, fs::Permissions::from_mode(0o444)).unwrap();
+
+        let artifacts = build_artifacts(&input(), &candidate, &provider);
+        assert_eq!(
+            write_artifacts_transactional(&root, &expected, &artifacts),
+            Err(2)
+        );
+        assert_eq!(
+            fs::read(root.join("acceptance.json")).unwrap(),
+            expected[0].1.as_bytes()
+        );
+        assert_eq!(fs::read(&cost_path).unwrap(), expected[1].1.as_bytes());
+
+        fs::set_permissions(&cost_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let _ = fs::remove_dir_all(root);
     }
 }
