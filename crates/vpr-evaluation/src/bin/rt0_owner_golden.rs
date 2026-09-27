@@ -145,11 +145,7 @@ fn unique_temp_path(parent: &Path, file_name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    parent.join(format!(
-        ".{file_name}.{}.{}.tmp",
-        process::id(),
-        nanos
-    ))
+    parent.join(format!(".{file_name}.{}.{}.tmp", process::id(), nanos))
 }
 
 fn emit_code<T: Serialize>(code: T) -> i32 {
