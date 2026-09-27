@@ -26,6 +26,8 @@ type FixtureState = {
   sessionState: string;
   sessionAudience: null | "owner" | "visitor";
   avatarOpen: boolean;
+  voiceReady: boolean;
+  videoReady: boolean;
   transportKind: "web_rtc" | "live_kit";
   startAudiences: string[];
   directSpeech: string[];
@@ -178,6 +180,13 @@ const statusSnapshot = (state: FixtureState) => ({
   avatar_open: state.avatarOpen,
   egress_enabled: true,
   conversation_readiness: "text_and_voice",
+  modality_readiness: state.ownerReviewed
+    ? {
+        text: "ready",
+        voice: state.voiceReady ? "ready" : state.sessionState === "active" ? "preparing" : "not_ready",
+        video: state.videoReady ? "ready" : state.sessionState === "active" ? "preparing" : "not_ready",
+      }
+    : { text: "not_ready", voice: "not_ready", video: "not_ready" },
   session_audience: state.sessionAudience,
   owner_context_state: state.ownerReviewed ? "reviewed" : "missing",
   persona_version: state.personaVersion,
@@ -276,7 +285,11 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       claim.owner_reviewed = true;
       claim.verification = "verified";
       claim.revision += 1;
-      if (state.ownerReviewed) state.personaVersion += 1;
+      if (state.ownerReviewed) {
+        state.personaVersion += 1;
+        state.voiceReady = false;
+        state.videoReady = false;
+      }
       if (state.ownerReviewed) {
         return json(route, {
           owner_context_state: "reviewed",
@@ -301,6 +314,12 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
         return json(route, { ok: false, code: "AUTH_SCOPE_DENIED" }, 403);
       }
       return json(route, reviewedProfile(state));
+    }
+    if (path === "/api/evidence/media") {
+      const kind = String(body.kind ?? "");
+      if (kind === "audio_started") state.voiceReady = true;
+      if (kind === "video_ready") state.videoReady = true;
+      return json(route, { ok: true });
     }
     if (path === "/api/avatar/start") {
       const audience = String(body.audience ?? "owner");
@@ -379,6 +398,8 @@ const initialState = (): FixtureState => ({
   sessionState: "none",
   sessionAudience: null,
   avatarOpen: false,
+  voiceReady: false,
+  videoReady: false,
   transportKind: "web_rtc",
   startAudiences: [],
   directSpeech: [],
@@ -393,6 +414,9 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.goto("/");
 
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
+  await expect(page.locator("#readiness-text")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
   await page.getByLabel("Идентификатор Persona").fill("owner-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
 
@@ -411,17 +435,24 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeEnabled();
 
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
+  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
+  await expect(page.locator("#readiness-video")).toHaveText("Подготовка…");
   await page.getByLabel("Текстовый разговор").fill("Проверка owner scope");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Owner scoped text reply");
   await expect.poll(() => state.textMessages).toEqual(["owner:Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  await expect(page.locator("#readiness-voice")).toHaveText("Не готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Не готов");
 
   const ownerClaim = page.getByLabel("Текущее утверждение opinion-working-style");
   await ownerClaim.fill("Предпочитаю короткие циклы проверки");
@@ -477,6 +508,9 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
 
   const layout = await page.evaluate(() => {
     const stage = document.querySelector<HTMLElement>(".stage");

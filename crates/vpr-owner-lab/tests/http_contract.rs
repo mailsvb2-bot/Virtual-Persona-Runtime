@@ -583,7 +583,11 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
 
     let status = http(port, "GET", "/api/status", &host, &[], "");
     let status_json: Value = serde_json::from_str(&status.body).unwrap();
-    assert_eq!(status_json["conversation_readiness"], "text_and_voice");
+    assert_eq!(status_json["conversation_readiness"], "none");
+    assert_eq!(status_json["owner_context_state"], "missing");
+    assert_eq!(status_json["modality_readiness"]["text"], "not_ready");
+    assert_eq!(status_json["modality_readiness"]["voice"], "not_ready");
+    assert_eq!(status_json["modality_readiness"]["video"], "not_ready");
 
     let start = post(
         port,
