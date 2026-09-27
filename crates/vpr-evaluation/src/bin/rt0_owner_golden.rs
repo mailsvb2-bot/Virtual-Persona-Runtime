@@ -10,9 +10,9 @@ use vpr_evaluation::{
 };
 
 #[derive(Serialize)]
-struct CliError<'a> {
+struct CliError<T: Serialize> {
     ok: bool,
-    code: &'a str,
+    code: T,
 }
 
 #[derive(Serialize)]
@@ -72,12 +72,11 @@ fn run() -> Result<(), i32> {
         },
     )
     .map_err(|error| {
-        let code = match error {
-            OwnerGoldenError::SuiteNotOwnerSpecific => "OWNER_GOLDEN_SUITE_INVALID",
-            OwnerGoldenError::ReportMismatch => "OWNER_GOLDEN_REPORT_MISMATCH",
-            OwnerGoldenError::Binding(_) => "OWNER_GOLDEN_BINDING_INVALID",
-        };
-        emit_code(code)
+        match error {
+            OwnerGoldenError::SuiteNotOwnerSpecific => emit_code("OWNER_GOLDEN_SUITE_INVALID"),
+            OwnerGoldenError::ReportMismatch => emit_code("OWNER_GOLDEN_REPORT_MISMATCH"),
+            OwnerGoldenError::Binding(code) => emit_code(code),
+        }
     })?;
 
     let output_bytes = serde_json::to_vec_pretty(&report).map_err(|_| 2)?;
@@ -139,7 +138,7 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), i32> {
     Ok(())
 }
 
-fn emit_code(code: &'static str) -> i32 {
+fn emit_code<T: Serialize>(code: T) -> i32 {
     eprintln!(
         "{}",
         serde_json::to_string(&CliError { ok: false, code })
