@@ -502,7 +502,10 @@ fn empty_speak_text_is_rejected_before_network() {
 fn maps_insufficient_credits_without_collapsing_to_internal_error() {
     let (endpoint, _) = serve(vec![
         ("200 OK", expressive_agent_body()),
-        ("402 Payment Required", r#"{"kind":"InsufficientCreditsError"}"#.to_owned()),
+        (
+            "402 Payment Required",
+            r#"{"kind":"InsufficientCreditsError"}"#.to_owned(),
+        ),
     ]);
     let error = adapter(endpoint)
         .create_session(&Probe(AtomicBool::new(false)))
