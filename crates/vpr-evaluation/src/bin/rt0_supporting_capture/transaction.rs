@@ -246,7 +246,10 @@ fn create_journal_file(path: &Path, journal: &TransactionJournal) -> std::io::Re
         transaction_nonce()
     ));
     let result = (|| {
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&temp)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
         fs::hard_link(&temp, path)?;
