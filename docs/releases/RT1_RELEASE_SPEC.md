@@ -361,6 +361,21 @@ The preferred first spike is contract-level validation of the publication bounda
 
 The spike must remain non-production, non-public and non-promoting. Its purpose is to remove uncertainty before RT1 entry, not to ship RT1 early.
 
+### Claim lifecycle feasibility boundary
+
+A second bounded pre-entry spike may freeze the owner-claim lifecycle because RT0 currently proves explicit approval/correction but RT1 additionally requires hide/delete semantics and stale-derived-state invalidation.
+
+This spike may define only the contract for:
+
+- `PENDING_REVIEW -> CONFIRMED | CORRECTED | HIDDEN | DELETED`;
+- correction revision history and PersonaVersion advancement;
+- hide as non-disclosure without pretending it is deletion;
+- delete as removal of active personal content with at most a minimal non-content erasure/tombstone record;
+- invalidation or erasure of affected derived/public state;
+- fail-closed handling of stale PersonaVersion and non-owner mutation attempts.
+
+It must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. In particular it MUST NOT add production hide/delete routes, durable product-state mutations, public projections or a second claim authority before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
