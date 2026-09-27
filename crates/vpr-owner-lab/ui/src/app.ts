@@ -562,7 +562,9 @@ const monitorRemoteAudio = (): void => {
           "audio_started",
           voice.audioStartedElapsed,
           voice.requestSequence,
-        ).then(() => syncStatus());
+        ).then(async () => {
+          await syncStatus();
+        });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence.catch(() => undefined);
       }
