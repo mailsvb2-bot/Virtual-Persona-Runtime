@@ -351,7 +351,7 @@ fn write_artifacts_transactional(
             return Err(fail("OUTPUT_STAGE_FAILED"));
         };
         if overwrite_synced(&root.join(name), &bytes).is_err() {
-            let rollback_ok = rollback(root, expected, replaced);
+            let rollback_ok = rollback(root, expected, replaced + 1);
             cleanup_paths(&staged);
             return Err(fail(if rollback_ok {
                 "OUTPUT_WRITE_FAILED"
@@ -365,10 +365,13 @@ fn write_artifacts_transactional(
 }
 
 fn rollback(root: &Path, expected: &[(&'static str, String)], replaced: usize) -> bool {
-    expected
-        .iter()
-        .take(replaced)
-        .all(|(name, content)| overwrite_synced(&root.join(name), content.as_bytes()).is_ok())
+    let mut restored = true;
+    for (name, content) in expected.iter().take(replaced) {
+        if overwrite_synced(&root.join(name), content.as_bytes()).is_err() {
+            restored = false;
+        }
+    }
+    restored
 }
 
 fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), i32> {
