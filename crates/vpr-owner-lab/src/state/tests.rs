@@ -11,8 +11,8 @@ use vpr_integration::{
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
-use super::*;
 use super::readiness::LabModalityState;
+use super::*;
 
 #[derive(Default)]
 struct Stats {
