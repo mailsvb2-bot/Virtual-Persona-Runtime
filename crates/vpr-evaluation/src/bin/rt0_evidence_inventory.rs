@@ -1,14 +1,14 @@
 use std::{env, fs, path::Path};
 
+#[path = "rt0_evidence_inventory/owner_golden.rs"]
+mod owner_golden;
 #[path = "rt0_evidence_inventory/session_snapshots.rs"]
 mod session_snapshots;
 #[path = "rt0_evidence_inventory/supporting.rs"]
 mod supporting;
-#[path = "rt0_evidence_inventory/owner_golden.rs"]
-mod owner_golden;
 
-use serde::{Deserialize, Serialize};
 use owner_golden::recompute_owner_golden_report;
+use serde::{Deserialize, Serialize};
 use session_snapshots::{SessionSnapshotChecks, collect_session_snapshot_checks};
 use supporting::SupportingArtifactBytes;
 use vpr_evaluation::{
