@@ -376,6 +376,27 @@ This spike may define only the contract for:
 
 It must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. In particular it MUST NOT add production hide/delete routes, durable product-state mutations, public projections or a second claim authority before RT1 entry.
 
+### Behavior training feasibility boundary
+
+A bounded pre-entry spike may also freeze the behavior-training-by-example contract required by Canon §12 without making the capability production-reachable before RT1 entry.
+
+The contract follows:
+
+`Question -> Persona answer -> Owner feedback -> BehaviorChangeProposal -> Before/after preview on several examples -> Owner approval -> New PersonaVersion`
+
+The active Persona remains unchanged until explicit owner approval. A proposal is candidate state only; rejection or abandonment leaves the active Persona unchanged.
+
+Feedback that is really about facts, attribution or policy boundaries must not be smuggled into a style rule:
+
+- wrong fact routes through canonical owner-claim correction authority;
+- wrong boundary cannot widen policy, consent or delegation;
+- “do not attribute this opinion” cannot create a verified owner belief;
+- a preferred answer may be supplied by text or voice but does not silently become a verified fact/opinion.
+
+Approval must bind the exact base PersonaVersion, fail closed when stale, create a new PersonaVersion instead of mutating the prior version in place, remain auditable, and be idempotent where retried.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production BehaviorChangeProposal runtime/state, durable behavior mutations or owner-facing production controls before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
