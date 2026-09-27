@@ -65,6 +65,22 @@ impl LocalOpenSourceAvatar {
         })
     }
 
+    /// Checks authenticated worker reachability without creating a GPU rendering session.
+    ///
+    /// # Errors
+    /// Returns a typed provider error when the worker is unreachable or rejects authentication.
+    pub fn probe_health(&self) -> Result<(), ProviderError> {
+        let mut url = self.base_url.clone();
+        url.path_segments_mut()
+            .map_err(|()| invalid_response())?
+            .extend(["v1", "health"]);
+        let response = self
+            .authorized(self.client.get(url))
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        expect_success(response).map(|_| ())
+    }
+
     fn sessions_url(&self) -> Result<reqwest::Url, ProviderError> {
         let mut url = self.base_url.clone();
         url.path_segments_mut()
@@ -568,6 +584,19 @@ mod tests {
         .err()
         .expect("remote plaintext must fail");
         assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    }
+
+    #[test]
+    fn health_probe_is_authenticated_and_session_free() {
+        let (endpoint, captured) = serve(vec![("200 OK", "{}".to_owned())]);
+        provider(endpoint).probe_health().unwrap();
+        let request = captured.recv().unwrap();
+        assert!(request.starts_with("GET /v1/health "));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer worker-secret")
+        );
     }
 
     #[test]
