@@ -69,11 +69,14 @@ impl CaptureLock {
         artifacts: &[(&'static str, Vec<u8>)],
         stale_after: Duration,
     ) -> Result<LockOutcome, i32> {
-        recover_orphan_commit_marker(root, journal, expected)?;
         match create_journal_file(&root.join(LOCK_FILE), journal) {
-            Ok(()) => Ok(LockOutcome::Acquired(Self {
-                path: root.join(LOCK_FILE),
-            })),
+            Ok(()) => {
+                let lock = Self {
+                    path: root.join(LOCK_FILE),
+                };
+                recover_commit_marker_under_lock(root, journal, expected)?;
+                Ok(LockOutcome::Acquired(lock))
+            }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 recover_stale_lock(root, journal, expected, artifacts, stale_after)
             }
@@ -161,13 +164,13 @@ pub(super) fn write_artifacts_transactional(
     fs::remove_file(marker).map_err(|_| fail("OUTPUT_COMMIT_FINALIZE_FAILED"))
 }
 
-fn recover_orphan_commit_marker(
+fn recover_commit_marker_under_lock(
     root: &Path,
     journal: &TransactionJournal,
     expected: &[(&'static str, String)],
 ) -> Result<(), i32> {
     let marker = root.join(COMMIT_MARKER);
-    if !marker.exists() || root.join(LOCK_FILE).exists() {
+    if !marker.exists() {
         return Ok(());
     }
     let stale = read_journal(&marker)?;
@@ -366,13 +369,13 @@ mod tests {
         path
     }
 
-    fn fixtures() -> (
-        String,
-        String,
-        Vec<(&'static str, String)>,
-        Vec<(&'static str, Vec<u8>)>,
-        TransactionJournal,
-    ) {
+    struct Fixtures {
+        expected: Vec<(&'static str, String)>,
+        artifacts: Vec<(&'static str, Vec<u8>)>,
+        journal: TransactionJournal,
+    }
+
+    fn fixtures() -> Fixtures {
         let candidate = "a".repeat(40);
         let provider = "b".repeat(64);
         let expected = vpr_evaluation::rt0_manual_supporting_scaffold(&candidate, &provider);
@@ -381,13 +384,21 @@ mod tests {
             .map(|(name, content)| (*name, format!("reviewed:{content}").into_bytes()))
             .collect::<Vec<_>>();
         let journal = TransactionJournal::new(&candidate, &provider, b"reviewed input", &artifacts);
-        (candidate, provider, expected, artifacts, journal)
+        Fixtures {
+            expected,
+            artifacts,
+            journal,
+        }
     }
 
     #[test]
     fn lock_serializes_concurrent_writers() {
         let root = temp_dir("lock");
-        let (_, _, expected, artifacts, journal) = fixtures();
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
         for (name, content) in &expected {
             fs::write(root.join(name), content).unwrap();
         }
@@ -421,7 +432,11 @@ mod tests {
     #[test]
     fn stale_mid_commit_is_restored_and_reacquired_for_same_input() {
         let root = temp_dir("stale-mid-commit");
-        let (_, _, expected, artifacts, journal) = fixtures();
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
         for (name, content) in &expected {
             fs::write(root.join(name), content).unwrap();
         }
@@ -444,9 +459,43 @@ mod tests {
     }
 
     #[test]
+    fn orphan_commit_marker_is_recovered_only_after_lock_claim() {
+        let root = temp_dir("orphan-marker");
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        create_journal_file(&root.join(COMMIT_MARKER), &journal).unwrap();
+        fs::write(root.join(artifacts[0].0), &artifacts[0].1).unwrap();
+
+        let recovered = CaptureLock::acquire_with_timeout(
+            &root,
+            &journal,
+            &expected,
+            &artifacts,
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(matches!(recovered, LockOutcome::Acquired(_)));
+        assert!(root.join(LOCK_FILE).exists());
+        assert!(!root.join(COMMIT_MARKER).exists());
+        assert!(scaffold_matches(&root, &expected));
+        drop(recovered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn stale_completed_capture_returns_without_rewriting() {
         let root = temp_dir("stale-complete");
-        let (_, _, expected, artifacts, journal) = fixtures();
+        let Fixtures {
+            expected,
+            artifacts,
+            journal,
+        } = fixtures();
         for (name, bytes) in &artifacts {
             fs::write(root.join(name), bytes).unwrap();
         }
