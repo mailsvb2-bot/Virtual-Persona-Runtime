@@ -1,14 +1,15 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::{env, fs, path::Path, process};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use vpr_evaluation::{
     CheckStatus, HumanDimensions, ProviderRole, ProviderStateManifest, RT0_MANUAL_SUPPORTING_FILES,
-    RecordStatus, rt0_manual_supporting_scaffold, validate_candidate_sha,
+    RecordStatus, rt0_manual_supporting_scaffold, sha256_hex, validate_candidate_sha,
     validate_provider_state_manifest,
 };
 
+#[path = "rt0_supporting_capture/transaction.rs"]
 mod transaction;
 use transaction::{
     CaptureLock, LockOutcome, TransactionJournal, artifact_digests, write_artifacts_transactional,
