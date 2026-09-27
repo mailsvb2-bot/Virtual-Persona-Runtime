@@ -26,6 +26,8 @@ type FixtureState = {
   sessionState: string;
   sessionAudience: null | "owner" | "visitor";
   avatarOpen: boolean;
+  voiceReady: boolean;
+  videoReady: boolean;
   transportKind: "web_rtc" | "live_kit";
   startAudiences: string[];
   directSpeech: string[];
@@ -178,6 +180,13 @@ const statusSnapshot = (state: FixtureState) => ({
   avatar_open: state.avatarOpen,
   egress_enabled: true,
   conversation_readiness: "text_and_voice",
+  modality_readiness: state.ownerReviewed
+    ? {
+        text: "ready",
+        voice: state.voiceReady ? "ready" : state.sessionState === "active" ? "preparing" : "not_ready",
+        video: state.videoReady ? "ready" : state.sessionState === "active" ? "preparing" : "not_ready",
+      }
+    : { text: "not_ready", voice: "not_ready", video: "not_ready" },
   session_audience: state.sessionAudience,
   owner_context_state: state.ownerReviewed ? "reviewed" : "missing",
   persona_version: state.personaVersion,
@@ -276,7 +285,11 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       claim.owner_reviewed = true;
       claim.verification = "verified";
       claim.revision += 1;
-      if (state.ownerReviewed) state.personaVersion += 1;
+      if (state.ownerReviewed) {
+        state.personaVersion += 1;
+        state.voiceReady = false;
+        state.videoReady = false;
+      }
       if (state.ownerReviewed) {
         return json(route, {
           owner_context_state: "reviewed",
@@ -301,6 +314,12 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
         return json(route, { ok: false, code: "AUTH_SCOPE_DENIED" }, 403);
       }
       return json(route, reviewedProfile(state));
+    }
+    if (path === "/api/evidence/media") {
+      const kind = String(body.kind ?? "");
+      if (kind === "audio_started") state.voiceReady = true;
+      if (kind === "video_ready") state.videoReady = true;
+      return json(route, { ok: true });
     }
     if (path === "/api/avatar/start") {
       const audience = String(body.audience ?? "owner");
@@ -379,6 +398,8 @@ const initialState = (): FixtureState => ({
   sessionState: "none",
   sessionAudience: null,
   avatarOpen: false,
+  voiceReady: false,
+  videoReady: false,
   transportKind: "web_rtc",
   startAudiences: [],
   directSpeech: [],
