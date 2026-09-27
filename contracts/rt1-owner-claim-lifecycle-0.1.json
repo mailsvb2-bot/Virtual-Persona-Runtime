@@ -1,0 +1,100 @@
+{
+  "schema": "rt1-owner-claim-lifecycle-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "domain_mutations_implemented": false,
+  "durable_state_implemented": false,
+  "public_projection_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "current_rt0_reality": {
+    "approve_present": true,
+    "correct_present": true,
+    "hide_present": false,
+    "delete_present": false,
+    "production_claim_lifecycle_complete": false
+  },
+  "states": [
+    "PENDING_REVIEW",
+    "CONFIRMED",
+    "CORRECTED",
+    "HIDDEN",
+    "DELETED"
+  ],
+  "transitions": [
+    ["PENDING_REVIEW", "CONFIRMED"],
+    ["PENDING_REVIEW", "CORRECTED"],
+    ["PENDING_REVIEW", "HIDDEN"],
+    ["PENDING_REVIEW", "DELETED"],
+    ["CONFIRMED", "CORRECTED"],
+    ["CONFIRMED", "HIDDEN"],
+    ["CONFIRMED", "DELETED"],
+    ["CORRECTED", "CORRECTED"],
+    ["CORRECTED", "HIDDEN"],
+    ["CORRECTED", "DELETED"],
+    ["HIDDEN", "CORRECTED"],
+    ["HIDDEN", "DELETED"]
+  ],
+  "operation_semantics": {
+    "confirm": {
+      "requires_owner_authority": true,
+      "makes_claim_owner_verified": true,
+      "may_widen_audience": false
+    },
+    "correct": {
+      "requires_owner_authority": true,
+      "preserves_attributable_prior_revision": true,
+      "advances_persona_version_after_initial_review": true,
+      "invalidates_derived_and_public_state": true
+    },
+    "hide": {
+      "requires_owner_authority": true,
+      "retains_canonical_content": true,
+      "removes_claim_from_normal_context_and_public_projection": true,
+      "advances_persona_version_after_initial_review": true,
+      "invalidates_derived_and_public_state": true,
+      "is_delete": false
+    },
+    "delete": {
+      "requires_owner_authority": true,
+      "removes_active_claim_content": true,
+      "retains_deleted_content_in_tombstone": false,
+      "allows_minimal_non_content_tombstone": true,
+      "advances_persona_version_after_initial_review": true,
+      "invalidates_or_erases_derived_state": true,
+      "must_not_resurrect_from_cache_or_restore": true
+    }
+  },
+  "invariants": {
+    "claim_id_stable_across_correction_and_hide": true,
+    "provider_identity_never_becomes_claim_identity": true,
+    "owner_mutation_cannot_widen_authority": true,
+    "stale_persona_version_must_fail_closed": true,
+    "hidden_claim_not_disclosed_by_normal_context": true,
+    "deleted_claim_not_disclosed": true,
+    "deleted_content_not_preserved_merely_for_revision_history": true,
+    "audit_may_preserve_non_content_deletion_evidence": true,
+    "derived_state_must_not_outlive_effective_correction_hide_or_delete": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "VISITOR_ATTEMPTS_OWNER_CLAIM_MUTATION",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "STALE_PERSONA_VERSION_MUTATION",
+      "decision": "DENY"
+    },
+    {
+      "case": "HIDDEN_CLAIM_IN_PUBLIC_CONTEXT",
+      "decision": "DENY_DISCLOSURE"
+    },
+    {
+      "case": "DELETED_CLAIM_IN_ANY_ACTIVE_CONTEXT",
+      "decision": "DENY_DISCLOSURE"
+    },
+    {
+      "case": "DELETE_WITH_DERIVED_STATE_NOT_INVALIDATED",
+      "decision": "FAIL_CLOSED"
+    }
+  ]
+}
