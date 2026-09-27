@@ -492,8 +492,7 @@ fn cli_rejects_tampered_private_owner_golden_even_when_json_remains_valid() {
     let bytes = serde_json::to_vec_pretty(&suite).unwrap();
     fs::write(&paths.owner_golden_suite, &bytes).unwrap();
 
-    let mut evidence: Value =
-        serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
     evidence["owner_golden_suite_sha256"] = json!(sha256_hex(&bytes));
     fs::write(
         &paths.evidence,
