@@ -12,6 +12,7 @@ use vpr_integration::{
 };
 
 use super::*;
+use super::readiness::LabModalityState;
 
 #[derive(Default)]
 struct Stats {
