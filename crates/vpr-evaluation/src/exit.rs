@@ -302,8 +302,8 @@ pub fn evaluate_rt0_exit_evidence(
     {
         failures.push(Rt0ExitFailureCode::GoldenSetNotPassed);
     }
-    if context.owner_golden_report.golden.failed != 0
-        || context.owner_golden_report.golden.passed != context.owner_golden_report.golden.total
+    if context.owner_golden.report.golden.failed != 0
+        || context.owner_golden.report.golden.passed != context.owner_golden.report.golden.total
     {
         failures.push(Rt0ExitFailureCode::OwnerGoldenSetNotPassed);
     }
@@ -384,9 +384,9 @@ fn validate_structure(
     if evidence.golden_report_sha256 != sha256_hex(context.golden_report_bytes) {
         return Err(Rt0ExitEvidenceError::GoldenReportDigestMismatch);
     }
-    if evidence.owner_golden_suite_sha256 != sha256_hex(context.owner_golden_suite_bytes)
-        || evidence.owner_golden_evidence_sha256 != sha256_hex(context.owner_golden_evidence_bytes)
-        || evidence.owner_golden_report_sha256 != sha256_hex(context.owner_golden_report_bytes)
+    if evidence.owner_golden_suite_sha256 != sha256_hex(context.owner_golden.suite_bytes)
+        || evidence.owner_golden_evidence_sha256 != sha256_hex(context.owner_golden.evidence_bytes)
+        || evidence.owner_golden_report_sha256 != sha256_hex(context.owner_golden.report_bytes)
     {
         return Err(Rt0ExitEvidenceError::OwnerGoldenDigestMismatch);
     }
@@ -396,7 +396,7 @@ fn validate_structure(
     let provider_state_digest = sha256_hex(context.provider_state_bytes);
     if evidence.provider_state_sha256 != provider_state_digest
         || golden_report.binding.provider_state_sha256 != provider_state_digest
-        || context.owner_golden_report.binding.provider_state_sha256 != provider_state_digest
+        || context.owner_golden.report.binding.provider_state_sha256 != provider_state_digest
     {
         return Err(Rt0ExitEvidenceError::ProviderStateDigestMismatch);
     }
