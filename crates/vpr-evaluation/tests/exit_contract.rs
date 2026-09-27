@@ -281,11 +281,17 @@ fn passing_cost_evidence() -> CostEvidence {
 }
 
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
+    let provider_state = serde_json::from_slice(provider_state_bytes).unwrap();
+    let owner_golden =
+        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, provider_state_bytes);
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
         candidate_sha: CANDIDATE.into(),
         release_spec_sha256: sha256_hex(RELEASE_SPEC),
         golden_report_sha256: sha256_hex(golden_bytes),
+        owner_golden_suite_sha256: sha256_hex(&owner_golden.suite_bytes),
+        owner_golden_evidence_sha256: sha256_hex(&owner_golden.bundle_bytes),
+        owner_golden_report_sha256: sha256_hex(&owner_golden.report_bytes),
         provider_state_sha256: sha256_hex(provider_state_bytes),
         live_provider_probe_sha256: sha256_hex(&live_provider_probe_bytes(provider_state_bytes)),
         conversation_attempt_sha256: sha256_hex(&conversation_attempt_bytes(provider_state_bytes)),
@@ -458,6 +464,12 @@ fn evaluate_with_runtime_snapshots(
     runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8], &[&[u8]]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
+    let owner_golden = support::owner_fixture(
+        release_spec,
+        candidate,
+        &fixture.provider_state,
+        &fixture.provider_state_bytes,
+    );
     evaluate_rt0_exit_evidence(
         evidence,
         golden.0,
@@ -466,6 +478,12 @@ fn evaluate_with_runtime_snapshots(
             golden_report_bytes: golden.1,
             golden_evidence_bundle: &fixture.bundle,
             golden_evidence_bytes: &fixture.bundle_bytes,
+            owner_golden_suite: &owner_golden.suite,
+            owner_golden_suite_bytes: &owner_golden.suite_bytes,
+            owner_golden_report: &owner_golden.report,
+            owner_golden_report_bytes: &owner_golden.report_bytes,
+            owner_golden_evidence_bundle: &owner_golden.bundle,
+            owner_golden_evidence_bytes: &owner_golden.bundle_bytes,
             provider_state: &fixture.provider_state,
             provider_state_bytes: &fixture.provider_state_bytes,
             live_provider_probe: live_provider_probe.0,
@@ -1148,6 +1166,8 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
     let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
     let session_snapshot_artifacts = [owner_snapshot.as_slice(), visitor_snapshot.as_slice()];
+    let owner_golden =
+        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, &provider_state_bytes);
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -1157,6 +1177,12 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 golden_report_bytes: &golden_bytes,
                 golden_evidence_bundle: &fixture.bundle,
                 golden_evidence_bytes: &fixture.bundle_bytes,
+                owner_golden_suite: &owner_golden.suite,
+                owner_golden_suite_bytes: &owner_golden.suite_bytes,
+                owner_golden_report: &owner_golden.report,
+                owner_golden_report_bytes: &owner_golden.report_bytes,
+                owner_golden_evidence_bundle: &owner_golden.bundle,
+                owner_golden_evidence_bytes: &owner_golden.bundle_bytes,
                 provider_state: &provider_state,
                 provider_state_bytes: &provider_state_bytes,
                 live_provider_probe: &live_provider_probe,
