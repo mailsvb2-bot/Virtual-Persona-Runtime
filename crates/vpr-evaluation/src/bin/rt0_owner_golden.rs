@@ -131,9 +131,12 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), i32> {
         return fail("OUTPUT_WRITE_FAILED");
     }
     drop(file);
-    if fs::rename(&temp_path, path).is_err() {
+    if fs::hard_link(&temp_path, path).is_err() {
         let _ = fs::remove_file(&temp_path);
         return fail("OUTPUT_COMMIT_FAILED");
+    }
+    if fs::remove_file(&temp_path).is_err() {
+        return fail("OUTPUT_TEMP_CLEANUP_FAILED");
     }
     Ok(())
 }
