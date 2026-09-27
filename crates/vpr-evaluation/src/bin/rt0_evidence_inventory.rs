@@ -179,7 +179,6 @@ struct ParsedBindingArtifacts {
     golden_evidence_bytes: Option<Vec<u8>>,
     owner_golden_suite_bytes: Option<Vec<u8>>,
     owner_golden_evidence_bytes: Option<Vec<u8>>,
-    owner_golden_report_bytes: Option<Vec<u8>>,
     release_spec_bytes: Option<Vec<u8>>,
 }
 
@@ -201,7 +200,6 @@ impl ParsedBindingArtifacts {
             golden_evidence_bytes: fs::read(root.join("private-golden-evidence.json")).ok(),
             owner_golden_suite_bytes: fs::read(root.join("owner-golden-suite.json")).ok(),
             owner_golden_evidence_bytes: fs::read(root.join("owner-golden-evidence.json")).ok(),
-            owner_golden_report_bytes: fs::read(root.join("owner-golden-report.json")).ok(),
             release_spec_bytes: fs::read(root.join("release-spec.md")).ok(),
         }
     }
