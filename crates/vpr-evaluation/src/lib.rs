@@ -1,6 +1,7 @@
 mod binding;
 mod exit;
 mod exit_assembly;
+mod exit_checks;
 mod exit_context;
 mod exit_cost;
 mod exit_support;
