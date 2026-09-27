@@ -57,7 +57,6 @@ pub fn fixture(release_spec: &[u8], candidate: &str) -> GoldenFixture {
     }
 }
 
-
 pub struct OwnerGoldenFixture {
     pub suite: GoldenSuite,
     pub suite_bytes: Vec<u8>,
