@@ -1,0 +1,89 @@
+{
+  "schema": "rt1-behavior-training-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "behavior_runtime_implemented": false,
+  "durable_behavior_state_implemented": false,
+  "owner_ui_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "canonical_flow": [
+    "QUESTION",
+    "PERSONA_ANSWER",
+    "OWNER_FEEDBACK",
+    "BEHAVIOR_CHANGE_PROPOSAL",
+    "BEFORE_AFTER_PREVIEW",
+    "OWNER_APPROVAL",
+    "NEW_PERSONA_VERSION"
+  ],
+  "feedback_kinds": [
+    "TOO_FORMAL",
+    "TOO_INFORMAL",
+    "TOO_LONG",
+    "TOO_SHORT",
+    "NOT_MY_WORDING",
+    "WRONG_TONE",
+    "WRONG_FACT",
+    "WRONG_BOUNDARY",
+    "DO_NOT_ATTRIBUTE_THIS_OPINION",
+    "PREFERRED_ANSWER"
+  ],
+  "preferred_answer_input": [
+    "TEXT",
+    "VOICE"
+  ],
+  "proposal_invariants": {
+    "binds_exact_base_persona_version": true,
+    "active_persona_unchanged_before_explicit_owner_approval": true,
+    "proposal_is_not_active_persona_state": true,
+    "preview_uses_candidate_behavior_only": true,
+    "preview_requires_several_examples": true,
+    "rejection_or_abandonment_leaves_active_persona_unchanged": true
+  },
+  "safety_routing": {
+    "style_feedback_may_form_behavior_candidate": true,
+    "wrong_fact_must_not_bypass_owner_claim_correction_authority": true,
+    "wrong_boundary_must_not_widen_policy_or_consent": true,
+    "do_not_attribute_opinion_must_not_create_verified_owner_belief": true,
+    "preferred_answer_must_not_silently_become_verified_fact_or_opinion": true
+  },
+  "approval_invariants": {
+    "requires_owner_authority": true,
+    "requires_exact_base_persona_version_match": true,
+    "stale_base_version_fails_closed": true,
+    "creates_new_persona_version": true,
+    "does_not_mutate_prior_persona_version_in_place": true,
+    "must_be_auditable": true,
+    "must_be_idempotent_when_retried": true,
+    "concurrent_newer_correction_or_revocation_must_win": true
+  },
+  "forbidden_side_effects": [
+    "SILENT_ACTIVE_PERSONA_MUTATION_FROM_FEEDBACK",
+    "SILENT_PERMISSION_EXPANSION",
+    "SILENT_CONSENT_EXPANSION",
+    "SILENT_DELEGATION_EXPANSION",
+    "SILENT_OWNER_BELIEF_ATTRIBUTION",
+    "PROVIDER_IDENTITY_AS_BEHAVIOR_IDENTITY"
+  ],
+  "fail_closed_examples": [
+    {
+      "case": "VISITOR_SUBMITS_BEHAVIOR_APPROVAL",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "OWNER_APPROVES_PROPOSAL_FOR_STALE_PERSONA_VERSION",
+      "decision": "DENY"
+    },
+    {
+      "case": "FEEDBACK_ATTEMPTS_TO_WIDEN_BOUNDARY",
+      "decision": "ROUTE_TO_CANONICAL_POLICY_REVIEW_OR_DENY"
+    },
+    {
+      "case": "WRONG_FACT_FEEDBACK_ATTEMPTS_DIRECT_BEHAVIOR_INJECTION",
+      "decision": "ROUTE_TO_CANONICAL_CLAIM_CORRECTION"
+    },
+    {
+      "case": "PREVIEW_NOT_COMPLETED",
+      "decision": "DENY_APPROVAL"
+    }
+  ]
+}
