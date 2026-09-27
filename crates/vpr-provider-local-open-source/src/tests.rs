@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
-
 struct Probe(AtomicBool);
 
 impl CancellationProbe for Probe {
@@ -25,8 +24,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> String {
         }
         request.extend_from_slice(&buffer[..read]);
         if total.is_none()
-            && let Some(header_end) =
-                request.windows(4).position(|window| window == b"\r\n\r\n")
+            && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
         {
             let headers = String::from_utf8_lossy(&request[..header_end]);
             let content_length = headers
@@ -67,8 +65,7 @@ fn serve(responses: Vec<(&'static str, String)>) -> (String, mpsc::Receiver<Stri
 }
 
 fn provider(endpoint: String) -> LocalOpenSourceAvatar {
-    LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(endpoint, "worker-secret"))
-        .unwrap()
+    LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(endpoint, "worker-secret")).unwrap()
 }
 
 #[test]
