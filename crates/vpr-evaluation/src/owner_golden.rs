@@ -6,6 +6,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnerGoldenError {
     SuiteNotOwnerSpecific,
+    ReportMismatch,
     Binding(EvidenceBindingError),
 }
 
@@ -32,6 +33,27 @@ pub fn evaluate_bound_owner_golden_suite(
 ) -> Result<BoundGoldenReport, OwnerGoldenError> {
     validate_owner_suite(suite)?;
     evaluate_bound_golden_suite(suite, bundle, context).map_err(Into::into)
+}
+
+pub(crate) fn verify_private_owner_golden(
+    context: crate::Rt0ExitVerificationContext<'_>,
+) -> Result<(), OwnerGoldenError> {
+    let recomputed = evaluate_bound_owner_golden_suite(
+        context.owner_golden_suite,
+        context.owner_golden_evidence_bundle,
+        EvidenceVerificationContext {
+            suite_bytes: context.owner_golden_suite_bytes,
+            release_spec_bytes: context.release_spec_bytes,
+            provider_state: context.provider_state,
+            provider_state_bytes: context.provider_state_bytes,
+            evidence_bytes: context.owner_golden_evidence_bytes,
+            exact_candidate_sha: context.exact_candidate_sha,
+        },
+    )?;
+    if recomputed != *context.owner_golden_report {
+        return Err(OwnerGoldenError::ReportMismatch);
+    }
+    Ok(())
 }
 
 fn validate_owner_suite(suite: &GoldenSuite) -> Result<(), OwnerGoldenError> {
