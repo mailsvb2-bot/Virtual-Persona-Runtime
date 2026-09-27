@@ -87,7 +87,13 @@ fn main() {
 
 fn run() -> Result<(), i32> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let [input_path, supporting_dir, provider_state_path, candidate_sha] = args.as_slice() else {
+    let [
+        input_path,
+        supporting_dir,
+        provider_state_path,
+        candidate_sha,
+    ] = args.as_slice()
+    else {
         eprintln!(
             "usage: vpr-rt0-supporting-capture <reviewed-observations.json> <supporting-dir> <provider-state.json> <exact-candidate-sha>"
         );
