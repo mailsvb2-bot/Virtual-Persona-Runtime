@@ -1,5 +1,5 @@
 {
-  "schema_version": "rt0-exit-evidence-0.5",
+  "schema_version": "rt0-exit-evidence-0.6",
   "candidate_sha": "0000000000000000000000000000000000000000",
   "release_spec_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "golden_report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -117,5 +117,8 @@
   "known_limitations": {
     "review_status": "passed",
     "document_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
-  }
+  },
+  "owner_golden_suite_sha256": "1212121212121212121212121212121212121212121212121212121212121212",
+  "owner_golden_evidence_sha256": "1313131313131313131313131313131313131313131313131313131313131313",
+  "owner_golden_report_sha256": "1414141414141414141414141414141414141414141414141414141414141414"
 }
