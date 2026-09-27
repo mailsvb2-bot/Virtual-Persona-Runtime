@@ -8,6 +8,7 @@ use vpr_evaluation::{
 pub const SUITE_BYTES: &[u8] =
     include_bytes!("../../../../docs/evaluation/rt0_golden_minimum.json");
 
+#[allow(dead_code)]
 pub struct GoldenFixture {
     pub provider_state: ProviderStateManifest,
     pub provider_state_bytes: Vec<u8>,
