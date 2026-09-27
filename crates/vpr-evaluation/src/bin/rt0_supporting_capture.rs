@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, process};
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,10 @@ const INPUT_SCHEMA: &str = "rt0-manual-supporting-observations-0.1";
 const RECEIPT_SCHEMA: &str = "rt0-manual-supporting-capture-receipt-0.1";
 const REQUIRED_ATTESTATION: &str = "reviewed_real_observations";
 const LOCK_FILE: &str = ".rt0-supporting-capture.lock";
+const COMMIT_MARKER: &str = ".rt0-supporting-capture.commit";
+const STAGE_PREFIX: &str = ".rt0-supporting-capture.stage.";
+const STALE_LOCK_AFTER: Duration = Duration::from_secs(30);
+const JOURNAL_SCHEMA: &str = "rt0-manual-supporting-capture-journal-0.1";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,7 +90,17 @@ struct CaptureReceipt {
     schema_version: &'static str,
     candidate_sha: String,
     provider_state_sha256: String,
-    artifact_sha256: BTreeMap<&'static str, String>,
+    artifact_sha256: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct TransactionJournal {
+    schema_version: String,
+    candidate_sha: String,
+    provider_state_sha256: String,
+    input_sha256: String,
+    artifact_sha256: BTreeMap<String, String>,
 }
 
 fn main() {
@@ -127,16 +141,35 @@ fn run() -> Result<(), i32> {
         return Err(fail("SUPPORTING_DIR_INVALID"));
     }
 
-    let _lock = CaptureLock::acquire(supporting_dir)?;
     let expected = rt0_manual_supporting_scaffold(candidate_sha, &provider_state_sha256);
-    validate_exact_placeholders(supporting_dir, &expected)?;
     let artifacts = build_artifacts(&input, candidate_sha, &provider_state_sha256);
-    write_artifacts_transactional(supporting_dir, &expected, &artifacts)?;
+    let journal = TransactionJournal {
+        schema_version: JOURNAL_SCHEMA.into(),
+        candidate_sha: candidate_sha.clone(),
+        provider_state_sha256: provider_state_sha256.clone(),
+        input_sha256: sha256_hex(&input_bytes),
+        artifact_sha256: artifact_digests(&artifacts),
+    };
+    let lock = match CaptureLock::acquire(
+        supporting_dir,
+        &journal,
+        &expected,
+        &artifacts,
+    )? {
+        LockOutcome::Acquired(lock) => {
+            validate_exact_placeholders(supporting_dir, &expected)?;
+            write_artifacts_transactional(
+                supporting_dir,
+                &expected,
+                &artifacts,
+                &journal,
+            )?;
+            Some(lock)
+        }
+        LockOutcome::AlreadyCommitted => None,
+    };
 
-    let artifact_sha256 = artifacts
-        .iter()
-        .map(|(name, bytes)| (*name, sha256_hex(bytes)))
-        .collect();
+    let artifact_sha256 = artifact_digests(&artifacts);
     println!(
         "{}",
         serde_json::to_string_pretty(&CaptureReceipt {
@@ -147,6 +180,7 @@ fn run() -> Result<(), i32> {
         })
         .map_err(|_| fail("INTERNAL_ERROR"))?
     );
+    drop(lock);
     Ok(())
 }
 
@@ -202,6 +236,10 @@ fn validate_exact_placeholders(
     }
     for (name, content) in expected {
         let path = root.join(name);
+        let metadata = fs::symlink_metadata(&path).map_err(|_| fail("INPUT_INVALID"))?;
+        if !metadata.file_type().is_file() {
+            return Err(fail("REVIEWED_ARTIFACT_EXISTS"));
+        }
         let existing = read(&path)?;
         if existing != content.as_bytes() {
             return Err(fail("REVIEWED_ARTIFACT_EXISTS"));
@@ -292,25 +330,42 @@ fn pretty_bytes(value: &Value) -> Vec<u8> {
     bytes
 }
 
+enum LockOutcome {
+    Acquired(CaptureLock),
+    AlreadyCommitted,
+}
+
 struct CaptureLock {
     path: PathBuf,
 }
 
 impl CaptureLock {
-    fn acquire(root: &Path) -> Result<Self, i32> {
-        let path = root.join(LOCK_FILE);
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&path)
-            .map_err(|_| fail("CAPTURE_IN_PROGRESS"))?;
-        writeln!(file, "{} {}", process::id(), transaction_nonce())
-            .and_then(|()| file.sync_all())
-            .map_err(|_| {
-                let _ = fs::remove_file(&path);
-                fail("CAPTURE_LOCK_FAILED")
-            })?;
-        Ok(Self { path })
+    fn acquire(
+        root: &Path,
+        journal: &TransactionJournal,
+        expected: &[(&'static str, String)],
+        artifacts: &[(&'static str, Vec<u8>)],
+    ) -> Result<LockOutcome, i32> {
+        Self::acquire_with_timeout(root, journal, expected, artifacts, STALE_LOCK_AFTER)
+    }
+
+    fn acquire_with_timeout(
+        root: &Path,
+        journal: &TransactionJournal,
+        expected: &[(&'static str, String)],
+        artifacts: &[(&'static str, Vec<u8>)],
+        stale_after: Duration,
+    ) -> Result<LockOutcome, i32> {
+        recover_orphan_commit_marker(root, journal, expected)?;
+        match create_journal_file(&root.join(LOCK_FILE), journal) {
+            Ok(()) => Ok(LockOutcome::Acquired(Self {
+                path: root.join(LOCK_FILE),
+            })),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                recover_stale_lock(root, journal, expected, artifacts, stale_after)
+            }
+            Err(_) => Err(fail("CAPTURE_LOCK_FAILED")),
+        }
     }
 }
 
@@ -320,16 +375,96 @@ impl Drop for CaptureLock {
     }
 }
 
+fn recover_orphan_commit_marker(
+    root: &Path,
+    journal: &TransactionJournal,
+    expected: &[(&'static str, String)],
+) -> Result<(), i32> {
+    let marker = root.join(COMMIT_MARKER);
+    if !marker.exists() || root.join(LOCK_FILE).exists() {
+        return Ok(());
+    }
+    let stale = read_journal(&marker)?;
+    if stale != *journal {
+        return Err(fail("STALE_CAPTURE_MISMATCH"));
+    }
+    if !restore_scaffold(root, expected) {
+        return Err(fail("STALE_CAPTURE_RECOVERY_FAILED"));
+    }
+    cleanup_staged_files(root);
+    fs::remove_file(marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))
+}
+
+fn recover_stale_lock(
+    root: &Path,
+    journal: &TransactionJournal,
+    expected: &[(&'static str, String)],
+    artifacts: &[(&'static str, Vec<u8>)],
+    stale_after: Duration,
+) -> Result<LockOutcome, i32> {
+    let lock_path = root.join(LOCK_FILE);
+    let metadata = fs::metadata(&lock_path).map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
+    let modified = metadata
+        .modified()
+        .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
+    let age = SystemTime::now().duration_since(modified).unwrap_or_default();
+    if age < stale_after {
+        return Err(fail("CAPTURE_IN_PROGRESS"));
+    }
+
+    let stale = read_journal(&lock_path)?;
+    if stale != *journal {
+        return Err(fail("STALE_CAPTURE_MISMATCH"));
+    }
+
+    let marker = root.join(COMMIT_MARKER);
+    if marker.exists() {
+        let marker_journal = read_journal(&marker)?;
+        if marker_journal != *journal || !restore_scaffold(root, expected) {
+            return Err(fail("STALE_CAPTURE_RECOVERY_FAILED"));
+        }
+        cleanup_staged_files(root);
+        fs::remove_file(&marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
+        fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
+        return CaptureLock::acquire_with_timeout(
+            root,
+            journal,
+            expected,
+            artifacts,
+            stale_after,
+        );
+    }
+
+    if artifacts_match(root, artifacts) {
+        cleanup_staged_files(root);
+        fs::remove_file(lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
+        return Ok(LockOutcome::AlreadyCommitted);
+    }
+    if scaffold_matches(root, expected) {
+        cleanup_staged_files(root);
+        fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
+        return CaptureLock::acquire_with_timeout(
+            root,
+            journal,
+            expected,
+            artifacts,
+            stale_after,
+        );
+    }
+    Err(fail("STALE_CAPTURE_AMBIGUOUS"))
+}
+
 fn write_artifacts_transactional(
     root: &Path,
     expected: &[(&'static str, String)],
     artifacts: &[(&'static str, Vec<u8>)],
+    journal: &TransactionJournal,
 ) -> Result<(), i32> {
     let nonce = transaction_nonce();
     let mut staged = Vec::with_capacity(artifacts.len());
     for (index, (name, bytes)) in artifacts.iter().enumerate() {
         let path = root.join(format!(
-            ".rt0-supporting-capture.{}.{}.{}.tmp",
+            "{STAGE_PREFIX}{}.{}.{}.tmp",
             process::id(),
             nonce,
             index
@@ -345,14 +480,35 @@ fn write_artifacts_transactional(
         }
     }
 
+    let marker = root.join(COMMIT_MARKER);
+    if let Err(error) = create_journal_file(&marker, journal) {
+        cleanup_paths(&staged);
+        return Err(fail(if error.kind() == std::io::ErrorKind::AlreadyExists {
+            "CAPTURE_IN_PROGRESS"
+        } else {
+            "OUTPUT_STAGE_FAILED"
+        }));
+    }
+
     for (replaced, ((name, _), staged_path)) in artifacts.iter().zip(&staged).enumerate() {
         let Ok(bytes) = fs::read(staged_path) else {
+            let rollback_ok = restore_scaffold(root, &expected[..replaced]);
             cleanup_paths(&staged);
-            return Err(fail("OUTPUT_STAGE_FAILED"));
+            if rollback_ok {
+                let _ = fs::remove_file(&marker);
+            }
+            return Err(fail(if rollback_ok {
+                "OUTPUT_STAGE_FAILED"
+            } else {
+                "OUTPUT_ROLLBACK_FAILED"
+            }));
         };
         if overwrite_synced(&root.join(name), &bytes).is_err() {
-            let rollback_ok = rollback(root, expected, replaced + 1);
+            let rollback_ok = restore_scaffold(root, &expected[..=replaced]);
             cleanup_paths(&staged);
+            if rollback_ok {
+                let _ = fs::remove_file(&marker);
+            }
             return Err(fail(if rollback_ok {
                 "OUTPUT_WRITE_FAILED"
             } else {
@@ -361,13 +517,47 @@ fn write_artifacts_transactional(
         }
     }
     cleanup_paths(&staged);
-    Ok(())
+    fs::remove_file(marker).map_err(|_| fail("OUTPUT_COMMIT_FINALIZE_FAILED"))
 }
 
-fn rollback(root: &Path, expected: &[(&'static str, String)], replaced: usize) -> bool {
+fn create_journal_file(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
+    let mut bytes = serde_json::to_vec(journal).map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
+    file.write_all(&bytes)?;
+    file.sync_all()
+}
+
+fn read_journal(path: &Path) -> Result<TransactionJournal, i32> {
+    let bytes = fs::read(path).map_err(|_| fail("STALE_CAPTURE_JOURNAL_INVALID"))?;
+    serde_json::from_slice(&bytes).map_err(|_| fail("STALE_CAPTURE_JOURNAL_INVALID"))
+}
+
+fn artifact_digests(
+    artifacts: &[(&'static str, Vec<u8>)],
+) -> BTreeMap<String, String> {
+    artifacts
+        .iter()
+        .map(|(name, bytes)| ((*name).to_owned(), sha256_hex(bytes)))
+        .collect()
+}
+
+fn artifacts_match(root: &Path, artifacts: &[(&'static str, Vec<u8>)]) -> bool {
+    artifacts
+        .iter()
+        .all(|(name, bytes)| fs::read(root.join(name)).is_ok_and(|actual| actual == *bytes))
+}
+
+fn scaffold_matches(root: &Path, expected: &[(&'static str, String)]) -> bool {
+    expected.iter().all(|(name, content)| {
+        fs::read(root.join(name)).is_ok_and(|actual| actual == content.as_bytes())
+    })
+}
+
+fn restore_scaffold(root: &Path, expected: &[(&'static str, String)]) -> bool {
     let mut restored = true;
-    for (name, content) in expected.iter().take(replaced) {
-        if overwrite_synced(&root.join(name), content.as_bytes()).is_err() {
+    for (name, content) in expected {
+        if restore_synced(&root.join(name), content.as_bytes()).is_err() {
             restored = false;
         }
     }
@@ -389,7 +579,27 @@ fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), i32> {
 }
 
 fn overwrite_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(std::io::Error::other("target is not a regular file"));
+    }
     let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+fn restore_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if !metadata.file_type().is_file() => {
+            return Err(std::io::Error::other("target is not a regular file"));
+        }
+        Ok(_) | Err(_) => {}
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -397,6 +607,19 @@ fn overwrite_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 fn cleanup_paths(paths: &[PathBuf]) {
     for path in paths {
         let _ = fs::remove_file(path);
+    }
+}
+
+fn cleanup_staged_files(root: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(STAGE_PREFIX) && name.ends_with(".tmp") {
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 
@@ -534,10 +757,44 @@ mod tests {
     #[test]
     fn capture_lock_serializes_concurrent_writers() {
         let root = temp_dir("lock");
-        let first = CaptureLock::acquire(&root).unwrap();
-        assert_eq!(CaptureLock::acquire(&root).err(), Some(2));
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let expected = rt0_manual_supporting_scaffold(&candidate, &provider);
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        let artifacts = build_artifacts(&input(), &candidate, &provider);
+        let journal = TransactionJournal {
+            schema_version: JOURNAL_SCHEMA.into(),
+            candidate_sha: candidate,
+            provider_state_sha256: provider,
+            input_sha256: "c".repeat(64),
+            artifact_sha256: artifact_digests(&artifacts),
+        };
+        let first = match CaptureLock::acquire_with_timeout(
+            &root,
+            &journal,
+            &expected,
+            &artifacts,
+            Duration::from_secs(60),
+        )
+        .unwrap()
+        {
+            LockOutcome::Acquired(lock) => lock,
+            LockOutcome::AlreadyCommitted => panic!("unexpected committed recovery"),
+        };
+        assert_eq!(
+            CaptureLock::acquire_with_timeout(
+                &root,
+                &journal,
+                &expected,
+                &artifacts,
+                Duration::from_secs(60),
+            )
+            .err(),
+            Some(2)
+        );
         drop(first);
-        assert!(CaptureLock::acquire(&root).is_ok());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -558,7 +815,18 @@ mod tests {
 
         let artifacts = build_artifacts(&input(), &candidate, &provider);
         assert_eq!(
-            write_artifacts_transactional(&root, &expected, &artifacts),
+            write_artifacts_transactional(
+                &root,
+                &expected,
+                &artifacts,
+                &TransactionJournal {
+                    schema_version: JOURNAL_SCHEMA.into(),
+                    candidate_sha: candidate.clone(),
+                    provider_state_sha256: provider.clone(),
+                    input_sha256: "d".repeat(64),
+                    artifact_sha256: artifact_digests(&artifacts),
+                },
+            ),
             Err(2)
         );
         assert_eq!(
@@ -568,6 +836,74 @@ mod tests {
         assert_eq!(fs::read(&cost_path).unwrap(), expected[1].1.as_bytes());
 
         fs::set_permissions(&cost_path, fs::Permissions::from_mode(0o644)).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_mid_commit_is_restored_and_reacquired_for_same_input() {
+        let root = temp_dir("stale-mid-commit");
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let expected = rt0_manual_supporting_scaffold(&candidate, &provider);
+        for (name, content) in &expected {
+            fs::write(root.join(name), content).unwrap();
+        }
+        let artifacts = build_artifacts(&input(), &candidate, &provider);
+        let journal = TransactionJournal {
+            schema_version: JOURNAL_SCHEMA.into(),
+            candidate_sha: candidate,
+            provider_state_sha256: provider,
+            input_sha256: "e".repeat(64),
+            artifact_sha256: artifact_digests(&artifacts),
+        };
+        create_journal_file(&root.join(LOCK_FILE), &journal).unwrap();
+        create_journal_file(&root.join(COMMIT_MARKER), &journal).unwrap();
+        fs::write(root.join(artifacts[0].0), &artifacts[0].1).unwrap();
+
+        let recovered = CaptureLock::acquire_with_timeout(
+            &root,
+            &journal,
+            &expected,
+            &artifacts,
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(matches!(recovered, LockOutcome::Acquired(_)));
+        assert!(scaffold_matches(&root, &expected));
+        drop(recovered);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_completed_capture_returns_receipt_path_without_rewriting() {
+        let root = temp_dir("stale-complete");
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let expected = rt0_manual_supporting_scaffold(&candidate, &provider);
+        let artifacts = build_artifacts(&input(), &candidate, &provider);
+        for (name, bytes) in &artifacts {
+            fs::write(root.join(name), bytes).unwrap();
+        }
+        let journal = TransactionJournal {
+            schema_version: JOURNAL_SCHEMA.into(),
+            candidate_sha: candidate,
+            provider_state_sha256: provider,
+            input_sha256: "f".repeat(64),
+            artifact_sha256: artifact_digests(&artifacts),
+        };
+        create_journal_file(&root.join(LOCK_FILE), &journal).unwrap();
+
+        let recovered = CaptureLock::acquire_with_timeout(
+            &root,
+            &journal,
+            &expected,
+            &artifacts,
+            Duration::ZERO,
+        )
+        .unwrap();
+        assert!(matches!(recovered, LockOutcome::AlreadyCommitted));
+        assert!(artifacts_match(&root, &artifacts));
+        assert!(!root.join(LOCK_FILE).exists());
         let _ = fs::remove_dir_all(root);
     }
 }
