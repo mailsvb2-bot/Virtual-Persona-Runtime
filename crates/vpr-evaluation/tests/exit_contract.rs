@@ -6,9 +6,10 @@ use vpr_evaluation::{
     ConversationPairEvidence, CostEvidence, EvidenceOrigin, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, HumanDimensions, HumanEvaluationEvidence,
     KnownLimitationsEvidence, LatencyDistributionMillis, LiveProviderProbeReceipt,
-    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, ProviderRole,
-    QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus,
-    Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext,
+    LlmProbeEvidence, OwnerGoldenVerificationContext, ParticipantRole, PrivacyPermissionEvidence,
+    ProbeUsage, ProviderRole, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError,
+    Rt0ExitFailureCode, Rt0ExitVerificationContext,
     SttProbeEvidence, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
@@ -474,6 +475,14 @@ fn evaluate_with_runtime_snapshots(
         &fixture.provider_state,
         &fixture.provider_state_bytes,
     );
+    let owner_golden_context = OwnerGoldenVerificationContext {
+        suite: &owner_golden.suite,
+        suite_bytes: &owner_golden.suite_bytes,
+        report: &owner_golden.report,
+        report_bytes: &owner_golden.report_bytes,
+        evidence_bundle: &owner_golden.bundle,
+        evidence_bytes: &owner_golden.bundle_bytes,
+    };
     evaluate_rt0_exit_evidence(
         evidence,
         golden.0,
@@ -482,12 +491,7 @@ fn evaluate_with_runtime_snapshots(
             golden_report_bytes: golden.1,
             golden_evidence_bundle: &fixture.bundle,
             golden_evidence_bytes: &fixture.bundle_bytes,
-            owner_golden_suite: &owner_golden.suite,
-            owner_golden_suite_bytes: &owner_golden.suite_bytes,
-            owner_golden_report: &owner_golden.report,
-            owner_golden_report_bytes: &owner_golden.report_bytes,
-            owner_golden_evidence_bundle: &owner_golden.bundle,
-            owner_golden_evidence_bytes: &owner_golden.bundle_bytes,
+            owner_golden: &owner_golden_context,
             provider_state: &fixture.provider_state,
             provider_state_bytes: &fixture.provider_state_bytes,
             live_provider_probe: live_provider_probe.0,
@@ -1176,6 +1180,14 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
         &provider_state,
         &provider_state_bytes,
     );
+    let owner_golden_context = OwnerGoldenVerificationContext {
+        suite: &owner_golden.suite,
+        suite_bytes: &owner_golden.suite_bytes,
+        report: &owner_golden.report,
+        report_bytes: &owner_golden.report_bytes,
+        evidence_bundle: &owner_golden.bundle,
+        evidence_bytes: &owner_golden.bundle_bytes,
+    };
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -1185,12 +1197,7 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 golden_report_bytes: &golden_bytes,
                 golden_evidence_bundle: &fixture.bundle,
                 golden_evidence_bytes: &fixture.bundle_bytes,
-                owner_golden_suite: &owner_golden.suite,
-                owner_golden_suite_bytes: &owner_golden.suite_bytes,
-                owner_golden_report: &owner_golden.report,
-                owner_golden_report_bytes: &owner_golden.report_bytes,
-                owner_golden_evidence_bundle: &owner_golden.bundle,
-                owner_golden_evidence_bytes: &owner_golden.bundle_bytes,
+                owner_golden: &owner_golden_context,
                 provider_state: &provider_state,
                 provider_state_bytes: &provider_state_bytes,
                 live_provider_probe: &live_provider_probe,
