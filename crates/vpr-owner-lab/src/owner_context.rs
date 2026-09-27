@@ -107,6 +107,10 @@ impl ReviewedOwnerContext {
         self.profile.identity()
     }
 
+    pub(crate) const fn profile(&self) -> &PersonaProfile {
+        &self.profile
+    }
+
     pub(crate) fn claim_count(&self) -> usize {
         self.profile.claims().len()
     }
