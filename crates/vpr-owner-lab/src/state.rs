@@ -260,10 +260,14 @@ impl OwnerLabEngine {
                 .as_ref()
                 .is_some_and(|handle| !handle.is_closed()),
             egress_enabled: self.egress_enabled,
-            conversation_readiness: match (self.llm.is_some(), self.stt.is_some()) {
-                (true, true) => ConversationReadiness::TextAndVoice,
-                (true, false) => ConversationReadiness::Text,
-                (false, _) => ConversationReadiness::None,
+            conversation_readiness: if self.reviewed_owner_context.is_none() {
+                ConversationReadiness::None
+            } else {
+                match (self.llm.is_some(), self.stt.is_some()) {
+                    (true, true) => ConversationReadiness::TextAndVoice,
+                    (true, false) => ConversationReadiness::Text,
+                    (false, _) => ConversationReadiness::None,
+                }
             },
             modality_readiness: self.readiness.snapshot(),
             session_audience: self.session_audience,
