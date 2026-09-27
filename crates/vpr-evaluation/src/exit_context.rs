@@ -3,7 +3,7 @@ use crate::{
     LiveProviderProbeReceipt, ProviderStateManifest,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct Rt0ExitVerificationContext<'a> {
     pub exit_evidence_bytes: &'a [u8],
     pub golden_report_bytes: &'a [u8],
