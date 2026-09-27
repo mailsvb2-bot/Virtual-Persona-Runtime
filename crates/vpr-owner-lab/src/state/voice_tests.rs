@@ -292,6 +292,41 @@ fn sample_pcm() -> Vec<u8> {
 }
 
 #[test]
+fn configured_voice_stack_is_not_conversation_ready_before_persona_review() {
+    let stats = Arc::new(VoiceStats::default());
+    let engine = OwnerLabEngine::new(
+        Box::new(VoiceAvatar {
+            stats: Arc::clone(&stats),
+        }),
+        true,
+    )
+    .unwrap()
+    .with_voice(
+        Box::new(ImmediateStt {
+            stats: Arc::clone(&stats),
+        }),
+        Box::new(VoiceLlm {
+            stats,
+            block_until_cancelled: false,
+            started: None,
+        }),
+    );
+
+    assert_eq!(
+        engine.status().conversation_readiness,
+        ConversationReadiness::None
+    );
+    assert_eq!(
+        engine.status().modality_readiness,
+        LabModalityReadiness {
+            text: LabModalityState::NotReady,
+            voice: LabModalityState::NotReady,
+            video: LabModalityState::NotReady,
+        }
+    );
+}
+
+#[test]
 fn voice_turn_runs_stt_llm_and_avatar_on_canonical_path() {
     let (mut engine, stats, _) = voice_engine(false);
     let result = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
