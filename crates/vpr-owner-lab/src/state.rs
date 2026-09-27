@@ -13,7 +13,7 @@ use vpr_runtime::{
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
-use readiness::{LabModalityReadiness, LabReadinessState};
+use readiness::LabReadinessState;
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
