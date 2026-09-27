@@ -161,6 +161,7 @@ impl MediaRecordError {
 }
 
 pub fn record_media(
+    engine: &StdMutex<OwnerLabEngine>,
     playback: &LabVoicePlaybackRegistry,
     recorder: &Mutex<LabSessionEvidenceRecorder>,
     input: &LabMediaEvidenceInput,
@@ -173,15 +174,29 @@ pub fn record_media(
         playback
             .acknowledge_voice_playback(canonical_turn_sequence, canonical_output_sequence)
             .map_err(MediaRecordError::Lab)?;
-        return recorder
+        recorder
             .lock()
             .record_canonical_playback(input, canonical_turn_sequence, canonical_output_sequence)
-            .map_err(MediaRecordError::Evidence);
+            .map_err(MediaRecordError::Evidence)?;
+        engine
+            .lock()
+            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
+            .mark_voice_ready_from_media()
+            .map_err(MediaRecordError::Lab)?;
+        return Ok(());
     }
     recorder
         .lock()
         .record_media(input)
-        .map_err(MediaRecordError::Evidence)
+        .map_err(MediaRecordError::Evidence)?;
+    if input.kind == LabMediaEvidenceKind::VideoReady {
+        engine
+            .lock()
+            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
+            .mark_video_ready_from_media()
+            .map_err(MediaRecordError::Lab)?;
+    }
+    Ok(())
 }
 
 pub fn record_av_sync(
