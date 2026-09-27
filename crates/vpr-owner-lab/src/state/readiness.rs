@@ -61,20 +61,26 @@ impl LabReadinessState {
     }
 
     pub(super) fn begin_media_preparation(&mut self) -> Result<(), LabError> {
+        if self.readiness.is_none() {
+            return Ok(());
+        }
         self.begin_one(Modality::Voice)?;
         self.begin_one(Modality::Video)?;
         Ok(())
     }
 
     pub(super) fn begin_media_validation(&mut self) -> Result<(), LabError> {
+        if self.readiness.is_none() {
+            return Ok(());
+        }
         self.begin_validation_one(Modality::Voice)?;
         self.begin_validation_one(Modality::Video)?;
         Ok(())
     }
 
     pub(super) fn fail_pending(&mut self) {
-        self.finish_pending(Modality::Voice, false);
-        self.finish_pending(Modality::Video, false);
+        self.finish_pending(Modality::Voice);
+        self.finish_pending(Modality::Video);
     }
 
     pub(super) fn cancel_pending(&mut self) {
@@ -86,28 +92,38 @@ impl LabReadinessState {
         if !matches!(modality, Modality::Voice | Modality::Video) {
             return Err(LabError::InvalidInput);
         }
-        let readiness = self.readiness.as_mut().ok_or(LabError::InvalidState)?;
+        let Some(readiness) = self.readiness.as_ref() else {
+            return Ok(());
+        };
         if readiness.modality(modality) == ModalityReadiness::Ready {
             return Ok(());
         }
-        let job = self.job_mut(modality).ok_or(LabError::InvalidState)?;
+
+        let mut job = self.take_job(modality).ok_or(LabError::InvalidState)?;
         if job.state() != PreparationJobState::Validating {
+            self.put_job(modality, job);
             return Err(LabError::InvalidState);
         }
         job.mark_ready().map_err(|_| LabError::Internal)?;
-        readiness.apply_job(job).map_err(|_| LabError::Internal)?;
-        self.clear_job(modality);
+        self.readiness
+            .as_mut()
+            .ok_or(LabError::InvalidState)?
+            .apply_job(&job)
+            .map_err(|_| LabError::Internal)?;
         Ok(())
     }
 
     fn begin_one(&mut self, modality: Modality) -> Result<(), LabError> {
-        let readiness = self.readiness.as_mut().ok_or(LabError::InvalidState)?;
+        let Some(readiness) = self.readiness.as_ref() else {
+            return Ok(());
+        };
         if matches!(
             readiness.modality(modality),
             ModalityReadiness::Ready | ModalityReadiness::Preparing
         ) {
             return Ok(());
         }
+
         self.job_counter = self.job_counter.checked_add(1).ok_or(LabError::Internal)?;
         let label = match modality {
             Modality::Voice => "voice",
@@ -116,32 +132,40 @@ impl LabReadinessState {
         };
         let id = PreparationJobId::new(format!("owner-lab-{label}-{}", self.job_counter))
             .map_err(|_| LabError::Internal)?;
-        let mut job = readiness
+        let mut job = self
+            .readiness
+            .as_mut()
+            .ok_or(LabError::InvalidState)?
             .start_preparation(id, modality)
             .map_err(|_| LabError::Internal)?;
         job.begin().map_err(|_| LabError::Internal)?;
-        readiness.apply_job(&job).map_err(|_| LabError::Internal)?;
-        *self.job_slot_mut(modality) = Some(job);
+        self.readiness
+            .as_mut()
+            .ok_or(LabError::InvalidState)?
+            .apply_job(&job)
+            .map_err(|_| LabError::Internal)?;
+        self.put_job(modality, job);
         Ok(())
     }
 
     fn begin_validation_one(&mut self, modality: Modality) -> Result<(), LabError> {
-        let Some(job) = self.job_mut(modality) else {
+        let Some(mut job) = self.take_job(modality) else {
             return Ok(());
         };
-        if job.state() == PreparationJobState::Validating {
-            return Ok(());
+        if job.state() != PreparationJobState::Validating {
+            job.begin_validation().map_err(|_| LabError::Internal)?;
+            self.readiness
+                .as_mut()
+                .ok_or(LabError::InvalidState)?
+                .apply_job(&job)
+                .map_err(|_| LabError::Internal)?;
         }
-        job.begin_validation().map_err(|_| LabError::Internal)?;
-        self.readiness
-            .as_mut()
-            .ok_or(LabError::InvalidState)?
-            .apply_job(job)
-            .map_err(|_| LabError::Internal)
+        self.put_job(modality, job);
+        Ok(())
     }
 
-    fn finish_pending(&mut self, modality: Modality, ready: bool) {
-        let Some(mut job) = self.job_slot_mut(modality).take() else {
+    fn finish_pending(&mut self, modality: Modality) {
+        let Some(mut job) = self.take_job(modality) else {
             return;
         };
         if matches!(
@@ -152,12 +176,7 @@ impl LabReadinessState {
         ) {
             return;
         }
-        let transitioned = if ready {
-            job.mark_ready()
-        } else {
-            job.fail()
-        };
-        if transitioned.is_ok()
+        if job.fail().is_ok()
             && let Some(readiness) = self.readiness.as_mut()
         {
             let _ = readiness.apply_job(&job);
@@ -165,7 +184,7 @@ impl LabReadinessState {
     }
 
     fn cancel_one(&mut self, modality: Modality) {
-        let Some(mut job) = self.job_slot_mut(modality).take() else {
+        let Some(mut job) = self.take_job(modality) else {
             return;
         };
         if job.cancel().is_ok()
@@ -175,24 +194,20 @@ impl LabReadinessState {
         }
     }
 
-    fn job_mut(&mut self, modality: Modality) -> Option<&mut PreparationJob> {
+    fn take_job(&mut self, modality: Modality) -> Option<PreparationJob> {
         match modality {
-            Modality::Voice => self.voice_job.as_mut(),
-            Modality::Video => self.video_job.as_mut(),
+            Modality::Voice => self.voice_job.take(),
+            Modality::Video => self.video_job.take(),
             Modality::Text => None,
         }
     }
 
-    fn job_slot_mut(&mut self, modality: Modality) -> &mut Option<PreparationJob> {
+    fn put_job(&mut self, modality: Modality, job: PreparationJob) {
         match modality {
-            Modality::Voice => &mut self.voice_job,
-            Modality::Video => &mut self.video_job,
+            Modality::Voice => self.voice_job = Some(job),
+            Modality::Video => self.video_job = Some(job),
             Modality::Text => unreachable!("text preparation is rejected before slot access"),
         }
-    }
-
-    fn clear_job(&mut self, modality: Modality) {
-        *self.job_slot_mut(modality) = None;
     }
 }
 
