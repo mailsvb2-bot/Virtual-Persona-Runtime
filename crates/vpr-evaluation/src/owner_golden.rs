@@ -59,7 +59,10 @@ pub(crate) fn verify_private_owner_golden(
 fn validate_owner_suite(suite: &GoldenSuite) -> Result<(), OwnerGoldenError> {
     if !suite.suite_id.starts_with("rt0.owner.")
         || suite.cases.len() < 3
-        || !suite.cases.iter().any(|case| case.actor == GoldenActor::Owner)
+        || !suite
+            .cases
+            .iter()
+            .any(|case| case.actor == GoldenActor::Owner)
     {
         return Err(OwnerGoldenError::SuiteNotOwnerSpecific);
     }
