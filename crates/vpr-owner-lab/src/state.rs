@@ -1,7 +1,7 @@
 use serde::Serialize;
 use vpr_domain::{
-    ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
-    PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
+    ClaimId, ClaimKind, CorrelationId, Modality, PersonaId, PersonaIdentity, PersonaMode,
+    PersonaProfile, PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
@@ -13,6 +13,7 @@ use vpr_runtime::{
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
+use readiness::{LabModalityReadiness, LabReadinessState};
 
 const PROVIDER_SCOPE: &str = "provider.egress";
 const PERSONA_ID: &str = "rt0-owner-lab-persona";
@@ -95,6 +96,7 @@ pub struct LabStatus {
     pub avatar_open: bool,
     pub egress_enabled: bool,
     pub conversation_readiness: ConversationReadiness,
+    pub modality_readiness: LabModalityReadiness,
     pub session_audience: Option<LabSessionAudience>,
     pub owner_context_state: OwnerContextState,
     pub persona_version: u64,
@@ -129,6 +131,7 @@ impl LabError {
 pub struct OwnerLabEngine {
     persona: PersonaIdentity,
     reviewed_owner_context: Option<ReviewedOwnerContext>,
+    readiness: LabReadinessState,
     provider: Box<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
@@ -155,6 +158,7 @@ impl OwnerLabEngine {
         Ok(Self {
             persona: PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin),
             reviewed_owner_context: None,
+            readiness: LabReadinessState::default(),
             provider,
             stt: None,
             llm: None,
@@ -197,6 +201,7 @@ impl OwnerLabEngine {
             return Err(LabError::InvalidState);
         }
         let context = ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?;
+        self.readiness.reset_for_profile(context.profile())?;
         self.reviewed_owner_context = Some(context);
         Ok(())
     }
@@ -215,11 +220,15 @@ impl OwnerLabEngine {
         if self.session_audience == Some(LabSessionAudience::Visitor) {
             return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
         }
-        self.reviewed_owner_context
+        let context = self
+            .reviewed_owner_context
             .as_mut()
-            .ok_or(LabError::InvalidState)?
+            .ok_or(LabError::InvalidState)?;
+        context
             .correct_claim(id, statement, kind)
-            .map_err(map_owner_context_error)
+            .map_err(map_owner_context_error)?;
+        self.readiness.reset_for_profile(context.profile())?;
+        Ok(())
     }
 
     /// Returns an owner-only snapshot of the current reviewed claim revisions.
@@ -256,6 +265,7 @@ impl OwnerLabEngine {
                 (true, false) => ConversationReadiness::Text,
                 (false, _) => ConversationReadiness::None,
             },
+            modality_readiness: self.readiness.snapshot(),
             session_audience: self.session_audience,
             owner_context_state: if self.reviewed_owner_context.is_some() {
                 OwnerContextState::Reviewed
@@ -330,9 +340,15 @@ impl OwnerLabEngine {
         );
         session.activate().map_err(LabError::Runtime)?;
         let turn = self.new_turn_for(&session)?;
-        let handle = turn
-            .open_realtime_avatar(self.provider.as_ref())
-            .map_err(map_provider_execution)?;
+        self.readiness.begin_media_preparation()?;
+        self.readiness.begin_media_validation()?;
+        let handle = match turn.open_realtime_avatar(self.provider.as_ref()) {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.readiness.fail_pending();
+                return Err(map_provider_execution(error));
+            }
+        };
         let bundle = signal_bundle(self.provider.as_ref(), &handle, self.session_counter);
         self.session = Some(session);
         self.avatar = Some(handle);
@@ -384,6 +400,22 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
+    /// Promotes voice readiness only after accepted browser playback evidence.
+    ///
+    /// # Errors
+    /// Fails closed unless the current Persona has a validating voice preparation attempt.
+    pub fn mark_voice_ready_from_media(&mut self) -> Result<(), LabError> {
+        self.readiness.mark_ready(Modality::Voice)
+    }
+
+    /// Promotes video readiness only after accepted browser first-frame evidence.
+    ///
+    /// # Errors
+    /// Fails closed unless the current Persona has a validating video preparation attempt.
+    pub fn mark_video_ready_from_media(&mut self) -> Result<(), LabError> {
+        self.readiness.mark_ready(Modality::Video)
+    }
+
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
@@ -397,6 +429,7 @@ impl OwnerLabEngine {
             | RealtimeSessionState::Draining
             | RealtimeSessionState::Closed => return Err(LabError::InvalidState),
         }
+        self.readiness.cancel_pending();
         self.close_avatar_resource()
     }
 
@@ -405,6 +438,7 @@ impl OwnerLabEngine {
     /// # Errors
     /// Returns a stable reason and never marks provider cleanup complete unless confirmed.
     pub fn close(&mut self) -> Result<(), LabError> {
+        self.readiness.cancel_pending();
         self.close_avatar_resource()?;
         let session = self.session.as_mut().ok_or(LabError::InvalidState)?;
         match session.state() {
@@ -563,6 +597,7 @@ const fn state_name(state: RealtimeSessionState) -> &'static str {
 
 mod client_control;
 mod persistence;
+mod readiness;
 mod text;
 mod voice;
 mod voice_input;
@@ -570,6 +605,7 @@ mod voice_phrase;
 mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
+pub use readiness::{LabModalityReadiness, LabModalityState};
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
 pub use voice_input::LabVoiceInput;
