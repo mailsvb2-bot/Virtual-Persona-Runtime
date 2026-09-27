@@ -61,7 +61,7 @@ fn exit_evidence(
         })
     };
     json!({
-        "schema_version":"rt0-exit-evidence-0.5",
+        "schema_version":"rt0-exit-evidence-0.6",
         "candidate_sha":CANDIDATE,
         "release_spec_sha256":sha256_hex(RELEASE_SPEC),
         "golden_report_sha256":sha256_hex(golden_bytes),
@@ -333,6 +333,9 @@ struct PreparedPaths {
     evidence: PathBuf,
     golden: PathBuf,
     golden_evidence: PathBuf,
+    owner_golden_suite: PathBuf,
+    owner_golden_evidence: PathBuf,
+    owner_golden_report: PathBuf,
     provider_state: PathBuf,
     live_provider_probe: PathBuf,
     conversation_attempt: PathBuf,
@@ -347,6 +350,9 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let dir = TempDir::new();
     let golden_path = dir.path().join("golden-report.json");
     let golden_evidence_path = dir.path().join("golden-evidence.json");
+    let owner_golden_suite_path = dir.path().join("owner-golden-suite.json");
+    let owner_golden_evidence_path = dir.path().join("owner-golden-evidence.json");
+    let owner_golden_report_path = dir.path().join("owner-golden-report.json");
     let provider_state_path = dir.path().join("provider-state.json");
     let live_provider_probe_path = dir.path().join("live-provider-probe.json");
     let conversation_attempt_path = dir.path().join("conversation-attempt.json");
@@ -357,6 +363,12 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let evidence_path = dir.path().join("exit-evidence.json");
     let spec_path = dir.path().join("RT0_RELEASE_SPEC.md");
     let fixture = support::fixture(RELEASE_SPEC, CANDIDATE);
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &fixture.provider_state,
+        &fixture.provider_state_bytes,
+    );
     let _ = (&fixture.provider_state, &fixture.bundle);
     let provider_state_bytes = fixture.provider_state_bytes;
     let provider_state_sha256 = sha256_hex(&provider_state_bytes);
@@ -390,10 +402,16 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         &sha256_hex(&bound_session_aggregate_bytes),
         &digest('0'),
     );
+    evidence["owner_golden_suite_sha256"] = json!(sha256_hex(&owner_golden.suite_bytes));
+    evidence["owner_golden_evidence_sha256"] = json!(sha256_hex(&owner_golden.bundle_bytes));
+    evidence["owner_golden_report_sha256"] = json!(sha256_hex(&owner_golden.report_bytes));
     evidence_mutator(&mut evidence);
     bind_supporting_artifacts(&supporting_artifacts_path, &mut evidence);
     fs::write(&golden_path, golden_bytes).unwrap();
     fs::write(&golden_evidence_path, golden_evidence_bytes).unwrap();
+    fs::write(&owner_golden_suite_path, &owner_golden.suite_bytes).unwrap();
+    fs::write(&owner_golden_evidence_path, &owner_golden.bundle_bytes).unwrap();
+    fs::write(&owner_golden_report_path, &owner_golden.report_bytes).unwrap();
     fs::write(&provider_state_path, provider_state_bytes).unwrap();
     fs::write(&live_provider_probe_path, live_provider_probe_bytes).unwrap();
     fs::write(&conversation_attempt_path, conversation_attempt_bytes).unwrap();
@@ -415,6 +433,9 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         evidence: evidence_path,
         golden: golden_path,
         golden_evidence: golden_evidence_path,
+        owner_golden_suite: owner_golden_suite_path,
+        owner_golden_evidence: owner_golden_evidence_path,
+        owner_golden_report: owner_golden_report_path,
         provider_state: provider_state_path,
         live_provider_probe: live_provider_probe_path,
         conversation_attempt: conversation_attempt_path,
@@ -446,6 +467,9 @@ fn run(paths: &PreparedPaths, candidate: &str) -> std::process::Output {
         .arg(&paths.evidence)
         .arg(&paths.golden)
         .arg(&paths.golden_evidence)
+        .arg(&paths.owner_golden_suite)
+        .arg(&paths.owner_golden_evidence)
+        .arg(&paths.owner_golden_report)
         .arg(&paths.provider_state)
         .arg(&paths.live_provider_probe)
         .arg(&paths.conversation_attempt)
@@ -457,6 +481,33 @@ fn run(paths: &PreparedPaths, candidate: &str) -> std::process::Output {
         .arg(candidate)
         .output()
         .unwrap()
+}
+
+#[test]
+fn cli_rejects_tampered_private_owner_golden_even_when_json_remains_valid() {
+    let paths = prepare(|_| {});
+    let mut suite: Value =
+        serde_json::from_slice(&fs::read(&paths.owner_golden_suite).unwrap()).unwrap();
+    suite["suite_id"] = json!("rt0.owner.tampered-private-v1");
+    let bytes = serde_json::to_vec_pretty(&suite).unwrap();
+    fs::write(&paths.owner_golden_suite, &bytes).unwrap();
+
+    let mut evidence: Value =
+        serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
+    evidence["owner_golden_suite_sha256"] = json!(sha256_hex(&bytes));
+    fs::write(
+        &paths.evidence,
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = run(&paths, CANDIDATE);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("OWNER_GOLDEN_INVALID")
+            || stderr.contains("OWNER_GOLDEN_RECOMPUTE_MISMATCH")
+    );
 }
 
 #[test]
