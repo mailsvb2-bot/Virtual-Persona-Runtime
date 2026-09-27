@@ -88,9 +88,7 @@ impl Drop for CaptureLock {
     }
 }
 
-pub(super) fn artifact_digests(
-    artifacts: &[(&'static str, Vec<u8>)],
-) -> BTreeMap<String, String> {
+pub(super) fn artifact_digests(artifacts: &[(&'static str, Vec<u8>)]) -> BTreeMap<String, String> {
     artifacts
         .iter()
         .map(|(name, bytes)| ((*name).to_owned(), sha256_hex(bytes)))
@@ -195,7 +193,9 @@ fn recover_stale_lock(
     let modified = metadata
         .modified()
         .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
-    let age = SystemTime::now().duration_since(modified).unwrap_or_default();
+    let age = SystemTime::now()
+        .duration_since(modified)
+        .unwrap_or_default();
     if age < stale_after {
         return Err(fail("CAPTURE_IN_PROGRESS"));
     }
@@ -214,13 +214,7 @@ fn recover_stale_lock(
         cleanup_staged_files(root);
         fs::remove_file(&marker).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
         fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        return CaptureLock::acquire_with_timeout(
-            root,
-            journal,
-            expected,
-            artifacts,
-            stale_after,
-        );
+        return CaptureLock::acquire_with_timeout(root, journal, expected, artifacts, stale_after);
     }
 
     if artifacts_match(root, artifacts) {
@@ -231,13 +225,7 @@ fn recover_stale_lock(
     if scaffold_matches(root, expected) {
         cleanup_staged_files(root);
         fs::remove_file(&lock_path).map_err(|_| fail("STALE_CAPTURE_RECOVERY_FAILED"))?;
-        return CaptureLock::acquire_with_timeout(
-            root,
-            journal,
-            expected,
-            artifacts,
-            stale_after,
-        );
+        return CaptureLock::acquire_with_timeout(root, journal, expected, artifacts, stale_after);
     }
     Err(fail("STALE_CAPTURE_AMBIGUOUS"))
 }
@@ -371,8 +359,7 @@ mod tests {
             .iter()
             .map(|(name, content)| (*name, format!("reviewed:{content}").into_bytes()))
             .collect::<Vec<_>>();
-        let journal =
-            TransactionJournal::new(&candidate, &provider, b"reviewed input", &artifacts);
+        let journal = TransactionJournal::new(&candidate, &provider, b"reviewed input", &artifacts);
         (candidate, provider, expected, artifacts, journal)
     }
 
