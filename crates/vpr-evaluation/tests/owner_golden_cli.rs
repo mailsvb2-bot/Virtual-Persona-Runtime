@@ -201,3 +201,49 @@ fn owner_golden_cli_preserves_exact_binding_failure_code() {
     assert!(!output.exists());
 }
 
+#[cfg(unix)]
+#[test]
+fn owner_golden_cli_does_not_replace_dangling_output_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let dir = TempDir::new();
+    let release_spec = b"rt0 release spec";
+    let baseline = support::fixture(release_spec, CANDIDATE);
+    let owner = support::owner_fixture(
+        release_spec,
+        CANDIDATE,
+        &baseline.provider_state,
+        &baseline.provider_state_bytes,
+    );
+
+    let suite = dir.0.join("owner-golden-suite.json");
+    let evidence = dir.0.join("owner-golden-evidence.json");
+    let spec = dir.0.join("release-spec.md");
+    let provider = dir.0.join("provider-state.json");
+    let output = dir.0.join("owner-golden-report.json");
+    let missing_target = dir.0.join("missing-target.json");
+
+    fs::write(&suite, &owner.suite_bytes).unwrap();
+    fs::write(&evidence, &owner.bundle_bytes).unwrap();
+    fs::write(&spec, release_spec).unwrap();
+    fs::write(&provider, &baseline.provider_state_bytes).unwrap();
+    symlink(&missing_target, &output).unwrap();
+
+    let result = Command::new(binary())
+        .args([
+            suite.as_os_str(),
+            evidence.as_os_str(),
+            spec.as_os_str(),
+            provider.as_os_str(),
+            output.as_os_str(),
+            OsStr::new(CANDIDATE),
+        ])
+        .output()
+        .unwrap();
+
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("OUTPUT_COMMIT_FAILED"));
+    assert_eq!(fs::read_link(&output).unwrap(), missing_target);
+    assert!(!missing_target.exists());
+}
+
