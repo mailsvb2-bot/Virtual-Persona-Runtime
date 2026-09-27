@@ -58,6 +58,7 @@ pub fn fixture(release_spec: &[u8], candidate: &str) -> GoldenFixture {
 }
 
 #[allow(dead_code)]
+#[allow(dead_code)]
 pub struct OwnerGoldenFixture {
     pub suite: GoldenSuite,
     pub suite_bytes: Vec<u8>,
@@ -67,6 +68,7 @@ pub struct OwnerGoldenFixture {
     pub report_bytes: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[allow(dead_code)]
 pub fn owner_fixture(
     release_spec: &[u8],
