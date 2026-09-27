@@ -246,3 +246,51 @@ fn owner_golden_cli_does_not_replace_dangling_output_symlink() {
     assert_eq!(fs::read_link(&output).unwrap(), missing_target);
     assert!(!missing_target.exists());
 }
+
+#[test]
+fn owner_golden_cli_ignores_stale_temp_from_interrupted_prior_run() {
+    let dir = TempDir::new();
+    let release_spec = b"rt0 release spec";
+    let baseline = support::fixture(release_spec, CANDIDATE);
+    let owner = support::owner_fixture(
+        release_spec,
+        CANDIDATE,
+        &baseline.provider_state,
+        &baseline.provider_state_bytes,
+    );
+
+    let suite = dir.0.join("owner-golden-suite.json");
+    let evidence = dir.0.join("owner-golden-evidence.json");
+    let spec = dir.0.join("release-spec.md");
+    let provider = dir.0.join("provider-state.json");
+    let output = dir.0.join("owner-golden-report.json");
+    let stale_temp = dir.0.join(".owner-golden-report.json.tmp");
+
+    fs::write(&suite, &owner.suite_bytes).unwrap();
+    fs::write(&evidence, &owner.bundle_bytes).unwrap();
+    fs::write(&spec, release_spec).unwrap();
+    fs::write(&provider, &baseline.provider_state_bytes).unwrap();
+    fs::write(&stale_temp, b"stale interrupted artifact").unwrap();
+
+    let result = Command::new(binary())
+        .args([
+            suite.as_os_str(),
+            evidence.as_os_str(),
+            spec.as_os_str(),
+            provider.as_os_str(),
+            output.as_os_str(),
+            OsStr::new(CANDIDATE),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        result.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let actual: BoundGoldenReport = serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+    assert_eq!(actual, owner.report);
+    assert_eq!(fs::read(stale_temp).unwrap(), b"stale interrupted artifact");
+}
+
