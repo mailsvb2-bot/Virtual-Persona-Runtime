@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use vpr_evaluation::{RT0_MANUAL_SUPPORTING_FILES, sha256_hex};
 
@@ -67,8 +68,12 @@ impl CaptureLock {
             .open(&path)
             .map_err(|_| fail("CAPTURE_LOCK_FAILED"))?;
 
-        if !platform_lock::try_lock_exclusive(&file).map_err(|_| fail("CAPTURE_LOCK_FAILED"))? {
-            return Err(fail("CAPTURE_IN_PROGRESS"));
+        match FileExt::try_lock_exclusive(&file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                return Err(fail("CAPTURE_IN_PROGRESS"));
+            }
+            Err(_) => return Err(fail("CAPTURE_LOCK_FAILED")),
         }
 
         let previous = read_lock_journal(&mut file)?;
@@ -86,7 +91,7 @@ impl CaptureLock {
 
 impl Drop for CaptureLock {
     fn drop(&mut self) {
-        let _ = platform_lock::unlock(&self.file);
+        let _ = FileExt::unlock(&self.file);
     }
 }
 
@@ -343,88 +348,6 @@ fn transaction_nonce() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos()
-}
-
-#[cfg(unix)]
-mod platform_lock {
-    use std::fs::File;
-    use std::io;
-    use std::os::fd::AsRawFd;
-
-    pub(super) fn try_lock_exclusive(file: &File) -> io::Result<bool> {
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result == 0 {
-            return Ok(true);
-        }
-        let error = io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::EWOULDBLOCK) => Ok(false),
-            _ => Err(error),
-        }
-    }
-
-    pub(super) fn unlock(file: &File) -> io::Result<()> {
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
-}
-
-#[cfg(windows)]
-mod platform_lock {
-    use std::fs::File;
-    use std::io;
-    use std::os::windows::io::AsRawHandle;
-
-    use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
-    use windows_sys::Win32::Storage::FileSystem::{
-        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx, UnlockFileEx,
-    };
-    use windows_sys::Win32::System::IO::OVERLAPPED;
-
-    pub(super) fn try_lock_exclusive(file: &File) -> io::Result<bool> {
-        let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
-        let result = unsafe {
-            LockFileEx(
-                file.as_raw_handle() as HANDLE,
-                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-                0,
-                u32::MAX,
-                u32::MAX,
-                &mut overlapped,
-            )
-        };
-        if result != 0 {
-            return Ok(true);
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
-            Ok(false)
-        } else {
-            Err(error)
-        }
-    }
-
-    pub(super) fn unlock(file: &File) -> io::Result<()> {
-        let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
-        let result = unsafe {
-            UnlockFileEx(
-                file.as_raw_handle() as HANDLE,
-                0,
-                u32::MAX,
-                u32::MAX,
-                &mut overlapped,
-            )
-        };
-        if result != 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
-    }
 }
 
 #[cfg(test)]

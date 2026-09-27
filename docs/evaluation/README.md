@@ -126,10 +126,10 @@ constructs the known-limitations review marker instead of trusting a hand-edited
 
 The command replaces only the exact untouched synthetic placeholders previously created by
 `vpr-rt0-supporting-scaffold`. If any of those five files has already been edited or reviewed, it
-fails closed rather than overwriting it. Capture is serialized by a native OS file lock
-(`flock` on Unix and `LockFileEx` on Windows), so a live owner cannot lose ownership merely
-because time passes, while the operating system releases ownership automatically when the process
-or file handle terminates. All five new files are staged before replacement, and an ordinary write
+fails closed rather than overwriting it. Capture is serialized by a safe cross-platform process-lifetime file lock via `fs2::FileExt`.
+The underlying operating-system lock remains held for the lifetime of the open file handle, so a
+live or suspended owner cannot lose ownership merely because time passes, while process/handle exit
+releases ownership automatically. All five new files are staged before replacement, and an ordinary write
 failure rolls back earlier replacements to the exact scaffold bytes before the transaction marker is
 released. A bound commit journal is published atomically before replacement; after an interrupted
 process, the single recovery owner either restores the exact scaffold and safely retries a mid-commit

@@ -1312,12 +1312,11 @@ version = "0.1.0"
 name = "vpr-evaluation"
 version = "0.1.0"
 dependencies = [
- "libc",
+ "fs2",
  "serde",
  "serde_json",
  "sha2",
  "vpr-domain",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
