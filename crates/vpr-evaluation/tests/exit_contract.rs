@@ -281,22 +281,28 @@ fn passing_cost_evidence() -> CostEvidence {
     }
 }
 
-fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
+fn owner_golden_digests(provider_state_bytes: &[u8]) -> (String, String, String) {
     let provider_state = serde_json::from_slice(provider_state_bytes).unwrap();
-    let owner_golden = support::owner_fixture(
-        RELEASE_SPEC,
-        CANDIDATE,
-        &provider_state,
-        provider_state_bytes,
-    );
+    let owner_golden =
+        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, provider_state_bytes);
+    (
+        sha256_hex(&owner_golden.suite_bytes),
+        sha256_hex(&owner_golden.bundle_bytes),
+        sha256_hex(&owner_golden.report_bytes),
+    )
+}
+
+fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
+    let (owner_suite_sha, owner_evidence_sha, owner_report_sha) =
+        owner_golden_digests(provider_state_bytes);
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
         candidate_sha: CANDIDATE.into(),
         release_spec_sha256: sha256_hex(RELEASE_SPEC),
         golden_report_sha256: sha256_hex(golden_bytes),
-        owner_golden_suite_sha256: sha256_hex(&owner_golden.suite_bytes),
-        owner_golden_evidence_sha256: sha256_hex(&owner_golden.bundle_bytes),
-        owner_golden_report_sha256: sha256_hex(&owner_golden.report_bytes),
+        owner_golden_suite_sha256: owner_suite_sha,
+        owner_golden_evidence_sha256: owner_evidence_sha,
+        owner_golden_report_sha256: owner_report_sha,
         provider_state_sha256: sha256_hex(provider_state_bytes),
         live_provider_probe_sha256: sha256_hex(&live_provider_probe_bytes(provider_state_bytes)),
         conversation_attempt_sha256: sha256_hex(&conversation_attempt_bytes(provider_state_bytes)),
