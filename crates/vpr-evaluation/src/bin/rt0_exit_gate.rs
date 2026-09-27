@@ -3,7 +3,7 @@ use std::{env, fs, path::Path};
 use serde::Serialize;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle, GoldenSuite,
-    LiveProviderProbeReceipt, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitSupportingArtifacts,
+    LiveProviderProbeReceipt, OwnerGoldenVerificationContext, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitSupportingArtifacts,
     Rt0ExitVerificationContext, evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
 };
 
@@ -117,6 +117,15 @@ fn run() -> Result<(), i32> {
     let bound_session_aggregate: BoundLabSessionEvidenceAggregate =
         parse(&bound_session_aggregate_bytes)?;
 
+    let owner_golden = OwnerGoldenVerificationContext {
+        suite: &owner_golden_suite,
+        suite_bytes: &owner_golden_suite_bytes,
+        report: &owner_golden_report,
+        report_bytes: &owner_golden_report_bytes,
+        evidence_bundle: &owner_golden_evidence_bundle,
+        evidence_bytes: &owner_golden_evidence_bytes,
+    };
+
     let report = match evaluate_rt0_exit_evidence(
         &evidence,
         &golden_report,
@@ -125,12 +134,7 @@ fn run() -> Result<(), i32> {
             golden_report_bytes: &golden_report_bytes,
             golden_evidence_bundle: &golden_evidence_bundle,
             golden_evidence_bytes: &golden_evidence_bytes,
-            owner_golden_suite: &owner_golden_suite,
-            owner_golden_suite_bytes: &owner_golden_suite_bytes,
-            owner_golden_report: &owner_golden_report,
-            owner_golden_report_bytes: &owner_golden_report_bytes,
-            owner_golden_evidence_bundle: &owner_golden_evidence_bundle,
-            owner_golden_evidence_bytes: &owner_golden_evidence_bytes,
+            owner_golden: &owner_golden,
             provider_state: &provider_state,
             provider_state_bytes: &provider_state_bytes,
             live_provider_probe: &live_provider_probe,
