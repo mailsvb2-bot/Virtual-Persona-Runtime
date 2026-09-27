@@ -66,6 +66,10 @@ impl ProviderCredentialProfile {
     }
 
     /// Selects the self-hosted avatar worker while preserving D-ID as a fallback provider.
+    ///
+    /// # Errors
+    /// Returns a redacted configuration error when endpoint or token is empty, or when the
+    /// resulting provider profile is incomplete.
     pub fn select_local_avatar(&mut self, endpoint: &str, api_token: &str) -> Result<(), String> {
         let endpoint = endpoint.trim();
         let api_token = api_token.trim();
