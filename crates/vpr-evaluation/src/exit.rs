@@ -12,11 +12,11 @@ use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
     BoundGoldenReport, GoldenSuite, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
+    RT0_PROVIDER_STATE_SCHEMA, evaluate_bound_owner_golden_suite, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.5";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.5";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.6";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.6";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -175,6 +175,9 @@ pub struct Rt0ExitEvidence {
     pub candidate_sha: String,
     pub release_spec_sha256: String,
     pub golden_report_sha256: String,
+    pub owner_golden_suite_sha256: String,
+    pub owner_golden_evidence_sha256: String,
+    pub owner_golden_report_sha256: String,
     pub provider_state_sha256: String,
     pub live_provider_probe_sha256: String,
     pub conversation_attempt_sha256: String,
@@ -193,6 +196,7 @@ pub struct Rt0ExitEvidence {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Rt0ExitFailureCode {
     GoldenSetNotPassed,
+    OwnerGoldenSetNotPassed,
     CiNotPassed,
     E2eNotPassed,
     OwnerConversationNotReal,
@@ -232,6 +236,8 @@ pub struct Rt0ExitReport {
     pub release_spec_sha256: String,
     pub provider_state_sha256: String,
     pub golden_report_sha256: String,
+    pub owner_golden_suite_sha256: String,
+    pub owner_golden_report_sha256: String,
     pub live_provider_probe_sha256: String,
     pub conversation_attempt_sha256: String,
     pub bound_session_aggregate_sha256: String,
@@ -251,6 +257,9 @@ pub enum Rt0ExitEvidenceError {
     CandidateShaMismatch,
     ReleaseSpecDigestMismatch,
     GoldenReportDigestMismatch,
+    OwnerGoldenDigestMismatch,
+    OwnerGoldenInvalid,
+    OwnerGoldenRecomputeMismatch,
     ProviderStateDigestMismatch,
     ProviderStateMismatch,
     LiveProviderProbeDigestMismatch,
@@ -290,6 +299,11 @@ pub fn evaluate_rt0_exit_evidence(
     {
         failures.push(Rt0ExitFailureCode::GoldenSetNotPassed);
     }
+    if context.owner_golden_report.golden.failed != 0
+        || context.owner_golden_report.golden.passed != context.owner_golden_report.golden.total
+    {
+        failures.push(Rt0ExitFailureCode::OwnerGoldenSetNotPassed);
+    }
     if evidence.automated.ci.status != CheckStatus::Passed {
         failures.push(Rt0ExitFailureCode::CiNotPassed);
     }
@@ -314,6 +328,8 @@ pub fn evaluate_rt0_exit_evidence(
         release_spec_sha256: evidence.release_spec_sha256.clone(),
         provider_state_sha256: evidence.provider_state_sha256.clone(),
         golden_report_sha256: evidence.golden_report_sha256.clone(),
+        owner_golden_suite_sha256: evidence.owner_golden_suite_sha256.clone(),
+        owner_golden_report_sha256: evidence.owner_golden_report_sha256.clone(),
         live_provider_probe_sha256: evidence.live_provider_probe_sha256.clone(),
         conversation_attempt_sha256: evidence.conversation_attempt_sha256.clone(),
         bound_session_aggregate_sha256: evidence.bound_session_aggregate_sha256.clone(),
@@ -339,6 +355,9 @@ fn validate_structure(
     for digest in [
         &evidence.release_spec_sha256,
         &evidence.golden_report_sha256,
+        &evidence.owner_golden_suite_sha256,
+        &evidence.owner_golden_evidence_sha256,
+        &evidence.owner_golden_report_sha256,
         &evidence.provider_state_sha256,
         &evidence.live_provider_probe_sha256,
         &evidence.conversation_attempt_sha256,
@@ -362,12 +381,19 @@ fn validate_structure(
     if evidence.golden_report_sha256 != sha256_hex(context.golden_report_bytes) {
         return Err(Rt0ExitEvidenceError::GoldenReportDigestMismatch);
     }
+    if evidence.owner_golden_suite_sha256 != sha256_hex(context.owner_golden_suite_bytes)
+        || evidence.owner_golden_evidence_sha256 != sha256_hex(context.owner_golden_evidence_bytes)
+        || evidence.owner_golden_report_sha256 != sha256_hex(context.owner_golden_report_bytes)
+    {
+        return Err(Rt0ExitEvidenceError::OwnerGoldenDigestMismatch);
+    }
     if evidence.live_provider_probe_sha256 != sha256_hex(context.live_provider_probe_bytes) {
         return Err(Rt0ExitEvidenceError::LiveProviderProbeDigestMismatch);
     }
     let provider_state_digest = sha256_hex(context.provider_state_bytes);
     if evidence.provider_state_sha256 != provider_state_digest
         || golden_report.binding.provider_state_sha256 != provider_state_digest
+        || context.owner_golden_report.binding.provider_state_sha256 != provider_state_digest
     {
         return Err(Rt0ExitEvidenceError::ProviderStateDigestMismatch);
     }
@@ -410,6 +436,25 @@ fn validate_structure(
     .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
     if recomputed != *golden_report {
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
+    }
+
+    validate_golden_report(context.owner_golden_report)
+        .map_err(|_| Rt0ExitEvidenceError::OwnerGoldenInvalid)?;
+    let owner_recomputed = evaluate_bound_owner_golden_suite(
+        context.owner_golden_suite,
+        context.owner_golden_evidence_bundle,
+        EvidenceVerificationContext {
+            suite_bytes: context.owner_golden_suite_bytes,
+            release_spec_bytes: context.release_spec_bytes,
+            provider_state: context.provider_state,
+            provider_state_bytes: context.provider_state_bytes,
+            evidence_bytes: context.owner_golden_evidence_bytes,
+            exact_candidate_sha: context.exact_candidate_sha,
+        },
+    )
+    .map_err(|_| Rt0ExitEvidenceError::OwnerGoldenInvalid)?;
+    if owner_recomputed != *context.owner_golden_report {
+        return Err(Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch);
     }
     validate_artifact_digests(evidence)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
