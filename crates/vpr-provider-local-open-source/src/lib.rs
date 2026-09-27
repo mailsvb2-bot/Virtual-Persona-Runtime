@@ -459,7 +459,8 @@ mod tests {
             }
             request.extend_from_slice(&buffer[..read]);
             if total.is_none()
-                && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                && let Some(header_end) =
+                    request.windows(4).position(|window| window == b"\r\n\r\n")
             {
                 let headers = String::from_utf8_lossy(&request[..header_end]);
                 let content_length = headers
