@@ -421,6 +421,30 @@ fn validate_structure(
         }
     })?;
     validate_runtime_evidence(evidence, context, &provider_state_digest)?;
+    validate_public_golden(golden_report, context)?;
+
+    crate::owner_golden::verify_private_owner_golden(context).map_err(|error| match error {
+        crate::OwnerGoldenError::ReportMismatch => {
+            Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
+        }
+        _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
+    })?;
+    validate_artifact_digests(evidence)?;
+    if evidence.conversations.owner.role != ParticipantRole::Owner
+        || evidence.conversations.visitor.role != ParticipantRole::Visitor
+    {
+        return Err(Rt0ExitEvidenceError::ParticipantRoleMismatch);
+    }
+    if evidence.human_evaluation.rubric_version.trim().is_empty() {
+        return Err(Rt0ExitEvidenceError::InvalidHumanRubric);
+    }
+    Ok(())
+}
+
+fn validate_public_golden(
+    golden_report: &BoundGoldenReport,
+    context: Rt0ExitVerificationContext<'_>,
+) -> Result<(), Rt0ExitEvidenceError> {
     validate_golden_report(golden_report)?;
     let required_suite: GoldenSuite = serde_json::from_slice(RT0_REQUIRED_GOLDEN_SUITE_BYTES)
         .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
@@ -439,22 +463,6 @@ fn validate_structure(
     .map_err(|_| Rt0ExitEvidenceError::GoldenEvidenceInvalid)?;
     if recomputed != *golden_report {
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
-    }
-
-    crate::owner_golden::verify_private_owner_golden(context).map_err(|error| match error {
-        crate::OwnerGoldenError::ReportMismatch => {
-            Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
-        }
-        _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
-    })?;
-    validate_artifact_digests(evidence)?;
-    if evidence.conversations.owner.role != ParticipantRole::Owner
-        || evidence.conversations.visitor.role != ParticipantRole::Visitor
-    {
-        return Err(Rt0ExitEvidenceError::ParticipantRoleMismatch);
-    }
-    if evidence.human_evaluation.rubric_version.trim().is_empty() {
-        return Err(Rt0ExitEvidenceError::InvalidHumanRubric);
     }
     Ok(())
 }
