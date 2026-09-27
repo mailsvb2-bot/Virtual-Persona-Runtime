@@ -28,11 +28,16 @@ struct ManualSupportingInput {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcceptanceInput {
-    owner_happy_path: CheckStatus,
-    visitor_happy_path: CheckStatus,
-    correction_path: CheckStatus,
-    failure_recovery_path: CheckStatus,
-    revoke_deny_path: CheckStatus,
+    #[serde(rename = "owner_happy_path")]
+    owner_happy: CheckStatus,
+    #[serde(rename = "visitor_happy_path")]
+    visitor_happy: CheckStatus,
+    #[serde(rename = "correction_path")]
+    correction: CheckStatus,
+    #[serde(rename = "failure_recovery_path")]
+    failure_recovery: CheckStatus,
+    #[serde(rename = "revoke_deny_path")]
+    revoke_deny: CheckStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,11 +214,11 @@ fn build_artifacts(
             "acceptance.json",
             pretty_bytes(&json!({
                 "origin": "real",
-                "owner_happy_path": input.acceptance.owner_happy_path,
-                "visitor_happy_path": input.acceptance.visitor_happy_path,
-                "correction_path": input.acceptance.correction_path,
-                "failure_recovery_path": input.acceptance.failure_recovery_path,
-                "revoke_deny_path": input.acceptance.revoke_deny_path,
+                "owner_happy_path": input.acceptance.owner_happy,
+                "visitor_happy_path": input.acceptance.visitor_happy,
+                "correction_path": input.acceptance.correction,
+                "failure_recovery_path": input.acceptance.failure_recovery,
+                "revoke_deny_path": input.acceptance.revoke_deny,
                 "candidate_sha": candidate_sha,
                 "provider_state_sha256": provider_state_sha256,
             })),
@@ -306,11 +311,11 @@ mod tests {
             schema_version: INPUT_SCHEMA.into(),
             attestation: REQUIRED_ATTESTATION.into(),
             acceptance: AcceptanceInput {
-                owner_happy_path: CheckStatus::Passed,
-                visitor_happy_path: CheckStatus::Passed,
-                correction_path: CheckStatus::Passed,
-                failure_recovery_path: CheckStatus::Failed,
-                revoke_deny_path: CheckStatus::Passed,
+                owner_happy: CheckStatus::Passed,
+                visitor_happy: CheckStatus::Passed,
+                correction: CheckStatus::Passed,
+                failure_recovery: CheckStatus::Failed,
+                revoke_deny: CheckStatus::Passed,
             },
             cost: CostInput {
                 estimated_cost_covered_provider_roles: vec![
