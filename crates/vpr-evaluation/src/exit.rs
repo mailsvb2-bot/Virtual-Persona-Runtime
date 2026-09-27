@@ -6,11 +6,11 @@ use crate::binding::{
     EvidenceVerificationContext, ProviderRole, evaluate_bound_golden_suite, valid_git_sha,
     valid_sha256, validate_provider_state,
 };
-use crate::exit_context::Rt0ExitVerificationContext;
-use crate::exit_cost::{estimated_cost_per_minute, evaluate_cost, provider_charge_per_minute};
 use crate::exit_checks::{
     evaluate_acceptance, evaluate_conversations, evaluate_human, evaluate_privacy, evaluate_quality,
 };
+use crate::exit_context::Rt0ExitVerificationContext;
+use crate::exit_cost::{estimated_cost_per_minute, evaluate_cost, provider_charge_per_minute};
 use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
@@ -441,13 +441,12 @@ fn validate_structure(
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
     }
 
-    crate::owner_golden::verify_private_owner_golden(context)
-        .map_err(|error| match error {
-            crate::OwnerGoldenError::ReportMismatch => {
-                Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
-            }
-            _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
-        })?;
+    crate::owner_golden::verify_private_owner_golden(context).map_err(|error| match error {
+        crate::OwnerGoldenError::ReportMismatch => {
+            Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
+        }
+        _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
+    })?;
     validate_artifact_digests(evidence)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
         || evidence.conversations.visitor.role != ParticipantRole::Visitor
@@ -506,4 +505,3 @@ fn validate_artifact_digests(evidence: &Rt0ExitEvidence) -> Result<(), Rt0ExitEv
         Err(Rt0ExitEvidenceError::InvalidArtifactDigest)
     }
 }
-
