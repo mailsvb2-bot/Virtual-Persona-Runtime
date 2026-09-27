@@ -12,7 +12,7 @@ use crate::exit_validation::validate_runtime_evidence;
 use crate::live_provider::{LiveProviderProbeValidationError, validate_live_provider_probe};
 use crate::{
     BoundGoldenReport, GoldenSuite, RT0_EVIDENCE_BINDING_SCHEMA, RT0_GOLDEN_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, evaluate_bound_owner_golden_suite, sha256_hex,
+    RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
 pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.6";
@@ -438,24 +438,13 @@ fn validate_structure(
         return Err(Rt0ExitEvidenceError::GoldenReportRecomputeMismatch);
     }
 
-    validate_golden_report(context.owner_golden_report)
-        .map_err(|_| Rt0ExitEvidenceError::OwnerGoldenInvalid)?;
-    let owner_recomputed = evaluate_bound_owner_golden_suite(
-        context.owner_golden_suite,
-        context.owner_golden_evidence_bundle,
-        EvidenceVerificationContext {
-            suite_bytes: context.owner_golden_suite_bytes,
-            release_spec_bytes: context.release_spec_bytes,
-            provider_state: context.provider_state,
-            provider_state_bytes: context.provider_state_bytes,
-            evidence_bytes: context.owner_golden_evidence_bytes,
-            exact_candidate_sha: context.exact_candidate_sha,
-        },
-    )
-    .map_err(|_| Rt0ExitEvidenceError::OwnerGoldenInvalid)?;
-    if owner_recomputed != *context.owner_golden_report {
-        return Err(Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch);
-    }
+    crate::owner_golden::verify_private_owner_golden(context)
+        .map_err(|error| match error {
+            crate::OwnerGoldenError::ReportMismatch => {
+                Rt0ExitEvidenceError::OwnerGoldenRecomputeMismatch
+            }
+            _ => Rt0ExitEvidenceError::OwnerGoldenInvalid,
+        })?;
     validate_artifact_digests(evidence)?;
     if evidence.conversations.owner.role != ParticipantRole::Owner
         || evidence.conversations.visitor.role != ParticipantRole::Visitor
