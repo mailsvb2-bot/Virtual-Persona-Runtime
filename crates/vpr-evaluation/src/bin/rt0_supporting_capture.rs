@@ -90,7 +90,6 @@ struct CaptureReceipt {
     artifact_sha256: BTreeMap<String, String>,
 }
 
-
 fn main() {
     if let Err(code) = run() {
         process::exit(code);
@@ -137,20 +136,10 @@ fn run() -> Result<(), i32> {
         &input_bytes,
         &artifacts,
     );
-    let lock = match CaptureLock::acquire(
-        supporting_dir,
-        &journal,
-        &expected,
-        &artifacts,
-    )? {
+    let lock = match CaptureLock::acquire(supporting_dir, &journal, &expected, &artifacts)? {
         LockOutcome::Acquired(lock) => {
             validate_exact_placeholders(supporting_dir, &expected)?;
-            write_artifacts_transactional(
-                supporting_dir,
-                &expected,
-                &artifacts,
-                &journal,
-            )?;
+            write_artifacts_transactional(supporting_dir, &expected, &artifacts, &journal)?;
             Some(lock)
         }
         LockOutcome::AlreadyCommitted => None,
