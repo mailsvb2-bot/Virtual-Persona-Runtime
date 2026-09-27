@@ -282,8 +282,12 @@ fn passing_cost_evidence() -> CostEvidence {
 
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
     let provider_state = serde_json::from_slice(provider_state_bytes).unwrap();
-    let owner_golden =
-        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, provider_state_bytes);
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &provider_state,
+        provider_state_bytes,
+    );
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
         candidate_sha: CANDIDATE.into(),
@@ -1166,8 +1170,12 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
     let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
     let session_snapshot_artifacts = [owner_snapshot.as_slice(), visitor_snapshot.as_slice()];
-    let owner_golden =
-        support::owner_fixture(RELEASE_SPEC, CANDIDATE, &provider_state, &provider_state_bytes);
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &provider_state,
+        &provider_state_bytes,
+    );
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
