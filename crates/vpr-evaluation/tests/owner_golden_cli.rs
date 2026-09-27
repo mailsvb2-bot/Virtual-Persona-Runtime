@@ -76,7 +76,11 @@ fn owner_golden_cli_writes_exact_bound_report() {
         .output()
         .unwrap();
 
-    assert!(result.status.success(), "stderr={}", String::from_utf8_lossy(&result.stderr));
+    assert!(
+        result.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     let actual: BoundGoldenReport = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
     assert_eq!(actual, owner.report);
 }
@@ -111,9 +115,7 @@ fn owner_golden_cli_rejects_public_baseline_suite() {
         .unwrap();
 
     assert_eq!(result.status.code(), Some(2));
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("OWNER_GOLDEN_SUITE_INVALID")
-    );
+    assert!(String::from_utf8_lossy(&result.stderr).contains("OWNER_GOLDEN_SUITE_INVALID"));
     assert!(!output.exists());
 }
 
