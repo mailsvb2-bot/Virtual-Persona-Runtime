@@ -1,7 +1,7 @@
 use serde::Serialize;
 use vpr_domain::{
-    ClaimId, ClaimKind, CorrelationId, Modality, PersonaId, PersonaIdentity, PersonaMode,
-    PersonaProfile, PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
+    ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
+    PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
@@ -344,12 +344,11 @@ impl OwnerLabEngine {
         );
         session.activate().map_err(LabError::Runtime)?;
         let turn = self.new_turn_for(&session)?;
-        self.readiness.begin_media_preparation()?;
-        self.readiness.begin_media_validation()?;
+        self.begin_avatar_preparation()?;
         let handle = match turn.open_realtime_avatar(self.provider.as_ref()) {
             Ok(handle) => handle,
             Err(error) => {
-                self.readiness.fail_pending();
+                self.fail_avatar_preparation();
                 return Err(map_provider_execution(error));
             }
         };
@@ -404,22 +403,6 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
-    /// Promotes voice readiness only after accepted browser playback evidence.
-    ///
-    /// # Errors
-    /// Fails closed unless the current Persona has a validating voice preparation attempt.
-    pub fn mark_voice_ready_from_media(&mut self) -> Result<(), LabError> {
-        self.readiness.mark_ready(Modality::Voice)
-    }
-
-    /// Promotes video readiness only after accepted browser first-frame evidence.
-    ///
-    /// # Errors
-    /// Fails closed unless the current Persona has a validating video preparation attempt.
-    pub fn mark_video_ready_from_media(&mut self) -> Result<(), LabError> {
-        self.readiness.mark_ready(Modality::Video)
-    }
-
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
@@ -433,7 +416,7 @@ impl OwnerLabEngine {
             | RealtimeSessionState::Draining
             | RealtimeSessionState::Closed => return Err(LabError::InvalidState),
         }
-        self.readiness.cancel_pending();
+        self.cancel_avatar_preparation();
         self.close_avatar_resource()
     }
 
@@ -442,7 +425,7 @@ impl OwnerLabEngine {
     /// # Errors
     /// Returns a stable reason and never marks provider cleanup complete unless confirmed.
     pub fn close(&mut self) -> Result<(), LabError> {
-        self.readiness.cancel_pending();
+        self.cancel_avatar_preparation();
         self.close_avatar_resource()?;
         let session = self.session.as_mut().ok_or(LabError::InvalidState)?;
         match session.state() {
