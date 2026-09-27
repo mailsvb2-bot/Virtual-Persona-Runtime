@@ -3,8 +3,9 @@ use std::{env, fs, path::Path};
 use serde::Serialize;
 use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle, GoldenSuite,
-    LiveProviderProbeReceipt, OwnerGoldenVerificationContext, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitSupportingArtifacts,
-    Rt0ExitVerificationContext, evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
+    LiveProviderProbeReceipt, OwnerGoldenVerificationContext, ProviderStateManifest,
+    Rt0ExitEvidence, Rt0ExitSupportingArtifacts, Rt0ExitVerificationContext,
+    evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
 };
 
 #[derive(Serialize)]
