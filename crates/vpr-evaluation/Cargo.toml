@@ -45,3 +45,7 @@ path = "src/bin/rt0_runtime_supporting.rs"
 [[bin]]
 name = "vpr-rt0-owner-golden"
 path = "src/bin/rt0_owner_golden.rs"
+
+[[bin]]
+name = "vpr-rt0-supporting-capture"
+path = "src/bin/rt0_supporting_capture.rs"
