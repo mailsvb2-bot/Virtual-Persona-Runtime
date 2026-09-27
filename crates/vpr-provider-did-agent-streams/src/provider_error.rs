@@ -58,6 +58,10 @@ pub(super) fn expect_success(response: Response) -> Result<Response, ProviderErr
 fn map_status(status: u16) -> ProviderError {
     match status {
         401 | 403 => policy_denied(),
+        402 => ProviderError {
+            kind: ProviderErrorKind::InsufficientCredits,
+            retryable: false,
+        },
         408 => ProviderError {
             kind: ProviderErrorKind::Timeout,
             retryable: true,

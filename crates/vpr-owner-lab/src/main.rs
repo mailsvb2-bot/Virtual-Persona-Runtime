@@ -517,6 +517,7 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
         ) => 403,
         LabError::InvalidInput => 400,
         LabError::InvalidState | LabError::Runtime(_) => 409,
+        LabError::Provider(Rt0ReasonCode::BudgetExhausted) => 402,
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
         LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
         LabError::Provider(_) => 502,

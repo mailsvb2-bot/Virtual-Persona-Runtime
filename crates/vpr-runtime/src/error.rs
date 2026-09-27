@@ -80,6 +80,7 @@ pub const fn provider_reason_code(kind: ProviderErrorKind) -> Rt0ReasonCode {
         ProviderErrorKind::Timeout => Rt0ReasonCode::ProviderTimeout,
         ProviderErrorKind::Cancelled => Rt0ReasonCode::TurnCancelled,
         ProviderErrorKind::PolicyDenied => Rt0ReasonCode::EgressDenied,
+        ProviderErrorKind::InsufficientCredits => Rt0ReasonCode::BudgetExhausted,
         ProviderErrorKind::InvalidResponse => Rt0ReasonCode::InternalError,
     }
 }

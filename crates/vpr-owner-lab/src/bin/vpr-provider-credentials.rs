@@ -193,6 +193,9 @@ fn probe_profile_did(
                 ProviderErrorKind::Timeout => "D-ID account authentication: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID account authentication: UNAVAILABLE",
                 ProviderErrorKind::Cancelled => "D-ID account authentication: CANCELLED",
+                ProviderErrorKind::InsufficientCredits => {
+                    "D-ID account authentication: INSUFFICIENT_CREDITS"
+                }
                 ProviderErrorKind::InvalidResponse => {
                     "D-ID account authentication: INVALID_RESPONSE"
                 }
@@ -227,6 +230,9 @@ fn probe_profile_did(
                 ProviderErrorKind::Timeout => "D-ID credential probe: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID credential probe: UNAVAILABLE",
                 ProviderErrorKind::Cancelled => "D-ID credential probe: CANCELLED",
+                ProviderErrorKind::InsufficientCredits => {
+                    "D-ID credential probe: INSUFFICIENT_CREDITS"
+                }
                 ProviderErrorKind::InvalidResponse => "D-ID credential probe: INVALID_RESPONSE",
             };
             Err(message.into())

@@ -151,6 +151,7 @@ impl MediaRecordError {
             ) => 403,
             Self::Lab(LabError::InvalidInput) => 400,
             Self::Lab(LabError::InvalidState | LabError::Runtime(_)) => 409,
+            Self::Lab(LabError::Provider(Rt0ReasonCode::BudgetExhausted)) => 402,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderRateLimited)) => 429,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderTimeout)) => 504,
             Self::Lab(LabError::Provider(_)) => 502,
