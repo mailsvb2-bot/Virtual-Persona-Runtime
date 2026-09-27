@@ -102,6 +102,9 @@ function Clear-ProviderEnvironmentOverrides {
         'VPR_DID_API_KEY',
         'VPR_DID_AGENT_ID',
         'VPR_DID_FLUENT',
+        'VPR_OWNER_LAB_AVATAR_PROVIDER',
+        'VPR_LOCAL_AVATAR_ENDPOINT',
+        'VPR_LOCAL_AVATAR_API_TOKEN',
         'VPR_OWNER_LAB_STT_PROVIDER',
         'VPR_OWNER_LAB_STT_ENDPOINT',
         'VPR_OWNER_LAB_STT_API_KEY',
@@ -144,9 +147,9 @@ try {
     }
 
     Clear-ProviderEnvironmentOverrides
-    & $credentialsExe probe-did
+    & $credentialsExe probe-avatar
     if ($LASTEXITCODE -ne 0) {
-        throw 'D-ID credential preflight failed; Owner Lab was not started'
+        throw 'Avatar provider preflight failed; Owner Lab was not started'
     }
 
     $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && `"$exe`" --allow-egress"

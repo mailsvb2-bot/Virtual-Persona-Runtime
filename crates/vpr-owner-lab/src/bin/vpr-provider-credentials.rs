@@ -14,6 +14,8 @@ use vpr_owner_lab::{
 use vpr_provider_did_agent_streams::{
     DidAgentStreamsAvatar, DidAgentStreamsConfig, DidRuntimeAccessFailure, DidRuntimeAccessProbe,
 };
+#[cfg(windows)]
+use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
 fn main() {
     if let Err(error) = run() {
@@ -39,12 +41,15 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     match command.as_str() {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
+        "set-local-avatar" => set_local_avatar(),
+        "use-did-avatar" => use_did_avatar(),
         "import-env" => import_env_profile(),
         "status" => status(),
         "probe-did" => probe_did(),
+        "probe-avatar" => probe_avatar(),
         "clear" => clear(),
         _ => Err(
-            "usage: vpr-provider-credentials <set|set-did|import-env|status|probe-did|clear>"
+            "usage: vpr-provider-credentials <set|set-did|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
         ),
     }
@@ -86,6 +91,35 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     probe_profile_did(&profile)?;
     save_provider_profile(&profile)?;
     println!("Updated D-ID credentials securely for the current Windows user.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_local_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
+    println!(
+        "Configure self-hosted realtime avatar worker; D-ID credentials remain stored as fallback."
+    );
+    let endpoint = prompt_line("Local avatar HTTPS endpoint: ")?;
+    let api_token = prompt_secret("Local avatar API token: ")?;
+    profile.select_local_avatar(&endpoint, &api_token)?;
+    probe_profile_local_avatar(&profile)?;
+    save_provider_profile(&profile)?;
+    println!("Selected local-open-source avatar securely for the current Windows user.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn use_did_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
+    profile.select_did_avatar();
+    probe_profile_did(&profile)?;
+    save_provider_profile(&profile)?;
+    println!("Selected D-ID avatar for the current Windows user.");
     print_safe_profile(&profile);
     Ok(())
 }
@@ -148,6 +182,48 @@ fn status() -> Result<(), Box<dyn Error + Send + Sync>> {
         }
         None => println!("Secure VPR provider profile: not configured"),
     }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn probe_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let profile = load_provider_profile()?
+        .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
+    match profile.avatar_provider.as_str() {
+        "did" | "d-id" | "did-agent-streams" => probe_profile_did(&profile),
+        "local" | "local-open-source" => probe_profile_local_avatar(&profile),
+        _ => Err("secure VPR provider profile selects an unsupported avatar provider".into()),
+    }
+}
+
+#[cfg(windows)]
+fn probe_profile_local_avatar(
+    profile: &ProviderCredentialProfile,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let endpoint = profile
+        .local_avatar_endpoint
+        .as_deref()
+        .ok_or("local avatar endpoint is not configured")?;
+    let api_token = profile
+        .local_avatar_api_token
+        .as_deref()
+        .ok_or("local avatar API token is not configured")?;
+    let provider =
+        LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(endpoint, api_token))
+            .map_err(|_| "local avatar provider configuration rejected")?;
+    provider.probe_health().map_err(|error| {
+        let message = match error.kind {
+            ProviderErrorKind::PolicyDenied => "local avatar probe: POLICY_DENIED",
+            ProviderErrorKind::RateLimited => "local avatar probe: RATE_LIMITED",
+            ProviderErrorKind::Timeout => "local avatar probe: TIMEOUT",
+            ProviderErrorKind::Unavailable => "local avatar probe: UNAVAILABLE",
+            ProviderErrorKind::Cancelled => "local avatar probe: CANCELLED",
+            ProviderErrorKind::InsufficientCredits => "local avatar probe: INSUFFICIENT_CREDITS",
+            ProviderErrorKind::InvalidResponse => "local avatar probe: INVALID_RESPONSE",
+        };
+        Box::<dyn Error + Send + Sync>::from(message)
+    })?;
+    println!("Local avatar worker probe: OK");
     Ok(())
 }
 
@@ -272,11 +348,20 @@ fn prompt_line(prompt: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
 
 #[cfg(windows)]
 fn print_safe_profile(profile: &ProviderCredentialProfile) {
-    println!(
-        "  avatar: D-ID ({}) · agent={} · legacy fluent disabled",
-        profile.did_endpoint,
-        redact_identifier(&profile.did_agent_id)
-    );
+    match profile.avatar_provider.as_str() {
+        "local" | "local-open-source" => println!(
+            "  avatar: local-open-source ({}) · token stored",
+            profile
+                .local_avatar_endpoint
+                .as_deref()
+                .unwrap_or("<missing>")
+        ),
+        _ => println!(
+            "  avatar: D-ID ({}) · agent={} · legacy fluent disabled",
+            profile.did_endpoint,
+            redact_identifier(&profile.did_agent_id)
+        ),
+    }
     println!(
         "  STT: {} {} ({})",
         profile.stt_provider, profile.stt_model, profile.stt_endpoint
