@@ -140,8 +140,9 @@ fn provider_config_complete_with(
 fn build_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
-    let name =
-        optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER").unwrap_or_else(|| "did".to_owned());
+    let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
+        .or_else(|| profile.map(|profile| profile.avatar_provider.to_ascii_lowercase()))
+        .unwrap_or_else(|| "did".to_owned());
     match name.as_str() {
         "did" | "d-id" | "did-agent-streams" => {
             let endpoint = resolved_value(
@@ -182,8 +183,14 @@ fn build_avatar(
             ))
         }
         "local" | "local-open-source" => {
-            let endpoint = required_value("VPR_LOCAL_AVATAR_ENDPOINT", None)?;
-            let api_token = required_value("VPR_LOCAL_AVATAR_API_TOKEN", None)?;
+            let endpoint = required_value(
+                "VPR_LOCAL_AVATAR_ENDPOINT",
+                profile.and_then(|profile| profile.local_avatar_endpoint.as_deref()),
+            )?;
+            let api_token = required_value(
+                "VPR_LOCAL_AVATAR_API_TOKEN",
+                profile.and_then(|profile| profile.local_avatar_api_token.as_deref()),
+            )?;
             let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
                 endpoint.clone(),
                 api_token,
@@ -439,6 +446,17 @@ mod tests {
         assert!(provider_config_complete_with(true, |name| {
             values.contains(&name).then(|| "configured".into())
         }));
+    }
+
+    #[test]
+    fn stored_avatar_selection_can_supply_local_worker_without_did_env() {
+        let mut profile = profile();
+        profile
+            .select_local_avatar("https://avatar.example.test", "worker-secret")
+            .unwrap();
+        let (avatar, descriptor) = super::build_avatar(Some(&profile)).unwrap();
+        assert_eq!(descriptor.provider, "local-open-source");
+        assert_eq!(avatar.descriptor().provider, "local-open-source");
     }
 
     #[test]
