@@ -619,6 +619,22 @@ Owner audit reads remain subject to current authority/disclosure. Visitor author
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a durable production audit log, owner-facing production audit UI or audit-export API before RT1 entry.
 
+### RT1 Quality / ReleaseEvidence feasibility boundary
+
+A bounded pre-entry spike may freeze the exact-candidate evidence contract required by §§14, 16, 17, 18 and 20 without claiming that any RT1 exit evidence already exists.
+
+RT1 ReleaseEvidence must bind the exact Git candidate, ReleaseSpec version/digest, schema/migration version and the material production candidate provider/model/representation state. Evidence from another candidate or materially different provider/configuration state is stale for affected claims.
+
+The minimum future evidence bundle includes automated unit/contract/integration/browser E2E plus the full owner journey, an independent visitor real conversation, correction, preparation failure/recovery, pause/unpublish denial, measured quality/latency, cost evidence, privacy/permission results, known limitations, rollback or safe-rollforward proof, and explicit human evaluation of voice, appearance, Persona and conversation quality.
+
+The QualityContract measures owner journey time, publish completion success rate, visitor bootstrap/first meaningful response latency, modality readiness/retry recovery and pause/unpublish propagation. Cost estimate must be available before publication or chargeable use. Accepted private-context leakage remains 0 and accepted false owner-opinion attribution remains 0.
+
+CI success alone does not satisfy the RT1 exit gate. Deterministic tests, mocks or synthetic sessions do not substitute for required real-provider, independent-visitor or human acceptance evidence. Missing provider charge or human review must not be inferred or fabricated.
+
+A material candidate/provider/representation change requires remeasurement of affected evidence. Rollback/recovery proof must preserve identity and reviewed claim history and default publication recovery safe/private on ambiguity.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT implement or mark the RT1 exit gate as passed, create a production ReleaseEvidence service, or claim `PRODUCTION_READY` before the complete reviewed bundle exists.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
