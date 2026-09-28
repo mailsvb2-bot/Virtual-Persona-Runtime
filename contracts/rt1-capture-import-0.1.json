@@ -1,0 +1,94 @@
+{
+  "schema": "rt1-capture-import-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "capture_import_runtime_implemented": false,
+  "durable_capture_state_implemented": false,
+  "owner_capture_import_ui_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "supported_input_kinds": [
+    "STRUCTURED_OWNER_INTERVIEW",
+    "VOICE_SAMPLE",
+    "VIDEO_SAMPLE",
+    "OWNER_PROVIDED_DOCUMENT_OR_SOURCE",
+    "PREFERRED_ANSWER_EXAMPLE",
+    "EXPLICIT_BOUNDARY_OR_PROHIBITED_ATTRIBUTION"
+  ],
+  "candidate_record_kinds": [
+    "IDENTITY",
+    "COMMUNICATION_STYLE",
+    "BIOGRAPHY",
+    "PREFERENCES",
+    "OWNER_OPINIONS",
+    "EXPERTISE",
+    "PRONUNCIATION",
+    "BEHAVIOR",
+    "CONSTITUTION_CLAUSE"
+  ],
+  "candidate_invariants": {
+    "capture_produces_candidates_not_automatic_truth": true,
+    "automatically_inferred_owner_facts_remain_unverified_until_review_or_approved_verification": true,
+    "automatically_inferred_owner_opinions_remain_unverified_until_review_or_approved_verification": true,
+    "capture_completion_distinct_from_owner_review_completion": true,
+    "candidate_correction_routes_to_canonical_claim_or_behavior_authority": true,
+    "preferred_answer_does_not_silently_become_verified_fact_or_opinion": true
+  },
+  "voice_and_appearance_reference_routing": {
+    "voice_samples_route_to_voice_identity_and_preparation": true,
+    "video_or_appearance_samples_route_to_appearance_identity_and_preparation": true,
+    "real_person_references_require_current_consent_rights_gate": true,
+    "reference_validation_required_before_activation": true,
+    "quality_evaluation_required_before_activation": true,
+    "provider_ids_are_not_owner_facing_identity": true,
+    "reference_assets_do_not_become_persona_claim_truth": true
+  },
+  "capture_separation": {
+    "capture_quality_separate_from_embodiment_quality": true,
+    "failed_voice_preparation_does_not_invalidate_reviewed_owner_knowledge": true,
+    "failed_avatar_preparation_does_not_invalidate_reviewed_owner_knowledge": true,
+    "failed_avatar_preparation_does_not_invalidate_persona_identity": true,
+    "text_capture_can_remain_valid_when_media_preparation_fails": true
+  },
+  "source_and_retention": {
+    "import_records_source_or_provenance_reference": true,
+    "import_does_not_imply_consent_or_ownership": true,
+    "raw_voice_video_retention_is_purpose_bound": true,
+    "raw_voice_video_not_retained_indefinitely_by_default": true,
+    "sensitive_reference_access_requires_stricter_acl": true,
+    "production_test_fixtures_should_prefer_synthetic_or_deidentified_data": true
+  },
+  "retry_and_completion": {
+    "same_request_identity_must_not_duplicate_candidate_records": true,
+    "capture_finish_retry_must_not_duplicate_reviewable_state": true,
+    "provider_retry_must_not_duplicate_external_side_effect_when_idempotency_or_reconciliation_is_required": true,
+    "unknown_external_outcome_requires_reconciliation_before_unsafe_retry": true
+  },
+  "owner_experience": {
+    "normal_flow_does_not_require_provider_names": true,
+    "normal_flow_does_not_require_provider_model_ids": true,
+    "normal_flow_does_not_require_vector_store_ids": true,
+    "owner_can_test_candidate_before_publication": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "INFERRED_OWNER_OPINION_AUTO_MARKED_OWNER_VERIFIED",
+      "decision": "DENY_MISATTRIBUTION"
+    },
+    {
+      "case": "REAL_PERSON_VOICE_SAMPLE_WITHOUT_APPLICABLE_CONSENT",
+      "decision": "DENY_PREPARATION_OR_ACTIVATION"
+    },
+    {
+      "case": "IMPORTED_SOURCE_WITH_AMBIGUOUS_PROVENANCE",
+      "decision": "KEEP_CANDIDATE_UNVERIFIED_AND_REQUIRE_REVIEW"
+    },
+    {
+      "case": "AVATAR_PREPARATION_FAILS_AFTER_REVIEWED_TEXT_CAPTURE",
+      "decision": "PRESERVE_PERSONA_AND_REVIEWED_TEXT_STATE"
+    },
+    {
+      "case": "DUPLICATE_CAPTURE_COMPLETION_RETRY",
+      "decision": "NO_DUPLICATE_CANDIDATE_OR_REVIEW_EFFECT"
+    }
+  ]
+}
