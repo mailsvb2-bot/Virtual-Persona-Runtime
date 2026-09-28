@@ -106,19 +106,29 @@ const releaseBrowserReference = (kind) => {
   }
 };
 
+const releaseAttemptedFileIfCurrent = (input, attemptedFile) => {
+  if (input.files?.[0] === attemptedFile) input.value = "";
+};
+
 const uploadFile = async (kind, input) => {
   const file = input.files?.[0];
   if (!file) throw new Error("REFERENCE_FILE_REQUIRED");
-  const mediaType = file.type.trim().toLowerCase();
-  if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
-  await uploadBlob(kind, file, mediaType);
-  releaseBrowserReference(kind);
+  try {
+    const mediaType = file.type.trim().toLowerCase();
+    if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
+    await uploadBlob(kind, file, mediaType);
+  } finally {
+    // Release only the File captured for this attempt. If the owner selected a newer
+    // replacement while the request was pending, that newer source remains untouched.
+    releaseAttemptedFileIfCurrent(input, file);
+  }
 };
 
 const clearReference = async (kind) => {
+  // Local raw source release must not depend on CSRF/bootstrap/backend availability.
+  releaseBrowserReference(kind);
   if (!csrfToken) throw new Error("REFERENCE_BOOTSTRAP_PENDING");
   await apiJson("/api/references/clear", { kind });
-  releaseBrowserReference(kind);
   setReferenceStatus(kind, "Reference очищен.");
 };
 
