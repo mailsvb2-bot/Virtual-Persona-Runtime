@@ -62,7 +62,8 @@ for invariant in (
 principals = contract.get("principal_scopes", {})
 owner = principals.get("owner", {})
 visitor = principals.get("public_visitor", {})
-for required in ("authenticated", "matching_workspace_required", "may_use_owner_routes", "may_preview", "may_publish_control"):
+visitor_preview = principals.get("visitor_preview", {})
+for required in ("authenticated", "matching_workspace_required", "may_use_owner_routes", "may_initiate_visitor_preview", "may_publish_control"):
     if owner.get(required) is not True:
         raise SystemExit(f"owner workspace contract lost: {required}")
 if visitor.get("authenticated_workspace_member") is not False:
@@ -74,6 +75,16 @@ if visitor.get("publication_bound") is not True:
 for forbidden in ("may_use_owner_routes", "may_read_owner_private_material", "may_mutate_persona"):
     if visitor.get(forbidden) is not False:
         raise SystemExit(f"public visitor gained forbidden owner capability: {forbidden}")
+
+if visitor_preview.get("initiated_by_owner") is not True:
+    raise SystemExit("Visitor Preview must require owner initiation")
+if visitor_preview.get("authenticated_workspace_member") is not False:
+    raise SystemExit("Visitor Preview session must not become a workspace member")
+if visitor_preview.get("effective_permissions") != "PUBLIC_VISITOR":
+    raise SystemExit("Visitor Preview must execute with visitor permissions")
+for forbidden in ("may_use_owner_routes", "may_read_owner_private_material", "may_mutate_persona"):
+    if visitor_preview.get(forbidden) is not False:
+        raise SystemExit(f"Visitor Preview gained forbidden owner capability: {forbidden}")
 
 public_link = contract.get("public_link_invariants", {})
 for false_invariant in ("is_owner_credential", "grants_workspace_membership", "grants_owner_authority"):
@@ -90,6 +101,7 @@ for true_invariant in (
 required_examples = {
     ("OWNER_WRONG_WORKSPACE", "DENY_BEFORE_PROVIDER_EGRESS"),
     ("VISITOR_CALLS_OWNER_ROUTE", "DENY_BEFORE_PROVIDER_EGRESS"),
+    ("VISITOR_PREVIEW_REQUESTS_OWNER_PRIVATE_CONTEXT", "DENY_UNLESS_EXPLICITLY_AUDIENCE_AUTHORIZED"),
     ("PUBLIC_LINK_ON_PAUSED_PUBLICATION", "DENY_BEFORE_PROVIDER_EGRESS"),
     ("OWNER_MATCHING_WORKSPACE_BUT_SCOPE_DENIED", "DENY_BEFORE_PROVIDER_EGRESS"),
     (
@@ -137,10 +149,16 @@ public_bootstrap = publication.get("bootstrap", {}).get("public_visitor", {})
 preview_bootstrap = publication.get("bootstrap", {}).get("preview", {})
 if public_bootstrap.get("scope") != "PUBLIC_VISITOR":
     raise SystemExit("workspace spike must preserve publication-bound PUBLIC_VISITOR scope")
-if preview_bootstrap.get("scope") != "OWNER_PREVIEW":
-    raise SystemExit("workspace spike must preserve distinct OWNER_PREVIEW scope")
+if preview_bootstrap.get("scope") != "VISITOR_PREVIEW":
+    raise SystemExit("workspace spike must preserve distinct VISITOR_PREVIEW scope")
+if preview_bootstrap.get("requires_owner_initiation") is not True:
+    raise SystemExit("workspace spike must preserve owner initiation for Visitor Preview")
+if preview_bootstrap.get("effective_permissions") != "PUBLIC_VISITOR":
+    raise SystemExit("workspace spike must preserve visitor permissions inside Visitor Preview")
+if preview_bootstrap.get("owner_privileges_in_session") is not False:
+    raise SystemExit("workspace spike must forbid owner privileges inside Visitor Preview")
 if preview_bootstrap.get("grants_public_authority") is not False:
-    raise SystemExit("owner preview must not grant public authority")
+    raise SystemExit("Visitor Preview must not grant public authority")
 
 for required_spec_marker in (
     "owner account/workspace basics with tenant-scoped authorization",
