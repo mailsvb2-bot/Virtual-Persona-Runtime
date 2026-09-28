@@ -1,0 +1,80 @@
+{
+  "schema": "rt1-consent-rights-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "durable_consent_rights_state_implemented": false,
+  "owner_consent_ui_implemented": false,
+  "revocation_runtime_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "dimensions": [
+    "RIGHTS_BASIS",
+    "CONSENT_STATE",
+    "COMMERCIAL_PERMISSION",
+    "USAGE_RESTRICTIONS",
+    "TERRITORY",
+    "EXPIRY",
+    "REVOCATION_STATE"
+  ],
+  "independence_invariants": {
+    "dimensions_not_collapsed_into_single_enum": true,
+    "persona_version_immutable_authorization_mutable": true,
+    "provider_representation_does_not_own_consent": true,
+    "provider_success_cannot_override_rights": true
+  },
+  "real_person_biometric_rules": {
+    "voice_requires_explicit_consent_scope": true,
+    "face_requires_explicit_consent_scope": true,
+    "body_requires_explicit_consent_scope": true,
+    "scope_binds_allowed_use": true,
+    "scope_binds_audience_or_application_when_relevant": true,
+    "scope_binds_expiry_when_present": true,
+    "commercial_use_requires_separate_permission": true,
+    "raw_biometric_material_not_retained_indefinitely_by_default": true
+  },
+  "activation_gates": {
+    "current_consent_required": true,
+    "current_rights_basis_required": true,
+    "commercial_permission_required_for_commercial_use": true,
+    "usage_restrictions_must_allow_operation": true,
+    "territory_must_allow_operation_when_restricted": true,
+    "expiry_must_not_be_passed": true,
+    "revoked_state_denies_activation_or_use": true
+  },
+  "revocation_and_change": {
+    "revocation_does_not_require_new_persona_version": true,
+    "revocation_invalidates_affected_current_authorization": true,
+    "revoked_representation_not_reactivated_by_stale_cache": true,
+    "revocation_blocks_new_sensitive_operations_before_provider_egress": true,
+    "running_session_propagation_sla_deferred_to_rt2": true,
+    "offline_revocation_semantics_deferred_to_rt2": true
+  },
+  "capture_import": {
+    "capture_or_import_records_source_and_scope": true,
+    "import_does_not_imply_ownership_or_consent": true,
+    "third_party_or_ambiguous_rights_fail_closed": true,
+    "reference_validation_distinct_from_consent_validation": true,
+    "quality_validation_distinct_from_rights_validation": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "REAL_PERSON_VOICE_WITHOUT_EXPLICIT_CONSENT_SCOPE",
+      "decision": "DENY_BEFORE_PREPARATION_OR_USE"
+    },
+    {
+      "case": "FACE_REFERENCE_IMPORTED_BUT_RIGHTS_AMBIGUOUS",
+      "decision": "DENY_ACTIVATION"
+    },
+    {
+      "case": "COMMERCIAL_USE_WITH_NONCOMMERCIAL_PERMISSION",
+      "decision": "DENY"
+    },
+    {
+      "case": "EXPIRED_CONSENT",
+      "decision": "DENY"
+    },
+    {
+      "case": "REVOKED_REPRESENTATION_CACHED_AS_READY",
+      "decision": "DENY_AND_INVALIDATE_AFFECTED_AUTHORIZATION"
+    }
+  ]
+}

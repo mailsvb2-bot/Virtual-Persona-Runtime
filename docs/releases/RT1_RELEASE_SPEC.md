@@ -493,6 +493,30 @@ Pause and unpublish deny new public sessions but do not delete the private Perso
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production RT1 Persona lifecycle store, lifecycle management API or owner-facing lifecycle manager before RT1 entry.
 
+### Consent / rights feasibility boundary
+
+A bounded pre-entry spike may freeze the RT1 consent/rights semantics required for voice/appearance capture and use without creating production consent storage or UI before RT1 entry.
+
+Rights remain independent dimensions rather than one overloaded status:
+
+- `RIGHTS_BASIS`;
+- `CONSENT_STATE`;
+- `COMMERCIAL_PERMISSION`;
+- `USAGE_RESTRICTIONS`;
+- `TERRITORY`;
+- `EXPIRY`;
+- `REVOCATION_STATE`.
+
+Real-person voice/face/body references require explicit consent scope. Importing a reference does not prove ownership or consent, and reference/quality validation remain distinct from rights validation. Commercial use requires an applicable commercial permission rather than being inferred from general consent.
+
+Current consent/rights must be checked before activation or sensitive use. Expired, revoked, territory-incompatible, use-restricted or commercially insufficient state fails closed. Provider success, preparation readiness or cached readiness cannot override rights.
+
+PersonaVersion remains immutable while authorization/consent is mutable. Revocation of an affected representation must invalidate current authorization and deny new sensitive operations before provider egress without requiring a new PersonaVersion. RT2 will define active-session revocation SLA and offline/air-gapped propagation semantics.
+
+Raw biometric material must not be retained indefinitely by default; retention remains purpose-bound and subject to deletion/consent policy.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production consent/rights persistence, consent-management APIs, owner-facing consent UI or RT2 revocation-runtime semantics before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
