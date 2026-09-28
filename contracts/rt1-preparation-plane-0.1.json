@@ -1,0 +1,77 @@
+{
+  "schema": "rt1-preparation-plane-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "durable_preparation_jobs_implemented": false,
+  "owner_preparation_ui_implemented": false,
+  "production_retry_cancel_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "planes": {
+    "preparation_plane_separate_from_live_plane": true,
+    "prepared_assets_reusable": true,
+    "preparation_failure_does_not_destroy_persona": true,
+    "partial_readiness_is_not_total_persona_failure": true
+  },
+  "job_states": [
+    "QUEUED",
+    "PREPARING",
+    "VALIDATING",
+    "READY",
+    "FAILED",
+    "CANCELLED",
+    "EXPIRED"
+  ],
+  "optional_wait_states": [
+    "WAITING_USER_INPUT",
+    "WAITING_PROVIDER"
+  ],
+  "job_identity_and_binding": {
+    "stable_job_id": true,
+    "binds_persona_id": true,
+    "binds_persona_version_or_input_revision": true,
+    "binds_modality_or_asset_kind": true,
+    "binds_provider_operation_when_external": true,
+    "provider_id_not_canonical_persona_identity": true
+  },
+  "retry_and_cancel": {
+    "retry_targets_only_affected_job_or_representation": true,
+    "retry_is_idempotent_when_repeated": true,
+    "unknown_external_outcome_reconciled_before_retry": true,
+    "local_cancel_does_not_imply_provider_cancel_or_refund": true,
+    "late_provider_success_after_cancel_cannot_silently_publish": true
+  },
+  "stale_result_rules": {
+    "result_for_old_persona_version_or_input_revision_not_current": true,
+    "material_provider_or_config_change_requires_revalidation": true,
+    "correction_invalidates_only_affected_derived_or_prepared_state": true,
+    "unrelated_ready_modalities_remain_intact": true
+  },
+  "readiness_projection": {
+    "text_voice_video_independent": true,
+    "job_state_not_equal_persona_state": true,
+    "ready_requires_validation": true,
+    "failed_or_cancelled_job_not_ready": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "VOICE_PREPARATION_FAILED",
+      "decision": "VOICE_FAILED_PERSONA_AND_UNRELATED_MODALITIES_INTACT"
+    },
+    {
+      "case": "VIDEO_RETRY_REQUESTED",
+      "decision": "RETRY_ONLY_VIDEO_PREPARATION"
+    },
+    {
+      "case": "OLD_JOB_COMPLETES_AFTER_PERSONA_CORRECTION",
+      "decision": "MARK_STALE_DO_NOT_PROMOTE_CURRENT_READINESS"
+    },
+    {
+      "case": "CANCELLED_EXTERNAL_JOB_LATER_REPORTS_SUCCESS",
+      "decision": "RECONCILE_AND_REQUIRE_CURRENT_BINDING_BEFORE_ACCEPTANCE"
+    },
+    {
+      "case": "PROVIDER_ACK_LOST",
+      "decision": "UNKNOWN_OUTCOME_RECONCILE_BEFORE_RETRY"
+    }
+  ]
+}
