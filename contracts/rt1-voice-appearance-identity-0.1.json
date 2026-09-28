@@ -16,18 +16,30 @@
     "appearance_change_not_personality_change": true
   },
   "voice_identity": {
-    "operations": ["CREATE", "SELECT", "IMPORT", "CONNECT", "AUTO_ROUTE"],
+    "operations": [
+      "CREATE",
+      "SELECT",
+      "IMPORT",
+      "CONNECT",
+      "AUTO_ROUTE"
+    ],
     "requires_rights_or_consent_for_real_person": true,
     "reference_validation_required": true,
     "quality_evaluation_required": true,
     "versioned": true,
     "multiple_provider_or_language_representations_allowed": true,
     "provider_migration_may_preserve_logical_identity": true,
-    "material_acoustic_change_visible_to_owner": true,
-    "material_change_requires_reevaluation": true
+    "acoustic_realization_change_visible_to_owner": true,
+    "acoustic_realization_change_requires_reevaluation": true
   },
   "appearance_identity": {
-    "operations": ["CREATE", "SELECT", "IMPORT", "CONNECT", "AUTO_ROUTE"],
+    "operations": [
+      "CREATE",
+      "SELECT",
+      "IMPORT",
+      "CONNECT",
+      "AUTO_ROUTE"
+    ],
     "supported_embodiment_classes": [
       "REAL_HUMAN",
       "STYLIZED_HUMAN",
@@ -43,7 +55,16 @@
     "real_person_requires_explicit_consent_scope": true,
     "provider_representation_does_not_own_identity": true,
     "material_identity_fidelity_change_visible_to_owner": true,
-    "material_change_requires_reevaluation": true
+    "material_change_requires_reevaluation": true,
+    "reference_validation_required": true,
+    "quality_evaluation_required": true,
+    "per_class_maturity_independent": true,
+    "embodiment_maturity": {
+      "REAL_HUMAN": "EXPERIMENTAL",
+      "STYLIZED_HUMAN": "NOT_TESTED",
+      "ANIMAL": "NOT_TESTED",
+      "NON_HUMAN_CHARACTER": "NOT_TESTED"
+    }
   },
   "representation_binding": {
     "binds_logical_identity": true,
@@ -56,12 +77,12 @@
   "migration_and_activation": {
     "compatibility_check_required": true,
     "candidate_representation_not_active_by_default": true,
-    "quality_comparison_required_for_material_replacement": true,
     "rights_or_consent_rechecked": true,
     "owner_approval_required_when_material_identity_fidelity_changes": true,
     "activation_explicit": true,
     "rollback_point_required": true,
-    "automatic_material_substitution_for_real_person_forbidden": true
+    "automatic_material_substitution_for_real_person_forbidden": true,
+    "quality_comparison_required": true
   },
   "fail_closed_examples": [
     {
