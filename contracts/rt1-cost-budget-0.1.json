@@ -1,0 +1,75 @@
+{
+  "schema": "rt1-cost-budget-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "prepublication_estimate_runtime_implemented": false,
+  "hard_session_budget_runtime_implemented": false,
+  "owner_cost_ui_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "cost_classes": [
+    "PREPARATION_COST",
+    "ESTIMATED_SESSION_COST",
+    "LIVE_ESTIMATED_USAGE",
+    "CONFIRMED_PROVIDER_CHARGE",
+    "CUSTOMER_CHARGE",
+    "MONTHLY_USAGE"
+  ],
+  "separation_invariants": {
+    "estimate_not_usage": true,
+    "usage_not_provider_charge": true,
+    "provider_charge_not_customer_charge": true,
+    "missing_provider_charge_not_invented": true,
+    "customer_charge_requires_explicit_business_contract": true
+  },
+  "prepublication_estimate": {
+    "required_before_publication_or_first_chargeable_use": true,
+    "binds_supported_candidate_configuration": true,
+    "records_estimate_basis_or_version": true,
+    "stale_when_material_provider_model_or_representation_changes": true,
+    "unknown_components_remain_unknown": true
+  },
+  "hard_session_budget": {
+    "must_not_be_silently_exceeded": true,
+    "exhaustion_reason_code": "BUDGET_EXHAUSTED",
+    "default_decision_on_uncertain_remaining_budget": "DENY_OR_REQUIRE_EXPLICIT_APPROVAL",
+    "concurrent_expensive_operations_require_reservation_or_equivalent": true,
+    "provider_fallback_cannot_bypass_budget_or_egress_policy": true,
+    "retry_cannot_double_reserve_or_double_charge": true
+  },
+  "allowed_exhaustion_actions": [
+    "WARN",
+    "DEGRADE_QUALITY",
+    "FALL_BACK_TO_VOICE",
+    "FALL_BACK_TO_TEXT",
+    "END_SESSION",
+    "REQUIRE_EXPLICIT_APPROVAL"
+  ],
+  "realtime_spend_controls": {
+    "idle_timeout_required_before_production": true,
+    "grace_period_explicit": true,
+    "reconnect_window_explicit": true,
+    "uncontrolled_gpu_or_video_spend_forbidden": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "PROVIDER_CHARGE_MISSING",
+      "decision": "REPORT_UNKNOWN_NOT_SYNTHESIZED"
+    },
+    {
+      "case": "HARD_SESSION_BUDGET_EXHAUSTED",
+      "decision": "DENY_OR_APPLY_PREAPPROVED_EXHAUSTION_POLICY"
+    },
+    {
+      "case": "CONCURRENT_RESERVATIONS_EXCEED_REMAINING_BUDGET",
+      "decision": "AT_MOST_BUDGETED_OPERATIONS_PROCEED"
+    },
+    {
+      "case": "RETRY_AFTER_UNKNOWN_EXTERNAL_OUTCOME",
+      "decision": "RECONCILE_BEFORE_NEW_RESERVATION_OR_CHARGE"
+    },
+    {
+      "case": "FALLBACK_PROVIDER_COSTS_MORE_OR_VIOLATES_POLICY",
+      "decision": "DO_NOT_SILENTLY_FALL_BACK"
+    }
+  ]
+}
