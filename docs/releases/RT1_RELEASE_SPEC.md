@@ -540,6 +540,33 @@ All mutations require owner authority and fail closed on stale PersonaVersion. T
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production Owner Control Center persistence, production mutation APIs or owner-facing production UI before RT1 entry.
 
+### Capture / import feasibility boundary
+
+A bounded pre-entry spike may freeze the first-owner capture/import semantics required by Canon §4.1 and RT1 while reusing the existing RT0 guided interview, canonical claim review, VoiceIdentity/AppearanceIdentity, Preparation Plane and consent/rights boundaries.
+
+Supported owner inputs may include:
+
+- structured owner interview;
+- voice samples;
+- video/appearance samples;
+- owner-provided documents or sources;
+- preferred-answer examples;
+- explicit boundaries and prohibited attributions.
+
+The pipeline produces **candidate structured records** for identity, communication style, biography, preferences, owner opinions, expertise, pronunciation, behavior and Constitution clauses. Capture does not turn inferred material into owner-verified truth. Automatically inferred owner facts/opinions remain unverified until explicit owner review or another approved verification rule applies.
+
+Capture completion and owner-review completion remain distinct. Corrections route to the existing canonical claim/behavior authorities rather than creating a second capture-owned mutation path. A preferred answer does not silently become a verified fact or opinion.
+
+Voice samples route to VoiceIdentity/preparation; appearance/video samples route to AppearanceIdentity/preparation. Real-person references remain gated by current consent/rights, reference validation and quality evaluation. Provider IDs are not owner-facing identity, and reference assets do not become Persona claim truth.
+
+Capture quality remains separate from embodiment quality. Failed voice/avatar preparation must not invalidate reviewed owner knowledge or Persona identity; text capture may remain valid while a media representation is failed or preparing.
+
+Imported sources retain provenance/reference identity. Import does not prove consent or ownership. Raw voice/video retention remains purpose-bound and is not indefinite by default; sensitive references require stricter ACL.
+
+Retry/completion semantics must prevent duplicate candidate/review effects for the same request identity, and uncertain external provider outcomes require reconciliation before unsafe retry.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production RT1 capture/import persistence, production upload/import APIs or owner-facing production capture/import UI before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
