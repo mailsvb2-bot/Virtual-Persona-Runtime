@@ -383,15 +383,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
-  // This harness validates expressive LiveKit playback/recovery rather than checkbox
-  // actionability, which is already covered by owner/voice browser E2E. Its media
-  // fakes can keep the page in continuous layout activity, so set the canonical
-  // consent control directly and still dispatch the same DOM change signal.
-  await page.locator("#consent").evaluate((element) => {
-    const input = element as HTMLInputElement;
-    input.checked = true;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await page.locator("#consent").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
