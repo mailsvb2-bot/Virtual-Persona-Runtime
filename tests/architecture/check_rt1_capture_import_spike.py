@@ -75,6 +75,7 @@ for invariant in (
 for invariant in (
     "capture_quality_separate_from_embodiment_quality",
     "failed_voice_preparation_does_not_invalidate_reviewed_owner_knowledge",
+    "failed_voice_preparation_does_not_invalidate_persona_identity",
     "failed_avatar_preparation_does_not_invalidate_reviewed_owner_knowledge",
     "failed_avatar_preparation_does_not_invalidate_persona_identity",
     "text_capture_can_remain_valid_when_media_preparation_fails",
