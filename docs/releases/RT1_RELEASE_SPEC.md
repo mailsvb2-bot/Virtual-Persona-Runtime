@@ -635,6 +635,22 @@ A material candidate/provider/representation change requires remeasurement of af
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT implement or mark the RT1 exit gate as passed, create a production ReleaseEvidence service, or claim `PRODUCTION_READY` before the complete reviewed bundle exists.
 
+### Private Persona deletion feasibility boundary
+
+A bounded pre-entry spike may freeze the semantics of deleting a private Persona without conflating deletion with publication control.
+
+`PAUSE` and `UNPUBLISH` only stop or remove public access. They MUST NOT delete the private Persona. Claim deletion removes a claim, not the Persona identity. Private Persona deletion is a separate owner-authorized operation.
+
+A committed private Persona deletion must block new owner/public use of that Persona, invalidate preview/publication bindings, remove active Persona/private content, and invalidate or erase affected derived summaries, caches, search/vector-index entries, generated profiles and equivalent derived state. Affected voice/appearance representations must be revoked or deactivated without deleting unrelated workspaces or other Personas.
+
+Deleted personal content MUST NOT be retained merely for revision history. A minimal non-content erasure/tombstone record MAY remain only to preserve deletion semantics and verification and MUST NOT contain the deleted content.
+
+Backup/restore and rollback MUST preserve erasure intent. A restore MUST NOT silently resurrect deleted personal content. Ambiguous restore state fails closed as deleted/unavailable rather than reviving content.
+
+Deletion must be idempotent under retry, require the exact current Persona identity/version or equivalent concurrency binding, and prevent concurrent correction/publication from overwriting a committed delete. Derived/public state bound to the deleted Persona must never become current again.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production private-Persona delete API, durable erasure runtime or owner-facing production delete UI before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
