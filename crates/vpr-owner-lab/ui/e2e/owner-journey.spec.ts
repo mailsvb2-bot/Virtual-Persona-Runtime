@@ -459,6 +459,10 @@ test("owner can upload and clear local voice/appearance references without raw r
   await page.locator("#reference-rights").check();
   await page.getByRole("button", { name: "Загрузить голос" }).click();
   await expect(page.locator("#voice-reference-status")).toContainText("raw не хранится");
+  await expect(page.locator("#voice-reference-file")).toHaveValue("");
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
   expect(state.voiceReference?.media_type).toBe("audio/webm");
   expect(state.voiceReference?.raw_retained).toBe(false);
 
@@ -469,6 +473,10 @@ test("owner can upload and clear local voice/appearance references without raw r
   });
   await page.getByRole("button", { name: "Загрузить внешность" }).click();
   await expect(page.locator("#appearance-reference-status")).toContainText("raw не хранится");
+  await expect(page.locator("#appearance-reference-file")).toHaveValue("");
+  expect(await page.locator("#appearance-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
   expect(state.appearanceReference?.media_type).toBe("image/png");
   expect(state.appearanceReference?.raw_retained).toBe(false);
 
@@ -551,6 +559,9 @@ test("reference recorder honors selected microphone device", async ({ page }) =>
 
   await page.getByRole("button", { name: "Остановить запись" }).click();
   await expect(page.locator("#voice-reference-status")).toContainText("raw не хранится");
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
 });
 
 test("owner review, correction, visitor scope and revoke stay connected in one browser journey", async ({ page }) => {
