@@ -587,6 +587,20 @@ Input validation is server-side. Unexpected enums, oversized payloads and ambigu
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production RT1 endpoints, public API exposure or a durable mutation transport before RT1 entry.
 
+### Stable reason-code / actionable UI feasibility boundary
+
+A bounded pre-entry spike may freeze the first-owner UI semantics for expected failures and denials while reusing the existing canonical `Rt0ReasonCode` enum rather than creating an RT1-specific error brain.
+
+The canonical reason identity remains the stable code, not localized copy. RT1-specific additions require a versioned contract change.
+
+Each reason used by the first RT1 journey must map to a user-comprehensible blocking/recovery state before production. The UI mapping does not create authority: server-side authorization, consent, egress and budget decisions remain authoritative even if a retry or action button is visible.
+
+Authorization and consent denials must not auto-retry without the required authority/consent change. Egress denials must not silently switch to external egress. Provider unavailable/rate-limit/timeout may offer retry or only a pre-approved fallback; fallback must not be silent. Preparation failure retries only the affected representation while unrelated valid modalities remain usable. Budget exhaustion stops chargeable work rather than overrunning the hard budget. Internal errors show a safe generic failure without raw secret/stack disclosure.
+
+An unknown reason must never render as success. Provider failure, cancellation or invalid state must not be presented as completed business success.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a second reason enum, production reason-catalog API or production UI mapping before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
