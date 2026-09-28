@@ -69,12 +69,24 @@ for invariant in (
     if contract.get("gating_invariants", {}).get(invariant) is not True:
         raise SystemExit(f"RT1 Persona lifecycle gate lost: {invariant}")
 
+expected_correction_transitions = {
+    "REVIEWED": "REVIEWED",
+    "READY_FOR_PREVIEW": "REVIEWED",
+    "READY_FOR_PUBLICATION": "REVIEWED",
+    "PUBLISHED": "REVIEWED",
+    "PAUSED": "REVIEWED",
+}
+if contract.get("correction_transitions") != expected_correction_transitions:
+    raise SystemExit("RT1 Persona correction re-entry transitions drifted")
+
 for invariant in (
     "correction_after_review_creates_new_persona_version",
     "affected_readiness_may_move_back_to_preparation_or_review",
     "unaffected_readiness_may_remain_valid_if_binding_still_current",
     "stale_preview_or_publication_binding_must_fail_closed",
     "prior_published_version_remains_immutable_history",
+    "corrected_new_version_starts_reviewed",
+    "repreview_required_before_republication",
 ):
     if contract.get("correction_and_invalidation", {}).get(invariant) is not True:
         raise SystemExit(f"RT1 correction lifecycle invariant lost: {invariant}")
