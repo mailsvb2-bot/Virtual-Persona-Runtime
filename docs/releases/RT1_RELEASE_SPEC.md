@@ -465,9 +465,9 @@ and provider/renderer identifiers remain representation bindings rather than can
 
 Voice and appearance operations may include `CREATE`, `SELECT`, `IMPORT`, `CONNECT` and `AUTO_ROUTE`, but real-person voice/face/body representations require the applicable rights/consent state, reference validation and quality evaluation before activation.
 
-A logical VoiceIdentity or AppearanceIdentity may acquire a new provider representation without creating a new Persona identity. Material acoustic or visual identity-fidelity changes must be visible to the owner and re-evaluated. A candidate representation is not active merely because a provider returned success.
+A logical VoiceIdentity or AppearanceIdentity may acquire a new provider representation without creating a new Persona identity. Any provider migration that changes acoustic realization must be visible to the owner and re-evaluated. Appearance references require validation and quality evaluation before activation. Each embodiment class carries its own independent maturity state. A candidate representation is not active merely because a provider returned success.
 
-Provider/representation migration must preserve compatibility checking, rights/consent re-check, quality comparison, explicit activation and a rollback point. For a real-person identity, materially different automatic substitution must not silently activate.
+Provider/representation migration must preserve compatibility checking, rights/consent re-check, quality comparison for every migration, explicit activation and a rollback point. For a real-person identity, materially different automatic substitution must not silently activate.
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production VoiceIdentity/AppearanceIdentity persistence, management APIs or owner-facing identity-manager UI before RT1 entry.
 
