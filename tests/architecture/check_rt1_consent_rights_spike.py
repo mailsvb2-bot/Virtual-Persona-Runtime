@@ -108,7 +108,8 @@ if actual_fail_closed != expected_fail_closed:
 surface_suffixes = {".rs", ".ts", ".tsx", ".js", ".html"}
 forbidden_markers = (
     "struct RightsBasis",
-    "enum ConsentState",
+    "Rt1ConsentRightsRecord",
+    "DurableConsentRightsState",
     "struct CommercialPermission",
     "struct UsageRestrictions",
     "struct RevocationState",
