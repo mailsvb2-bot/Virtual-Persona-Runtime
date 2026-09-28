@@ -1,0 +1,67 @@
+{
+  "schema": "rt1-persona-deletion-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "persona_deletion_runtime_implemented": false,
+  "durable_erasure_ledger_implemented": false,
+  "owner_delete_ui_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "semantic_distinctions": {
+    "unpublish_is_not_private_persona_deletion": true,
+    "pause_is_not_private_persona_deletion": true,
+    "claim_delete_is_not_private_persona_deletion": true,
+    "private_persona_delete_requires_explicit_owner_authority": true
+  },
+  "delete_effects": {
+    "blocks_new_owner_and_public_use_of_deleted_persona": true,
+    "removes_active_persona_content_and_active_private_state": true,
+    "invalidates_publication_and_preview_bindings": true,
+    "invalidates_or_erases_derived_summaries": true,
+    "invalidates_or_erases_caches": true,
+    "invalidates_or_erases_search_or_vector_index_entries": true,
+    "invalidates_or_erases_generated_profiles_or_equivalent_derived_state": true,
+    "revokes_or_deactivates_affected_voice_and_appearance_representations": true,
+    "does_not_delete_unrelated_workspace_or_other_personas": true
+  },
+  "erasure_and_audit": {
+    "deleted_personal_content_not_retained_for_revision_history": true,
+    "minimal_non_content_erasure_tombstone_allowed": true,
+    "tombstone_must_not_contain_deleted_content": true,
+    "deletion_event_auditable_without_preserving_deleted_payload": true,
+    "deletion_verification_required": true
+  },
+  "recovery_and_backup": {
+    "restore_must_not_silently_resurrect_deleted_personal_content": true,
+    "rollback_must_preserve_erasure_intent": true,
+    "ambiguous_restore_state_fails_closed_deleted_or_unavailable": true,
+    "retry_same_delete_request_must_not_duplicate_side_effects": true
+  },
+  "concurrency_and_binding": {
+    "delete_requires_exact_current_persona_identity": true,
+    "stale_persona_version_delete_fails_closed": true,
+    "concurrent_correction_or_publication_cannot_overwrite_committed_delete": true,
+    "derived_or_public_state_bound_to_deleted_persona_must_not_become_current_again": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "UNPUBLISH_REQUEST",
+      "decision": "KEEP_PRIVATE_PERSONA"
+    },
+    {
+      "case": "DELETE_PERSONA_WITH_STALE_VERSION",
+      "decision": "DENY"
+    },
+    {
+      "case": "BACKUP_RESTORE_CONTAINS_DELETED_PERSONA_CONTENT",
+      "decision": "DO_NOT_RESURRECT_DELETED_CONTENT"
+    },
+    {
+      "case": "DELETE_RETRY_AFTER_COMMITTED_DELETE",
+      "decision": "IDEMPOTENT_ALREADY_DELETED"
+    },
+    {
+      "case": "PUBLICATION_CACHE_REFERENCES_DELETED_PERSONA",
+      "decision": "DENY_AND_INVALIDATE_STALE_PROJECTION"
+    }
+  ]
+}
