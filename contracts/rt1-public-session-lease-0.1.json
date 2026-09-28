@@ -1,0 +1,73 @@
+{
+  "schema": "rt1-public-session-lease-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "public_endpoint_exposed": false,
+  "durable_state_implemented": false,
+  "purpose": "bounded contract-level feasibility proof for active public-session authority",
+  "lease_binding": {
+    "binds_publication_id": true,
+    "binds_persona_id": true,
+    "binds_persona_version": true,
+    "binds_authorization_epoch": true,
+    "binds_publication_state_version": true,
+    "bounded_expiry_required": true,
+    "provider_session_id_is_not_authority": true,
+    "client_token_is_not_canonical_authority": true
+  },
+  "issuance": {
+    "allowed_only_from_published": true,
+    "requires_exact_current_persona_version": true,
+    "requires_current_authorization_epoch": true,
+    "requires_current_publication_state_version": true,
+    "ambiguous_state_denied": true
+  },
+  "revalidation": {
+    "required_before_new_turn_or_protected_provider_egress": true,
+    "pause_invalidates_active_public_authority": true,
+    "unpublish_invalidates_active_public_authority": true,
+    "consent_or_permission_revoke_invalidates_active_public_authority": true,
+    "persona_correction_invalidates_stale_version_lease": true,
+    "expired_lease_denied": true,
+    "cache_cannot_extend_authority": true
+  },
+  "concurrency": {
+    "state_and_epoch_changes_are_monotonic": true,
+    "revocation_wins_over_concurrent_resume_for_older_epoch": true,
+    "late_provider_success_cannot_restore_authority": true,
+    "stale_lease_cannot_be_reissued_as_current_without_new_authorization_check": true,
+    "retry_does_not_duplicate_authority_grant": true
+  },
+  "active_session_after_revocation": {
+    "new_turn_denied": true,
+    "in_flight_turn_cancelled_or_drained_without_further_protected_egress": true,
+    "client_disconnect_not_required_for_server_side_denial": true,
+    "provider_disconnect_best_effort_not_source_of_truth": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "PUBLICATION_PAUSED_WITH_ACTIVE_SESSION",
+      "decision": "DENY_NEXT_TURN_AND_REVOKE_PUBLIC_AUTHORITY"
+    },
+    {
+      "case": "PUBLICATION_UNPUBLISHED_WITH_ACTIVE_SESSION",
+      "decision": "DENY_NEXT_TURN_AND_REVOKE_PUBLIC_AUTHORITY"
+    },
+    {
+      "case": "PERSONA_CORRECTED_AFTER_LEASE_ISSUED",
+      "decision": "DENY_STALE_PERSONA_VERSION_LEASE"
+    },
+    {
+      "case": "CONSENT_REVOKED_DURING_IN_FLIGHT_TURN",
+      "decision": "CANCEL_OR_DRAIN_WITHOUT_FURTHER_PROTECTED_EGRESS"
+    },
+    {
+      "case": "STALE_RESUME_RACES_WITH_NEWER_REVOKE",
+      "decision": "REVOKE_WINS_OLDER_EPOCH_CANNOT_REAUTHORIZE"
+    },
+    {
+      "case": "PROVIDER_REPORTS_LATE_SUCCESS_AFTER_REVOKE",
+      "decision": "IGNORE_FOR_AUTHORITY_RECONCILE_AS_NON_CURRENT"
+    }
+  ]
+}
