@@ -559,7 +559,7 @@ Capture completion and owner-review completion remain distinct. Corrections rout
 
 Voice samples route to VoiceIdentity/preparation; appearance/video samples route to AppearanceIdentity/preparation. Real-person references remain gated by current consent/rights, reference validation and quality evaluation. Provider IDs are not owner-facing identity, and reference assets do not become Persona claim truth.
 
-Capture quality remains separate from embodiment quality. Failed voice/avatar preparation must not invalidate reviewed owner knowledge or Persona identity; text capture may remain valid while a media representation is failed or preparing.
+Capture quality remains separate from embodiment quality. Failed voice preparation and failed avatar preparation must each preserve reviewed owner knowledge and Persona identity; text capture may remain valid while a media representation is failed or preparing.
 
 Imported sources retain provenance/reference identity. Import does not prove consent or ownership. Raw voice/video retention remains purpose-bound and is not indefinite by default; sensitive references require stricter ACL.
 
