@@ -567,6 +567,26 @@ Retry/completion semantics must prevent duplicate candidate/review effects for t
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production RT1 capture/import persistence, production upload/import APIs or owner-facing production capture/import UI before RT1 entry.
 
+### API contract feasibility boundary
+
+A bounded pre-entry spike may freeze cross-cutting RT1 API semantics before any production RT1 transport is implemented.
+
+The bounded operation families cover owner workspace/session identity, Persona create/read, capture/import initiate/complete, owner claim review/mutations, preparation jobs, readiness, Visitor Preview, publication controls, public visitor bootstrap, Answer Evidence Card retrieval, cost estimate, and owner-visible audit/provenance.
+
+Mutations require a stable request identity so an exact retry cannot silently create a second business effect. Writes against mutable Persona/publication/claim state require an expected version or equivalent concurrency token; stale writes fail closed rather than overwriting newer owner state.
+
+When an API operation can cause an external side effect, provider idempotency is used where supported, external operation identity is preserved where available, and `UNKNOWN_OUTCOME` is reconciled before an unsafe retry. Local cancel does not imply provider cancellation or refund.
+
+List operations use bounded page sizes and an opaque cursor with explicit stable ordering. A cursor must not contain owner secrets/provider credentials and can never bypass current authorization or disclosure filtering.
+
+The API contract is versioned. Breaking changes require an explicit version or migration/deprecation path, and saved publication links must not silently change meaning. Provider/model/vector-store identifiers are not required in the normal owner payloads.
+
+Expected domain denial/failure uses stable reason-code families. Authorization or provider failure must not be reported as business success. Before production, each expected reason used by the first journey must have a user-actionable UI mapping.
+
+Input validation is server-side. Unexpected enums, oversized payloads and ambiguous/duplicated fields must follow an explicit fail-closed or canonicalization contract. Visitor authority cannot call owner mutation surfaces.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production RT1 endpoints, public API exposure or a durable mutation transport before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
