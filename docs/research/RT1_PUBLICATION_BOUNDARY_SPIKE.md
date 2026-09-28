@@ -39,13 +39,13 @@ Unknown/ambiguous state fails closed.
 
 ## Scope separation
 
-`OWNER_PREVIEW` and `PUBLIC_VISITOR` are distinct bootstrap scopes.
+`VISITOR_PREVIEW` and `PUBLIC_VISITOR` are distinct bootstrap scopes.
 
-Owner preview may be available while a publication is PREVIEWABLE, PUBLISHED or PAUSED, subject to owner authority. Preview never grants public authority.
+The owner initiates Visitor Preview, but the preview session executes with visitor permissions, never owner privileges. It may be available while a publication is PREVIEWABLE, PUBLISHED or PAUSED. Owner-private context is denied by default unless explicitly authorized for that visitor audience. Preview never grants public authority.
 
 A new PUBLIC_VISITOR bootstrap is allowed only while state is exactly PUBLISHED and the publication's bound PersonaVersion still equals the current canonical version. PAUSED, UNPUBLISHED, stale PersonaVersion or ambiguous state deny before any future public provider egress.
 
-This deliberately separates “the owner can preview the Persona” from “the public can start a new session”.
+This deliberately separates owner initiation from session authority: the owner can launch a Visitor Preview, but the resulting conversation is evaluated through visitor permissions; public bootstrap remains a separate permission to start a public session.
 
 ## Correction / stale projection rule
 

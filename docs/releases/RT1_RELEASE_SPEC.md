@@ -356,7 +356,8 @@ The preferred first spike is contract-level validation of the publication bounda
 
 - can a stable publication identity point to canonical PersonaVersion without copying Persona truth;
 - can pause/unpublish deny new visitor bootstrap fail-closed;
-- can preview and public scopes remain distinct;
+- can Visitor Preview execute with visitor permissions while owner initiation remains separate from session authority;
+- can preview and public bootstrap scopes remain distinct;
 - can a future durable schema represent publication without embedding provider identity.
 
 The spike must remain non-production, non-public and non-promoting. Its purpose is to remove uncertainty before RT1 entry, not to ship RT1 early.

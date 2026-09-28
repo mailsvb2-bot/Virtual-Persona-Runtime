@@ -45,6 +45,8 @@ Workspace IDs therefore MUST NOT be encoded into ad-hoc `AuthorityScope` strings
 
 Owner routes require an authenticated owner principal, matching workspace and the required effective scope.
 
+The owner may initiate Visitor Preview, but initiation does not transfer owner authority into the preview session. Visitor Preview executes with visitor permissions, is not a workspace-member session, cannot call owner routes or mutate the Persona, and denies owner-private material unless that material is explicitly audience-authorized for the visitor context.
+
 Public visitors are not workspace members. They enter through the publication boundary already proven by the publication spike.
 
 A public link or publication token:
