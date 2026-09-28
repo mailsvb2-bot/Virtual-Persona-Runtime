@@ -281,14 +281,13 @@ fn doctor_validates_candidate_inputs_and_provider_config_without_egress() {
     fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
     let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
 
-    let mut command = doctor_command(
-        &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
+    let mut command = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio);
+    configure_live(
+        &mut command,
+        "did-doctor-secret",
+        "stt-doctor-secret",
+        "llm-doctor-secret",
     );
-    configure_live(&mut command, "did-doctor-secret", "stt-doctor-secret", "llm-doctor-secret");
     command
         .env_remove("VPR_LIVE_PROOF_ALLOW_EGRESS")
         .env("VPR_DID_ENDPOINT", "http://127.0.0.1:9")
@@ -315,7 +314,11 @@ fn doctor_validates_candidate_inputs_and_provider_config_without_egress() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    for secret in ["did-doctor-secret", "stt-doctor-secret", "llm-doctor-secret"] {
+    for secret in [
+        "did-doctor-secret",
+        "stt-doctor-secret",
+        "llm-doctor-secret",
+    ] {
         assert!(!all_output.contains(secret));
     }
     remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
@@ -328,15 +331,9 @@ fn doctor_rejects_invalid_private_inputs_before_provider_configuration() {
     fs::write(&probe_audio, vec![0_u8; 3]).unwrap();
     let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
 
-    let output = doctor_command(
-        &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
-    )
-    .output()
-    .unwrap();
+    let output = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio)
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("INVALID_INPUT"));
@@ -351,16 +348,10 @@ fn doctor_rejects_incomplete_provider_configuration_without_secret_echo() {
     fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
     let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
 
-    let output = doctor_command(
-        &repo,
-        &probe_audio,
-        &profile,
-        &owner_audio,
-        &visitor_audio,
-    )
-    .env("VPR_DID_API_KEY", "doctor-do-not-echo")
-    .output()
-    .unwrap();
+    let output = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio)
+        .env("VPR_DID_API_KEY", "doctor-do-not-echo")
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("PROVIDER_CONFIGURATION_INVALID"));
