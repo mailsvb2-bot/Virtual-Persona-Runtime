@@ -392,10 +392,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
-  await expect(connectAvatar).toBeEnabled();
   // Consent and connect-button actionability are separately covered by the browser-contract
-  // journey. This provider harness invokes the already-enabled DOM control directly.
+  // journey. This provider harness invokes the DOM control directly and verifies the real
+  // backend transition below.
   await page.locator("#connect").evaluate((element) => (element as HTMLButtonElement).click());
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
