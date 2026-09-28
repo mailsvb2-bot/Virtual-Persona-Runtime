@@ -122,7 +122,7 @@ for required_spec_marker in (
     "Status:** `BLOCKED_ON_RT0_EXIT`",
     "Allowed pre-entry work:** `BOUNDED_FEASIBILITY_SPIKE_ONLY`",
     "Stable reason-code / actionable UI feasibility boundary",
-    "reuse the existing canonical `Rt0ReasonCode`",
+    "reusing the existing canonical `Rt0ReasonCode`",
     "unknown reason must never render as success",
     "must remain contract-only and non-promoting",
 ):
