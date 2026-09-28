@@ -1,0 +1,95 @@
+{
+  "schema": "rt1-api-boundary-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "rt1_http_endpoints_implemented": false,
+  "public_api_implemented": false,
+  "durable_mutation_api_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "operation_families": [
+    "OWNER_WORKSPACE_SESSION_IDENTITY",
+    "PERSONA_CREATE_READ",
+    "CAPTURE_IMPORT_INITIATE_COMPLETE",
+    "OWNER_CLAIM_LIST_REVIEW_CORRECT_HIDE_DELETE",
+    "PREPARATION_CREATE_LIST_RETRY_CANCEL",
+    "READINESS_QUERY",
+    "VISITOR_PREVIEW_SESSION",
+    "PUBLICATION_CREATE_READ_PAUSE_RESUME_UNPUBLISH",
+    "PUBLIC_VISITOR_SESSION_BOOTSTRAP",
+    "ANSWER_EVIDENCE_CARD_RETRIEVAL",
+    "PRE_PUBLICATION_OR_USE_COST_ESTIMATE",
+    "OWNER_VISIBLE_AUDIT_PROVENANCE"
+  ],
+  "versioning": {
+    "api_contract_is_versioned": true,
+    "breaking_change_requires_explicit_version_or_migration_path": true,
+    "provider_specific_ids_not_required_in_normal_owner_payloads": true,
+    "saved_publication_links_must_not_silently_change_semantics": true
+  },
+  "mutation_semantics": {
+    "mutation_requires_stable_request_identity": true,
+    "retry_with_same_request_identity_must_not_duplicate_business_effect": true,
+    "mutable_aggregate_write_requires_expected_version_or_equivalent_concurrency_token": true,
+    "stale_write_fails_closed": true,
+    "owner_mutation_requires_current_owner_authority": true,
+    "workspace_or_tenant_scope_checked_server_side": true,
+    "durable_state_and_required_event_must_not_split_brain": true
+  },
+  "external_side_effect_semantics": {
+    "idempotency_used_when_provider_supports_it": true,
+    "external_operation_id_preserved_when_available": true,
+    "unknown_outcome_reconciled_before_unsafe_retry": true,
+    "local_cancel_does_not_imply_provider_cancel_or_refund": true
+  },
+  "pagination": {
+    "list_operations_use_bounded_page_size": true,
+    "cursor_is_opaque_to_clients": true,
+    "ordering_is_explicit_and_stable_within_contract": true,
+    "cursor_must_not_encode_owner_secret_or_provider_credential": true,
+    "pagination_must_not_bypass_authorization_or_disclosure_filters": true
+  },
+  "read_and_projection_semantics": {
+    "persona_reads_bind_canonical_persona_identity_and_version": true,
+    "public_bootstrap_requires_exact_current_publication_binding": true,
+    "visitor_preview_executes_with_visitor_permissions": true,
+    "evidence_reads_respect_effective_disclosure": true,
+    "stale_or_ambiguous_public_state_fails_closed": true
+  },
+  "error_contract": {
+    "stable_reason_code_required_for_expected_domain_denial_or_failure": true,
+    "unknown_internal_failure_maps_to_internal_error_without_secret_leak": true,
+    "authorization_denial_must_not_be_returned_as_success": true,
+    "provider_failure_must_not_be_returned_as_business_success": true,
+    "user_actionable_ui_mapping_required_before_production": true
+  },
+  "security_and_input": {
+    "server_side_validation_required": true,
+    "unexpected_enum_rejected": true,
+    "oversized_payload_bounded": true,
+    "duplicate_or_ambiguous_fields_rejected_or_canonicalized_by_explicit_contract": true,
+    "secrets_and_raw_private_source_payloads_not_echoed_by_default": true,
+    "visitor_cannot_call_owner_mutation_surface": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "RETRIED_MUTATION_WITH_SAME_REQUEST_ID",
+      "decision": "RETURN_OR_RECONCILE_SINGLE_BUSINESS_EFFECT"
+    },
+    {
+      "case": "MUTATION_WITH_STALE_EXPECTED_PERSONA_VERSION",
+      "decision": "DENY_STALE_WRITE"
+    },
+    {
+      "case": "UNKNOWN_PROVIDER_OUTCOME_THEN_RETRY",
+      "decision": "RECONCILE_BEFORE_NEW_SIDE_EFFECT"
+    },
+    {
+      "case": "VISITOR_ATTEMPTS_OWNER_MUTATION",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "PAGINATION_CURSOR_FROM_DIFFERENT_AUTHORITY_SCOPE",
+      "decision": "DENY_OR_RESTART_AUTHORIZED_LIST"
+    }
+  ]
+}
