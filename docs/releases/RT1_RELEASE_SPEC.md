@@ -517,6 +517,29 @@ Raw biometric material must not be retained indefinitely by default; retention r
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production consent/rights persistence, consent-management APIs, owner-facing consent UI or RT2 revocation-runtime semantics before RT1 entry.
 
+### Owner Control Center feasibility boundary
+
+A bounded pre-entry spike may freeze the owner-facing control projection required by Canon §11 without creating a second claim, provenance or audience authority.
+
+The Owner Control Center remains a projection titled equivalent to “What my Persona knows and says about me” over canonical claims/revisions, provenance and audience policy. It may classify owner-facing material as facts, opinions, preferences, stories, biography, skills, restrictions, relationships and system inferences.
+
+Existing actions `confirm`, `correct`, `hide` and `delete` MUST route to the canonical owner-claim lifecycle. The Control Center does not acquire a separate mutation engine.
+
+Additional owner controls are bounded as follows:
+
+- `restrict audience` narrows visibility in this flow, routes to canonical audience policy and invalidates affected public projection;
+- `mark outdated` preserves attributable history, removes the item from current factual context and invalidates affected derived/public state without pretending to delete it;
+- `reject inference` applies only to system-inferred/derived material, must not manufacture an opposite owner-verified claim, and invalidates affected derived/public state;
+- `inspect provenance` is a read-only, disclosure-filtered projection of canonical evidence and must not expose restricted source payloads or hidden chain-of-thought.
+
+The owner correction authority hierarchy remains:
+
+`Explicit Owner Correction > Verified Owner Statement > Verified Source > System Inference > Unverified Model Knowledge`.
+
+All mutations require owner authority and fail closed on stale PersonaVersion. The Control Center cannot widen authority, bypass claim lifecycle or evidence disclosure, or require provider/model IDs in the normal owner flow.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production Owner Control Center persistence, production mutation APIs or owner-facing production UI before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
