@@ -285,6 +285,10 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       }
 
       async connect(): Promise<void> {
+        // Real LiveKit publishes remote tracks asynchronously after transport connect.
+        // Yield a browser task before emitting subscriptions so provider media callbacks
+        // cannot run inside the same DOM click dispatch that starts the session.
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         this.videoTrack = new FakeRemoteTrack("video");
         this.audioTrack = new FakeRemoteTrack("audio");
         this.emit(roomEvents.TrackSubscribed, this.videoTrack);
