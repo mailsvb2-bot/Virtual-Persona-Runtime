@@ -331,7 +331,8 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.goto("/");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await page.locator("#consent").check();
+  await page.locator("#consent").check({ force: true });
+  await expect(page.locator("#consent")).toBeChecked();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
