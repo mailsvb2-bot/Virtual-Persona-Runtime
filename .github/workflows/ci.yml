@@ -52,6 +52,8 @@ jobs:
         run: python3 tests/architecture/check_rt1_api_boundary_spike.py
       - name: RT1 reason-code UI pre-entry spike
         run: python3 tests/architecture/check_rt1_reason_ui_spike.py
+      - name: RT1 owner audit pre-entry spike
+        run: python3 tests/architecture/check_rt1_owner_audit_spike.py
       - name: Owner Lab browser contract guard
         run: python3 tests/architecture/check_browser_contract.py
       - name: Lockfile consistency
