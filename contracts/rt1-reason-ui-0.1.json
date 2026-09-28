@@ -1,0 +1,148 @@
+{
+  "schema": "rt1-reason-ui-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "rt1_reason_enum_implemented": false,
+  "production_ui_mapping_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "canonical_reason_source": "vpr_domain::Rt0ReasonCode",
+  "canonical_reason_codes": [
+    "AUTH_REVOKED",
+    "AUTH_EXPIRED",
+    "AUTH_SCOPE_DENIED",
+    "EGRESS_DENIED",
+    "EGRESS_LOCAL_ONLY",
+    "CONSENT_REQUIRED",
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_TIMEOUT",
+    "PREPARATION_FAILED",
+    "TURN_CANCELLED",
+    "INVALID_STATE_TRANSITION",
+    "OWNER_ATTRIBUTION_UNVERIFIED",
+    "BUDGET_EXHAUSTED",
+    "INTERNAL_ERROR"
+  ],
+  "minimum_rt1_journey_codes": [
+    "AUTH_REVOKED",
+    "AUTH_EXPIRED",
+    "AUTH_SCOPE_DENIED",
+    "EGRESS_DENIED",
+    "EGRESS_LOCAL_ONLY",
+    "CONSENT_REQUIRED",
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_RATE_LIMITED",
+    "PROVIDER_TIMEOUT",
+    "PREPARATION_FAILED",
+    "INVALID_STATE_TRANSITION",
+    "OWNER_ATTRIBUTION_UNVERIFIED",
+    "BUDGET_EXHAUSTED",
+    "INTERNAL_ERROR"
+  ],
+  "ui_semantics": {
+    "AUTH_REVOKED": {
+      "blocking": true,
+      "action": "REAUTHORIZE_OR_STOP",
+      "automatic_retry_without_authority_change": false
+    },
+    "AUTH_EXPIRED": {
+      "blocking": true,
+      "action": "REAUTHORIZE",
+      "automatic_retry_without_authority_change": false
+    },
+    "AUTH_SCOPE_DENIED": {
+      "blocking": true,
+      "action": "CHANGE_REQUEST_OR_AUTHORITY",
+      "automatic_retry_without_authority_change": false
+    },
+    "EGRESS_DENIED": {
+      "blocking": true,
+      "action": "EXPLAIN_POLICY_BLOCK",
+      "silent_external_fallback": false
+    },
+    "EGRESS_LOCAL_ONLY": {
+      "blocking": true,
+      "action": "EXPLAIN_LOCAL_ONLY",
+      "silent_external_fallback": false
+    },
+    "CONSENT_REQUIRED": {
+      "blocking": true,
+      "action": "COLLECT_OR_UPDATE_CONSENT",
+      "automatic_retry_without_consent_change": false
+    },
+    "PROVIDER_UNAVAILABLE": {
+      "blocking_for_current_attempt": true,
+      "action": "RETRY_OR_USE_PREAPPROVED_FALLBACK",
+      "silent_fallback": false
+    },
+    "PROVIDER_RATE_LIMITED": {
+      "blocking_for_current_attempt": true,
+      "action": "RETRY_LATER_OR_USE_PREAPPROVED_FALLBACK",
+      "silent_fallback": false
+    },
+    "PROVIDER_TIMEOUT": {
+      "blocking_for_current_attempt": true,
+      "action": "RETRY_OR_USE_PREAPPROVED_FALLBACK",
+      "silent_fallback": false
+    },
+    "PREPARATION_FAILED": {
+      "blocking_for_affected_representation": true,
+      "action": "RETRY_AFFECTED_REPRESENTATION",
+      "unrelated_modalities_remain_usable_when_valid": true
+    },
+    "TURN_CANCELLED": {
+      "business_success": false,
+      "action": "SHOW_CANCELLED_OR_IDLE_STATE"
+    },
+    "INVALID_STATE_TRANSITION": {
+      "business_success": false,
+      "action": "REFRESH_AND_SHOW_VALID_NEXT_STEP"
+    },
+    "OWNER_ATTRIBUTION_UNVERIFIED": {
+      "blocking_for_owner_attribution": true,
+      "action": "OWNER_REVIEW_REQUIRED"
+    },
+    "BUDGET_EXHAUSTED": {
+      "blocking": true,
+      "action": "STOP_CHARGEABLE_WORK_AND_SHOW_BUDGET",
+      "silent_budget_overrun": false
+    },
+    "INTERNAL_ERROR": {
+      "business_success": false,
+      "action": "SHOW_SAFE_GENERIC_FAILURE",
+      "raw_secret_or_stack_disclosure": false
+    }
+  },
+  "cross_cutting_invariants": {
+    "rt1_reuses_canonical_reason_enum": true,
+    "new_rt1_specific_reason_requires_versioned_contract_change": true,
+    "localized_copy_is_not_reason_identity": true,
+    "unknown_reason_never_maps_to_success": true,
+    "ui_action_does_not_bypass_server_authorization": true,
+    "provider_failure_never_maps_to_business_success": true,
+    "expected_denial_is_user_comprehensible_before_production": true,
+    "raw_provider_error_or_secret_not_shown_by_default": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "UNKNOWN_REASON_CODE_REACHES_UI",
+      "decision": "SHOW_SAFE_GENERIC_FAILURE_NOT_SUCCESS"
+    },
+    {
+      "case": "CONSENT_REQUIRED_AND_USER_PRESSES_RETRY_WITHOUT_NEW_CONSENT",
+      "decision": "REMAIN_DENIED"
+    },
+    {
+      "case": "PROVIDER_TIMEOUT_WITH_UNAPPROVED_FALLBACK",
+      "decision": "DO_NOT_SILENTLY_SWITCH_PROVIDER"
+    },
+    {
+      "case": "BUDGET_EXHAUSTED_WITH_RETRY",
+      "decision": "DO_NOT_EXCEED_HARD_BUDGET"
+    },
+    {
+      "case": "AUTH_SCOPE_DENIED_BUT_UI_BUTTON_VISIBLE",
+      "decision": "SERVER_DENY_REMAINS_AUTHORITATIVE"
+    }
+  ]
+}
