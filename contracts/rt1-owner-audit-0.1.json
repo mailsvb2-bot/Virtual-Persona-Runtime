@@ -1,0 +1,93 @@
+{
+  "schema": "rt1-owner-audit-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "durable_audit_log_implemented": false,
+  "owner_audit_ui_implemented": false,
+  "audit_export_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "canonical_scope": {
+    "is_projection_of_authoritative_mutations_and_execution_evidence": true,
+    "is_not_second_persona_or_claim_source_of_truth": true,
+    "owner_visible_where_disclosure_allows": true,
+    "operator_or_admin_visibility_requires_separate_authority": true
+  },
+  "minimum_audited_event_families": [
+    "PERSONA_CREATED_OR_VERSION_ADVANCED",
+    "OWNER_CLAIM_CONFIRMED",
+    "OWNER_CLAIM_CORRECTED",
+    "OWNER_CLAIM_HIDDEN",
+    "OWNER_CLAIM_DELETED",
+    "AUDIENCE_RESTRICTED",
+    "INFERENCE_REJECTED",
+    "CONSENT_OR_RIGHTS_CHANGED",
+    "VOICE_OR_APPEARANCE_REPRESENTATION_ACTIVATED",
+    "PUBLICATION_CREATED",
+    "PUBLICATION_PAUSED",
+    "PUBLICATION_RESUMED",
+    "PUBLICATION_UNPUBLISHED",
+    "PREPARATION_RETRY_OR_CANCEL_REQUESTED",
+    "BEHAVIOR_CHANGE_APPROVED",
+    "OWNER_VISIBLE_SECURITY_OR_AUTHORITY_DENIAL"
+  ],
+  "record_minimum": [
+    "AUDIT_EVENT_ID",
+    "EVENT_TYPE",
+    "TIMESTAMP",
+    "ACTOR_ID_OR_ACTOR_CLASS",
+    "WORKSPACE_OR_TENANT_SCOPE",
+    "PERSONA_ID",
+    "PERSONA_VERSION_WHEN_APPLICABLE",
+    "TARGET_ID_WHEN_APPLICABLE",
+    "REQUEST_OR_OPERATION_ID_WHEN_APPLICABLE",
+    "REASON_CODE_WHEN_APPLICABLE",
+    "RESULT",
+    "EVIDENCE_OR_REVISION_REFERENCE_WHEN_APPLICABLE"
+  ],
+  "privacy_and_integrity": {
+    "audit_record_does_not_copy_secrets": true,
+    "audit_record_does_not_copy_unrestricted_private_payloads_by_default": true,
+    "deleted_personal_content_need_not_be_retained_in_audit": true,
+    "minimal_non_content_tombstone_allowed_for_deletion_evidence": true,
+    "audit_read_respects_current_disclosure_and_authority": true,
+    "audit_event_identity_is_stable": true,
+    "retry_must_not_create_duplicate_business_audit_event_for_same_committed_effect": true,
+    "append_or_immutable_evidence_semantics_required_for_committed_history": true
+  },
+  "binding_invariants": {
+    "claim_correction_audit_binds_prior_and_new_revision": true,
+    "persona_version_change_audit_binds_old_and_new_version": true,
+    "publication_event_binds_exact_publication_identity_and_persona_version": true,
+    "consent_or_rights_event_binds_authorization_epoch_or_equivalent_revision_when_available": true,
+    "provider_ids_never_replace_canonical_persona_or_representation_identity": true,
+    "answer_evidence_card_remains_separate_turn_evidence_projection": true
+  },
+  "recovery_and_failure": {
+    "durable_mutation_and_required_audit_event_must_not_split_brain": true,
+    "unknown_external_outcome_may_record_reconciling_state_without_claiming_success": true,
+    "failed_mutation_must_not_be_audited_as_committed_success": true,
+    "rollback_or_safe_rollforward_preserves_committed_audit_continuity": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "CLAIM_DELETE_SUCCEEDS_BUT_AUDIT_WOULD_REQUIRE_RETAINING_DELETED_CONTENT",
+      "decision": "STORE_MINIMAL_NON_CONTENT_DELETION_EVIDENCE_ONLY"
+    },
+    {
+      "case": "VISITOR_REQUESTS_OWNER_AUDIT_TRAIL",
+      "decision": "DENY"
+    },
+    {
+      "case": "RETRIED_MUTATION_ALREADY_COMMITTED",
+      "decision": "RETURN_SINGLE_BUSINESS_EFFECT_AND_NON_DUPLICATED_COMMITTED_AUDIT"
+    },
+    {
+      "case": "PROVIDER_ACK_LOST",
+      "decision": "AUDIT_UNKNOWN_OR_RECONCILING_NOT_SUCCESS"
+    },
+    {
+      "case": "AUDIT_READ_WOULD_DISCLOSE_RESTRICTED_PRIVATE_SOURCE",
+      "decision": "REDACT_OR_OMIT_BY_EFFECTIVE_AUTHORITY"
+    }
+  ]
+}
