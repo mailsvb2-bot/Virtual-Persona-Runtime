@@ -124,7 +124,7 @@ for required_spec_marker in (
     "first cost estimate before publication/use",
     "Cost and hard-budget feasibility boundary",
     "ESTIMATE != USAGE != PROVIDER CHARGE != CUSTOMER CHARGE",
-    "must not silently exceed a hard session budget",
+    "A hard session budget must not be silently exceeded.",
     "must remain contract-only and non-promoting",
 ):
     if required_spec_marker not in spec:
