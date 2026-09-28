@@ -119,7 +119,7 @@ for required_spec_marker in (
     "Preparation Plane job lifecycle",
     "Preparation Plane job feasibility boundary",
     "QUEUED -> PREPARING -> VALIDATING -> READY | FAILED | CANCELLED | EXPIRED",
-    "retry only the affected representation",
+    "Retry must target only the affected representation",
     "must remain contract-only and non-promoting",
 ):
     if required_spec_marker not in spec:
