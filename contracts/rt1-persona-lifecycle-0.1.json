@@ -17,17 +17,44 @@
     "UNPUBLISHED"
   ],
   "forward_transitions": [
-    ["DRAFT", "CAPTURED"],
-    ["CAPTURED", "REVIEWED"],
-    ["REVIEWED", "READY_FOR_PREVIEW"],
-    ["READY_FOR_PREVIEW", "READY_FOR_PUBLICATION"],
-    ["READY_FOR_PUBLICATION", "PUBLISHED"]
+    [
+      "DRAFT",
+      "CAPTURED"
+    ],
+    [
+      "CAPTURED",
+      "REVIEWED"
+    ],
+    [
+      "REVIEWED",
+      "READY_FOR_PREVIEW"
+    ],
+    [
+      "READY_FOR_PREVIEW",
+      "READY_FOR_PUBLICATION"
+    ],
+    [
+      "READY_FOR_PUBLICATION",
+      "PUBLISHED"
+    ]
   ],
   "side_transitions": [
-    ["PUBLISHED", "PAUSED"],
-    ["PAUSED", "PUBLISHED"],
-    ["PUBLISHED", "UNPUBLISHED"],
-    ["PAUSED", "UNPUBLISHED"]
+    [
+      "PUBLISHED",
+      "PAUSED"
+    ],
+    [
+      "PAUSED",
+      "PUBLISHED"
+    ],
+    [
+      "PUBLISHED",
+      "UNPUBLISHED"
+    ],
+    [
+      "PAUSED",
+      "UNPUBLISHED"
+    ]
   ],
   "gating_invariants": {
     "provider_success_cannot_advance_persona_lifecycle_directly": true,
@@ -44,7 +71,9 @@
     "affected_readiness_may_move_back_to_preparation_or_review": true,
     "unaffected_readiness_may_remain_valid_if_binding_still_current": true,
     "stale_preview_or_publication_binding_must_fail_closed": true,
-    "prior_published_version_remains_immutable_history": true
+    "prior_published_version_remains_immutable_history": true,
+    "corrected_new_version_starts_reviewed": true,
+    "repreview_required_before_republication": true
   },
   "pause_and_unpublish": {
     "pause_blocks_new_public_sessions": true,
@@ -54,10 +83,22 @@
     "resume_requires_current_valid_publication_binding": true
   },
   "forbidden_shortcuts": [
-    ["DRAFT", "PUBLISHED"],
-    ["CAPTURED", "PUBLISHED"],
-    ["REVIEWED", "PUBLISHED"],
-    ["READY_FOR_PREVIEW", "PUBLISHED"]
+    [
+      "DRAFT",
+      "PUBLISHED"
+    ],
+    [
+      "CAPTURED",
+      "PUBLISHED"
+    ],
+    [
+      "REVIEWED",
+      "PUBLISHED"
+    ],
+    [
+      "READY_FOR_PREVIEW",
+      "PUBLISHED"
+    ]
   ],
   "fail_closed_examples": [
     {
@@ -80,5 +121,12 @@
       "case": "UNPUBLISHED_PERSONA_PRIVATE_OWNER_ACCESS",
       "decision": "ALLOW_IF_SEPARATELY_AUTHORIZED"
     }
-  ]
+  ],
+  "correction_transitions": {
+    "REVIEWED": "REVIEWED",
+    "READY_FOR_PREVIEW": "REVIEWED",
+    "READY_FOR_PUBLICATION": "REVIEWED",
+    "PUBLISHED": "REVIEWED",
+    "PAUSED": "REVIEWED"
+  }
 }
