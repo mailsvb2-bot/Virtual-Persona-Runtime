@@ -486,7 +486,7 @@ with side transitions:
 
 Provider or preparation success must never advance Persona lifecycle by itself. Review is required before preview readiness, preview is required before publication readiness, and publication must bind the exact current PersonaVersion, current authorization/consent/rights and the required ready modalities for the selected supported configuration.
 
-A correction after review creates a new PersonaVersion and may move only affected readiness back to preparation or review. Unaffected readiness may remain valid only when its exact binding is still current. Stale preview/publication projections fail closed, and previously published PersonaVersions remain immutable historical evidence.
+A correction after review creates a new PersonaVersion whose lifecycle re-enters at `REVIEWED`, including when the prior version was `READY_FOR_PREVIEW`, `READY_FOR_PUBLICATION`, `PUBLISHED` or `PAUSED`. The corrected version must pass preview and publication gates again before republishing. Only affected readiness moves back to preparation/review; unaffected readiness may remain valid only when its exact binding is still current. Stale preview/publication projections fail closed, and previously published PersonaVersions remain immutable historical evidence.
 
 Pause and unpublish deny new public sessions but do not delete the private Persona. Resume requires a current valid publication binding.
 
