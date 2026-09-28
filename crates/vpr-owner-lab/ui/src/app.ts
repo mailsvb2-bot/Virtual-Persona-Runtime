@@ -184,6 +184,7 @@ let csrfToken = "";
 let egressEnabled = false;
 let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
+let bootstrapComplete = false;
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
 let liveKitAudioTrack: LiveKitTrack | null = null;
@@ -698,7 +699,9 @@ const ownerCapture = mountOwnerCapture({
   onStateChange: (state) => {
     ownerCaptureReviewed = state.reviewed;
     updateControls();
-    void syncStatus().catch(() => undefined);
+    if (bootstrapComplete) {
+      void syncStatus().catch(() => undefined);
+    }
   },
 });
 
@@ -1566,6 +1569,7 @@ void api<Bootstrap>("/api/bootstrap")
       setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
+    bootstrapComplete = true;
     const bootstrapState = (window as typeof window & {
       __vprBootstrap?: { csrfToken: string; ready: boolean };
     }).__vprBootstrap;
