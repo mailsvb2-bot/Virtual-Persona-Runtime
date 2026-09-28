@@ -641,7 +641,7 @@ A bounded pre-entry spike may freeze the semantics of deleting a private Persona
 
 `PAUSE` and `UNPUBLISH` only stop or remove public access. They MUST NOT delete the private Persona. Claim deletion removes a claim, not the Persona identity. Private Persona deletion is a separate owner-authorized operation.
 
-A committed private Persona deletion must block new owner/public use of that Persona, invalidate preview/publication bindings, remove active Persona/private content, and invalidate or erase affected derived summaries, caches, search/vector-index entries, generated profiles and equivalent derived state. Affected voice/appearance representations must be revoked or deactivated without deleting unrelated workspaces or other Personas.
+A committed private Persona deletion must block new owner/public use of that Persona, revoke active owner/visitor session and turn authority bound to it, cancel or drain in-flight execution without further Persona use, invalidate cached session Persona context, invalidate preview/publication bindings, remove active Persona/private content, and invalidate or erase affected derived summaries, caches, search/vector-index entries, generated profiles and equivalent derived state. Deletion must not report success while active use remains authorized. Affected voice/appearance representations must be revoked or deactivated without deleting unrelated workspaces or other Personas.
 
 Deleted personal content MUST NOT be retained merely for revision history. A minimal non-content erasure/tombstone record MAY remain only to preserve deletion semantics and verification and MUST NOT contain the deleted content.
 
