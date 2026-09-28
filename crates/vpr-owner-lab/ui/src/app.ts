@@ -1541,6 +1541,9 @@ void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
+    window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
+      detail: { csrfToken },
+    }));
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
     if (backendStatus.session_audience) audienceSelect.value = backendStatus.session_audience;
