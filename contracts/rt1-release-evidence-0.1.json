@@ -1,0 +1,84 @@
+{
+  "schema": "rt1-release-evidence-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "rt1_exit_gate_implemented": false,
+  "release_evidence_bundle_implemented": false,
+  "human_acceptance_completed": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "exact_candidate_binding": {
+    "git_candidate_required": true,
+    "release_spec_version_or_digest_required": true,
+    "schema_or_migration_version_required": true,
+    "provider_model_representation_state_required": true,
+    "material_candidate_change_invalidates_prior_evidence": true
+  },
+  "mandatory_evidence": [
+    "UNIT_CONTRACT_INTEGRATION_BROWSER_E2E",
+    "FULL_OWNER_JOURNEY",
+    "INDEPENDENT_VISITOR_REAL_CONVERSATION",
+    "CORRECTION_PATH",
+    "PREPARATION_FAILURE_RECOVERY_PATH",
+    "PAUSE_UNPUBLISH_DENY_PATH",
+    "QUALITY_LATENCY_MEASUREMENTS",
+    "COST_EVIDENCE",
+    "PRIVACY_PERMISSION_RESULTS",
+    "KNOWN_LIMITATIONS",
+    "ROLLBACK_OR_SAFE_ROLLFORWARD_PROOF"
+  ],
+  "quality_contract": {
+    "owner_journey_time_measured": true,
+    "publish_completion_success_rate_measured": true,
+    "visitor_bootstrap_and_first_meaningful_response_latency_measured": true,
+    "text_voice_video_readiness_and_retry_recovery_measured": true,
+    "pause_unpublish_propagation_measured": true,
+    "cost_estimate_available_before_publication_or_use": true,
+    "accepted_private_context_leakage": 0,
+    "accepted_false_owner_opinion_attribution": 0,
+    "numeric_thresholds_beyond_inherited_rt0_require_measured_calibration_before_promotion": true
+  },
+  "acceptance_paths": {
+    "happy_path_required": true,
+    "user_correction_path_required": true,
+    "failure_recovery_path_required": true,
+    "revoke_deny_path_required": true,
+    "real_video_conversation_required_for_exit": true,
+    "owner_without_developer_assistance_required_for_exit": true
+  },
+  "anti_fabrication": {
+    "deterministic_tests_do_not_substitute_for_real_provider_evidence": true,
+    "synthetic_or_mock_success_does_not_prove_real_visitor_conversation": true,
+    "missing_provider_charge_not_invented": true,
+    "missing_human_review_not_inferred_from_ci": true,
+    "rt1_must_not_claim_production_ready_before_complete_reviewed_bundle": true
+  },
+  "rollback_and_recovery": {
+    "forward_migration_evidence_required": true,
+    "rollback_or_safe_rollforward_required": true,
+    "no_identity_duplication_required": true,
+    "publication_recovery_defaults_safe_private_on_ambiguity": true,
+    "reviewed_claim_revision_history_preserved": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "CI_GREEN_BUT_REAL_VISITOR_VIDEO_EVIDENCE_MISSING",
+      "decision": "RT1_EXIT_NOT_PASSED"
+    },
+    {
+      "case": "EVIDENCE_FROM_DIFFERENT_GIT_CANDIDATE",
+      "decision": "STALE_EVIDENCE_REJECTED"
+    },
+    {
+      "case": "PROVIDER_CONFIGURATION_MATERIALLY_CHANGED_AFTER_MEASUREMENT",
+      "decision": "REMEASURE_AFFECTED_EVIDENCE"
+    },
+    {
+      "case": "PRIVATE_CONTEXT_LEAKAGE_OBSERVED",
+      "decision": "RT1_EXIT_NOT_PASSED"
+    },
+    {
+      "case": "FALSE_OWNER_OPINION_ATTRIBUTION_OBSERVED",
+      "decision": "RT1_EXIT_NOT_PASSED"
+    }
+  ]
+}
