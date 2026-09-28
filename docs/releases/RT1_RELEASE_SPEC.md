@@ -601,6 +601,24 @@ An unknown reason must never render as success. Provider failure, cancellation o
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a second reason enum, production reason-catalog API or production UI mapping before RT1 entry.
 
+### Owner-visible audit feasibility boundary
+
+A bounded pre-entry spike may freeze the owner-visible audit semantics required by the first-owner journey without creating a second event store or a second Persona/claim authority.
+
+The audit view is a projection of authoritative committed mutations and execution evidence. It must not become a second Persona or claim source of truth.
+
+At minimum, future production audit must be able to represent material owner-visible events for Persona/version changes, claim confirm/correct/hide/delete, audience restriction, rejected inference, consent/rights change, voice/appearance activation, publication create/pause/resume/unpublish, preparation retry/cancel requests, approved behavior changes, and relevant security/authority denials.
+
+Audit records bind stable event identity, actor/scope, Persona identity/version where applicable, target/request/operation identity where applicable, result, stable reason code where applicable, and revision/evidence references. They must not copy secrets or unrestricted private payloads by default.
+
+Deletion audit must not force retention of deleted personal content: a minimal non-content tombstone/evidence record is sufficient where deletion evidence is required.
+
+A retried mutation that resolves to one committed business effect must not create duplicate committed audit meaning. Durable state and any required audit event must not split-brain. Unknown external outcomes may be recorded as unknown/reconciling but not as success.
+
+Owner audit reads remain subject to current authority/disclosure. Visitor authority cannot read owner audit. Answer Evidence Card remains the turn-specific provenance projection and is not replaced by this audit trail.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a durable production audit log, owner-facing production audit UI or audit-export API before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
