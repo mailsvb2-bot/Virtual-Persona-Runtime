@@ -455,8 +455,16 @@ test("owner can upload and clear local voice/appearance references without raw r
   });
   await page.getByRole("button", { name: "Загрузить голос" }).click();
   await expect(page.locator("#voice-reference-status")).toContainText("подтвердите права");
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
 
   await page.locator("#reference-rights").check();
+  await page.locator("#voice-reference-file").setInputFiles({
+    name: "voice.webm",
+    mimeType: "audio/webm",
+    buffer: Buffer.from("synthetic-voice-reference"),
+  });
   await page.getByRole("button", { name: "Загрузить голос" }).click();
   await expect(page.locator("#voice-reference-status")).toContainText("raw не хранится");
   await expect(page.locator("#voice-reference-file")).toHaveValue("");
@@ -508,6 +516,34 @@ test("reference upload rejects unknown browser MIME before HTTP", async ({ page 
   await expect(page.locator("#voice-reference-status")).toContainText("REFERENCE_MEDIA_TYPE_UNKNOWN");
   const after = state.apiPaths.filter((path) => path === "POST /api/references/intake").length;
   expect(after).toBe(before);
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
+});
+
+test("reference clear releases browser raw source even when backend clear fails", async ({ page }) => {
+  const state = initialState();
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.route("**/api/references/clear", async (route) => {
+    await json(route, { ok: false, code: "PROVIDER_UNAVAILABLE" }, 503);
+  });
+  await page.goto("/");
+
+  await page.locator("#voice-reference-file").setInputFiles({
+    name: "voice.webm",
+    mimeType: "audio/webm",
+    buffer: Buffer.from("local-raw-reference"),
+  });
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(1);
+
+  await page.getByRole("button", { name: "Очистить" }).first().click();
+  await expect(page.locator("#voice-reference-status")).toContainText("PROVIDER_UNAVAILABLE");
+  expect(await page.locator("#voice-reference-file").evaluate((element) =>
+    (element as HTMLInputElement).files?.length ?? 0
+  )).toBe(0);
 });
 
 test("reference recorder honors selected microphone device", async ({ page }) => {
