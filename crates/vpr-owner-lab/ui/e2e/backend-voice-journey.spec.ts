@@ -333,6 +333,9 @@ test("owner and visitor voice turns cross the real backend with different contex
 
   await installBrowserAudioFakes(page);
   await page.goto("/");
+  await expect.poll(() => page.evaluate(
+    () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
+  )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
