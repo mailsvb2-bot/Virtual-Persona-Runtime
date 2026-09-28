@@ -40,6 +40,7 @@ expected = {
     "PRIVACY_PERMISSION_RESULTS",
     "KNOWN_LIMITATIONS",
     "ROLLBACK_OR_SAFE_ROLLFORWARD_PROOF",
+    "HUMAN_VOICE_APPEARANCE_PERSONA_CONVERSATION_EVALUATION",
 }
 if set(c.get("mandatory_evidence",[])) != expected:
     raise SystemExit("mandatory RT1 evidence set drifted")
@@ -60,6 +61,27 @@ if q.get("accepted_private_context_leakage") != 0:
     raise SystemExit("private-context leakage acceptance must remain zero")
 if q.get("accepted_false_owner_opinion_attribution") != 0:
     raise SystemExit("false owner-opinion attribution acceptance must remain zero")
+
+for key in (
+    "happy_path_required",
+    "user_correction_path_required",
+    "failure_recovery_path_required",
+    "revoke_deny_path_required",
+    "real_video_conversation_required_for_exit",
+    "owner_without_developer_assistance_required_for_exit",
+):
+    if c.get("acceptance_paths",{}).get(key) is not True:
+        raise SystemExit(f"RT1 acceptance-path invariant lost: {key}")
+
+for key in (
+    "forward_migration_evidence_required",
+    "rollback_or_safe_rollforward_required",
+    "no_identity_duplication_required",
+    "publication_recovery_defaults_safe_private_on_ambiguity",
+    "reviewed_claim_revision_history_preserved",
+):
+    if c.get("rollback_and_recovery",{}).get(key) is not True:
+        raise SystemExit(f"RT1 rollback/recovery invariant lost: {key}")
 
 for key in (
     "deterministic_tests_do_not_substitute_for_real_provider_evidence",
