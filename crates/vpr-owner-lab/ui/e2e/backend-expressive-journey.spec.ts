@@ -386,7 +386,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await page.locator("#consent").check();
+  await page.locator("#consent").check({ force: true });
+  await expect(page.locator("#consent")).toBeChecked();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
