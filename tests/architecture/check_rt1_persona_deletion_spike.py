@@ -42,6 +42,10 @@ for key in (
     "invalidates_or_erases_search_or_vector_index_entries",
     "invalidates_or_erases_generated_profiles_or_equivalent_derived_state",
     "revokes_or_deactivates_affected_voice_and_appearance_representations",
+    "active_sessions_and_turn_authority_revoked_on_commit",
+    "in_flight_execution_cancelled_or_drained_without_further_persona_use",
+    "cached_session_persona_context_invalidated",
+    "deletion_success_not_reported_while_active_use_remains_authorized",
     "does_not_delete_unrelated_workspace_or_other_personas",
 ):
     if c.get("delete_effects", {}).get(key) is not True:
@@ -81,6 +85,7 @@ expected = {
     ("BACKUP_RESTORE_CONTAINS_DELETED_PERSONA_CONTENT", "DO_NOT_RESURRECT_DELETED_CONTENT"),
     ("DELETE_RETRY_AFTER_COMMITTED_DELETE", "IDEMPOTENT_ALREADY_DELETED"),
     ("PUBLICATION_CACHE_REFERENCES_DELETED_PERSONA", "DENY_AND_INVALIDATE_STALE_PROJECTION"),
+    ("ACTIVE_SESSION_EXISTS_WHEN_PERSONA_DELETE_COMMITS", "REVOKE_ACTIVE_USE_CANCEL_OR_DRAIN_AND_INVALIDATE_SESSION_CONTEXT"),
 }
 actual = {(x.get("case"), x.get("decision")) for x in c.get("fail_closed_examples", [])}
 if actual != expected:
@@ -90,7 +95,11 @@ forbidden = (
     "struct Rt1PersonaDeletion",
     "Rt1PersonaErasureLedger",
     "/api/rt1/persona/delete",
+    "/api/persona/delete",
+    "delete_persona(",
+    "persona_delete(",
     'id="rt1-persona-delete"',
+    'id="persona-delete"',
 )
 for source in CRATES.rglob("*"):
     if not source.is_file() or source.suffix not in {".rs", ".ts", ".tsx", ".js", ".html"}:
