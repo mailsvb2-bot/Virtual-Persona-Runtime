@@ -68,7 +68,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await expect(page.locator("#evidence")).toContainText('"owner_context_state": "reviewed"');
   await expect(page.locator("#evidence")).toContainText('"reviewed_owner_claims": 3');
 
-  await page.getByRole("checkbox").check();
+  await page.locator("#consent").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeDisabled();

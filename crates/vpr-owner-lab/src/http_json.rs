@@ -9,6 +9,11 @@ use super::{HttpResponse, MAX_BODY_BYTES, error_response, is_json};
 #[serde(deny_unknown_fields)]
 struct EmptyJsonBody {}
 
+#[derive(Deserialize)]
+pub(crate) struct SpeakBody {
+    pub(crate) text: String,
+}
+
 pub(crate) fn parse_json<T: for<'de> Deserialize<'de>>(
     request: &mut Request,
 ) -> Result<T, HttpResponse> {

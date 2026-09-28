@@ -50,6 +50,41 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="references-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Шаг 2 · references</p>
+          <h2 id="references-heading">Голос и внешность</h2>
+          <p class="hint">RT0 принимает reference локально только для проверки record/upload flow. Backend сохраняет только media-type, размер и SHA-256; raw audio/video/image после intake не хранится.</p>
+        </div>
+      </div>
+      <label class="consent">
+        <input id="reference-rights" type="checkbox">
+        <span>Я подтверждаю, что у меня есть права и необходимое согласие на использование этих voice/appearance references.</span>
+      </label>
+      <div class="reference-grid">
+        <div class="reference-card">
+          <h3>Голос</h3>
+          <input id="voice-reference-file" type="file" accept="audio/*">
+          <div class="row compact">
+            <button id="voice-reference-upload">Загрузить голос</button>
+            <button id="voice-reference-record">Записать голос (до 15 с)</button>
+            <button id="voice-reference-clear">Очистить</button>
+          </div>
+          <p id="voice-reference-status" class="inline-status">Reference ещё не выбран.</p>
+        </div>
+        <div class="reference-card">
+          <h3>Внешность</h3>
+          <input id="appearance-reference-file" type="file" accept="image/*,video/*">
+          <div class="row compact">
+            <button id="appearance-reference-upload">Загрузить внешность</button>
+            <button id="appearance-reference-clear">Очистить</button>
+          </div>
+          <p id="appearance-reference-status" class="inline-status">Reference ещё не выбран.</p>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="readiness-heading">
       <div class="panel-heading">
         <div>
@@ -140,5 +175,6 @@
   </main>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/evidence-export.js"></script>
+  <script type="module" src="/reference-capture.js"></script>
 </body>
 </html>

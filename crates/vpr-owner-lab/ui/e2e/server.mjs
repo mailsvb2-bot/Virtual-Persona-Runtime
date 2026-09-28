@@ -11,6 +11,7 @@ const files = new Map([
   ["/owner-capture.js", "dist/owner-capture.js"],
   ["/voice-command-scheduler.js", "dist/voice-command-scheduler.js"],
   ["/evidence-export.js", "dist/evidence-export.js"],
+  ["/reference-capture.js", "reference-capture.js"],
   ["/mic-worklet.js", "mic-worklet.js"],
 ]);
 const mime = new Map([
