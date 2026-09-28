@@ -34,22 +34,43 @@
     "UNPUBLISHED"
   ],
   "transitions": [
-    ["PRIVATE", "PREVIEWABLE"],
-    ["PREVIEWABLE", "PUBLISHED"],
-    ["PUBLISHED", "PAUSED"],
-    ["PAUSED", "PUBLISHED"],
-    ["PUBLISHED", "UNPUBLISHED"],
-    ["PAUSED", "UNPUBLISHED"]
+    [
+      "PRIVATE",
+      "PREVIEWABLE"
+    ],
+    [
+      "PREVIEWABLE",
+      "PUBLISHED"
+    ],
+    [
+      "PUBLISHED",
+      "PAUSED"
+    ],
+    [
+      "PAUSED",
+      "PUBLISHED"
+    ],
+    [
+      "PUBLISHED",
+      "UNPUBLISHED"
+    ],
+    [
+      "PAUSED",
+      "UNPUBLISHED"
+    ]
   ],
   "bootstrap": {
     "preview": {
-      "scope": "OWNER_PREVIEW",
+      "scope": "VISITOR_PREVIEW",
       "allowed_states": [
         "PREVIEWABLE",
         "PUBLISHED",
         "PAUSED"
       ],
-      "requires_owner_authority": true,
+      "requires_owner_initiation": true,
+      "effective_permissions": "PUBLIC_VISITOR",
+      "owner_privileges_in_session": false,
+      "owner_private_context_default_denied": true,
       "grants_public_authority": false
     },
     "public_visitor": {
@@ -84,6 +105,12 @@
       "scope": "PUBLIC_VISITOR",
       "persona_version_match": true,
       "decision": "ALLOW"
+    },
+    {
+      "state": "PREVIEWABLE",
+      "scope": "VISITOR_PREVIEW",
+      "owner_private_context_requested": true,
+      "decision": "DENY_UNLESS_EXPLICITLY_AUDIENCE_AUTHORIZED"
     }
   ]
 }
