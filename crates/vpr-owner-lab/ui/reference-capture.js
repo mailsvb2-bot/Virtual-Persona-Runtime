@@ -109,16 +109,22 @@ const releaseBrowserReference = (kind) => {
 const uploadFile = async (kind, input) => {
   const file = input.files?.[0];
   if (!file) throw new Error("REFERENCE_FILE_REQUIRED");
-  const mediaType = file.type.trim().toLowerCase();
-  if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
-  await uploadBlob(kind, file, mediaType);
-  releaseBrowserReference(kind);
+  try {
+    const mediaType = file.type.trim().toLowerCase();
+    if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
+    await uploadBlob(kind, file, mediaType);
+  } finally {
+    // Browser-side raw biometric/source material is fail-safe ephemeral: once the
+    // owner attempts intake, the selected File must not remain retained for retry.
+    releaseBrowserReference(kind);
+  }
 };
 
 const clearReference = async (kind) => {
+  // Local raw source release must not depend on CSRF/bootstrap/backend availability.
+  releaseBrowserReference(kind);
   if (!csrfToken) throw new Error("REFERENCE_BOOTSTRAP_PENDING");
   await apiJson("/api/references/clear", { kind });
-  releaseBrowserReference(kind);
   setReferenceStatus(kind, "Reference очищен.");
 };
 
