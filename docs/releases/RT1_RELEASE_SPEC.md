@@ -607,7 +607,7 @@ A bounded pre-entry spike may freeze the owner-visible audit semantics required 
 
 The audit view is a projection of authoritative committed mutations and execution evidence. It must not become a second Persona or claim source of truth.
 
-At minimum, future production audit must be able to represent material owner-visible events for Persona/version changes, claim confirm/correct/hide/delete, audience restriction, rejected inference, consent/rights change, voice/appearance activation, publication create/pause/resume/unpublish, preparation retry/cancel requests, approved behavior changes, and relevant security/authority denials.
+At minimum, future production audit must be able to represent material owner-visible events for Persona/version changes, claim confirm/correct/hide/delete/mark-outdated, audience restriction, rejected inference, consent/rights change, voice/appearance activation, publication create/pause/resume/unpublish, preparation retry/cancel requests, approved behavior changes, and relevant security/authority denials.
 
 Audit records bind stable event identity, actor/scope, Persona identity/version where applicable, target/request/operation identity where applicable, result, stable reason code where applicable, and revision/evidence references. They must not copy secrets or unrestricted private payloads by default.
 
