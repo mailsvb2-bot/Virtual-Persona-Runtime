@@ -46,6 +46,8 @@ jobs:
         run: python3 tests/architecture/check_rt1_consent_rights_spike.py
       - name: RT1 Owner Control Center pre-entry spike
         run: python3 tests/architecture/check_rt1_owner_control_center_spike.py
+      - name: RT1 capture and import pre-entry spike
+        run: python3 tests/architecture/check_rt1_capture_import_spike.py
       - name: Owner Lab browser contract guard
         run: python3 tests/architecture/check_browser_contract.py
       - name: Lockfile consistency
