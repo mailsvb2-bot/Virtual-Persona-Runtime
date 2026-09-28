@@ -1541,8 +1541,9 @@ void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
-    (window as typeof window & { __vprBootstrap?: { csrfToken: string } }).__vprBootstrap = {
+    (window as typeof window & { __vprBootstrap?: { csrfToken: string; ready: boolean } }).__vprBootstrap = {
       csrfToken,
+      ready: false,
     };
     window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
       detail: { csrfToken },
@@ -1565,5 +1566,9 @@ void api<Bootstrap>("/api/bootstrap")
       setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
+    const bootstrapState = (window as typeof window & {
+      __vprBootstrap?: { csrfToken: string; ready: boolean };
+    }).__vprBootstrap;
+    if (bootstrapState) bootstrapState.ready = true;
   })
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
