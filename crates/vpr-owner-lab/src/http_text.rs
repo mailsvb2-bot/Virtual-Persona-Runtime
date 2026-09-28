@@ -2,8 +2,10 @@ use std::sync::atomic::Ordering;
 
 use tiny_http::Request;
 
+use crate::http_json::SpeakBody;
+
 use super::{
-    AppState, HttpResponse, SpeakBody, error_response, http_evidence, json_response,
+    AppState, HttpResponse, error_response, http_evidence, json_response,
     lab_error_response, parse_json, reject_if_session_ending,
 };
 
