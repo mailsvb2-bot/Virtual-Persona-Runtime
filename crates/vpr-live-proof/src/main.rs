@@ -4,10 +4,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
+use vpr_evaluation::ProviderStateManifest;
 use vpr_live_proof::{
-    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, doctor,
-    preflight, prepare, run_live_conversation_attempt, run_provider_probe,
-    validate_live_conversation_inputs, validate_provider_probe_audio,
+    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError,
+    inspect_provider_configuration, preflight, prepare, run_live_conversation_attempt,
+    run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
 };
 
 #[derive(Serialize)]
@@ -23,6 +24,18 @@ struct CandidateRunReceipt<'a> {
     ok: bool,
     candidate_sha: &'a str,
     provider_state_sha256: &'a str,
+}
+
+#[derive(Serialize)]
+struct DoctorRunReceipt<'a> {
+    schema_version: &'static str,
+    candidate_sha: &'a str,
+    provider_state_sha256: &'a str,
+    provider_state: &'a ProviderStateManifest,
+    input_validation_passed: bool,
+    provider_configuration_passed: bool,
+    egress_performed: bool,
+    release_evidence: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -156,9 +169,23 @@ fn run_doctor(
     validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
         .map_err(emit_conversation)?;
 
-    let receipt = doctor(&snapshot.candidate, worktree_clean()?).map_err(emit_preflight)?;
+    let inspection = inspect_provider_configuration(&snapshot.candidate, worktree_clean()?)
+        .map_err(emit_preflight)?;
     verify_snapshot(&snapshot).map_err(emit_preflight)?;
-    println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&DoctorRunReceipt {
+            schema_version: "rt0-live-proof-doctor-0.1",
+            candidate_sha: &inspection.candidate_sha,
+            provider_state_sha256: &inspection.provider_state_sha256,
+            provider_state: &inspection.provider_state,
+            input_validation_passed: true,
+            provider_configuration_passed: true,
+            egress_performed: false,
+            release_evidence: false,
+        })
+        .map_err(|_| 2)?
+    );
     Ok(())
 }
 
