@@ -191,10 +191,8 @@ voiceRecord.addEventListener("click", () => {
   });
 });
 
-window.addEventListener("vpr:bootstrap", (event) => {
-  const detail = event instanceof CustomEvent ? event.detail : null;
-  const token = detail && typeof detail.csrfToken === "string" ? detail.csrfToken : "";
-  if (!token) {
+const acceptBootstrap = (token) => {
+  if (typeof token !== "string" || !token) {
     setReferenceStatus("voice", "REFERENCE_BOOTSTRAP_FAILED", "error");
     setReferenceStatus("appearance", "REFERENCE_BOOTSTRAP_FAILED", "error");
     return;
@@ -205,4 +203,14 @@ window.addEventListener("vpr:bootstrap", (event) => {
     setReferenceStatus("voice", message, "error");
     setReferenceStatus("appearance", message, "error");
   });
-}, { once: true });
+};
+
+const bootstrapSnapshot = window.__vprBootstrap;
+if (bootstrapSnapshot && typeof bootstrapSnapshot.csrfToken === "string") {
+  acceptBootstrap(bootstrapSnapshot.csrfToken);
+} else {
+  window.addEventListener("vpr:bootstrap", (event) => {
+    const detail = event instanceof CustomEvent ? event.detail : null;
+    acceptBootstrap(detail?.csrfToken ?? "");
+  }, { once: true });
+}
