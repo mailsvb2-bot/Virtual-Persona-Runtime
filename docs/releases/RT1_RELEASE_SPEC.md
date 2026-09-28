@@ -417,6 +417,22 @@ This contract does not require exposing hidden chain-of-thought. It requires hum
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production AnswerEvidenceCard runtime, durable provenance schema or owner/visitor production UI before RT1 entry.
 
+### Cost and hard-budget feasibility boundary
+
+A bounded pre-entry spike may freeze the RT1 cost-estimate and hard-session-budget semantics without making paid/public use production-reachable before RT1 entry.
+
+The owner-facing cost model must preserve:
+
+`ESTIMATE != USAGE != PROVIDER CHARGE != CUSTOMER CHARGE`
+
+The first RT1 estimate is required before publication or first chargeable use and must bind the supported candidate configuration and an explicit estimate basis/version. Material provider/model/representation changes make that estimate stale. Unknown components remain unknown; missing provider charge must never be invented.
+
+A hard session budget must not be silently exceeded. Concurrency must use reservation or an equivalent atomic strategy for expensive operations so parallel work cannot overspend the remaining budget. Retries must be idempotent with respect to reservations/charges, and UNKNOWN external outcomes require reconciliation before another reservation or charge is attempted.
+
+Budget exhaustion uses stable reason `BUDGET_EXHAUSTED`. Any degradation or fallback must be pre-approved by policy and must not bypass egress, authorization or the hard budget. Realtime paid media requires explicit idle timeout, grace period and reconnect window before production so abandoned sessions cannot create uncontrolled GPU/video spend.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production pre-publication estimate API/UI, hard-session-budget runtime or customer charging path before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
