@@ -210,7 +210,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
         (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
-        (&Method::Get, "/api/references") => http_references::snapshot_response(&state.reference_intake),
+        (&Method::Get, "/api/references") => {
+            http_references::snapshot_response(&state.reference_intake)
+        }
         (&Method::Get, "/api/evidence/session") => match http_evidence::snapshot(&state.evidence) {
             Ok(snapshot) => json_response(200, &snapshot),
             Err(error) => error_response(http_evidence::error_status(error), error.code()),
