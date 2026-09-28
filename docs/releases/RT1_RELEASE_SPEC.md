@@ -451,6 +451,26 @@ Late completion from an old PersonaVersion/input revision, or from a cancelled/s
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add durable production preparation-job storage, production retry/cancel routes or owner-facing job history before RT1 entry.
 
+### VoiceIdentity / AppearanceIdentity feasibility boundary
+
+A bounded pre-entry spike may freeze the RT1 canonical identity/representation contract for voice and appearance without creating production identity managers before RT1 entry.
+
+The boundary preserves the Canon invariants:
+
+`VoiceIdentity != TTS provider voice ID`
+
+`AppearanceIdentity != avatar provider ID`
+
+and provider/renderer identifiers remain representation bindings rather than canonical identity.
+
+Voice and appearance operations may include `CREATE`, `SELECT`, `IMPORT`, `CONNECT` and `AUTO_ROUTE`, but real-person voice/face/body representations require the applicable rights/consent state, reference validation and quality evaluation before activation.
+
+A logical VoiceIdentity or AppearanceIdentity may acquire a new provider representation without creating a new Persona identity. Any provider migration that changes acoustic realization must be visible to the owner and re-evaluated. Appearance references require validation and quality evaluation before activation. Each embodiment class carries its own independent maturity state. A candidate representation is not active merely because a provider returned success.
+
+Provider/representation migration must preserve compatibility checking, rights/consent re-check, quality comparison for every migration, explicit activation and a rollback point. For a real-person identity, materially different automatic substitution must not silently activate.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production VoiceIdentity/AppearanceIdentity persistence, management APIs or owner-facing identity-manager UI before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
