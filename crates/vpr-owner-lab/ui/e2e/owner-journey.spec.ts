@@ -33,6 +33,8 @@ type FixtureState = {
   directSpeech: string[];
   textMessages: string[];
   apiPaths: string[];
+  voiceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
+  appearanceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
 };
 
 const installBrowserFakes = async (page: Page): Promise<void> => {
@@ -234,6 +236,12 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
     if (request.method() === "GET" && path === "/api/evidence/session") {
       return json(route, { session_state: state.sessionState, fixture: true });
     }
+    if (request.method() === "GET" && path === "/api/references") {
+      return json(route, {
+        voice: state.voiceReference,
+        appearance: state.appearanceReference,
+      });
+    }
     if (request.method() === "POST" && path === "/api/evidence/session/export") {
       const participantRole = state.startAudiences.at(-1) ?? "owner";
       return json(route, {
@@ -242,7 +250,31 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       });
     }
 
+    if (request.method() === "POST" && path === "/api/references/intake") {
+      expect(request.headers()["x-vpr-reference-consent"]).toBe("confirmed");
+      const kind = request.headers()["x-vpr-reference-kind"];
+      const mediaType = request.headers()["x-vpr-reference-media-type"];
+      const bytes = request.postDataBuffer()?.byteLength ?? 0;
+      const metadata = {
+        bytes,
+        media_type: mediaType,
+        sha256: kind === "voice" ? "a".repeat(64) : "b".repeat(64),
+        raw_retained: false as const,
+      };
+      if (kind === "voice") state.voiceReference = metadata;
+      else if (kind === "appearance") state.appearanceReference = metadata;
+      else return json(route, { ok: false, code: "INVALID_INPUT" }, 400);
+      return json(route, { kind, ...metadata }, 201);
+    }
+
     const body = request.postDataJSON() as Record<string, unknown>;
+    if (path === "/api/references/clear") {
+      const kind = String(body.kind ?? "");
+      if (kind === "voice") state.voiceReference = null;
+      else if (kind === "appearance") state.appearanceReference = null;
+      else return json(route, { ok: false, code: "INVALID_INPUT" }, 400);
+      return json(route, { ok: true, kind, cleared: true });
+    }
     if (path === "/api/persona/create") {
       state.personaId = String(body.persona_id);
       state.personaVersion = 1;
@@ -405,6 +437,47 @@ const initialState = (): FixtureState => ({
   directSpeech: [],
   textMessages: [],
   apiPaths: [],
+  voiceReference: null,
+  appearanceReference: null,
+});
+
+
+test("owner can upload and clear local voice/appearance references without raw retention", async ({ page }) => {
+  const state = initialState();
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.locator("#voice-reference-file").setInputFiles({
+    name: "voice.webm",
+    mimeType: "audio/webm",
+    buffer: Buffer.from("synthetic-voice-reference"),
+  });
+  await page.getByRole("button", { name: "Загрузить голос" }).click();
+  await expect(page.locator("#voice-reference-status")).toContainText("подтвердите права");
+
+  await page.locator("#reference-rights").check();
+  await page.getByRole("button", { name: "Загрузить голос" }).click();
+  await expect(page.locator("#voice-reference-status")).toContainText("raw не хранится");
+  expect(state.voiceReference?.media_type).toBe("audio/webm");
+  expect(state.voiceReference?.raw_retained).toBe(false);
+
+  await page.locator("#appearance-reference-file").setInputFiles({
+    name: "appearance.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("synthetic-appearance-reference"),
+  });
+  await page.getByRole("button", { name: "Загрузить внешность" }).click();
+  await expect(page.locator("#appearance-reference-status")).toContainText("raw не хранится");
+  expect(state.appearanceReference?.media_type).toBe("image/png");
+  expect(state.appearanceReference?.raw_retained).toBe(false);
+
+  await page.getByRole("button", { name: "Очистить" }).first().click();
+  await expect(page.locator("#voice-reference-status")).toContainText("Reference очищен");
+  expect(state.voiceReference).toBeNull();
+
+  expect(state.apiPaths).toContain("POST /api/references/intake");
+  expect(state.apiPaths).toContain("POST /api/references/clear");
 });
 
 test("owner review, correction, visitor scope and revoke stay connected in one browser journey", async ({ page }) => {
