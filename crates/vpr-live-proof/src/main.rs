@@ -27,15 +27,27 @@ struct CandidateRunReceipt<'a> {
 }
 
 #[derive(Serialize)]
+struct DoctorValidationReceipt {
+    input_validation_passed: bool,
+    provider_configuration_passed: bool,
+}
+
+#[derive(Serialize)]
+struct DoctorExecutionReceipt {
+    egress_performed: bool,
+    release_evidence: bool,
+}
+
+#[derive(Serialize)]
 struct DoctorRunReceipt<'a> {
     schema_version: &'static str,
     candidate_sha: &'a str,
     provider_state_sha256: &'a str,
     provider_state: &'a ProviderStateManifest,
-    input_validation_passed: bool,
-    provider_configuration_passed: bool,
-    egress_performed: bool,
-    release_evidence: bool,
+    #[serde(flatten)]
+    validation: DoctorValidationReceipt,
+    #[serde(flatten)]
+    execution: DoctorExecutionReceipt,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -179,10 +191,14 @@ fn run_doctor(
             candidate_sha: &inspection.candidate_sha,
             provider_state_sha256: &inspection.provider_state_sha256,
             provider_state: &inspection.provider_state,
-            input_validation_passed: true,
-            provider_configuration_passed: true,
-            egress_performed: false,
-            release_evidence: false,
+            validation: DoctorValidationReceipt {
+                input_validation_passed: true,
+                provider_configuration_passed: true,
+            },
+            execution: DoctorExecutionReceipt {
+                egress_performed: false,
+                release_evidence: false,
+            },
         })
         .map_err(|_| 2)?
     );
