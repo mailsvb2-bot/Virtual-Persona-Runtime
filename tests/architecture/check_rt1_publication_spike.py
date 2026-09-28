@@ -60,12 +60,18 @@ if actual_transitions != expected_transitions:
 bootstrap = contract.get("bootstrap", {})
 preview = bootstrap.get("preview", {})
 public = bootstrap.get("public_visitor", {})
-if preview.get("scope") != "OWNER_PREVIEW" or public.get("scope") != "PUBLIC_VISITOR":
+if preview.get("scope") != "VISITOR_PREVIEW" or public.get("scope") != "PUBLIC_VISITOR":
     raise SystemExit("preview and public visitor scopes must remain distinct")
 if preview.get("grants_public_authority") is not False:
-    raise SystemExit("owner preview must never grant public authority")
-if preview.get("requires_owner_authority") is not True:
-    raise SystemExit("owner preview must require owner authority")
+    raise SystemExit("visitor preview must never grant public authority")
+if preview.get("requires_owner_initiation") is not True:
+    raise SystemExit("visitor preview must require owner initiation")
+if preview.get("effective_permissions") != "PUBLIC_VISITOR":
+    raise SystemExit("visitor preview must execute with visitor permissions")
+if preview.get("owner_privileges_in_session") is not False:
+    raise SystemExit("visitor preview must never inherit owner privileges")
+if preview.get("owner_private_context_default_denied") is not True:
+    raise SystemExit("visitor preview must deny owner-private context by default")
 if public.get("allowed_states") != ["PUBLISHED"]:
     raise SystemExit("new public visitor bootstrap must be allowed only while PUBLISHED")
 if public.get("requires_exact_persona_version") is not True:
@@ -81,6 +87,7 @@ required_examples = {
     ("UNPUBLISHED", "PUBLIC_VISITOR", None, "DENY"),
     ("PUBLISHED", "PUBLIC_VISITOR", False, "DENY"),
     ("PUBLISHED", "PUBLIC_VISITOR", True, "ALLOW"),
+    ("PREVIEWABLE", "VISITOR_PREVIEW", None, "DENY_UNLESS_EXPLICITLY_AUDIENCE_AUTHORIZED"),
 }
 actual_examples = {
     (
