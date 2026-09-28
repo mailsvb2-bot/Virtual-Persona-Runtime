@@ -48,8 +48,8 @@ for invariant in (
     "versioned",
     "multiple_provider_or_language_representations_allowed",
     "provider_migration_may_preserve_logical_identity",
-    "material_acoustic_change_visible_to_owner",
-    "material_change_requires_reevaluation",
+    "acoustic_realization_change_visible_to_owner",
+    "acoustic_realization_change_requires_reevaluation",
 ):
     if contract.get("voice_identity", {}).get(invariant) is not True:
         raise SystemExit(f"VoiceIdentity invariant lost: {invariant}")
@@ -65,8 +65,19 @@ if set(appearance.get("maturity_states", [])) != {
     "NOT_TESTED", "EXPERIMENTAL", "SUPPORTED", "PRODUCTION_READY"
 }:
     raise SystemExit("AppearanceIdentity maturity states drifted")
+expected_embodiment_maturity = {
+    "REAL_HUMAN", "STYLIZED_HUMAN", "ANIMAL", "NON_HUMAN_CHARACTER"
+}
+if set(appearance.get("embodiment_maturity", {}).keys()) != expected_embodiment_maturity:
+    raise SystemExit("AppearanceIdentity must bind maturity independently per embodiment class")
+for class_name, maturity in appearance.get("embodiment_maturity", {}).items():
+    if maturity not in set(appearance.get("maturity_states", [])):
+        raise SystemExit(f"invalid embodiment maturity for {class_name}: {maturity}")
 for invariant in (
     "real_person_requires_explicit_consent_scope",
+    "reference_validation_required",
+    "quality_evaluation_required",
+    "per_class_maturity_independent",
     "provider_representation_does_not_own_identity",
     "material_identity_fidelity_change_visible_to_owner",
     "material_change_requires_reevaluation",
@@ -88,7 +99,7 @@ for invariant in (
 for invariant in (
     "compatibility_check_required",
     "candidate_representation_not_active_by_default",
-    "quality_comparison_required_for_material_replacement",
+    "quality_comparison_required",
     "rights_or_consent_rechecked",
     "owner_approval_required_when_material_identity_fidelity_changes",
     "activation_explicit",
