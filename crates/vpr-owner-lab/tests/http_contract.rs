@@ -926,7 +926,6 @@ fn close_preempts_active_voice_before_any_avatar_output() {
     );
 }
 
-
 #[test]
 fn rt0_reference_intake_is_local_consent_gated_and_non_retaining() {
     let _serial = serialize_owner_lab_http_contract();
@@ -1004,9 +1003,21 @@ fn rt0_reference_intake_is_local_consent_gated_and_non_retaining() {
     assert_eq!(snapshot_json["appearance"], Value::Null);
     assert!(!snapshot.body.contains("synthetic-reference"));
 
-    let cleared = post(port, &host, &csrf, "/api/references/clear", r#"{"kind":"voice"}"#);
+    let cleared = post(
+        port,
+        &host,
+        &csrf,
+        "/api/references/clear",
+        r#"{"kind":"voice"}"#,
+    );
     assert_eq!(cleared.status, 200);
-    let cleared_again = post(port, &host, &csrf, "/api/references/clear", r#"{"kind":"voice"}"#);
+    let cleared_again = post(
+        port,
+        &host,
+        &csrf,
+        "/api/references/clear",
+        r#"{"kind":"voice"}"#,
+    );
     assert_eq!(cleared_again.status, 200);
     let cleared_json: Value = serde_json::from_str(&cleared_again.body).unwrap();
     assert_eq!(cleared_json["cleared"], false);
