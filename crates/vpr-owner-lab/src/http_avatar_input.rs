@@ -2,7 +2,8 @@ use serde::Deserialize;
 use tiny_http::Request;
 use vpr_owner_lab::OwnerLabTurnInput;
 
-use super::{AppState, HttpResponse, SpeakBody, apply_input, parse_json};
+use super::{AppState, HttpResponse, apply_input, parse_json};
+use crate::http_json::SpeakBody;
 
 #[derive(Deserialize)]
 struct AudioBody {
