@@ -488,10 +488,12 @@ test("reference upload rejects unknown browser MIME before HTTP", async ({ page 
   await page.goto("/");
 
   await page.locator("#reference-rights").check();
-  await page.locator("#voice-reference-file").setInputFiles({
-    name: "voice.unknown",
-    mimeType: "",
-    buffer: Buffer.from("synthetic-voice-reference"),
+  await page.locator("#voice-reference-file").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["synthetic-voice-reference"], "voice.unknown", { type: "" }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   });
   const before = state.apiPaths.filter((path) => path === "POST /api/references/intake").length;
   await page.getByRole("button", { name: "Загрузить голос" }).click();
@@ -584,7 +586,7 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await expect(page.locator("#readiness-video")).toHaveText("Не готов");
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeEnabled();
 
-  await page.getByRole("checkbox").check();
+  await page.locator("#consent").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
@@ -648,7 +650,7 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   await installApiFixture(page, state);
   await page.goto("/");
 
-  await page.getByRole("checkbox").check();
+  await page.locator("#consent").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
