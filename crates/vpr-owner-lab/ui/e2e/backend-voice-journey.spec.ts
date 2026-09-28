@@ -344,7 +344,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.evaluate(() => {
     const element = document.getElementById("connect");
     if (!(element instanceof HTMLButtonElement)) throw new Error("CONNECT_BUTTON_MISSING");
-    element.click();
+    window.setTimeout(() => element.click(), 0);
   });
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
