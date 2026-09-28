@@ -480,6 +480,77 @@ test("owner can upload and clear local voice/appearance references without raw r
   expect(state.apiPaths).toContain("POST /api/references/clear");
 });
 
+
+test("reference upload rejects unknown browser MIME before HTTP", async ({ page }) => {
+  const state = initialState();
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.locator("#reference-rights").check();
+  await page.locator("#voice-reference-file").setInputFiles({
+    name: "voice.unknown",
+    mimeType: "",
+    buffer: Buffer.from("synthetic-voice-reference"),
+  });
+  const before = state.apiPaths.filter((path) => path === "POST /api/references/intake").length;
+  await page.getByRole("button", { name: "Загрузить голос" }).click();
+  await expect(page.locator("#voice-reference-status")).toContainText("REFERENCE_MEDIA_TYPE_UNKNOWN");
+  const after = state.apiPaths.filter((path) => path === "POST /api/references/intake").length;
+  expect(after).toBe(before);
+});
+
+test("reference recorder honors selected microphone device", async ({ page }) => {
+  const state = initialState();
+  await page.addInitScript(() => {
+    const calls = [];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async (constraints) => {
+          calls.push(constraints);
+          return {
+            getTracks: () => [{ stop: () => undefined }],
+          };
+        },
+      },
+    });
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      state = "inactive";
+      mimeType = "audio/webm";
+      listeners = new Map();
+      constructor() {}
+      addEventListener(name, listener) { this.listeners.set(name, listener); }
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.listeners.get("dataavailable")?.({ data: new Blob(["voice"], { type: "audio/webm" }) });
+        this.listeners.get("stop")?.();
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: FakeMediaRecorder });
+    window.__referenceMicCalls = calls;
+  });
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.locator("#reference-rights").check();
+  await page.locator("#microphone-device").evaluate((element) => {
+    const select = element;
+    select.append(new Option("Reference mic", "mic-reference"));
+    select.value = "mic-reference";
+  });
+  await page.getByRole("button", { name: "Записать голос (до 15 с)" }).click();
+
+  const calls = await page.evaluate(() => window.__referenceMicCalls);
+  expect(calls).toEqual([{ audio: { deviceId: { exact: "mic-reference" } } }]);
+
+  await page.getByRole("button", { name: "Остановить запись" }).click();
+  await expect(page.locator("#voice-reference-status")).toContainText("raw не хранится");
+});
+
 test("owner review, correction, visitor scope and revoke stay connected in one browser journey", async ({ page }) => {
   const state = initialState();
   await installBrowserFakes(page);
