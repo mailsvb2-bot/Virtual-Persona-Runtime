@@ -433,6 +433,24 @@ Budget exhaustion uses stable reason `BUDGET_EXHAUSTED`. Any degradation or fall
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production pre-publication estimate API/UI, hard-session-budget runtime or customer charging path before RT1 entry.
 
+### Preparation Plane job feasibility boundary
+
+A bounded pre-entry spike may freeze the RT1 durable Preparation Plane job contract while reusing the already-proven RT0 modality-readiness model rather than creating a second readiness authority.
+
+The canonical job lifecycle is:
+
+`QUEUED -> PREPARING -> VALIDATING -> READY | FAILED | CANCELLED | EXPIRED`
+
+Optional wait states may include `WAITING_USER_INPUT` and `WAITING_PROVIDER`.
+
+A future durable job must bind a stable job identity, Persona/input revision, affected modality or asset kind, and any external provider operation identity needed for reconciliation. Provider identity must remain representation metadata, never canonical Persona identity.
+
+Failure or cancellation of one preparation job must not destroy the Persona or unrelated ready modalities. Retry must target only the affected representation, be idempotent where repeated, and reconcile `UNKNOWN_OUTCOME` before a duplicate external operation can be launched. Local cancellation does not imply provider cancellation or refund.
+
+Late completion from an old PersonaVersion/input revision, or from a cancelled/stale job, must not silently promote current readiness. Material provider/configuration changes require revalidation before the result can be current.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add durable production preparation-job storage, production retry/cancel routes or owner-facing job history before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
