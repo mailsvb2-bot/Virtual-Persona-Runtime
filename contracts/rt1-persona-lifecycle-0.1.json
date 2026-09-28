@@ -1,0 +1,84 @@
+{
+  "schema": "rt1-persona-lifecycle-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "persona_lifecycle_runtime_implemented": false,
+  "owner_creation_ui_implemented": false,
+  "production_publication_transition_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "states": [
+    "DRAFT",
+    "CAPTURED",
+    "REVIEWED",
+    "READY_FOR_PREVIEW",
+    "READY_FOR_PUBLICATION",
+    "PUBLISHED",
+    "PAUSED",
+    "UNPUBLISHED"
+  ],
+  "forward_transitions": [
+    ["DRAFT", "CAPTURED"],
+    ["CAPTURED", "REVIEWED"],
+    ["REVIEWED", "READY_FOR_PREVIEW"],
+    ["READY_FOR_PREVIEW", "READY_FOR_PUBLICATION"],
+    ["READY_FOR_PUBLICATION", "PUBLISHED"]
+  ],
+  "side_transitions": [
+    ["PUBLISHED", "PAUSED"],
+    ["PAUSED", "PUBLISHED"],
+    ["PUBLISHED", "UNPUBLISHED"],
+    ["PAUSED", "UNPUBLISHED"]
+  ],
+  "gating_invariants": {
+    "provider_success_cannot_advance_persona_lifecycle_directly": true,
+    "preparation_job_ready_cannot_publish_persona": true,
+    "review_required_before_preview_readiness": true,
+    "preview_required_before_publication_readiness": true,
+    "publication_requires_exact_current_persona_version": true,
+    "publication_requires_required_modalities_ready_for_selected_configuration": true,
+    "publication_requires_current_authorization_consent_and_rights": true,
+    "publication_requires_no_stale_blocking_projection": true
+  },
+  "correction_and_invalidation": {
+    "correction_after_review_creates_new_persona_version": true,
+    "affected_readiness_may_move_back_to_preparation_or_review": true,
+    "unaffected_readiness_may_remain_valid_if_binding_still_current": true,
+    "stale_preview_or_publication_binding_must_fail_closed": true,
+    "prior_published_version_remains_immutable_history": true
+  },
+  "pause_and_unpublish": {
+    "pause_blocks_new_public_sessions": true,
+    "unpublish_blocks_new_public_sessions": true,
+    "pause_does_not_delete_private_persona": true,
+    "unpublish_does_not_delete_private_persona": true,
+    "resume_requires_current_valid_publication_binding": true
+  },
+  "forbidden_shortcuts": [
+    ["DRAFT", "PUBLISHED"],
+    ["CAPTURED", "PUBLISHED"],
+    ["REVIEWED", "PUBLISHED"],
+    ["READY_FOR_PREVIEW", "PUBLISHED"]
+  ],
+  "fail_closed_examples": [
+    {
+      "case": "PROVIDER_RETURNS_READY_WHILE_PERSONA_NOT_REVIEWED",
+      "decision": "DO_NOT_ADVANCE_BEYOND_CAPTURE_OR_REVIEW_GATE"
+    },
+    {
+      "case": "PUBLICATION_REQUEST_USES_STALE_PERSONA_VERSION",
+      "decision": "DENY"
+    },
+    {
+      "case": "CORRECTION_INVALIDATES_REQUIRED_VIDEO_READINESS",
+      "decision": "MOVE_AFFECTED_PATH_BACK_BEFORE_PUBLICATION"
+    },
+    {
+      "case": "PAUSED_PERSONA_RECEIVES_NEW_PUBLIC_SESSION_REQUEST",
+      "decision": "DENY"
+    },
+    {
+      "case": "UNPUBLISHED_PERSONA_PRIVATE_OWNER_ACCESS",
+      "decision": "ALLOW_IF_SEPARATELY_AUTHORIZED"
+    }
+  ]
+}
