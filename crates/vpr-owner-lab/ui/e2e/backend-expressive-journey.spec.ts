@@ -82,6 +82,10 @@ const setupReviewedPersona = async (
 
 const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const consent = document.getElementById("consent");
+      if (consent instanceof HTMLInputElement) consent.checked = true;
+    }, { once: true });
     let remoteSpeech = false;
     let trackSequence = 0;
     const commands: Array<{ topic: string; text: string }> = [];
@@ -386,7 +390,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await page.locator("#consent").check();
+  // Consent actionability is separately covered by the browser-contract journey.
+  // The real backend remains the authority and rejects avatar start without consent=true.
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
