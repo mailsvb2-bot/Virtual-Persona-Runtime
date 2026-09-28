@@ -41,6 +41,7 @@ const APP_JS: &str = include_str!("../ui/dist/app.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
+const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 
@@ -196,6 +197,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         }
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/reference-capture.js") => {
+            static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
         }
         (&Method::Get, "/styles.css") => static_response(STYLES_CSS, "text/css; charset=utf-8"),
         (&Method::Get, "/mic-worklet.js") => {
