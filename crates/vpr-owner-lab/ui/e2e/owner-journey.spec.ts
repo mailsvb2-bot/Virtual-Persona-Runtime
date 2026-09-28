@@ -546,6 +546,45 @@ test("reference clear releases browser raw source even when backend clear fails"
   )).toBe(0);
 });
 
+
+test("stale upload cleanup preserves a newer reference selection", async ({ page }) => {
+  const state = initialState();
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+
+  let releaseOldUpload: (() => void) | undefined;
+  const oldUploadGate = new Promise<void>((resolve) => {
+    releaseOldUpload = resolve;
+  });
+  await page.route("**/api/references/intake", async (route) => {
+    await oldUploadGate;
+    await json(route, { ok: false, code: "PROVIDER_TIMEOUT" }, 504);
+  });
+  await page.goto("/");
+
+  await page.locator("#reference-rights").check();
+  const input = page.locator("#voice-reference-file");
+  await input.setInputFiles({
+    name: "old.webm",
+    mimeType: "audio/webm",
+    buffer: Buffer.from("old-reference"),
+  });
+  await page.getByRole("button", { name: "Загрузить голос" }).click();
+  await expect(page.locator("#voice-reference-status")).toContainText("Проверяю reference");
+
+  await input.setInputFiles({
+    name: "new.webm",
+    mimeType: "audio/webm",
+    buffer: Buffer.from("new-reference"),
+  });
+  releaseOldUpload?.();
+
+  await expect(page.locator("#voice-reference-status")).toContainText("PROVIDER_TIMEOUT");
+  await expect.poll(async () => input.evaluate((element) =>
+    (element as HTMLInputElement).files?.[0]?.name ?? ""
+  )).toBe("new.webm");
+});
+
 test("reference recorder honors selected microphone device", async ({ page }) => {
   const state = initialState();
   await page.addInitScript(() => {
