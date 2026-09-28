@@ -398,7 +398,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await page.evaluate(() => {
     const element = document.getElementById("connect");
     if (!(element instanceof HTMLButtonElement)) throw new Error("CONNECT_BUTTON_MISSING");
-    element.click();
+    window.setTimeout(() => element.click(), 0);
   });
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
