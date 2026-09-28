@@ -1,0 +1,76 @@
+{
+  "schema": "rt1-answer-evidence-card-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "answer_evidence_card_runtime_implemented": false,
+  "owner_ui_implemented": false,
+  "visitor_ui_implemented": false,
+  "durable_trace_schema_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "canonical_projection": [
+    "EXACT_TURN_EXECUTION_EVIDENCE",
+    "DISCLOSURE_FILTER",
+    "ANSWER_EVIDENCE_CARD",
+    "HUMAN_READABLE_EXPLANATION"
+  ],
+  "card_may_show": [
+    "SOURCES_USED",
+    "OWNER_VERIFIED_MATERIAL",
+    "SYSTEM_INFERENCE",
+    "RESEARCH_DATE",
+    "FRESHNESS",
+    "UNCERTAINTY"
+  ],
+  "trace_binding_invariants": {
+    "binds_exact_answer_or_turn": true,
+    "binds_exact_persona_version": true,
+    "binds_actual_generation_evidence": true,
+    "provider_failover_or_model_change_is_explicit_when_material": true,
+    "card_is_projection_not_second_source_of_truth": true,
+    "unsupported_post_hoc_explanation_forbidden": true,
+    "missing_evidence_is_reported_as_unavailable_or_unknown": true
+  },
+  "epistemic_invariants": {
+    "owner_verified_material_distinct_from_system_inference": true,
+    "system_inference_not_presented_as_verified_owner_opinion": true,
+    "simulated_content_not_presented_as_observed_fact": true,
+    "freshness_and_uncertainty_remain_explicit_when_applicable": true
+  },
+  "privacy_and_authority": {
+    "effective_audience_permissions_apply_to_card": true,
+    "card_cannot_widen_source_disclosure": true,
+    "private_source_payloads_are_not_exposed_by_default": true,
+    "secrets_are_not_duplicated_into_card": true,
+    "revocation_or_deletion_cannot_be_bypassed_by_historical_card": true,
+    "source_restrictions_are_inherited_by_derived_explanation": true
+  },
+  "voice_explanation": {
+    "question": "Where do you know this from?",
+    "uses_same_real_trace": true,
+    "human_readable": true,
+    "does_not_require_hidden_chain_of_thought": true,
+    "must_not_invent_missing_sources_or_rationale": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "TRACE_MISSING_FOR_ANSWER",
+      "decision": "SHOW_EVIDENCE_UNAVAILABLE_NOT_INVENTED_EXPLANATION"
+    },
+    {
+      "case": "VISITOR_CARD_REQUESTS_OWNER_PRIVATE_SOURCE",
+      "decision": "REDACT_OR_OMIT_BY_EFFECTIVE_AUDIENCE"
+    },
+    {
+      "case": "SYSTEM_INFERENCE_PRESENTED_AS_OWNER_VERIFIED_OPINION",
+      "decision": "DENY_MISREPRESENTATION"
+    },
+    {
+      "case": "SOURCE_REVOKED_OR_DELETED_AFTER_TURN",
+      "decision": "DO_NOT_REDISCLOSE_REVOKED_OR_DELETED_CONTENT"
+    },
+    {
+      "case": "VOICE_EXPLANATION_HAS_NO_TRACE_SUPPORT",
+      "decision": "STATE_UNKNOWN_OR_UNAVAILABLE"
+    }
+  ]
+}
