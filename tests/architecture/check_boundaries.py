@@ -680,8 +680,19 @@ for required_streaming_http in (
         raise SystemExit(
             f"Owner Lab HTTP microphone path must remain incrementally streamed: {required_streaming_http}"
         )
-if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
-    raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
+if "ScriptProcessor" in owner_lab_ui:
+    raise SystemExit("Owner Lab voice capture must not regress to deprecated ScriptProcessor capture")
+media_recorder_paths = [
+    path.relative_to(owner_lab_ui_root).as_posix()
+    for path in owner_lab_ui_files
+    if "MediaRecorder" in path.read_text(encoding="utf-8")
+    and path.relative_to(owner_lab_ui_root).as_posix() != "reference-capture.js"
+]
+if media_recorder_paths:
+    raise SystemExit(
+        "MediaRecorder is allowed only for isolated RT0 reference capture, not conversation voice capture: "
+        + ", ".join(sorted(media_recorder_paths))
+    )
 
 owner_lab_evidence = (owner_lab_src / "evidence.rs").read_text(encoding="utf-8")
 evaluation_session_evidence = (CRATES / "vpr-evaluation" / "src" / "session_evidence.rs").read_text(encoding="utf-8")
