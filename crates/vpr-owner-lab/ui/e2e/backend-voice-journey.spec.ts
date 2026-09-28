@@ -330,7 +330,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   await installBrowserAudioFakes(page);
   await page.goto("/");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await page.getByRole("checkbox").check();
+  await page.locator("#consent").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
