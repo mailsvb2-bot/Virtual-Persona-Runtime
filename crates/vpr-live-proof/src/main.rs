@@ -5,9 +5,9 @@ use std::process::Command;
 
 use serde::Serialize;
 use vpr_live_proof::{
-    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, preflight,
-    prepare, run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
-    validate_provider_probe_audio,
+    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, doctor,
+    preflight, prepare, run_live_conversation_attempt, run_provider_probe,
+    validate_live_conversation_inputs, validate_provider_probe_audio,
 };
 
 #[derive(Serialize)]
@@ -67,6 +67,14 @@ fn run() -> Result<(), i32> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
         [provider_state_output] => run_preflight(Path::new(provider_state_output)),
+        [mode, probe_audio, profile_input, owner_audio, visitor_audio] if mode == "doctor" => {
+            run_doctor(
+                Path::new(probe_audio),
+                Path::new(profile_input),
+                Path::new(owner_audio),
+                Path::new(visitor_audio),
+            )
+        }
         [mode, audio_input, provider_state_output, probe_output] if mode == "probe" => run_probe(
             Path::new(audio_input),
             Path::new(provider_state_output),
@@ -106,11 +114,52 @@ fn run() -> Result<(), i32> {
         ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }
     }
+}
+
+fn run_doctor(
+    probe_audio_path: &Path,
+    profile_path: &Path,
+    owner_audio_path: &Path,
+    visitor_audio_path: &Path,
+) -> Result<(), i32> {
+    let snapshot = repo_snapshot()?;
+    let probe_audio_path =
+        validated_input_path(probe_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let profile_path = validated_input_path(profile_path, &snapshot.root).map_err(emit_boundary)?;
+    let owner_audio_path =
+        validated_input_path(owner_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    let visitor_audio_path =
+        validated_input_path(visitor_audio_path, &snapshot.root).map_err(emit_boundary)?;
+    ensure_unique_paths(&[
+        probe_audio_path.as_path(),
+        profile_path.as_path(),
+        owner_audio_path.as_path(),
+        visitor_audio_path.as_path(),
+    ])
+    .map_err(emit_boundary)?;
+
+    let probe_audio =
+        fs::read(&probe_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let profile =
+        fs::read(&profile_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let owner_audio =
+        fs::read(&owner_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+    let visitor_audio =
+        fs::read(&visitor_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
+
+    validate_provider_probe_audio(&probe_audio).map_err(|error| emit_probe(&error))?;
+    validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
+        .map_err(emit_conversation)?;
+
+    let receipt = doctor(&snapshot.candidate, worktree_clean()?).map_err(emit_preflight)?;
+    verify_snapshot(&snapshot).map_err(emit_preflight)?;
+    println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
+    Ok(())
 }
 
 fn run_preflight(output_path: &Path) -> Result<(), i32> {
