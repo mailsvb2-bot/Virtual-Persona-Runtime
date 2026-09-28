@@ -101,6 +101,16 @@ actual_examples = {
 if actual_examples != required_examples:
     raise SystemExit("publication bootstrap fail-closed examples are incomplete")
 
+private_preview_examples = [
+    item
+    for item in examples
+    if item.get("state") == "PREVIEWABLE"
+    and item.get("scope") == "VISITOR_PREVIEW"
+    and item.get("decision") == "DENY_UNLESS_EXPLICITLY_AUDIENCE_AUTHORIZED"
+]
+if len(private_preview_examples) != 1 or private_preview_examples[0].get("owner_private_context_requested") is not True:
+    raise SystemExit("Visitor Preview must fail closed on owner-private context without audience authorization")
+
 for required_spec_marker in (
     "Status:** `BLOCKED_ON_RT0_EXIT`",
     "Allowed pre-entry work:** `BOUNDED_FEASIBILITY_SPIKE_ONLY`",
