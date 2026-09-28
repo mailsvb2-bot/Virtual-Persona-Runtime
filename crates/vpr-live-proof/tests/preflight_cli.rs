@@ -289,7 +289,11 @@ fn doctor_validates_candidate_inputs_and_provider_config_without_egress() {
         &visitor_audio,
     );
     configure_live(&mut command, "did-doctor-secret", "stt-doctor-secret", "llm-doctor-secret");
-    command.env_remove("VPR_LIVE_PROOF_ALLOW_EGRESS");
+    command
+        .env_remove("VPR_LIVE_PROOF_ALLOW_EGRESS")
+        .env("VPR_DID_ENDPOINT", "http://127.0.0.1:9")
+        .env("VPR_OWNER_LAB_STT_ENDPOINT", "http://127.0.0.1:9/stt")
+        .env("VPR_OWNER_LAB_LLM_ENDPOINT", "http://127.0.0.1:9/llm");
     let output = command.output().unwrap();
     assert_eq!(
         output.status.code(),
