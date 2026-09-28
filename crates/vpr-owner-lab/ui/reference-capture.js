@@ -97,17 +97,28 @@ const refresh = async () => {
   }
 };
 
+const releaseBrowserReference = (kind) => {
+  if (kind === "voice") {
+    voiceInput.value = "";
+    recorderChunks = [];
+  } else if (kind === "appearance") {
+    appearanceInput.value = "";
+  }
+};
+
 const uploadFile = async (kind, input) => {
   const file = input.files?.[0];
   if (!file) throw new Error("REFERENCE_FILE_REQUIRED");
   const mediaType = file.type.trim().toLowerCase();
   if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
   await uploadBlob(kind, file, mediaType);
+  releaseBrowserReference(kind);
 };
 
 const clearReference = async (kind) => {
   if (!csrfToken) throw new Error("REFERENCE_BOOTSTRAP_PENDING");
   await apiJson("/api/references/clear", { kind });
+  releaseBrowserReference(kind);
   setReferenceStatus(kind, "Reference очищен.");
 };
 
@@ -148,9 +159,14 @@ const startRecording = async () => {
     stopRecorderTracks();
     recorder = null;
     voiceRecord.textContent = "Записать голос (до 15 с)";
-    void uploadBlob("voice", blob, mediaType).catch((error) => {
-      setReferenceStatus("voice", error instanceof Error ? error.message : "REFERENCE_UPLOAD_FAILED", "error");
-    });
+    void uploadBlob("voice", blob, mediaType)
+      .then(() => releaseBrowserReference("voice"))
+      .catch((error) => {
+        setReferenceStatus("voice", error instanceof Error ? error.message : "REFERENCE_UPLOAD_FAILED", "error");
+      })
+      .finally(() => {
+        recorderChunks = [];
+      });
   }, { once: true });
   recorder.start();
   voiceRecord.textContent = "Остановить запись";
@@ -186,6 +202,7 @@ voiceRecord.addEventListener("click", () => {
   void startRecording().catch((error) => {
     stopRecorderTracks();
     recorder = null;
+    recorderChunks = [];
     voiceRecord.textContent = "Записать голос (до 15 с)";
     setReferenceStatus("voice", error instanceof Error ? error.message : "REFERENCE_RECORDING_FAILED", "error");
   });
