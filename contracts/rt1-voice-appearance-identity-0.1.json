@@ -1,0 +1,88 @@
+{
+  "schema": "rt1-voice-appearance-identity-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "voice_identity_runtime_implemented": false,
+  "appearance_identity_runtime_implemented": false,
+  "owner_identity_ui_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "canonical_invariants": {
+    "persona_identity_not_llm_provider": true,
+    "voice_identity_not_tts_provider_voice_id": true,
+    "appearance_identity_not_avatar_provider_id": true,
+    "external_ids_are_representations_or_bindings": true,
+    "voice_change_not_identity_change": true,
+    "appearance_change_not_identity_change": true,
+    "appearance_change_not_personality_change": true
+  },
+  "voice_identity": {
+    "operations": ["CREATE", "SELECT", "IMPORT", "CONNECT", "AUTO_ROUTE"],
+    "requires_rights_or_consent_for_real_person": true,
+    "reference_validation_required": true,
+    "quality_evaluation_required": true,
+    "versioned": true,
+    "multiple_provider_or_language_representations_allowed": true,
+    "provider_migration_may_preserve_logical_identity": true,
+    "material_acoustic_change_visible_to_owner": true,
+    "material_change_requires_reevaluation": true
+  },
+  "appearance_identity": {
+    "operations": ["CREATE", "SELECT", "IMPORT", "CONNECT", "AUTO_ROUTE"],
+    "supported_embodiment_classes": [
+      "REAL_HUMAN",
+      "STYLIZED_HUMAN",
+      "ANIMAL",
+      "NON_HUMAN_CHARACTER"
+    ],
+    "maturity_states": [
+      "NOT_TESTED",
+      "EXPERIMENTAL",
+      "SUPPORTED",
+      "PRODUCTION_READY"
+    ],
+    "real_person_requires_explicit_consent_scope": true,
+    "provider_representation_does_not_own_identity": true,
+    "material_identity_fidelity_change_visible_to_owner": true,
+    "material_change_requires_reevaluation": true
+  },
+  "representation_binding": {
+    "binds_logical_identity": true,
+    "binds_provider_and_model_version": true,
+    "binds_rights_or_consent_state": true,
+    "binds_quality_evidence_or_status": true,
+    "secrets_not_part_of_canonical_identity": true,
+    "representation_can_be_replaced_without_new_persona_identity": true
+  },
+  "migration_and_activation": {
+    "compatibility_check_required": true,
+    "candidate_representation_not_active_by_default": true,
+    "quality_comparison_required_for_material_replacement": true,
+    "rights_or_consent_rechecked": true,
+    "owner_approval_required_when_material_identity_fidelity_changes": true,
+    "activation_explicit": true,
+    "rollback_point_required": true,
+    "automatic_material_substitution_for_real_person_forbidden": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "TTS_PROVIDER_VOICE_ID_CHANGES",
+      "decision": "DO_NOT_CREATE_NEW_PERSONA_OR_RENAME_VOICE_IDENTITY"
+    },
+    {
+      "case": "AVATAR_PROVIDER_ID_CHANGES",
+      "decision": "DO_NOT_CREATE_NEW_PERSONA_OR_RENAME_APPEARANCE_IDENTITY"
+    },
+    {
+      "case": "REAL_PERSON_VOICE_REPRESENTATION_LACKS_CONSENT",
+      "decision": "DO_NOT_ACTIVATE"
+    },
+    {
+      "case": "MATERIAL_ACOUSTIC_OR_VISUAL_DELTA_WITHOUT_REQUIRED_OWNER_APPROVAL",
+      "decision": "KEEP_CANDIDATE_INACTIVE"
+    },
+    {
+      "case": "PROVIDER_REPLACEMENT_INVALIDATES_QUALITY_CLAIM",
+      "decision": "MARK_RELEVANT_EVALUATION_STALE_AND_REEVALUATE"
+    }
+  ]
+}
