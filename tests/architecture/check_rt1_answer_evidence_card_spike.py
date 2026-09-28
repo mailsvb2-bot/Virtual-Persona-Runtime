@@ -101,14 +101,42 @@ if actual_fail_closed != expected_fail_closed:
     raise SystemExit("Answer Evidence Card fail-closed matrix drifted")
 
 # While RT1 remains blocked on RT0 exit, the feasibility slice must not
-# silently become a production AnswerEvidenceCard implementation.
-for source in CRATES.rglob("*.rs"):
-    text = source.read_text(encoding="utf-8")
-    if "AnswerEvidenceCard" in text:
-        raise SystemExit(
-            "production AnswerEvidenceCard appeared while RT1 remains blocked on RT0 exit: "
-            + str(source.relative_to(ROOT))
-        )
+# silently become a production Answer Evidence Card implementation through
+# Rust, HTTP routes, or the user-reachable Owner Lab TypeScript/HTML surface.
+production_surface_roots = (
+    CRATES,
+    ROOT / "crates" / "vpr-owner-lab" / "ui",
+)
+production_surface_suffixes = {".rs", ".ts", ".tsx", ".js", ".html"}
+forbidden_surface_markers = (
+    "AnswerEvidenceCard",
+    "answerEvidenceCard",
+    "answer_evidence_card",
+    "answer-evidence-card",
+    "/api/answer/evidence",
+    "/api/evidence/answer",
+    'id="answer-evidence"',
+    'id="answer-evidence-card"',
+    "Where do you know this from?",
+)
+
+scanned_paths: set[Path] = set()
+for surface_root in production_surface_roots:
+    for source in surface_root.rglob("*"):
+        if (
+            not source.is_file()
+            or source.suffix not in production_surface_suffixes
+            or source in scanned_paths
+        ):
+            continue
+        scanned_paths.add(source)
+        text = source.read_text(encoding="utf-8")
+        marker = next((item for item in forbidden_surface_markers if item in text), None)
+        if marker is not None:
+            raise SystemExit(
+                "production Answer Evidence Card surface appeared while RT1 remains blocked "
+                f"on RT0 exit: {source.relative_to(ROOT)} (marker={marker!r})"
+            )
 
 for required_spec_marker in (
     "Status:** `BLOCKED_ON_RT0_EXIT`",
