@@ -1541,6 +1541,9 @@ void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
+    (window as typeof window & { __vprBootstrap?: { csrfToken: string } }).__vprBootstrap = {
+      csrfToken,
+    };
     window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
       detail: { csrfToken },
     }));
