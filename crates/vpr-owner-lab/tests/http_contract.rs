@@ -925,3 +925,93 @@ fn close_preempts_active_voice_before_any_avatar_output() {
             .is_err()
     );
 }
+
+
+#[test]
+fn rt0_reference_intake_is_local_consent_gated_and_non_retaining() {
+    let _serial = serialize_owner_lab_http_contract();
+    let (did_endpoint, _captured) = mock_did();
+    let port = free_port();
+    let host = format!("127.0.0.1:{port}");
+    let _guard = launch_owner_lab(port, &did_endpoint);
+    let csrf = bootstrap(port, &host);
+    let origin = format!("http://{host}");
+
+    let denied = http_bytes(
+        port,
+        "POST",
+        "/api/references/intake",
+        &host,
+        &[
+            ("Content-Type", "application/octet-stream"),
+            ("Origin", &origin),
+            ("X-VPR-CSRF", &csrf),
+            ("X-VPR-Reference-Kind", "voice"),
+            ("X-VPR-Reference-Media-Type", "audio/webm"),
+            ("X-VPR-Reference-Consent", "missing"),
+        ],
+        b"voice-reference",
+    );
+    assert_eq!(denied.status, 403);
+    assert!(denied.body.contains("CONSENT_REQUIRED"));
+
+    let wrong_media = http_bytes(
+        port,
+        "POST",
+        "/api/references/intake",
+        &host,
+        &[
+            ("Content-Type", "application/octet-stream"),
+            ("Origin", &origin),
+            ("X-VPR-CSRF", &csrf),
+            ("X-VPR-Reference-Kind", "voice"),
+            ("X-VPR-Reference-Media-Type", "image/png"),
+            ("X-VPR-Reference-Consent", "confirmed"),
+        ],
+        b"not-a-voice-reference",
+    );
+    assert_eq!(wrong_media.status, 415);
+    assert!(wrong_media.body.contains("REFERENCE_MEDIA_TYPE_DENIED"));
+
+    let accepted = http_bytes(
+        port,
+        "POST",
+        "/api/references/intake",
+        &host,
+        &[
+            ("Content-Type", "application/octet-stream"),
+            ("Origin", &origin),
+            ("X-VPR-CSRF", &csrf),
+            ("X-VPR-Reference-Kind", "voice"),
+            ("X-VPR-Reference-Media-Type", "audio/webm"),
+            ("X-VPR-Reference-Consent", "confirmed"),
+        ],
+        b"synthetic-reference",
+    );
+    assert_eq!(accepted.status, 201, "{}", accepted.body);
+    let accepted_json: Value = serde_json::from_str(&accepted.body).unwrap();
+    assert_eq!(accepted_json["kind"], "voice");
+    assert_eq!(accepted_json["media_type"], "audio/webm");
+    assert_eq!(accepted_json["bytes"], 19);
+    assert_eq!(accepted_json["raw_retained"], false);
+    assert_eq!(accepted_json["sha256"].as_str().unwrap().len(), 64);
+    assert!(!accepted.body.contains("synthetic-reference"));
+
+    let snapshot = http(port, "GET", "/api/references", &host, &[], "");
+    assert_eq!(snapshot.status, 200);
+    let snapshot_json: Value = serde_json::from_str(&snapshot.body).unwrap();
+    assert_eq!(snapshot_json["voice"]["raw_retained"], false);
+    assert_eq!(snapshot_json["appearance"], Value::Null);
+    assert!(!snapshot.body.contains("synthetic-reference"));
+
+    let cleared = post(port, &host, &csrf, "/api/references/clear", r#"{"kind":"voice"}"#);
+    assert_eq!(cleared.status, 200);
+    let cleared_again = post(port, &host, &csrf, "/api/references/clear", r#"{"kind":"voice"}"#);
+    assert_eq!(cleared_again.status, 200);
+    let cleared_json: Value = serde_json::from_str(&cleared_again.body).unwrap();
+    assert_eq!(cleared_json["cleared"], false);
+
+    let after = http(port, "GET", "/api/references", &host, &[], "");
+    let after_json: Value = serde_json::from_str(&after.body).unwrap();
+    assert_eq!(after_json["voice"], Value::Null);
+}
