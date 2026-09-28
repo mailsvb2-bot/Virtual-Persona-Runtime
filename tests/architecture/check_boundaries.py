@@ -695,6 +695,19 @@ if media_recorder_paths:
         + ", ".join(sorted(media_recorder_paths))
     )
 
+reference_capture_ui = (owner_lab_ui_root / "reference-capture.js").read_text(encoding="utf-8")
+for required_reference_release in (
+    "releaseBrowserReference",
+    'voiceInput.value = ""',
+    'appearanceInput.value = ""',
+    "recorderChunks = []",
+    ".finally(() => {",
+):
+    if required_reference_release not in reference_capture_ui:
+        raise SystemExit(
+            f"Owner Lab reference capture must release raw browser references: {required_reference_release}"
+        )
+
 owner_lab_evidence = (owner_lab_src / "evidence.rs").read_text(encoding="utf-8")
 evaluation_session_evidence = (CRATES / "vpr-evaluation" / "src" / "session_evidence.rs").read_text(encoding="utf-8")
 for required_evidence_boundary in (
