@@ -28,13 +28,21 @@
       "authenticated": true,
       "matching_workspace_required": true,
       "may_use_owner_routes": true,
-      "may_preview": true,
-      "may_publish_control": true
+      "may_publish_control": true,
+      "may_initiate_visitor_preview": true
     },
     "public_visitor": {
       "authenticated_workspace_member": false,
       "matching_workspace_membership_required": false,
       "publication_bound": true,
+      "may_use_owner_routes": false,
+      "may_read_owner_private_material": false,
+      "may_mutate_persona": false
+    },
+    "visitor_preview": {
+      "initiated_by_owner": true,
+      "authenticated_workspace_member": false,
+      "effective_permissions": "PUBLIC_VISITOR",
       "may_use_owner_routes": false,
       "may_read_owner_private_material": false,
       "may_mutate_persona": false
@@ -56,6 +64,10 @@
     {
       "case": "VISITOR_CALLS_OWNER_ROUTE",
       "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "VISITOR_PREVIEW_REQUESTS_OWNER_PRIVATE_CONTEXT",
+      "decision": "DENY_UNLESS_EXPLICITLY_AUDIENCE_AUTHORIZED"
     },
     {
       "case": "PUBLIC_LINK_ON_PAUSED_PUBLICATION",
