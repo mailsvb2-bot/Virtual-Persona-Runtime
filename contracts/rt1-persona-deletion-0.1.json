@@ -21,7 +21,11 @@
     "invalidates_or_erases_search_or_vector_index_entries": true,
     "invalidates_or_erases_generated_profiles_or_equivalent_derived_state": true,
     "revokes_or_deactivates_affected_voice_and_appearance_representations": true,
-    "does_not_delete_unrelated_workspace_or_other_personas": true
+    "does_not_delete_unrelated_workspace_or_other_personas": true,
+    "active_sessions_and_turn_authority_revoked_on_commit": true,
+    "in_flight_execution_cancelled_or_drained_without_further_persona_use": true,
+    "cached_session_persona_context_invalidated": true,
+    "deletion_success_not_reported_while_active_use_remains_authorized": true
   },
   "erasure_and_audit": {
     "deleted_personal_content_not_retained_for_revision_history": true,
@@ -62,6 +66,10 @@
     {
       "case": "PUBLICATION_CACHE_REFERENCES_DELETED_PERSONA",
       "decision": "DENY_AND_INVALIDATE_STALE_PROJECTION"
+    },
+    {
+      "case": "ACTIVE_SESSION_EXISTS_WHEN_PERSONA_DELETE_COMMITS",
+      "decision": "REVOKE_ACTIVE_USE_CANCEL_OR_DRAIN_AND_INVALIDATE_SESSION_CONTEXT"
     }
   ]
 }
