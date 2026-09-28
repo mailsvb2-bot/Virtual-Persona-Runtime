@@ -21,19 +21,12 @@ pub use vpr_evaluation::{
 };
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";
-pub const RT0_LIVE_PROOF_DOCTOR_SCHEMA: &str = "rt0-live-proof-doctor-0.1";
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LiveProofDoctorReceipt {
-    pub schema_version: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderConfigurationInspection {
     pub candidate_sha: String,
     pub provider_state_sha256: String,
     pub provider_state: ProviderStateManifest,
-    pub input_validation_passed: bool,
-    pub provider_configuration_passed: bool,
-    pub egress_performed: bool,
-    pub release_evidence: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -116,28 +109,23 @@ fn prepare_provider_configuration(
     })
 }
 
-/// Validates the exact local RT0 candidate and configured provider composition without egress.
+/// Inspects the exact local RT0 candidate and configured provider composition without egress.
 ///
-/// This is an operator readiness check only. It performs no provider calls, writes no evidence
-/// artifacts, and cannot satisfy any RT0 exit criterion.
+/// Input-file validation is deliberately outside this API; callers must not infer that private
+/// evidence inputs were checked merely because provider configuration is valid.
 ///
 /// # Errors
 /// Fails closed for an invalid/dirty candidate or incomplete/rejected provider configuration.
-pub fn doctor(
+pub fn inspect_provider_configuration(
     candidate_sha: &str,
     worktree_clean: bool,
-) -> Result<LiveProofDoctorReceipt, LiveProofPreflightError> {
+) -> Result<ProviderConfigurationInspection, LiveProofPreflightError> {
     let prepared = prepare_provider_configuration(candidate_sha, worktree_clean)?;
     let receipt = prepared.receipt();
-    Ok(LiveProofDoctorReceipt {
-        schema_version: RT0_LIVE_PROOF_DOCTOR_SCHEMA.into(),
+    Ok(ProviderConfigurationInspection {
         candidate_sha: receipt.candidate_sha.clone(),
         provider_state_sha256: receipt.provider_state_sha256.clone(),
         provider_state: receipt.provider_state.clone(),
-        input_validation_passed: true,
-        provider_configuration_passed: true,
-        egress_performed: false,
-        release_evidence: false,
     })
 }
 
