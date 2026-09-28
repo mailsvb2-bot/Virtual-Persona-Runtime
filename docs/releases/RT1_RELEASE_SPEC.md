@@ -397,6 +397,26 @@ Approval must bind the exact base PersonaVersion, fail closed when stale, create
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add production BehaviorChangeProposal runtime/state, durable behavior mutations or owner-facing production controls before RT1 entry.
 
+### Answer Evidence Card feasibility boundary
+
+A bounded pre-entry spike may freeze the provenance UX contract required by Canon §33 without making the card production-reachable before RT1 entry.
+
+The card is a disclosure-filtered projection of the real generation/evidence trace for the exact answer or Turn. It may expose sources used, owner-verified material, system inference, research date, freshness and uncertainty only when those facts are supported by the underlying trace.
+
+The boundary must preserve these invariants:
+
+- the card binds the exact PersonaVersion and actual answer/Turn evidence;
+- owner-verified material remains distinct from system inference and simulated content;
+- effective audience permissions apply to the card exactly as they apply to the underlying source material;
+- the card cannot widen source disclosure, duplicate secrets or expose private source payloads by default;
+- missing trace data is shown as unknown/unavailable rather than fabricated;
+- revocation or deletion cannot be bypassed by reopening historical provenance UI;
+- a voice answer to “Where do you know this from?” uses the same real trace and must not invent a post-hoc explanation unsupported by it.
+
+This contract does not require exposing hidden chain-of-thought. It requires human-readable provenance derived from structured evidence.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production AnswerEvidenceCard runtime, durable provenance schema or owner/visitor production UI before RT1 entry.
+
 ## 20. Exit gate
 
 RT1 is complete only when:
