@@ -191,15 +191,18 @@ voiceRecord.addEventListener("click", () => {
   });
 });
 
-void fetch("/api/bootstrap", { credentials: "same-origin", cache: "no-store" })
-  .then(async (response) => {
-    if (!response.ok) throw new Error("REFERENCE_BOOTSTRAP_FAILED");
-    const bootstrap = await response.json();
-    csrfToken = bootstrap.csrf_token;
-    await refresh();
-  })
-  .catch((error) => {
-    const message = error instanceof Error ? error.message : "REFERENCE_BOOTSTRAP_FAILED";
+window.addEventListener("vpr:bootstrap", (event) => {
+  const detail = event instanceof CustomEvent ? event.detail : null;
+  const token = detail && typeof detail.csrfToken === "string" ? detail.csrfToken : "";
+  if (!token) {
+    setReferenceStatus("voice", "REFERENCE_BOOTSTRAP_FAILED", "error");
+    setReferenceStatus("appearance", "REFERENCE_BOOTSTRAP_FAILED", "error");
+    return;
+  }
+  csrfToken = token;
+  void refresh().catch((error) => {
+    const message = error instanceof Error ? error.message : "REFERENCE_REFRESH_FAILED";
     setReferenceStatus("voice", message, "error");
     setReferenceStatus("appearance", message, "error");
   });
+}, { once: true });
