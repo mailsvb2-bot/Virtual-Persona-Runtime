@@ -14,6 +14,7 @@ const voiceClear = byId("voice-reference-clear");
 const appearanceClear = byId("appearance-reference-clear");
 const voiceStatus = byId("voice-reference-status");
 const appearanceStatus = byId("appearance-reference-status");
+const microphoneSelect = document.getElementById("microphone-device");
 
 let csrfToken = "";
 let recorder = null;
@@ -99,7 +100,9 @@ const refresh = async () => {
 const uploadFile = async (kind, input) => {
   const file = input.files?.[0];
   if (!file) throw new Error("REFERENCE_FILE_REQUIRED");
-  await uploadBlob(kind, file, file.type || "application/octet-stream");
+  const mediaType = file.type.trim().toLowerCase();
+  if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
+  await uploadBlob(kind, file, mediaType);
 };
 
 const clearReference = async (kind) => {
@@ -124,7 +127,12 @@ const startRecording = async () => {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
     throw new Error("REFERENCE_RECORDING_UNAVAILABLE");
   }
-  recorderStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const selectedDeviceId = microphoneSelect instanceof HTMLSelectElement
+    ? microphoneSelect.value.trim()
+    : "";
+  recorderStream = await navigator.mediaDevices.getUserMedia({
+    audio: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : true,
+  });
   recorderChunks = [];
   const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"]
     .find((type) => MediaRecorder.isTypeSupported?.(type));
