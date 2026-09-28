@@ -66,6 +66,8 @@ let csrfToken = "";
 let egressEnabled = false;
 let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
+let bootstrapComplete = false;
+let statusSyncTail = Promise.resolve();
 let peer = null;
 let liveKitRoom = null;
 let liveKitAudioTrack = null;
@@ -483,12 +485,19 @@ const renderModalityReadiness = (readiness) => {
         node.dataset.state = state;
     });
 };
-const syncStatus = async () => {
-    backendStatus = await api("/api/status");
-    renderModalityReadiness(backendStatus.modality_readiness);
-    updateControls();
-    showEvidence(backendStatus);
-    return backendStatus;
+const syncStatus = () => {
+    const run = statusSyncTail
+        .catch(() => undefined)
+        .then(async () => {
+        const status = await api("/api/status");
+        backendStatus = status;
+        renderModalityReadiness(status.modality_readiness);
+        updateControls();
+        showEvidence(status);
+        return status;
+    });
+    statusSyncTail = run.then(() => undefined, () => undefined);
+    return run;
 };
 const postIce = async (candidate) => {
     await api("/api/avatar/ice", {
@@ -536,7 +545,9 @@ const ownerCapture = mountOwnerCapture({
     onStateChange: (state) => {
         ownerCaptureReviewed = state.reviewed;
         updateControls();
-        void syncStatus().catch(() => undefined);
+        if (bootstrapComplete) {
+            void syncStatus().catch(() => undefined);
+        }
     },
 });
 const handleProviderClientEvent = (raw) => {
@@ -1361,6 +1372,7 @@ void api("/api/bootstrap")
         setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
+    bootstrapComplete = true;
     const bootstrapState = window.__vprBootstrap;
     if (bootstrapState)
         bootstrapState.ready = true;
