@@ -47,7 +47,8 @@
     "failed_voice_preparation_does_not_invalidate_reviewed_owner_knowledge": true,
     "failed_avatar_preparation_does_not_invalidate_reviewed_owner_knowledge": true,
     "failed_avatar_preparation_does_not_invalidate_persona_identity": true,
-    "text_capture_can_remain_valid_when_media_preparation_fails": true
+    "text_capture_can_remain_valid_when_media_preparation_fails": true,
+    "failed_voice_preparation_does_not_invalidate_persona_identity": true
   },
   "source_and_retention": {
     "import_records_source_or_provenance_reference": true,
