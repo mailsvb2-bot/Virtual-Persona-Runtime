@@ -106,6 +106,10 @@ const releaseBrowserReference = (kind) => {
   }
 };
 
+const releaseAttemptedFileIfCurrent = (input, attemptedFile) => {
+  if (input.files?.[0] === attemptedFile) input.value = "";
+};
+
 const uploadFile = async (kind, input) => {
   const file = input.files?.[0];
   if (!file) throw new Error("REFERENCE_FILE_REQUIRED");
@@ -114,9 +118,9 @@ const uploadFile = async (kind, input) => {
     if (!mediaType) throw new Error("REFERENCE_MEDIA_TYPE_UNKNOWN");
     await uploadBlob(kind, file, mediaType);
   } finally {
-    // Browser-side raw biometric/source material is fail-safe ephemeral: once the
-    // owner attempts intake, the selected File must not remain retained for retry.
-    releaseBrowserReference(kind);
+    // Release only the File captured for this attempt. If the owner selected a newer
+    // replacement while the request was pending, that newer source remains untouched.
+    releaseAttemptedFileIfCurrent(input, file);
   }
 };
 
