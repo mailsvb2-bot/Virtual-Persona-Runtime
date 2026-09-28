@@ -28,6 +28,8 @@ jobs:
         run: python3 tests/architecture/check_release_contracts.py
       - name: RT1 publication pre-entry spike
         run: python3 tests/architecture/check_rt1_publication_spike.py
+      - name: RT1 public session lease pre-entry spike
+        run: python3 tests/architecture/check_rt1_public_session_lease_spike.py
       - name: RT1 persistence pre-entry spike
         run: python3 tests/architecture/check_rt1_persistence_spike.py
       - name: RT1 workspace authority pre-entry spike
