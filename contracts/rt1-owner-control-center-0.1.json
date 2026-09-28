@@ -1,0 +1,118 @@
+{
+  "schema": "rt1-owner-control-center-spike-0.1",
+  "maturity": "RESEARCH_REQUIRED",
+  "production": false,
+  "owner_control_center_runtime_implemented": false,
+  "owner_control_center_ui_implemented": false,
+  "durable_control_center_projection_implemented": false,
+  "purpose": "bounded contract-level feasibility proof only",
+  "projection": {
+    "title": "What my Persona knows and says about me",
+    "is_projection_not_source_of_truth": true,
+    "reads_canonical_claims_and_revision_history": true,
+    "reads_canonical_provenance": true,
+    "reads_canonical_audience_policy": true,
+    "must_not_copy_provider_owned_truth": true
+  },
+  "content_classes": [
+    "FACTS",
+    "OPINIONS",
+    "PREFERENCES",
+    "STORIES",
+    "BIOGRAPHY",
+    "SKILLS",
+    "RESTRICTIONS",
+    "RELATIONSHIPS",
+    "SYSTEM_INFERENCES"
+  ],
+  "owner_actions": {
+    "confirm": {
+      "routes_to": "OWNER_CLAIM_LIFECYCLE",
+      "creates_second_claim_authority": false
+    },
+    "correct": {
+      "routes_to": "OWNER_CLAIM_LIFECYCLE",
+      "creates_second_claim_authority": false
+    },
+    "hide": {
+      "routes_to": "OWNER_CLAIM_LIFECYCLE",
+      "creates_second_claim_authority": false
+    },
+    "delete": {
+      "routes_to": "OWNER_CLAIM_LIFECYCLE",
+      "creates_second_claim_authority": false
+    },
+    "restrict_audience": {
+      "routes_to": "CANONICAL_AUDIENCE_POLICY",
+      "may_only_narrow_visibility_in_this_flow": true,
+      "must_invalidate_affected_public_projection": true
+    },
+    "mark_outdated": {
+      "preserves_attributable_history": true,
+      "excludes_from_current_factual_context": true,
+      "must_invalidate_affected_derived_and_public_state": true,
+      "does_not_mean_delete": true
+    },
+    "reject_inference": {
+      "applies_only_to_system_inference_or_derived_claim": true,
+      "must_not_create_opposite_owner_claim": true,
+      "must_not_upgrade_any_claim_to_owner_verified": true,
+      "must_invalidate_affected_derived_and_public_state": true
+    },
+    "inspect_provenance": {
+      "routes_to": "CANONICAL_PROVENANCE_EVIDENCE",
+      "read_only": true,
+      "must_respect_effective_disclosure": true,
+      "must_not_expose_hidden_chain_of_thought": true
+    }
+  },
+  "owner_correction_authority_hierarchy": [
+    "EXPLICIT_OWNER_CORRECTION",
+    "VERIFIED_OWNER_STATEMENT",
+    "VERIFIED_SOURCE",
+    "SYSTEM_INFERENCE",
+    "UNVERIFIED_MODEL_KNOWLEDGE"
+  ],
+  "ledger_entry_minimum": [
+    "CLAIM_OR_ITEM_ID",
+    "CURRENT_REVISION",
+    "CONTENT_CLASS",
+    "VERIFICATION_OR_REVIEW_STATE",
+    "DERIVATION_OR_INFERENCE_STATUS",
+    "AUDIENCE_RESTRICTION_SUMMARY",
+    "PROVENANCE_SUMMARY",
+    "FRESHNESS_OR_OUTDATED_STATUS"
+  ],
+  "invariants": {
+    "owner_actions_require_owner_authority": true,
+    "visitor_cannot_mutate_control_center": true,
+    "control_center_cannot_widen_authority": true,
+    "control_center_cannot_bypass_claim_lifecycle": true,
+    "control_center_cannot_bypass_evidence_disclosure": true,
+    "stale_persona_version_mutation_fails_closed": true,
+    "correction_outdated_rejection_and_restriction_propagate_to_affected_projections": true,
+    "normal_owner_flow_does_not_require_provider_or_model_ids": true
+  },
+  "fail_closed_examples": [
+    {
+      "case": "VISITOR_ATTEMPTS_CONTROL_CENTER_MUTATION",
+      "decision": "DENY_BEFORE_PROVIDER_EGRESS"
+    },
+    {
+      "case": "RESTRICT_AUDIENCE_REQUEST_WOULD_WIDEN_VISIBILITY",
+      "decision": "DENY_OR_ROUTE_TO_SEPARATE_REVIEWED_AUDIENCE_POLICY_CHANGE"
+    },
+    {
+      "case": "REJECT_INFERENCE_ATTEMPTS_TO_CREATE_OWNER_VERIFIED_OPPOSITE",
+      "decision": "DENY"
+    },
+    {
+      "case": "PROVENANCE_VIEW_WOULD_DISCLOSE_RESTRICTED_SOURCE",
+      "decision": "REDACT_OR_OMIT"
+    },
+    {
+      "case": "MARK_OUTDATED_WITH_STALE_PERSONA_VERSION",
+      "decision": "DENY"
+    }
+  ]
+}
