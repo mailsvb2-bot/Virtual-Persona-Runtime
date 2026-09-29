@@ -13,6 +13,7 @@ EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
+MEDIA_RUNTIME = UI / "src" / "media-runtime.ts"
 VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 STYLES = UI / "styles.css"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
@@ -37,6 +38,7 @@ fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+media_runtime = MEDIA_RUNTIME.read_text(encoding="utf-8")
 voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 styles = STYLES.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
@@ -58,10 +60,33 @@ for forbidden in (
     "notifyTestApiResponse",
     "__vprTestMediaRuntime",
 ):
-    if forbidden in app:
+    if forbidden in app or forbidden in media_runtime:
         raise SystemExit(f"Owner Lab production runtime contains forbidden test orchestration: {forbidden}")
-if "__vprMediaRuntime" not in app:
-    raise SystemExit("Owner Lab media dependency seam missing")
+for required in (
+    "export type MediaRuntimeOverrides",
+    "window.__vprMediaRuntime",
+    "runtimeMediaDevices",
+    "createRuntimePeerConnection",
+    "setMediaSrcObject",
+):
+    if required not in media_runtime:
+        raise SystemExit(f"Owner Lab media adapter missing dependency seam: {required}")
+if "__vprMediaRuntime" in app:
+    raise SystemExit("Owner Lab application must consume the media adapter, not the global override directly")
+if 'from "./media-runtime.js"' not in app:
+    raise SystemExit("Owner Lab application must compose media through the extracted adapter")
+
+for forbidden in ("let backendStatus", "let realtimeReadiness", "let providerPlaybackId"):
+    if forbidden in app:
+        raise SystemExit(f"Owner Lab contains split mutable session ownership: {forbidden}")
+for required in (
+    "class SessionRuntimeState",
+    "applyBackend(status: LabStatus)",
+    "patchBackend(patch: Partial<LabStatus>)",
+    "resetRealtime(): void",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab centralized session runtime state missing: {required}")
 
 for required in (
     "/api/persona/reviewed",
@@ -489,6 +514,7 @@ for required in (
     "npm run test:e2e:voice",
     "npm run test:e2e:expressive",
     "dist/owner-capture.js",
+    "dist/media-runtime.js",
 ):
     if required not in ci:
         raise SystemExit(f"Owner Lab CI missing browser-contract enforcement: {required}")
