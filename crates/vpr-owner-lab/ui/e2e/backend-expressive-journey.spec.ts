@@ -86,7 +86,11 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
+  });
+};
 
+const prepareExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let testDevicesReady = false;
@@ -397,6 +401,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
+  await prepareExpressiveRuntimeFakes(page);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   // Consent and connect-button actionability are separately covered by the browser-contract
