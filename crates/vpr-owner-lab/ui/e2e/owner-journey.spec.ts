@@ -477,9 +477,12 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
   });
   await installApiFixture(page, state);
   await page.goto("/");
-  await expect(page.locator("#connect")).toBeEnabled();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#connect")).toBeEnabled();
+  await expect.poll(() => page.evaluate(
+    () => (window as typeof window & { __vprBootstrapMediaAccesses?: number })
+      .__vprBootstrapMediaAccesses ?? 0,
+  )).toBe(0);
 });
 
 test("bootstrap applies one authoritative status snapshot before capture refreshes can resync", async ({ page }) => {
