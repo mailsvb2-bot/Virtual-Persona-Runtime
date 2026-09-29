@@ -62,7 +62,7 @@ struct DoctorRunReceipt<'a> {
     execution: DoctorExecutionReceipt,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoundaryError {
     InputPathInvalid,
     InputPathInsideWorktree,
