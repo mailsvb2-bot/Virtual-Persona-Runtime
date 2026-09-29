@@ -234,8 +234,8 @@ fn extract_artifacts(
 ) -> Result<ExtractedCandidateArtifacts, CandidateBundleExtractError> {
     validate_candidate_sha(exact_candidate_sha)
         .map_err(|_| CandidateBundleExtractError::CandidateMismatch)?;
-    let bundle: CandidateBundleInput =
-        serde_json::from_slice(bundle_bytes).map_err(|_| CandidateBundleExtractError::InvalidBundle)?;
+    let bundle: CandidateBundleInput = serde_json::from_slice(bundle_bytes)
+        .map_err(|_| CandidateBundleExtractError::InvalidBundle)?;
     if bundle.schema_version != CANDIDATE_BUNDLE_SCHEMA {
         return Err(CandidateBundleExtractError::InvalidBundle);
     }
