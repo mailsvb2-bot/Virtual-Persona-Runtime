@@ -961,12 +961,7 @@ const connectWebRtcTransport = async (
     if (event.track.kind === "video") {
       realtimeReadiness.video = true;
       stage?.classList.add("has-video");
-      const requestFrame = (video as unknown as {
-        requestVideoFrameCallback?: (callback: () => void) => number;
-      }).requestVideoFrameCallback;
-      if (typeof requestFrame === "function") {
-        requestFrame.call(video, () => recordFirstVideoFrame());
-      } else {
+      if (!requestVideoFrame(video, recordFirstVideoFrame)) {
         video.addEventListener("playing", recordFirstVideoFrame, { once: true });
       }
       setStatus("Видео подключено", "ready");
