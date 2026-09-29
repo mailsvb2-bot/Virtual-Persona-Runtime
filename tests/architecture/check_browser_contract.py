@@ -52,6 +52,19 @@ session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
 
+# Test doubles may replace browser media primitives only at the composition seam.
+# They must never participate in production HTTP completion ordering or mutate the
+# runtime after navigation. These are architecture invariants, not timing heuristics.
+for forbidden in (
+    "afterApiResponse",
+    "notifyTestApiResponse",
+    "__vprTestMediaRuntime",
+):
+    if forbidden in app:
+        raise SystemExit(f"Owner Lab production runtime contains forbidden test orchestration: {forbidden}")
+if "__vprMediaRuntime" not in app:
+    raise SystemExit("Owner Lab media dependency seam missing")
+
 for required in (
     "/api/persona/reviewed",
     "/api/session/revoke",
@@ -189,8 +202,8 @@ if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
     "const installMediaRuntime = () => {",
-    "async connect() {\n      installMediaRuntime();",
-    "window.__vprTestMediaRuntime",
+    "installMediaRuntime();",
+    "window.__vprMediaRuntime",
     "window.LivekitClient",
     "FakeAudioWorkletNode",
     "async getUserMedia()",
@@ -200,6 +213,10 @@ for required in (
         raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic media runtime: {required}")
 if "navigator.mediaDevices" in fake_livekit:
     raise SystemExit("Owner Lab fake LiveKit SDK must never touch native browser media devices")
+if "async connect() {\n      installMediaRuntime();" in fake_livekit:
+    raise SystemExit("Owner Lab Expressive media runtime must be installed once before navigation")
+if fake_livekit.find("installMediaRuntime();") > fake_livekit.find("window.LivekitClient"):
+    raise SystemExit("Owner Lab Expressive media runtime must exist before the fake SDK is published")
 
 
 for required in (
@@ -430,13 +447,36 @@ for required in (
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
+for forbidden in (
+    "afterApiResponse",
+    "prepareVoiceCaptureFakes",
+    "__vprStartVoicePlayback",
+):
+    if forbidden in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E contains forbidden post-response orchestration: {forbidden}")
 for required in (
-    'path.endsWith("/api/avatar/answer")',
-    '__vprSetPeerConnectionState?.("connected")',
-    "A local answer does not mean ICE/DTLS is connected",
+    "async setLocalDescription(): Promise<void>",
+    'this.connectionState = "connected"',
+    "publishRemoteAudioTrack?.()",
+    'payload.includes("interrupt")',
+    "getUserMedia: async (constraints: MediaStreamConstraints)",
+    "AudioWorkletNode: FakeAudioWorkletNode",
 ):
     if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
+        raise SystemExit(f"Owner Lab voice fake transport lifecycle missing: {required}")
+
+
+voice_goto = voice_e2e.find('await page.goto("/");')
+if voice_goto >= 0 and "await page.evaluate(() => {" in voice_e2e[voice_goto:voice_e2e.find("const recordTextTurn")]:
+    raise SystemExit("Owner Lab voice E2E must not mutate page runtime after navigation")
+expressive_goto = expressive_e2e.find('await page.goto("/");')
+expressive_layout = expressive_e2e.find("const layout = await page.evaluate")
+if expressive_goto >= 0 and expressive_layout >= 0:
+    # Layout inspection is allowed; runtime mutation is not.
+    mutable_markers = ("__vprMediaRuntime =", "installMediaRuntime(", "LivekitClient =")
+    window = expressive_e2e[expressive_goto:expressive_layout]
+    if any(marker in window for marker in mutable_markers):
+        raise SystemExit("Owner Lab Expressive E2E must not mutate media runtime after navigation")
 
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
