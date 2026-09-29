@@ -327,16 +327,15 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       value: FakeAudioWorkletNode,
     });
     };
-  });
-};
-
-const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const install = (window as typeof window & {
-      __vprInstallExpressiveRuntimeFakes?: () => void;
-    }).__vprInstallExpressiveRuntimeFakes;
-    if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
-    install();
+    window.addEventListener("vpr:bootstrap-ready", () => {
+      const fakeWindow = window as typeof window & {
+        __vprInstallExpressiveRuntimeFakes?: () => void;
+      };
+      const install = fakeWindow.__vprInstallExpressiveRuntimeFakes;
+      if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
+      install();
+      document.documentElement.dataset.vprExpressiveRuntimeFakesReady = "true";
+    }, { once: true });
   });
 };
 
@@ -410,7 +409,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  await installExpressiveRuntimeFakes(page);
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-vpr-expressive-runtime-fakes-ready",
+    "true",
+  );
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
