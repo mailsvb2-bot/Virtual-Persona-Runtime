@@ -721,7 +721,6 @@ fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
     remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
 }
 
-
 fn candidate_bundle_command(
     repo: &TempRepo,
     probe_audio: &Path,
