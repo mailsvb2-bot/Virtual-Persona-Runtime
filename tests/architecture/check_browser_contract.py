@@ -132,7 +132,7 @@ for required in (
     "av_sync_proven",
     "did.speak",
     "did.interrupt",
-    "__vprExpressiveDisconnect",
+    "vpr:expressive-control",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
     "#metric-stt",
     "#metric-llm-first",
@@ -188,18 +188,19 @@ if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in ex
 if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
-    "const installMediaRuntime = () => {",
-    "async connect() {\n      installMediaRuntime();",
-    "window.__vprTestMediaRuntime",
     "window.LivekitClient",
     "FakeAudioWorkletNode",
     "async getUserMedia()",
-    "if (!testDevicesReady) return []",
+    'Object.defineProperty(navigator, "mediaDevices"',
+    'Object.defineProperty(window, "AudioContext"',
+    'Object.defineProperty(window, "MediaStream"',
+    '"vpr:expressive-control"',
 ):
     if required not in fake_livekit:
-        raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic media runtime: {required}")
-if "navigator.mediaDevices" in fake_livekit:
-    raise SystemExit("Owner Lab fake LiveKit SDK must never touch native browser media devices")
+        raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic browser boundary: {required}")
+for forbidden in ("__vprTestMediaRuntime", "installMediaRuntime"):
+    if forbidden in fake_livekit:
+        raise SystemExit(f"Owner Lab fake LiveKit SDK leaked obsolete production test seam: {forbidden}")
 
 
 for required in (
@@ -236,6 +237,15 @@ for required in (
 ):
     if required not in index_html:
         raise SystemExit(f"Owner Lab microphone selection DOM missing: {required}")
+
+for forbidden in (
+    "__vprTestMediaRuntime",
+    "__vprBootstrap",
+    "vpr:bootstrap-ready",
+    "notifyTestApiResponse",
+):
+    if forbidden in app:
+        raise SystemExit(f"Owner Lab production app must not contain test orchestration seam: {forbidden}")
 
 for required in (
     "enumerateDevices",
@@ -385,20 +395,21 @@ for provider_e2e, label in (
         )
     if "installProviderAutoConnect(page)" not in provider_e2e:
         raise SystemExit(f"{label} provider E2E must arm connect before navigation")
-    if 'document.getElementById("connect")' in provider_e2e:
-        raise SystemExit(
-            f"{label} provider E2E must not inject a late post-bootstrap connect RPC"
-        )
+    if "page.evaluate(" in provider_e2e:
+        raise SystemExit(f"{label} provider E2E must not mutate the renderer through late page.evaluate RPCs")
 
 for required in (
-    'window.addEventListener("vpr:bootstrap-ready"',
+    "MutationObserver",
     'document.getElementById("connect")',
-    '"CONNECT_CONTROL_DISABLED"',
+    '"CONNECT_CONTROL_MISSING"',
     'root.dataset.vprProviderAutoConnect = "clicked"',
     "connect.click()",
 ):
     if required not in provider_bootstrap:
         raise SystemExit(f"Owner Lab provider bootstrap harness missing: {required}")
+for forbidden in ("vpr:bootstrap-ready", "__vprBootstrap"):
+    if forbidden in provider_bootstrap:
+        raise SystemExit(f"Provider bootstrap must not depend on a production test lifecycle event: {forbidden}")
 
 
 for required in (
@@ -431,12 +442,16 @@ for required in (
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
 for required in (
-    'path.endsWith("/api/avatar/answer")',
+    'url.endsWith("/api/avatar/answer")',
     '__vprSetPeerConnectionState?.("connected")',
-    "A local answer does not mean ICE/DTLS is connected",
+    'url.endsWith("/api/voice/input/finish")',
+    "window.setTimeout",
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
+for forbidden in ("__vprTestMediaRuntime", "prepareVoiceCaptureFakes"):
+    if forbidden in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E leaked obsolete two-phase test seam: {forbidden}")
 
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
