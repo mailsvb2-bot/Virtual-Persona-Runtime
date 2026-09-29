@@ -1,6 +1,17 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
+import {
+  createRuntimeAudioContext,
+  createRuntimeAudioWorkletNode,
+  createRuntimeMediaStream,
+  createRuntimePeerConnection,
+  mediaRuntime,
+  requestVideoFrame,
+  runtimeFetch,
+  runtimeMediaDevices,
+  setMediaSrcObject,
+} from "./media-runtime.js";
 
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
@@ -118,71 +129,13 @@ type LiveKitSdk = {
   };
 };
 
-type MediaRuntimeOverrides = {
-  mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
-  AudioContext?: unknown;
-  AudioWorkletNode?: unknown;
-  MediaStream?: unknown;
-  RTCPeerConnection?: unknown;
-  liveKitSdk?: LiveKitSdk;
-  setSrcObject?: (element: HTMLMediaElement, value: MediaProvider | null) => void;
-  requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
-};
-
-const mediaRuntime = (): MediaRuntimeOverrides | undefined => (
-  window as typeof window & { __vprMediaRuntimeOverrides?: MediaRuntimeOverrides }
-).__vprMediaRuntimeOverrides;
-const runtimeFetch = window.fetch.bind(window);
-const runtimeMediaDevices = (): MediaDevices | MediaRuntimeOverrides["mediaDevices"] =>
-  mediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
-const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext => {
-  const Constructor = (mediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
-  return new Constructor(options);
-};
-const createRuntimeAudioWorkletNode = (
-  context: BaseAudioContext,
-  name: string,
-): AudioWorkletNode => {
-  const Constructor = (mediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
-  return new Constructor(context, name);
-};
-const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
-  const Constructor = (mediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
-  return tracks ? new Constructor(tracks) : new Constructor();
-};
-const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
-  const Constructor = (mediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
-  return new Constructor(configuration);
-};
-const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  const setter = mediaRuntime()?.setSrcObject;
-  if (setter) {
-    setter(element, value);
-  } else {
-    element.srcObject = value;
-  }
-};
-const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  const request = mediaRuntime()?.requestVideoFrame;
-  if (request) {
-    request(element, callback);
-    return true;
-  }
-  const nativeRequest = (element as HTMLVideoElement & {
-    requestVideoFrameCallback?: (callback: () => void) => number;
-  }).requestVideoFrameCallback;
-  if (typeof nativeRequest !== "function") return false;
-  nativeRequest.call(element, callback);
-  return true;
-};
-
 const LIVEKIT_CLIENT_URL =
   "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
-  const runtime = mediaRuntime();
-  if (runtime?.liveKitSdk) return runtime.liveKitSdk;
+  const injectedSdk = mediaRuntime()?.liveKitSdk as LiveKitSdk | undefined;
+  if (injectedSdk) return injectedSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
   liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
