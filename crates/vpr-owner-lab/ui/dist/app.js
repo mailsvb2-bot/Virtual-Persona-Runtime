@@ -107,7 +107,36 @@ const readinessVoice = byId("readiness-voice");
 const readinessVideo = byId("readiness-video");
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+const INITIAL_LAB_STATUS = {
+    session_state: "none",
+    avatar_open: false,
+    egress_enabled: false,
+    conversation_readiness: "none",
+    modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" },
+    session_audience: null,
+    owner_context_state: "missing",
+    persona_version: 1,
+    reviewed_owner_claims: 0,
+};
+class SessionRuntimeState {
+    backend = INITIAL_LAB_STATUS;
+    realtime = { control: false, audio: false, video: false };
+    playbackId = null;
+    backendRevision = 0;
+    applyBackend(status) {
+        this.backend = status;
+        this.backendRevision += 1;
+        return status;
+    }
+    patchBackend(patch) {
+        return this.applyBackend({ ...this.backend, ...patch });
+    }
+    resetRealtime() {
+        this.realtime = { control: false, audio: false, video: false };
+        this.playbackId = null;
+    }
+}
+const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
 let microphoneDeviceListenerInstalled = false;
@@ -116,10 +145,8 @@ let peer = null;
 let liveKitRoom = null;
 let liveKitAudioTrack = null;
 let liveKitVideoTrack = null;
-let realtimeReadiness = { control: false, audio: false, video: false };
 let providerDataChannel = null;
 let activeClientControl = null;
-let providerPlaybackId = null;
 let answerSubmitted = false;
 let pendingIce = [];
 let capabilities = new Set();
@@ -543,7 +570,7 @@ const syncStatus = () => {
         .catch(() => undefined)
         .then(async () => {
         const status = await api("/api/status");
-        backendStatus = status;
+        sessionState.applyBackend(status);
         renderModalityReadiness(status.modality_readiness);
         updateControls();
         showEvidence(status);
@@ -565,17 +592,17 @@ const flushIce = async () => {
     for (const candidate of queued)
         await postIce(candidate);
 };
-const backendSessionPresent = () => !["none", "closed"].includes(backendStatus.session_state);
-const selectedAudience = () => backendStatus.session_audience ?? audienceSelect.value;
+const backendSessionPresent = () => !["none", "closed"].includes(sessionState.backend.session_state);
+const selectedAudience = () => sessionState.backend.session_audience ?? audienceSelect.value;
 const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
 const updateControls = () => {
-    const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
-    const textReady = backendStatus.conversation_readiness !== "none";
-    const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+    const transportReady = sessionState.realtime.control && sessionState.backend.session_state === "active";
+    const textReady = sessionState.backend.conversation_readiness !== "none";
+    const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
-        ? providerPlaybackId !== null
+        ? sessionState.playbackId !== null
         : true;
     const clientInterruptReady = transportReady
         && activeClientControl?.interrupt === true
@@ -585,7 +612,7 @@ const updateControls = () => {
     voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
-        || (backendStatus.session_state === "revoked" && !backendStatus.avatar_open);
+        || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
     closeButton.disabled = !backendSessionPresent();
     connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
     audienceSelect.disabled = backendSessionPresent();
@@ -609,10 +636,10 @@ const handleProviderClientEvent = (raw) => {
     void api("/api/avatar/client-event", { message: raw })
         .then((normalized) => {
         if (normalized?.kind === "playback_started") {
-            providerPlaybackId = normalized.playback_id;
+            sessionState.playbackId = normalized.playback_id;
         }
         else if (normalized?.kind === "playback_done") {
-            providerPlaybackId = null;
+            sessionState.playbackId = null;
             voiceCommandScheduler.playbackDone();
         }
         updateControls();
@@ -640,7 +667,7 @@ const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
         track.attach(video);
-        realtimeReadiness.video = true;
+        sessionState.realtime.video = true;
         stage?.classList.add("has-video");
         if (!requestVideoFrame(video, recordFirstVideoFrame)) {
             video.addEventListener("playing", recordFirstVideoFrame, { once: true });
@@ -650,7 +677,7 @@ const attachLiveKitTrack = (track) => {
     }
     else if (track.kind === "audio") {
         liveKitAudioTrack = track;
-        realtimeReadiness.audio = true;
+        sessionState.realtime.audio = true;
         track.attach(avatarAudio);
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
@@ -670,7 +697,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitAudioTrack) {
         detachLiveKitTrack(track, avatarAudio);
         liveKitAudioTrack = null;
-        realtimeReadiness.audio = false;
+        sessionState.realtime.audio = false;
         setStatus("Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…", "error");
         if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
             void interruptAvatar();
@@ -679,14 +706,14 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitVideoTrack) {
         detachLiveKitTrack(track, video);
         liveKitVideoTrack = null;
-        realtimeReadiness.video = false;
+        sessionState.realtime.video = false;
         stage?.classList.remove("has-video");
         setStatus("Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…", "error");
     }
     updateControls();
 };
 const clearRealtimeMedia = () => {
-    realtimeReadiness = { control: false, audio: false, video: false };
+    sessionState.resetRealtime();
     liveKitAudioTrack = null;
     liveKitVideoTrack = null;
     setMediaSrcObject(video, null);
@@ -700,7 +727,6 @@ const closePeerTransport = () => {
     stopRemoteEvidence();
     providerDataChannel?.close();
     providerDataChannel = null;
-    providerPlaybackId = null;
     activeClientControl = null;
     peer?.close();
     peer = null;
@@ -758,7 +784,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         providerDataChannel = channel;
         channel.onopen = () => updateControls();
         channel.onclose = () => {
-            providerPlaybackId = null;
+            sessionState.playbackId = null;
             updateControls();
         };
         channel.onmessage = (event) => {
@@ -773,7 +799,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         }
         setMediaSrcObject(video, remoteMediaStream);
         if (event.track.kind === "video") {
-            realtimeReadiness.video = true;
+            sessionState.realtime.video = true;
             stage?.classList.add("has-video");
             if (!requestVideoFrame(video, recordFirstVideoFrame)) {
                 video.addEventListener("playing", recordFirstVideoFrame, { once: true });
@@ -781,7 +807,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
             setStatus("Видео подключено", "ready");
         }
         else if (event.track.kind === "audio") {
-            realtimeReadiness.audio = true;
+            sessionState.realtime.audio = true;
             void attachRemoteAudioEvidence(event.track).catch(() => undefined);
         }
         updateControls();
@@ -790,7 +816,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         if (!peer)
             return;
         const state = peer.connectionState;
-        realtimeReadiness.control = state === "connected";
+        sessionState.realtime.control = state === "connected";
         updateControls();
         if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
             reconnectStartedAt = performance.now();
@@ -859,7 +885,7 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room, reason);
     });
     await room.connect(transport.server_url, transport.token);
-    realtimeReadiness.control = true;
+    sessionState.realtime.control = true;
     updateControls();
 };
 const connectAvatar = async () => {
@@ -880,13 +906,12 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         evidenceSessionSequence = start.evidence_session_sequence;
-        backendStatus = {
-            ...backendStatus,
+        sessionState.patchBackend({
             session_state: "active",
             avatar_open: true,
             egress_enabled: egressEnabled,
             session_audience: audience,
-        };
+        });
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
         if (start.transport.kind === "web_rtc") {
@@ -1294,12 +1319,12 @@ const interruptAvatar = async () => {
             silentFrames: 0,
         };
     }
-    const playbackId = providerPlaybackId;
+    const playbackId = sessionState.playbackId;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? playbackId !== null
         : true;
     const clientReady = !textRequestInFlight
-        && realtimeReadiness.control
+        && sessionState.realtime.control
         && activeClientControl?.interrupt === true
         && playbackReady;
     voiceCommandScheduler.interrupt();
@@ -1312,7 +1337,7 @@ const interruptAvatar = async () => {
                 playback_id: playbackId,
             });
             await dispatchClientCommand(command);
-            providerPlaybackId = null;
+            sessionState.playbackId = null;
             updateControls();
             await refreshSessionEvidence();
             return;
@@ -1397,10 +1422,10 @@ void api("/api/bootstrap")
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
-    ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
-    if (backendStatus.session_audience)
-        audienceSelect.value = backendStatus.session_audience;
-    if (backendStatus.session_audience !== "visitor") {
+    ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
+    if (sessionState.backend.session_audience)
+        audienceSelect.value = sessionState.backend.session_audience;
+    if (sessionState.backend.session_audience !== "visitor") {
         await ownerCapture.refresh();
     }
     else {
