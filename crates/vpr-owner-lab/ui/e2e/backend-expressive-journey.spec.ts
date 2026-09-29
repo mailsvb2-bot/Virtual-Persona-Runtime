@@ -80,7 +80,7 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
+const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     document.addEventListener("DOMContentLoaded", () => {
       const consent = document.getElementById("consent");
@@ -134,6 +134,9 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       },
     });
 
+    (window as typeof window & {
+      __vprInstallExpressiveRuntimeFakes?: () => void;
+    }).__vprInstallExpressiveRuntimeFakes = () => {
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -323,6 +326,16 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       configurable: true,
       value: FakeAudioWorkletNode,
     });
+    };
+    window.addEventListener("vpr:bootstrap-ready", () => {
+      const fakeWindow = window as typeof window & {
+        __vprInstallExpressiveRuntimeFakes?: () => void;
+      };
+      const install = fakeWindow.__vprInstallExpressiveRuntimeFakes;
+      if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
+      install();
+      document.documentElement.dataset.vprExpressiveRuntimeFakesReady = "true";
+    }, { once: true });
   });
 };
 
@@ -379,7 +392,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installExpressiveBrowserFakes(page);
+  await installExpressiveBootstrapFakes(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -396,6 +409,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-vpr-expressive-runtime-fakes-ready",
+    "true",
+  );
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
