@@ -1082,8 +1082,6 @@ const connectAvatar = async (): Promise<void> => {
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
-  remoteEvidenceAudioContext = createRuntimeAudioContext();
-  void remoteEvidenceAudioContext.resume();
   setStatus("Создаю защищённую сессию…");
   try {
     const audience = audienceSelect.value as SessionAudience;
