@@ -4,8 +4,9 @@ use std::path::Path;
 use serde::Serialize;
 use vpr_evaluation::ProviderStateManifest;
 use vpr_live_proof::{
-    LiveConversationAttemptReceipt, LiveProviderProbeReceipt, prepare, run_live_conversation_attempt,
-    run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
+    LiveConversationAttemptReceipt, LiveProviderProbeReceipt, prepare,
+    run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
+    validate_provider_probe_audio,
 };
 
 use super::{
@@ -54,8 +55,8 @@ pub(super) fn run(
     validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
         .map_err(emit_conversation)?;
 
-    let prepared_probe =
-        prepare(&snapshot.candidate, worktree_clean()?, egress_authorized()).map_err(emit_preflight)?;
+    let prepared_probe = prepare(&snapshot.candidate, worktree_clean()?, egress_authorized())
+        .map_err(emit_preflight)?;
     let provider_state_sha256 = prepared_probe.receipt().provider_state_sha256.clone();
     let provider_state = prepared_probe.receipt().provider_state.clone();
     let probe =
