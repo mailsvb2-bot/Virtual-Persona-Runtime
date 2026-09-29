@@ -458,34 +458,26 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
   }];
 
   await page.addInitScript(() => {
-    const testWindow = window as typeof window & {
-      __vprTestMediaRuntime?: unknown;
-      __vprBootstrapMediaAccesses?: number;
-    };
-    testWindow.__vprBootstrapMediaAccesses = 0;
+    document.documentElement.dataset.vprBootstrapMediaAccesses = "0";
     const unexpectedMediaAccess = (): never => {
-      testWindow.__vprBootstrapMediaAccesses = (testWindow.__vprBootstrapMediaAccesses ?? 0) + 1;
+      const root = document.documentElement;
+      const count = Number(root.dataset.vprBootstrapMediaAccesses ?? "0") + 1;
+      root.dataset.vprBootstrapMediaAccesses = String(count);
       throw new Error("MEDIA_RUNTIME_TOUCHED_DURING_BOOTSTRAP");
     };
-    testWindow.__vprTestMediaRuntime = {
-      mediaDevices: {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
         enumerateDevices: async () => unexpectedMediaAccess(),
         getUserMedia: async () => unexpectedMediaAccess(),
         addEventListener: () => unexpectedMediaAccess(),
       },
-    };
+    });
   });
   await installApiFixture(page, state);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrap?: { ready?: boolean } })
-      .__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
   await expect(page.locator("#connect")).toBeEnabled();
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrapMediaAccesses?: number })
-      .__vprBootstrapMediaAccesses ?? 0,
-  )).toBe(0);
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-bootstrap-media-accesses", "0");
 });
 
 test("bootstrap applies one authoritative status snapshot before capture refreshes can resync", async ({ page }) => {
@@ -503,28 +495,13 @@ test("bootstrap applies one authoritative status snapshot before capture refresh
     owner_reviewed: true,
   }];
 
-  await page.addInitScript(() => {
-    (window as typeof window & { __vprBootstrapReadyEvents?: number }).__vprBootstrapReadyEvents = 0;
-    window.addEventListener("vpr:bootstrap-ready", () => {
-      const testWindow = window as typeof window & { __vprBootstrapReadyEvents?: number };
-      testWindow.__vprBootstrapReadyEvents = (testWindow.__vprBootstrapReadyEvents ?? 0) + 1;
-    });
-  });
   await installBrowserFakes(page);
   await installApiFixture(page, state);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrap?: { ready?: boolean } })
-      .__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
-
-  expect(state.apiPaths.filter((entry) => entry === "GET /api/status")).toHaveLength(1);
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrapReadyEvents?: number })
-      .__vprBootstrapReadyEvents ?? 0,
-  )).toBe(1);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#connect")).toBeEnabled();
+
+  expect(state.apiPaths.filter((entry) => entry === "GET /api/status")).toHaveLength(1);
 });
 
 test("owner can upload and clear local voice/appearance references without raw retention", async ({ page }) => {
