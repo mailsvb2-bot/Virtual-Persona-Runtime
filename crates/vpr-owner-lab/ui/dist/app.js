@@ -2,7 +2,10 @@ import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 const testMediaRuntime = window.__vprTestMediaRuntime;
-const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
+const runtimeFetch = window.fetch.bind(window);
+const notifyTestApiResponse = async (path) => {
+    await testMediaRuntime?.afterApiResponse?.(path);
+};
 const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
 const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext);
 const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode);
@@ -246,6 +249,7 @@ const api = async (path, body) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
+    await notifyTestApiResponse(path);
     return payload;
 };
 const apiEvidenceJson = async (path, body, requestSequence) => {
@@ -265,6 +269,7 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
+    await notifyTestApiResponse(path);
     return payload;
 };
 const apiBinary = async (path, body, requestSequence) => {
