@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -509,7 +510,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BoundaryError> {
     let mut file = options
         .open(&temp)
         .map_err(|_| BoundaryError::ArtifactWriteFailed)?;
-    use std::io::Write as _;
     if file.write_all(bytes).is_err() || file.sync_all().is_err() {
         let _ = fs::remove_file(&temp);
         return Err(BoundaryError::ArtifactWriteFailed);
