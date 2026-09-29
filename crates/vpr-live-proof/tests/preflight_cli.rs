@@ -720,3 +720,86 @@ fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
     assert!(!receipt.exists());
     remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
 }
+
+
+fn candidate_bundle_command(
+    repo: &TempRepo,
+    probe_audio: &Path,
+    profile: &Path,
+    owner_audio: &Path,
+    visitor_audio: &Path,
+    bundle: &Path,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
+    command
+        .current_dir(repo.path())
+        .arg("candidate-bundle")
+        .arg(probe_audio)
+        .arg(profile)
+        .arg(owner_audio)
+        .arg(visitor_audio)
+        .arg(bundle)
+        .env_clear();
+    for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+#[test]
+fn candidate_bundle_rejects_invalid_input_before_egress_and_writes_nothing() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "bundle-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let bundle = external_output(&repo, "candidate-bundle.json");
+
+    let output = candidate_bundle_command(
+        &repo,
+        &probe_audio,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &bundle,
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("INVALID_INPUT"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert!(!bundle.exists());
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn candidate_bundle_rejects_existing_artifact_before_egress_and_preserves_it() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "bundle-existing-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let bundle = external_output(&repo, "candidate-existing-bundle.json");
+    let sentinel = b"immutable candidate bundle\n";
+    fs::write(&bundle, sentinel).unwrap();
+
+    let output = candidate_bundle_command(
+        &repo,
+        &probe_audio,
+        &profile,
+        &owner_audio,
+        &visitor_audio,
+        &bundle,
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("OUTPUT_ALREADY_EXISTS"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert_eq!(fs::read(&bundle).unwrap(), sentinel);
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio, bundle]);
+}
