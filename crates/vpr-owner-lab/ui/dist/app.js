@@ -17,23 +17,25 @@ const createRuntimeAudioWorkletNode = (context, name) => {
 };
 const createRuntimeMediaStream = (tracks) => {
     const Constructor = testMediaRuntime()?.MediaStream ?? window.MediaStream;
-    return new Constructor(tracks);
+    return tracks ? new Constructor(tracks) : new Constructor();
 };
 const createRuntimePeerConnection = (configuration) => {
     const Constructor = testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection;
     return new Constructor(configuration);
 };
 const setMediaSrcObject = (element, value) => {
-    if (testMediaRuntime()?.setSrcObject) {
-        testMediaRuntime()?.setSrcObject(element, value);
+    const setter = testMediaRuntime()?.setSrcObject;
+    if (setter) {
+        setter(element, value);
     }
     else {
         element.srcObject = value;
     }
 };
 const requestVideoFrame = (element, callback) => {
-    if (testMediaRuntime()?.requestVideoFrame) {
-        testMediaRuntime()?.requestVideoFrame(element, callback);
+    const request = testMediaRuntime()?.requestVideoFrame;
+    if (request) {
+        request(element, callback);
         return true;
     }
     const nativeRequest = element.requestVideoFrameCallback;
