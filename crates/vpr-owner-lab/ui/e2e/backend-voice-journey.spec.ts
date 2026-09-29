@@ -294,13 +294,15 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
     };
     window.addEventListener("vpr:bootstrap-ready", () => {
-      const fakeWindow = window as unknown as {
-        __vprInstallBrowserRuntimeFakes?: () => void;
-      };
-      const install = fakeWindow.__vprInstallBrowserRuntimeFakes;
-      if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
-      install();
-      document.documentElement.dataset.vprRuntimeFakesReady = "true";
+      window.setTimeout(() => {
+        const fakeWindow = window as unknown as {
+          __vprInstallBrowserRuntimeFakes?: () => void;
+        };
+        const install = fakeWindow.__vprInstallBrowserRuntimeFakes;
+        if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
+        install();
+        document.documentElement.dataset.vprRuntimeFakesReady = "true";
+      }, 0);
     }, { once: true });
   });
 };
