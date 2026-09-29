@@ -146,6 +146,39 @@ for required in (
     if required not in expressive_e2e:
         raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
 
+
+def require_pre_navigation_media_runtime(source: str, installer: str, label: str) -> None:
+    declaration = (
+        f"const {installer} = async (page: Page): Promise<void> => {{\n"
+        "  await page.addInitScript(() => {"
+    )
+    if declaration not in source:
+        raise SystemExit(
+            f"{label} media runtime must be installed with addInitScript before the live page starts"
+        )
+    call = f"await {installer}(page);"
+    goto = 'await page.goto("/");'
+    call_index = source.find(call)
+    goto_index = source.find(goto)
+    if call_index < 0 or goto_index < 0 or call_index > goto_index:
+        raise SystemExit(f"{label} media runtime must be installed before page.goto")
+    if "return await navigator.mediaDevices?.enumerateDevices?.() ?? [];" in source:
+        raise SystemExit(f"{label} media E2E must never fall through to native device discovery")
+
+
+require_pre_navigation_media_runtime(
+    voice_e2e,
+    "prepareBrowserRuntimeFakes",
+    "Owner Lab voice",
+)
+require_pre_navigation_media_runtime(
+    expressive_e2e,
+    "prepareExpressiveRuntimeFakes",
+    "Owner Lab Expressive",
+)
+if "fake-livekit-client.js" not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must isolate the provider at the LiveKit SDK boundary")
+
 for required in (
     "run_owner_lab_expressive_backend.py",
     "backend-expressive-journey.spec.ts",

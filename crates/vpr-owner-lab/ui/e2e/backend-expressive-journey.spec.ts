@@ -90,7 +90,7 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
 };
 
 const prepareExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     let trackSequence = 0;
     let testDevicesReady = false;
     const deviceChangeListeners: Array<() => void> = [];
@@ -290,6 +290,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
+  await prepareExpressiveRuntimeFakes(page);
   await page.route(
     "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js",
     async (route) => {
@@ -313,7 +314,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
-  await prepareExpressiveRuntimeFakes(page);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   // Consent and connect-button actionability are separately covered by the browser-contract
