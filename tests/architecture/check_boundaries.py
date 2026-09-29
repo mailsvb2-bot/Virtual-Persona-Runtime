@@ -484,6 +484,7 @@ owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
 owner_lab_providers = (owner_lab_src / "providers.rs").read_text(encoding="utf-8")
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
 owner_lab_app = (owner_lab_ui_root / "src" / "app.ts").read_text(encoding="utf-8")
+owner_lab_media_runtime = (owner_lab_ui_root / "src" / "media-runtime.ts").read_text(encoding="utf-8")
 owner_lab_bundle = owner_lab_ui_root / "dist" / "app.js"
 if not owner_lab_bundle.is_file():
     raise SystemExit("Owner Lab browser bundle must remain versioned for Rust include_str embedding")
@@ -677,14 +678,8 @@ if any(
         "new RuntimeAudioContext({ sampleRate: 16_000",
         "createRuntimeAudioContext({ sampleRate: 16_000",
     )
-) and not any(
-    native_fallback in owner_lab_app
-    for native_fallback in (
-        "testMediaRuntime?.AudioContext ?? window.AudioContext",
-        "testMediaRuntime()?.AudioContext ?? window.AudioContext",
-    )
-):
-    raise SystemExit("Owner Lab test media seam must preserve native AudioContext fallback")
+) and "mediaRuntime()?.AudioContext ?? window.AudioContext" not in owner_lab_media_runtime:
+    raise SystemExit("Owner Lab media adapter must preserve native AudioContext fallback")
 if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
     raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (
