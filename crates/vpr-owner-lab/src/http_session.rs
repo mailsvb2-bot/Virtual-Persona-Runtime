@@ -38,7 +38,11 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
         .engine
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    let result = if close { engine.close() } else { engine.revoke() };
+    let result = if close {
+        engine.close()
+    } else {
+        engine.revoke()
+    };
     match result {
         Ok(()) => {
             if close {
