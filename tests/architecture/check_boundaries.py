@@ -667,11 +667,22 @@ if not any(
     for constructor in (
         'new AudioContext({ sampleRate: 16_000',
         'new RuntimeAudioContext({ sampleRate: 16_000',
+        'createRuntimeAudioContext({ sampleRate: 16_000',
     )
 ):
     raise SystemExit("Owner Lab live microphone upload missing a 16 kHz AudioContext constructor")
-if "new RuntimeAudioContext({ sampleRate: 16_000" in owner_lab_app and (
-    "testMediaRuntime?.AudioContext ?? window.AudioContext" not in owner_lab_app
+if any(
+    dynamic_audio_context in owner_lab_app
+    for dynamic_audio_context in (
+        "new RuntimeAudioContext({ sampleRate: 16_000",
+        "createRuntimeAudioContext({ sampleRate: 16_000",
+    )
+) and not any(
+    native_fallback in owner_lab_app
+    for native_fallback in (
+        "testMediaRuntime?.AudioContext ?? window.AudioContext",
+        "testMediaRuntime()?.AudioContext ?? window.AudioContext",
+    )
 ):
     raise SystemExit("Owner Lab test media seam must preserve native AudioContext fallback")
 if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
