@@ -109,7 +109,7 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       },
     });
 
-    constconst installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+    const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
   await page.evaluate(() => {
     const install = (window as typeof window & {
       __vprInstallExpressiveRuntimeFakes?: () => void;
