@@ -118,11 +118,53 @@ type LiveKitSdk = {
   };
 };
 
+type TestMediaRuntime = {
+  fetch?: typeof window.fetch;
+  mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
+  AudioContext?: unknown;
+  AudioWorkletNode?: unknown;
+  MediaStream?: unknown;
+  RTCPeerConnection?: unknown;
+  liveKitSdk?: LiveKitSdk;
+  setSrcObject?: (element: HTMLMediaElement, value: MediaProvider | null) => void;
+  requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
+};
+
+const testMediaRuntime = (window as typeof window & {
+  __vprTestMediaRuntime?: TestMediaRuntime;
+}).__vprTestMediaRuntime;
+const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
+const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
+const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext) as typeof AudioContext;
+const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
+const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream) as typeof MediaStream;
+const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
+  if (testMediaRuntime?.setSrcObject) {
+    testMediaRuntime.setSrcObject(element, value);
+  } else {
+    element.srcObject = value;
+  }
+};
+const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
+  if (testMediaRuntime?.requestVideoFrame) {
+    testMediaRuntime.requestVideoFrame(element, callback);
+    return true;
+  }
+  const nativeRequest = (element as HTMLVideoElement & {
+    requestVideoFrameCallback?: (callback: () => void) => number;
+  }).requestVideoFrameCallback;
+  if (typeof nativeRequest !== "function") return false;
+  nativeRequest.call(element, callback);
+  return true;
+};
+
 const LIVEKIT_CLIENT_URL =
   "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
+  if (testMediaRuntime?.liveKitSdk) return testMediaRuntime.liveKitSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
   liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
@@ -351,7 +393,7 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
         credentials: "same-origin",
         cache: "no-store",
       };
-  const response = await fetch(path, init);
+  const response = await runtimeFetch(path, init);
   const payload = await response.json() as T | ErrorPayload;
   if (!response.ok) {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
@@ -361,7 +403,7 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
 };
 
 const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: number): Promise<T> => {
-  const response = await fetch(path, {
+  const response = await runtimeFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -385,7 +427,7 @@ const apiBinary = async <T>(
   body: ArrayBuffer,
   requestSequence: number,
 ): Promise<T> => {
-  const response = await fetch(path, {
+  const response = await runtimeFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/octet-stream",
@@ -603,12 +645,12 @@ const monitorRemoteAudio = (): void => {
 };
 
 const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void> => {
-  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = new AudioContext();
+  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = new RuntimeAudioContext();
   await remoteEvidenceAudioContext.resume();
   remoteAudioSource?.disconnect();
   remoteAudioAnalyser?.disconnect();
   remoteSilentGain?.disconnect();
-  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new MediaStream([track]));
+  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new RuntimeMediaStream([track]));
   remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
   remoteAudioAnalyser.fftSize = 256;
   remoteSilentGain = remoteEvidenceAudioContext.createGain();
@@ -764,12 +806,7 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     track.attach(video);
     realtimeReadiness.video = true;
     stage?.classList.add("has-video");
-    const requestFrame = (video as unknown as {
-      requestVideoFrameCallback?: (callback: () => void) => number;
-    }).requestVideoFrameCallback;
-    if (typeof requestFrame === "function") {
-      requestFrame.call(video, () => recordFirstVideoFrame());
-    } else {
+    if (!requestVideoFrame(video, recordFirstVideoFrame)) {
       video.addEventListener("playing", recordFirstVideoFrame, { once: true });
     }
     setStatus("Видео подключено", "ready");
@@ -791,7 +828,7 @@ const detachLiveKitTrack = (track: LiveKitTrack, element: HTMLMediaElement): voi
   } catch {
     // The media element is still cleared below; provider detach is best-effort cleanup.
   }
-  element.srcObject = null;
+  setMediaSrcObject(element, null);
 };
 
 const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
@@ -824,8 +861,8 @@ const clearRealtimeMedia = (): void => {
   realtimeReadiness = { control: false, audio: false, video: false };
   liveKitAudioTrack = null;
   liveKitVideoTrack = null;
-  video.srcObject = null;
-  avatarAudio.srcObject = null;
+  setMediaSrcObject(video, null);
+  setMediaSrcObject(avatarAudio, null);
   stage?.classList.remove("has-video");
   updateControls();
 };
@@ -894,7 +931,7 @@ const connectWebRtcTransport = async (
   transport: Extract<RealtimeTransport, { kind: "web_rtc" }>,
   clientControl: ClientControl | null,
 ): Promise<void> => {
-  peer = new RTCPeerConnection({
+  peer = new RuntimeRTCPeerConnection({
     iceServers: transport.ice_servers.map((server) => ({
       urls: server.urls,
       ...(server.username ? { username: server.username } : {}),
@@ -916,11 +953,11 @@ const connectWebRtcTransport = async (
     };
   }
   peer.ontrack = (event) => {
-    remoteMediaStream ??= new MediaStream();
+    remoteMediaStream ??= new RuntimeMediaStream();
     if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
       remoteMediaStream.addTrack(event.track);
     }
-    video.srcObject = remoteMediaStream;
+    setMediaSrcObject(video, remoteMediaStream);
     if (event.track.kind === "video") {
       realtimeReadiness.video = true;
       stage?.classList.add("has-video");
@@ -1025,7 +1062,7 @@ const connectAvatar = async (): Promise<void> => {
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
-  remoteEvidenceAudioContext = new AudioContext();
+  remoteEvidenceAudioContext = new RuntimeAudioContext();
   void remoteEvidenceAudioContext.resume();
   setStatus("Создаю защищённую сессию…");
   try {
@@ -1175,10 +1212,10 @@ const rememberMicrophoneDeviceId = (deviceId: string): void => {
 };
 
 const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<void> => {
-  if (!navigator.mediaDevices?.enumerateDevices) return;
+  if (!runtimeMediaDevices?.enumerateDevices) return;
   let devices: MediaDeviceInfo[];
   try {
-    devices = (await navigator.mediaDevices.enumerateDevices())
+    devices = (await runtimeMediaDevices.enumerateDevices())
       .filter((device) => device.kind === "audioinput");
   } catch {
     return;
@@ -1218,10 +1255,10 @@ const microphoneCaptureError = (error: unknown): Error => {
 };
 
 const startMicrophone = async (): Promise<void> => {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  if (!runtimeMediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
     const selectedDeviceId = microphoneSelect.value.trim();
-    micStream = await navigator.mediaDevices.getUserMedia({
+    micStream = await runtimeMediaDevices.getUserMedia({
       audio: {
         ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         channelCount: 1,
@@ -1240,14 +1277,14 @@ const startMicrophone = async (): Promise<void> => {
   } catch (error) {
     throw microphoneCaptureError(error);
   }
-  audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+  audioContext = new RuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
   if (audioContext.sampleRate !== 16_000) {
     stopMicrophoneCapture();
     throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
   }
   await audioContext.audioWorklet.addModule("/mic-worklet.js");
   micSource = audioContext.createMediaStreamSource(micStream);
-  micWorklet = new AudioWorkletNode(audioContext, "vpr-mic-capture");
+  micWorklet = new RuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
 
   nextVoiceRequestSequence += 1;
   const requestSequence = nextVoiceRequestSequence;
@@ -1516,7 +1553,7 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
 
 const closeBackendOnUnload = (): void => {
   if (!backendSessionPresent() || !csrfToken) return;
-  void fetch("/api/session/close", {
+  void runtimeFetch("/api/session/close", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
     body: "{}",
@@ -1550,7 +1587,7 @@ voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
   rememberMicrophoneDeviceId(microphoneSelect.value.trim());
 });
-navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+runtimeMediaDevices?.addEventListener?.("devicechange", () => {
   void refreshMicrophoneDevices();
 });
 window.addEventListener("pagehide", closeBackendOnUnload);
