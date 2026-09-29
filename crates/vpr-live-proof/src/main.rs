@@ -126,17 +126,20 @@ fn run() -> Result<(), i32> {
             Path::new(provider_state_output),
             Path::new(receipt_output),
         ),
-        [mode, probe_audio, profile_input, owner_audio, visitor_audio, bundle_output]
-            if mode == "candidate-bundle" =>
-        {
-            candidate_bundle::run(
-                Path::new(probe_audio),
-                Path::new(profile_input),
-                Path::new(owner_audio),
-                Path::new(visitor_audio),
-                Path::new(bundle_output),
-            )
-        }
+        [
+            mode,
+            probe_audio,
+            profile_input,
+            owner_audio,
+            visitor_audio,
+            bundle_output,
+        ] if mode == "candidate-bundle" => candidate_bundle::run(
+            Path::new(probe_audio),
+            Path::new(profile_input),
+            Path::new(owner_audio),
+            Path::new(visitor_audio),
+            Path::new(bundle_output),
+        ),
         [
             mode,
             probe_audio,
@@ -570,5 +573,3 @@ fn emit_error(code: &str, stage: Option<&str>) {
         .unwrap_or_else(|_| "{\"ok\":false}".into())
     );
 }
-
-
