@@ -1582,5 +1582,6 @@ void api<Bootstrap>("/api/bootstrap")
       __vprBootstrap?: { csrfToken: string; ready: boolean };
     }).__vprBootstrap;
     if (bootstrapState) bootstrapState.ready = true;
+    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
   })
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
