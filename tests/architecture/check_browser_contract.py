@@ -33,6 +33,7 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
+fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
@@ -145,6 +146,59 @@ for required in (
 ):
     if required not in expressive_e2e:
         raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
+
+
+def require_pre_navigation_media_runtime(source: str, installer: str, label: str) -> None:
+    declaration = (
+        f"const {installer} = async (page: Page): Promise<void> => {{\n"
+        "  await page.addInitScript(() => {"
+    )
+    if declaration not in source:
+        raise SystemExit(
+            f"{label} media runtime must be installed with addInitScript before the live page starts"
+        )
+    call = f"await {installer}(page);"
+    goto = 'await page.goto("/");'
+    call_index = source.find(call)
+    goto_index = source.find(goto)
+    if call_index < 0 or goto_index < 0 or call_index > goto_index:
+        raise SystemExit(f"{label} media runtime must be installed before page.goto")
+    if "return await navigator.mediaDevices?.enumerateDevices?.() ?? [];" in source:
+        raise SystemExit(f"{label} media E2E must never fall through to native device discovery")
+
+
+require_pre_navigation_media_runtime(
+    voice_e2e,
+    "prepareBrowserRuntimeFakes",
+    "Owner Lab voice",
+)
+
+for forbidden in (
+    "prepareExpressiveRuntimeFakes",
+    "prepareExpressiveVoiceCaptureFakes",
+):
+    if forbidden in expressive_e2e:
+        raise SystemExit(
+            f"Owner Lab Expressive runtime must be owned by the fake LiveKit SDK boundary, not {forbidden}"
+        )
+if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must load the fake SDK before navigation without network routing")
+if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
+for required in (
+    "const installMediaRuntime = () => {",
+    "async connect() {\n      installMediaRuntime();",
+    "window.__vprTestMediaRuntime",
+    "window.LivekitClient",
+    "FakeAudioWorkletNode",
+    "async getUserMedia()",
+    "if (!testDevicesReady) return []",
+):
+    if required not in fake_livekit:
+        raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic media runtime: {required}")
+if "navigator.mediaDevices" in fake_livekit:
+    raise SystemExit("Owner Lab fake LiveKit SDK must never touch native browser media devices")
+
 
 for required in (
     "run_owner_lab_expressive_backend.py",
@@ -317,6 +371,24 @@ for source, required in (
 ):
     if required not in source:
         raise SystemExit(f"Owner Lab A/V sync sample-count contract missing: {required}")
+
+for provider_e2e, label in (
+    (voice_e2e, "Owner Lab voice"),
+    (expressive_e2e, "Owner Lab Expressive"),
+):
+    if 'expect(connectAvatar).toBeEnabled()' in provider_e2e:
+        raise SystemExit(
+            f"{label} provider E2E must not duplicate Playwright connect actionability; "
+            "browser-contract E2E owns that proof"
+        )
+    for required in (
+        'document.getElementById("connect")',
+        '"CONNECT_CONTROL_DISABLED"',
+        "connect.click()",
+    ):
+        if required not in provider_e2e:
+            raise SystemExit(f"{label} provider E2E missing direct DOM connect proof: {required}")
+
 
 for required in (
     "run_owner_lab_voice_backend.py",

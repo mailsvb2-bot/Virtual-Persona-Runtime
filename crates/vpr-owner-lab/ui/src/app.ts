@@ -119,7 +119,7 @@ type LiveKitSdk = {
 };
 
 type TestMediaRuntime = {
-  fetch?: typeof window.fetch;
+  afterApiResponse?: (path: string) => void | Promise<void>;
   mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
   AudioContext?: unknown;
   AudioWorkletNode?: unknown;
@@ -130,25 +130,46 @@ type TestMediaRuntime = {
   requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
 };
 
-const testMediaRuntime = (window as typeof window & {
-  __vprTestMediaRuntime?: TestMediaRuntime;
-}).__vprTestMediaRuntime;
-const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
-const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
-const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext) as typeof AudioContext;
-const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
-const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream) as typeof MediaStream;
-const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+const testMediaRuntime = (): TestMediaRuntime | undefined => (
+  window as typeof window & { __vprTestMediaRuntime?: TestMediaRuntime }
+).__vprTestMediaRuntime;
+const runtimeFetch = window.fetch.bind(window);
+const notifyTestApiResponse = async (path: string): Promise<void> => {
+  await testMediaRuntime()?.afterApiResponse?.(path);
+};
+const runtimeMediaDevices = (): MediaDevices | TestMediaRuntime["mediaDevices"] =>
+  testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
+const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext => {
+  const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
+  return new Constructor(options);
+};
+const createRuntimeAudioWorkletNode = (
+  context: BaseAudioContext,
+  name: string,
+): AudioWorkletNode => {
+  const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
+  return new Constructor(context, name);
+};
+const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
+  const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
+  return tracks ? new Constructor(tracks) : new Constructor();
+};
+const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
+  const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+  return new Constructor(configuration);
+};
 const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  if (testMediaRuntime?.setSrcObject) {
-    testMediaRuntime.setSrcObject(element, value);
+  const setter = testMediaRuntime()?.setSrcObject;
+  if (setter) {
+    setter(element, value);
   } else {
     element.srcObject = value;
   }
 };
 const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  if (testMediaRuntime?.requestVideoFrame) {
-    testMediaRuntime.requestVideoFrame(element, callback);
+  const request = testMediaRuntime()?.requestVideoFrame;
+  if (request) {
+    request(element, callback);
     return true;
   }
   const nativeRequest = (element as HTMLVideoElement & {
@@ -164,7 +185,8 @@ const LIVEKIT_CLIENT_URL =
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
-  if (testMediaRuntime?.liveKitSdk) return testMediaRuntime.liveKitSdk;
+  const runtime = testMediaRuntime();
+  if (runtime?.liveKitSdk) return runtime.liveKitSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
   liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
@@ -227,6 +249,7 @@ let egressEnabled = false;
 let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
+let microphoneDeviceListenerInstalled = false;
 let statusSyncTail: Promise<void> = Promise.resolve();
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
@@ -399,6 +422,7 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
+  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -419,6 +443,7 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
+  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -645,12 +670,12 @@ const monitorRemoteAudio = (): void => {
 };
 
 const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void> => {
-  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = new RuntimeAudioContext();
+  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = createRuntimeAudioContext();
   await remoteEvidenceAudioContext.resume();
   remoteAudioSource?.disconnect();
   remoteAudioAnalyser?.disconnect();
   remoteSilentGain?.disconnect();
-  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new RuntimeMediaStream([track]));
+  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(createRuntimeMediaStream([track]));
   remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
   remoteAudioAnalyser.fftSize = 256;
   remoteSilentGain = remoteEvidenceAudioContext.createGain();
@@ -931,7 +956,7 @@ const connectWebRtcTransport = async (
   transport: Extract<RealtimeTransport, { kind: "web_rtc" }>,
   clientControl: ClientControl | null,
 ): Promise<void> => {
-  peer = new RuntimeRTCPeerConnection({
+  peer = createRuntimePeerConnection({
     iceServers: transport.ice_servers.map((server) => ({
       urls: server.urls,
       ...(server.username ? { username: server.username } : {}),
@@ -953,7 +978,7 @@ const connectWebRtcTransport = async (
     };
   }
   peer.ontrack = (event) => {
-    remoteMediaStream ??= new RuntimeMediaStream();
+    remoteMediaStream ??= createRuntimeMediaStream();
     if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
       remoteMediaStream.addTrack(event.track);
     }
@@ -1057,8 +1082,6 @@ const connectAvatar = async (): Promise<void> => {
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
-  remoteEvidenceAudioContext = new RuntimeAudioContext();
-  void remoteEvidenceAudioContext.resume();
   setStatus("Создаю защищённую сессию…");
   try {
     const audience = audienceSelect.value as SessionAudience;
@@ -1079,6 +1102,8 @@ const connectAvatar = async (): Promise<void> => {
       await connectLiveKitTransport(start.transport);
     }
 
+    ensureMicrophoneDeviceMonitoring();
+    await refreshMicrophoneDevices(storedMicrophoneDeviceId());
     await syncStatus();
     const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
     setStatus(
@@ -1207,10 +1232,11 @@ const rememberMicrophoneDeviceId = (deviceId: string): void => {
 };
 
 const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<void> => {
-  if (!runtimeMediaDevices?.enumerateDevices) return;
+  const mediaDevices = runtimeMediaDevices();
+  if (!mediaDevices?.enumerateDevices) return;
   let devices: MediaDeviceInfo[];
   try {
-    devices = (await runtimeMediaDevices.enumerateDevices())
+    devices = (await mediaDevices.enumerateDevices())
       .filter((device) => device.kind === "audioinput");
   } catch {
     return;
@@ -1229,6 +1255,15 @@ const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<voi
     microphoneSelect.value = "";
     if (requested) rememberMicrophoneDeviceId("");
   }
+};
+
+const ensureMicrophoneDeviceMonitoring = (): void => {
+  if (microphoneDeviceListenerInstalled) return;
+  const mediaDevices = runtimeMediaDevices();
+  mediaDevices?.addEventListener?.("devicechange", () => {
+    if (backendSessionPresent()) void refreshMicrophoneDevices();
+  });
+  microphoneDeviceListenerInstalled = true;
 };
 
 const microphoneCaptureError = (error: unknown): Error => {
@@ -1250,10 +1285,11 @@ const microphoneCaptureError = (error: unknown): Error => {
 };
 
 const startMicrophone = async (): Promise<void> => {
-  if (!runtimeMediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  const mediaDevices = runtimeMediaDevices();
+  if (!mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
     const selectedDeviceId = microphoneSelect.value.trim();
-    micStream = await runtimeMediaDevices.getUserMedia({
+    micStream = await mediaDevices.getUserMedia({
       audio: {
         ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         channelCount: 1,
@@ -1272,14 +1308,14 @@ const startMicrophone = async (): Promise<void> => {
   } catch (error) {
     throw microphoneCaptureError(error);
   }
-  audioContext = new RuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+  audioContext = createRuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
   if (audioContext.sampleRate !== 16_000) {
     stopMicrophoneCapture();
     throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
   }
   await audioContext.audioWorklet.addModule("/mic-worklet.js");
   micSource = audioContext.createMediaStreamSource(micStream);
-  micWorklet = new RuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
+  micWorklet = createRuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
 
   nextVoiceRequestSequence += 1;
   const requestSequence = nextVoiceRequestSequence;
@@ -1582,12 +1618,8 @@ voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
   rememberMicrophoneDeviceId(microphoneSelect.value.trim());
 });
-runtimeMediaDevices?.addEventListener?.("devicechange", () => {
-  void refreshMicrophoneDevices();
-});
 window.addEventListener("pagehide", closeBackendOnUnload);
 
-void refreshMicrophoneDevices(storedMicrophoneDeviceId());
 void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;

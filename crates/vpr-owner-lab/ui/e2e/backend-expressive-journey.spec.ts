@@ -86,248 +86,9 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
-
-    let remoteSpeech = false;
-    let trackSequence = 0;
-    let testDevicesReady = false;
-    const deviceChangeListeners: Array<() => void> = [];
-    const commands: Array<{ topic: string; text: string }> = [];
-    type EventHandler = (...args: unknown[]) => void;
-
-    class FakeTrack {
-      id: string;
-      constructor(readonly kind: "audio" | "video", readonly deviceId = "expressive-mic") {
-        trackSequence += 1;
-        this.id = `expressive-track-${trackSequence}`;
-      }
-      stop(): void {}
-      getSettings(): MediaTrackSettings {
-        return this.kind === "audio" ? { deviceId: this.deviceId } : {};
-      }
-    }
-
-    class FakeMediaStream {
-      private readonly tracks: FakeTrack[];
-      constructor(tracks: FakeTrack[] = []) {
-        this.tracks = [...tracks];
-      }
-      getTracks(): FakeTrack[] { return [...this.tracks]; }
-      getAudioTracks(): FakeTrack[] {
-        return this.tracks.filter((track) => track.kind === "audio");
-      }
-      addTrack(track: FakeTrack): void { this.tracks.push(track); }
-    }
-
-    class FakeAnalyser {
-      fftSize = 256;
-      connect(): void {}
-      disconnect(): void {}
-      getFloatTimeDomainData(samples: Float32Array): void {
-        samples.fill(remoteSpeech ? 0.12 : 0.0005);
-      }
-    }
-
-    class FakeGain {
-      gain = { value: 1 };
-      connect(): void {}
-      disconnect(): void {}
-    }
-
-    class FakeAudioContext {
-      sampleRate: number;
-      constructor(options?: AudioContextOptions) {
-        this.sampleRate = options?.sampleRate ?? 48_000;
-      }
-      destination = {};
-      audioWorklet = { addModule: async () => undefined };
-      async resume(): Promise<void> {}
-      async close(): Promise<void> {}
-      createMediaStreamSource(): { connect: () => void; disconnect: () => void } {
-        return { connect: () => undefined, disconnect: () => undefined };
-      }
-      createAnalyser(): FakeAnalyser { return new FakeAnalyser(); }
-      createGain(): FakeGain { return new FakeGain(); }
-    }
-
-    class FakeAudioWorkletNode {
-      port: { onmessage: ((event: { data: ArrayBuffer }) => void) | null } = {
-        onmessage: null,
-      };
-      connect(): void {
-        const samples = new Float32Array(4_800);
-        samples.fill(0.2);
-        queueMicrotask(() => this.port.onmessage?.({ data: samples.buffer }));
-      }
-      disconnect(): void {}
-    }
-
-    const roomEvents = {
-      TrackSubscribed: "track-subscribed",
-      TrackUnsubscribed: "track-unsubscribed",
-      DataReceived: "data-received",
-      Reconnecting: "reconnecting",
-      Reconnected: "reconnected",
-      Disconnected: "disconnected",
-    };
-
-    class FakeRemoteTrack {
-      readonly mediaStreamTrack: FakeTrack;
-      constructor(readonly kind: "audio" | "video") {
-        this.mediaStreamTrack = new FakeTrack(kind);
-      }
-      attach(element: HTMLMediaElement): HTMLMediaElement {
-        element.style.width = "4096px";
-        element.style.height = "4096px";
-        return element;
-      }
-      async getRTCStatsReport(): Promise<RTCStatsReport> {
-        const timestamp = this.kind === "audio" ? 1_000 : 1_060;
-        return new Map([
-          [
-            `${this.kind}-inbound`,
-            {
-              type: "inbound-rtp",
-              kind: this.kind,
-              packetsReceived: 20,
-              estimatedPlayoutTimestamp: timestamp,
-            },
-          ],
-        ]) as unknown as RTCStatsReport;
-      }
-    }
-
-    class FakeRoom {
-      readonly localParticipant = {
-        sendText: async (text: string, options: { topic: string }): Promise<void> => {
-          commands.push({ topic: options.topic, text });
-          if (options.topic === "did.speak") remoteSpeech = true;
-          if (options.topic === "did.interrupt") remoteSpeech = false;
-        },
-      };
-      private readonly handlers = new Map<string, EventHandler[]>();
-      private audioTrack: FakeRemoteTrack | null = null;
-      private videoTrack: FakeRemoteTrack | null = null;
-
-      constructor() {
-        const fakeWindow = window as typeof window & {
-          __vprExpressiveDisconnect?: () => void;
-          __vprExpressiveLoseAudio?: () => void;
-          __vprExpressiveRestoreAudio?: () => void;
-          __vprExpressiveLoseVideo?: () => void;
-          __vprExpressiveRestoreVideo?: () => void;
-          __vprExpressivePlaybackDone?: () => void;
-        };
-        fakeWindow.__vprExpressiveDisconnect = () => {
-          for (const handler of this.handlers.get(roomEvents.Disconnected) ?? []) handler();
-        };
-        fakeWindow.__vprExpressiveLoseAudio = () => {
-          const track = this.audioTrack;
-          if (!track) return;
-          this.audioTrack = null;
-          this.emit(roomEvents.TrackUnsubscribed, track);
-        };
-        fakeWindow.__vprExpressiveRestoreAudio = () => {
-          if (this.audioTrack) return;
-          const track = new FakeRemoteTrack("audio");
-          this.audioTrack = track;
-          this.emit(roomEvents.TrackSubscribed, track);
-        };
-        fakeWindow.__vprExpressiveLoseVideo = () => {
-          const track = this.videoTrack;
-          if (!track) return;
-          this.videoTrack = null;
-          this.emit(roomEvents.TrackUnsubscribed, track);
-        };
-        fakeWindow.__vprExpressiveRestoreVideo = () => {
-          if (this.videoTrack) return;
-          const track = new FakeRemoteTrack("video");
-          this.videoTrack = track;
-          this.emit(roomEvents.TrackSubscribed, track);
-        };
-        fakeWindow.__vprExpressivePlaybackDone = () => {
-          remoteSpeech = false;
-          this.emit(
-            roomEvents.DataReceived,
-            new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
-          );
-        };
-      }
-
-      on(event: string, handler: EventHandler): FakeRoom {
-        const handlers = this.handlers.get(event) ?? [];
-        handlers.push(handler);
-        this.handlers.set(event, handlers);
-        return this;
-      }
-
-      private emit(event: string, ...args: unknown[]): void {
-        for (const handler of this.handlers.get(event) ?? []) handler(...args);
-      }
-
-      async connect(): Promise<void> {
-        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-        testDevicesReady = true;
-        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
-        this.videoTrack = new FakeRemoteTrack("video");
-        this.audioTrack = new FakeRemoteTrack("audio");
-        this.emit(roomEvents.TrackSubscribed, this.videoTrack);
-        this.emit(roomEvents.TrackSubscribed, this.audioTrack);
-      }
-
-      async disconnect(): Promise<void> {}
-    }
-
-    const mediaDevices = {
-      enumerateDevices: async () => {
-        if (!testDevicesReady) {
-          return await navigator.mediaDevices?.enumerateDevices?.() ?? [];
-        }
-        return [
-          {
-            deviceId: "expressive-mic",
-            kind: "audioinput",
-            label: "Expressive test microphone",
-            groupId: "g1",
-            toJSON: () => ({}),
-          },
-        ];
-      },
-      getUserMedia: async () =>
-        new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]) as unknown as MediaStream,
-      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
-        if (type !== "devicechange") return;
-        deviceChangeListeners.push(() => {
-          if (typeof listener === "function") listener(new Event("devicechange"));
-          else listener.handleEvent(new Event("devicechange"));
-        });
-      },
-    };
-
-    const fakeWindow = window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-      __vprTestMediaRuntime?: unknown;
-    };
-    fakeWindow.__vprLiveKitCommands = commands;
-    fakeWindow.__vprTestMediaRuntime = {
-      mediaDevices,
-      MediaStream: FakeMediaStream,
-      AudioContext: FakeAudioContext,
-      AudioWorkletNode: FakeAudioWorkletNode,
-      liveKitSdk: {
-        Room: FakeRoom,
-        RoomEvent: roomEvents,
-      },
-      setSrcObject(element: HTMLMediaElement, value: unknown) {
-        (element as HTMLMediaElement & { __vprTestSrcObject?: unknown }).__vprTestSrcObject = value;
-      },
-      requestVideoFrame(_element: HTMLVideoElement, callback: () => void): number {
-        queueMicrotask(callback);
-        return 1;
-      },
-    };
-
   });
 };
+
 
 const recordStreamingVoiceTurn = async (
   page: Page,
@@ -383,6 +144,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -402,9 +164,16 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
-  const connectAvatar = page.locator("#connect");
-  await expect(connectAvatar).toBeEnabled();
-  await connectAvatar.click();
+  await page.evaluate(() => {
+    const connect = document.getElementById("connect");
+    const consent = document.getElementById("consent");
+    if (!(connect instanceof HTMLButtonElement)) throw new Error("CONNECT_CONTROL_MISSING");
+    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
+      throw new Error("CONNECT_CONSENT_NOT_PRESEEDED");
+    }
+    if (connect.disabled) throw new Error("CONNECT_CONTROL_DISABLED");
+    connect.click();
+  });
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
