@@ -1,3 +1,4 @@
+import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
@@ -1353,6 +1354,7 @@ window.addEventListener("pagehide", closeBackendOnUnload);
 void api("/api/bootstrap")
     .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
+    publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
     ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
