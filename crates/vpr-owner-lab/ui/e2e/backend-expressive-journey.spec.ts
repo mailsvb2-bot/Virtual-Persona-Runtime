@@ -80,12 +80,39 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
+const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     document.addEventListener("DOMContentLoaded", () => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
+
+    class FakeInputTrack {
+      id = "expressive-input-track";
+      kind: "audio" = "audio";
+      stop(): void {}
+      getSettings(): MediaTrackSettings { return { deviceId: "expressive-mic" }; }
+    }
+    class FakeInputStream {
+      private readonly tracks = [new FakeInputTrack()];
+      getTracks(): FakeInputTrack[] { return [...this.tracks]; }
+      getAudioTracks(): FakeInputTrack[] { return [...this.tracks]; }
+    }
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: async () => [
+          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
+        ],
+        getUserMedia: async () => new FakeInputStream() as unknown as MediaStream,
+        addEventListener: () => undefined,
+      },
+    });
+  });
+};
+
+const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
     let remoteSpeech = false;
     let trackSequence = 0;
     const commands: Array<{ topic: string; text: string }> = [];
@@ -123,17 +150,6 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       configurable: true,
       value: FakeMediaStream,
     });
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        enumerateDevices: async () => [
-          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
-        ],
-        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]),
-        addEventListener: () => undefined,
-      },
-    });
-
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -379,7 +395,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installExpressiveBrowserFakes(page);
+  await installExpressiveBootstrapFakes(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -396,6 +412,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await installExpressiveRuntimeFakes(page);
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
