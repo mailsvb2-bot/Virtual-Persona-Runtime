@@ -458,11 +458,16 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
   }];
 
   await page.addInitScript(() => {
-    document.documentElement.dataset.vprBootstrapMediaAccesses = "0";
+    let accesses = 0;
+    const publish = (): void => {
+      if (document.documentElement) {
+        document.documentElement.dataset.vprBootstrapMediaAccesses = String(accesses);
+      }
+    };
+    window.addEventListener("DOMContentLoaded", publish, { once: true });
     const unexpectedMediaAccess = (): never => {
-      const root = document.documentElement;
-      const count = Number(root.dataset.vprBootstrapMediaAccesses ?? "0") + 1;
-      root.dataset.vprBootstrapMediaAccesses = String(count);
+      accesses += 1;
+      publish();
       throw new Error("MEDIA_RUNTIME_TOUCHED_DURING_BOOTSTRAP");
     };
     Object.defineProperty(navigator, "mediaDevices", {
