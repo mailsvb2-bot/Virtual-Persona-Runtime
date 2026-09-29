@@ -1,30 +1,27 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
-const testMediaRuntime = () => window.__vprTestMediaRuntime;
+const mediaRuntime = () => window.__vprMediaRuntimeOverrides;
 const runtimeFetch = window.fetch.bind(window);
-const notifyTestApiResponse = async (path) => {
-    await testMediaRuntime()?.afterApiResponse?.(path);
-};
-const runtimeMediaDevices = () => testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
+const runtimeMediaDevices = () => mediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
 const createRuntimeAudioContext = (options) => {
-    const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext);
+    const Constructor = (mediaRuntime()?.AudioContext ?? window.AudioContext);
     return new Constructor(options);
 };
 const createRuntimeAudioWorkletNode = (context, name) => {
-    const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode);
+    const Constructor = (mediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode);
     return new Constructor(context, name);
 };
 const createRuntimeMediaStream = (tracks) => {
-    const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream);
+    const Constructor = (mediaRuntime()?.MediaStream ?? window.MediaStream);
     return tracks ? new Constructor(tracks) : new Constructor();
 };
 const createRuntimePeerConnection = (configuration) => {
-    const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection);
+    const Constructor = (mediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection);
     return new Constructor(configuration);
 };
 const setMediaSrcObject = (element, value) => {
-    const setter = testMediaRuntime()?.setSrcObject;
+    const setter = mediaRuntime()?.setSrcObject;
     if (setter) {
         setter(element, value);
     }
@@ -33,7 +30,7 @@ const setMediaSrcObject = (element, value) => {
     }
 };
 const requestVideoFrame = (element, callback) => {
-    const request = testMediaRuntime()?.requestVideoFrame;
+    const request = mediaRuntime()?.requestVideoFrame;
     if (request) {
         request(element, callback);
         return true;
@@ -47,7 +44,7 @@ const requestVideoFrame = (element, callback) => {
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
-    const runtime = testMediaRuntime();
+    const runtime = mediaRuntime();
     if (runtime?.liveKitSdk)
         return runtime.liveKitSdk;
     const existing = window.LivekitClient;
@@ -264,8 +261,7 @@ const api = async (path, body) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-    await notifyTestApiResponse(path);
-    return payload;
+      return payload;
 };
 const apiEvidenceJson = async (path, body, requestSequence) => {
     const response = await runtimeFetch(path, {
@@ -284,8 +280,7 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-    await notifyTestApiResponse(path);
-    return payload;
+      return payload;
 };
 const apiBinary = async (path, body, requestSequence) => {
     const response = await runtimeFetch(path, {
