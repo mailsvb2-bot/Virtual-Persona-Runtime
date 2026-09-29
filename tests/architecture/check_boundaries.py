@@ -671,20 +671,14 @@ if not any(
     )
 ):
     raise SystemExit("Owner Lab live microphone upload missing a 16 kHz AudioContext constructor")
-if any(
-    dynamic_audio_context in owner_lab_app
-    for dynamic_audio_context in (
-        "new RuntimeAudioContext({ sampleRate: 16_000",
-        "createRuntimeAudioContext({ sampleRate: 16_000",
-    )
-) and not any(
-    native_fallback in owner_lab_app
-    for native_fallback in (
-        "testMediaRuntime?.AudioContext ?? window.AudioContext",
-        "testMediaRuntime()?.AudioContext ?? window.AudioContext",
-    )
-):
-    raise SystemExit("Owner Lab test media seam must preserve native AudioContext fallback")
+if "createRuntimeAudioContext({ sampleRate: 16_000" in owner_lab_app:
+    if "new window.AudioContext(options)" not in owner_lab_app:
+        raise SystemExit("Owner Lab media boundary must resolve AudioContext directly to the native browser runtime")
+    for forbidden_test_seam in ("__vprTestMediaRuntime", "testMediaRuntime()", "notifyTestApiResponse"):
+        if forbidden_test_seam in owner_lab_app:
+            raise SystemExit(
+                f"Owner Lab production media boundary leaked test orchestration: {forbidden_test_seam}"
+            )
 if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
     raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (
