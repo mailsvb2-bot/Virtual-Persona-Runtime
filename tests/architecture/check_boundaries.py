@@ -659,10 +659,21 @@ for required_live_mic in (
     '"/api/voice/input/chunk"',
     '"/api/voice/input/finish"',
     '"/api/voice/input/cancel"',
-    'new AudioContext({ sampleRate: 16_000',
 ):
     if required_live_mic not in owner_lab_app:
         raise SystemExit(f"Owner Lab live microphone upload missing {required_live_mic}")
+if not any(
+    constructor in owner_lab_app
+    for constructor in (
+        'new AudioContext({ sampleRate: 16_000',
+        'new RuntimeAudioContext({ sampleRate: 16_000',
+    )
+):
+    raise SystemExit("Owner Lab live microphone upload missing a 16 kHz AudioContext constructor")
+if "new RuntimeAudioContext({ sampleRate: 16_000" in owner_lab_app and (
+    "testMediaRuntime?.AudioContext ?? window.AudioContext" not in owner_lab_app
+):
+    raise SystemExit("Owner Lab test media seam must preserve native AudioContext fallback")
 if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
     raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (
