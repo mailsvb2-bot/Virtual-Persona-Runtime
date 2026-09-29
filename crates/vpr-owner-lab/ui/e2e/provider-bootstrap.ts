@@ -9,11 +9,6 @@ import type { Page } from "@playwright/test";
  */
 export const installProviderAutoConnect = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const consent = document.getElementById("consent");
-      if (consent instanceof HTMLInputElement) consent.checked = true;
-    }, { once: true });
-
     window.addEventListener("vpr:bootstrap-ready", () => {
       const root = document.documentElement;
       const connect = document.getElementById("connect");
@@ -23,7 +18,14 @@ export const installProviderAutoConnect = async (page: Page): Promise<void> => {
         root.dataset.vprProviderAutoConnect = "CONNECT_CONTROL_MISSING";
         return;
       }
-      if (!(consent instanceof HTMLInputElement) || !consent.checked) {
+      if (!(consent instanceof HTMLInputElement)) {
+        root.dataset.vprProviderAutoConnect = "CONNECT_CONSENT_MISSING";
+        return;
+      }
+      // Provider E2E owns the provider/backend path, not the human consent-click proof.
+      // Set consent at the exact bootstrap-ready boundary so DOM parsing/order cannot race it.
+      consent.checked = true;
+      if (!consent.checked) {
         root.dataset.vprProviderAutoConnect = "CONNECT_CONSENT_NOT_PRESEEDED";
         return;
       }
