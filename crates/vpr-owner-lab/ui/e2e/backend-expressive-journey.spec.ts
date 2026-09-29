@@ -109,8 +109,14 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       },
     });
 
-    const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
+  });
+};
+
+const prepareExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    (window as typeof window & {
+      __vprInstallExpressiveRuntimeFakes?: () => void;
+    }).__vprInstallExpressiveRuntimeFakes = () => {
     const install = (window as typeof window & {
       __vprInstallExpressiveRuntimeFakes?: () => void;
     }).__vprInstallExpressiveRuntimeFakes;
@@ -353,6 +359,17 @@ const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
       configurable: true,
       value: FakeAudioWorkletNode,
     });
+    };
+  });
+};
+
+const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
+    const install = (window as typeof window & {
+      __vprInstallExpressiveRuntimeFakes?: () => void;
+    }).__vprInstallExpressiveRuntimeFakes;
+    if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
+    install();
   });
 };
 
@@ -410,6 +427,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
+  await prepareExpressiveRuntimeFakes(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
