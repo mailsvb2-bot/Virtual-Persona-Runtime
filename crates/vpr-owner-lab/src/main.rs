@@ -6,6 +6,7 @@ mod http_owner_capture;
 mod http_references;
 #[cfg(test)]
 mod http_security_tests;
+mod http_session;
 mod http_text;
 mod http_voice;
 mod launch;
@@ -18,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use http_json::{parse_empty_json, parse_json, read_body};
+use http_session::{end_session, reject_if_session_ending};
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -367,63 +369,6 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
-}
-
-fn reject_if_session_ending(state: &AppState) -> Result<(), HttpResponse> {
-    if state.session_end_requested.load(Ordering::Acquire) {
-        Err(error_response(409, "INVALID_STATE_TRANSITION"))
-    } else {
-        Ok(())
-    }
-}
-
-fn request_voice_cancel(state: &AppState) {
-    if !state.voice_busy.load(Ordering::Acquire) {
-        return;
-    }
-    state.voice_cancel_requested.store(true, Ordering::Release);
-    if let Some(handle) = state.active_voice_interrupt.lock().clone() {
-        let _ = handle.interrupt();
-    }
-    let _ = http_voice::cancel_active_input(state, LabError::Runtime(Rt0ReasonCode::TurnCancelled));
-}
-
-fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
-    state.session_end_requested.store(true, Ordering::Release);
-    request_voice_cancel(state);
-    if !state.voice_streams.wait_until_quiescent() {
-        return Err(error_response(504, "PROVIDER_TIMEOUT"));
-    }
-    state.evidence.lock().seal_session();
-    let mut engine = state
-        .engine
-        .lock()
-        .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    let result = if close {
-        engine.close()
-    } else {
-        engine.revoke()
-    };
-    match result {
-        Ok(()) => {
-            if close {
-                *state.active_voice_interrupt.lock() = None;
-                state.voice_cancel_requested.store(false, Ordering::Release);
-                state.voice_busy.store(false, Ordering::Release);
-                // Terminal voice events are part of the public close contract. Keep them
-                // available until the client consumes them; VoiceStreamRegistry removes each
-                // terminal stream after wait_events() observes it.
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Ok(json_response(200, &serde_json::json!({"ok": true})))
-        }
-        Err(error) => {
-            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Err(lab_error_response(&error))
-        }
-    }
 }
 
 fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse> {
