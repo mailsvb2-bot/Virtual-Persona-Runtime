@@ -90,41 +90,6 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
 };
 
 
-const prepareExpressiveVoiceCaptureFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & {
-      __vprExpressiveCreateMicStream?: () => MediaStream;
-      __vprTestMediaRuntime?: {
-        mediaDevices?: Record<string, unknown>;
-        AudioWorkletNode?: unknown;
-      };
-    };
-    const runtime = fakeWindow.__vprTestMediaRuntime;
-    if (!runtime || !fakeWindow.__vprExpressiveCreateMicStream) {
-      throw new Error("EXPRESSIVE_TEST_RUNTIME_NOT_READY");
-    }
-
-    class FakeAudioWorkletNode {
-      port: { onmessage: ((event: { data: ArrayBuffer }) => void) | null } = {
-        onmessage: null,
-      };
-      connect(): void {
-        const samples = new Float32Array(4_800);
-        samples.fill(0.2);
-        queueMicrotask(() => this.port.onmessage?.({ data: samples.buffer }));
-      }
-      disconnect(): void {}
-    }
-
-    const mediaDevices = runtime.mediaDevices as {
-      getUserMedia?: () => Promise<MediaStream>;
-    };
-    mediaDevices.getUserMedia = async () =>
-      fakeWindow.__vprExpressiveCreateMicStream?.() as MediaStream;
-    runtime.AudioWorkletNode = FakeAudioWorkletNode;
-  });
-};
-
 const recordStreamingVoiceTurn = async (
   page: Page,
   transcript: string,
@@ -211,7 +176,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(connectAvatar).toBeEnabled();
   await connectAvatar.click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
-  await prepareExpressiveVoiceCaptureFakes(page);
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   await expect(page.locator("#readiness-video")).toHaveText("Готов");

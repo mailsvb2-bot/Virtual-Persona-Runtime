@@ -33,6 +33,7 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
+fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
@@ -171,13 +172,29 @@ require_pre_navigation_media_runtime(
     "prepareBrowserRuntimeFakes",
     "Owner Lab voice",
 )
-require_pre_navigation_media_runtime(
-    expressive_e2e,
+
+for forbidden in (
     "prepareExpressiveRuntimeFakes",
-    "Owner Lab Expressive",
-)
+    "prepareExpressiveVoiceCaptureFakes",
+):
+    if forbidden in expressive_e2e:
+        raise SystemExit(
+            f"Owner Lab Expressive runtime must be owned by the fake LiveKit SDK boundary, not {forbidden}"
+        )
 if "fake-livekit-client.js" not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must isolate the provider at the LiveKit SDK boundary")
+for required in (
+    "window.__vprTestMediaRuntime",
+    "window.LivekitClient",
+    "FakeAudioWorkletNode",
+    "async getUserMedia()",
+    "if (!testDevicesReady) return []",
+):
+    if required not in fake_livekit:
+        raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic media runtime: {required}")
+if "navigator.mediaDevices" in fake_livekit:
+    raise SystemExit("Owner Lab fake LiveKit SDK must never touch native browser media devices")
+
 
 for required in (
     "run_owner_lab_expressive_backend.py",

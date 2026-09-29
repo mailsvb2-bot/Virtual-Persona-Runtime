@@ -64,6 +64,18 @@
     createGain() { return new FakeGain(); }
   }
 
+  class FakeAudioWorkletNode {
+    constructor() {
+      this.port = { onmessage: null };
+    }
+    connect() {
+      const samples = new Float32Array(4800);
+      samples.fill(0.2);
+      queueMicrotask(() => this.port.onmessage?.({ data: samples.buffer }));
+    }
+    disconnect() {}
+  }
+
   const mediaDevices = {
     async enumerateDevices() {
       if (!testDevicesReady) return [];
@@ -74,6 +86,9 @@
         groupId: "g1",
         toJSON: () => ({}),
       }];
+    },
+    async getUserMedia() {
+      return new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]);
     },
     addEventListener(type, listener) {
       if (type !== "devicechange") return;
@@ -176,12 +191,11 @@
 
   window.__vprLiveKitCommands = commands;
   window.__vprExpressiveRemoteSpeech = false;
-  window.__vprExpressiveCreateMicStream = () =>
-    new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]);
   window.__vprTestMediaRuntime = {
     mediaDevices,
     MediaStream: FakeMediaStream,
     AudioContext: FakeAudioContext,
+    AudioWorkletNode: FakeAudioWorkletNode,
     setSrcObject(element, value) {
       element.__vprTestSrcObject = value;
     },
