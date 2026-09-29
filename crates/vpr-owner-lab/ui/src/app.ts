@@ -118,8 +118,7 @@ type LiveKitSdk = {
   };
 };
 
-type TestMediaRuntime = {
-  afterApiResponse?: (path: string) => void | Promise<void>;
+type MediaRuntimeOverrides = {
   mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
   AudioContext?: unknown;
   AudioWorkletNode?: unknown;
@@ -130,36 +129,33 @@ type TestMediaRuntime = {
   requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
 };
 
-const testMediaRuntime = (): TestMediaRuntime | undefined => (
-  window as typeof window & { __vprTestMediaRuntime?: TestMediaRuntime }
-).__vprTestMediaRuntime;
+const mediaRuntime = (): MediaRuntimeOverrides | undefined => (
+  window as typeof window & { __vprMediaRuntimeOverrides?: MediaRuntimeOverrides }
+).__vprMediaRuntimeOverrides;
 const runtimeFetch = window.fetch.bind(window);
-const notifyTestApiResponse = async (path: string): Promise<void> => {
-  await testMediaRuntime()?.afterApiResponse?.(path);
-};
-const runtimeMediaDevices = (): MediaDevices | TestMediaRuntime["mediaDevices"] =>
-  testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
+const runtimeMediaDevices = (): MediaDevices | MediaRuntimeOverrides["mediaDevices"] =>
+  mediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
 const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext => {
-  const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
+  const Constructor = (mediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
   return new Constructor(options);
 };
 const createRuntimeAudioWorkletNode = (
   context: BaseAudioContext,
   name: string,
 ): AudioWorkletNode => {
-  const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
+  const Constructor = (mediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
   return new Constructor(context, name);
 };
 const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
-  const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
+  const Constructor = (mediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
   return tracks ? new Constructor(tracks) : new Constructor();
 };
 const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
-  const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+  const Constructor = (mediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
   return new Constructor(configuration);
 };
 const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  const setter = testMediaRuntime()?.setSrcObject;
+  const setter = mediaRuntime()?.setSrcObject;
   if (setter) {
     setter(element, value);
   } else {
@@ -167,7 +163,7 @@ const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | nul
   }
 };
 const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  const request = testMediaRuntime()?.requestVideoFrame;
+  const request = mediaRuntime()?.requestVideoFrame;
   if (request) {
     request(element, callback);
     return true;
@@ -185,7 +181,7 @@ const LIVEKIT_CLIENT_URL =
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
-  const runtime = testMediaRuntime();
+  const runtime = mediaRuntime();
   if (runtime?.liveKitSdk) return runtime.liveKitSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
@@ -422,7 +418,6 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
-  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -443,7 +438,6 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
-  await notifyTestApiResponse(path);
   return payload as T;
 };
 
