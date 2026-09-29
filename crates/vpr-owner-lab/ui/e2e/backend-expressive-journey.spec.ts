@@ -145,6 +145,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
+  await page.locator("#consent").check();
   const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
   await expect(connectAvatar).toBeEnabled();
   await connectAvatar.click();
