@@ -652,6 +652,43 @@ fn candidate_mode_rejects_malformed_profile_before_egress_and_writes_nothing() {
 }
 
 #[test]
+fn candidate_mode_rejects_existing_output_before_egress_and_preserves_it() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "candidate-existing-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+    let provider = external_output(&repo, "candidate-existing-provider.json");
+    let probe = external_output(&repo, "candidate-existing-probe.json");
+    let receipt = external_output(&repo, "candidate-existing-conversation.json");
+    let sentinel = b"previous exact-candidate evidence\n";
+    fs::write(&provider, sentinel).unwrap();
+
+    let output = candidate_command(
+        &repo,
+        &CandidateCommandPaths {
+            probe_audio: &probe_audio,
+            profile: &profile,
+            owner_audio: &owner_audio,
+            visitor_audio: &visitor_audio,
+            provider: &provider,
+            probe: &probe,
+            receipt: &receipt,
+        },
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("OUTPUT_ALREADY_EXISTS"));
+    assert!(!stderr.contains("EGRESS_NOT_AUTHORIZED"));
+    assert_eq!(fs::read(&provider).unwrap(), sentinel);
+    assert!(!probe.exists());
+    assert!(!receipt.exists());
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio, provider]);
+}
+
+#[test]
 fn candidate_mode_rejects_output_conflicts_before_egress_and_writes_nothing() {
     let repo = TempRepo::new();
     let probe_audio = external_output(&repo, "candidate-probe.raw");
