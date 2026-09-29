@@ -109,6 +109,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     const requestedMicrophones: string[] = [];
     const interruptPayloads: string[] = [];
+    const deviceChangeListeners: Array<() => void> = [];
+    let testDevicesReady = false;
     const fakeWindow = window as unknown as {
       __vprRequestedMicrophones?: string[];
       __vprInterruptPayloads?: string[];
@@ -248,6 +250,10 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         : input instanceof URL ? input.href : input.url;
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
       const response = await realFetch(input, init);
+      if (target.endsWith("/api/avatar/start")) {
+        testDevicesReady = true;
+        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+      }
       if (!target.endsWith("/api/voice/input/finish")) return response;
 
       // The single-thread Owner Lab backend must finish the HTTP request before the
@@ -262,10 +268,15 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     };
 
     const mediaDevices = {
-      enumerateDevices: async () => [
-        { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
-        { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
-      ],
+      enumerateDevices: async () => {
+        if (!testDevicesReady) {
+          return await navigator.mediaDevices?.enumerateDevices?.() ?? [];
+        }
+        return [
+          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
+          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
+        ];
+      },
       getUserMedia: async (constraints: MediaStreamConstraints) => {
         const audio = typeof constraints.audio === "object" && constraints.audio !== null
           ? constraints.audio
@@ -278,7 +289,13 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         requestedMicrophones.push(requested);
         return new FakeMediaStream([new FakeTrack("audio", requested)]) as unknown as MediaStream;
       },
-      addEventListener: () => undefined,
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type !== "devicechange") return;
+        deviceChangeListeners.push(() => {
+          if (typeof listener === "function") listener(new Event("devicechange"));
+          else listener.handleEvent(new Event("devicechange"));
+        });
+      },
     };
 
     fakeWindow.__vprTestMediaRuntime = {
@@ -293,9 +310,6 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       },
     };
 
-    window.addEventListener("vpr:bootstrap-ready", () => {
-      document.documentElement.dataset.vprRuntimeFakesReady = "true";
-    }, { once: true });
   });
 };
 
