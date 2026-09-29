@@ -153,7 +153,6 @@ for required in (
     "av_sync_proven",
     "web_rtc_estimated_playout_timestamp",
     "absolute_offset_millis",
-    "stream/started",
     "stream/interrupt",
     "videoId",
     "interruption_stopped",
@@ -493,6 +492,7 @@ for forbidden in (
     if forbidden in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E contains forbidden post-response orchestration: {forbidden}")
 for required in (
+    "stream/started",
     "async setLocalDescription()",
     'this.connectionState = "connected"',
     "publishRemoteAudioTrack?.()",
