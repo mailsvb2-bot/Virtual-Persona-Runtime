@@ -430,6 +430,14 @@ for required in (
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
+for required in (
+    'path.endsWith("/api/avatar/answer")',
+    '__vprSetPeerConnectionState?.("connected")',
+    "A local answer does not mean ICE/DTLS is connected",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
+
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
         raise SystemExit(f"Owner Lab backend provider fixture missing: {required}")

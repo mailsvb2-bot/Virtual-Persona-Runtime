@@ -205,8 +205,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
       }
       async setLocalDescription(): Promise<void> {
-        this.connectionState = "connected";
-        queueMicrotask(() => this.onconnectionstatechange?.());
+        // A local answer does not mean ICE/DTLS is connected. The provider harness advances
+        // connection state only after the backend has accepted /api/avatar/answer.
       }
       async getStats(): Promise<Map<string, object>> {
         return new Map([
@@ -253,10 +253,17 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     fakeWindow.__vprTestMediaRuntime = {
       afterApiResponse: async (path: string) => {
-        if (!path.endsWith("/api/avatar/start")) return;
-        remoteSpeech = false;
-        testDevicesReady = true;
-        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+        if (path.endsWith("/api/avatar/start")) {
+          remoteSpeech = false;
+          testDevicesReady = true;
+          queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+          return;
+        }
+        if (path.endsWith("/api/avatar/answer")) {
+          // The backend has consumed the SDP answer and the application has consumed the
+          // successful response. Only now may the synthetic transport become connected.
+          fakeWindow.__vprSetPeerConnectionState?.("connected");
+        }
       },
       mediaDevices,
       AudioContext: FakeAudioContext,
