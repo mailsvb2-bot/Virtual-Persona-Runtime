@@ -602,7 +602,8 @@ for required_text_http in (
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
 owner_lab_voice_stt = (owner_lab_src / "state" / "voice_stt.rs").read_text(encoding="utf-8")
 owner_lab_http_voice = (owner_lab_src / "http_voice.rs").read_text(encoding="utf-8")
-owner_lab_voice_http_boundary = owner_lab_main + "\n" + owner_lab_http_voice
+owner_lab_http_session = (owner_lab_src / "http_session.rs").read_text(encoding="utf-8")
+owner_lab_voice_http_boundary = owner_lab_main + "\n" + owner_lab_http_voice + "\n" + owner_lab_http_session
 owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
 if not owner_lab_mic_worklet.is_file():
