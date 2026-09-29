@@ -296,16 +296,15 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
     Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
     };
-  });
-};
-
-const installBrowserRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const install = (window as unknown as {
-      __vprInstallBrowserRuntimeFakes?: () => void;
-    }).__vprInstallBrowserRuntimeFakes;
-    if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
-    install();
+    window.addEventListener("vpr:bootstrap-ready", () => {
+      const fakeWindow = window as unknown as {
+        __vprInstallBrowserRuntimeFakes?: () => void;
+      };
+      const install = fakeWindow.__vprInstallBrowserRuntimeFakes;
+      if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
+      install();
+      document.documentElement.dataset.vprRuntimeFakesReady = "true";
+    }, { once: true });
   });
 };
 
@@ -373,7 +372,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await installBrowserRuntimeFakes(page);
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-runtime-fakes-ready", "true");
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.
