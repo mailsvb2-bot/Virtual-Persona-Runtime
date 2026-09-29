@@ -5,8 +5,6 @@ import {
   type Page,
 } from "@playwright/test";
 
-import { installProviderAutoConnect } from "./provider-bootstrap.js";
-
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -357,9 +355,10 @@ test("owner and visitor voice turns cross the real backend with different contex
   await setupReviewedPersona(request, csrf);
 
   await prepareBrowserRuntimeFakes(page);
-  await installProviderAutoConnect(page);
   await page.goto("/");
-  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
+  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
+  await expect(connectAvatar).toBeEnabled();
+  await connectAvatar.click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
