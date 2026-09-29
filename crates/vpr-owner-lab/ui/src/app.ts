@@ -41,7 +41,7 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -519,6 +519,12 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   if (sampleSequence > 1) await refreshSessionEvidence();
 };
 
+const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null => {
+  if (!voice.responseComplete || voice.audioStartedElapsed === null) return null;
+  voice.avSyncEvidence ??= collectAvSyncEvidence(voice.requestSequence);
+  return voice.avSyncEvidence;
+};
+
 const rms = (samples: Float32Array): number => {
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
@@ -566,6 +572,8 @@ const monitorRemoteAudio = (): void => {
           voice.requestSequence,
         ).then(async () => {
           await syncStatus();
+          const avSyncEvidence = ensureAvSyncEvidence(voice);
+          if (avSyncEvidence) await avSyncEvidence;
         });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence.catch(() => undefined);
@@ -1327,6 +1335,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStarted: false,
     audioStartedElapsed: null,
     audioStartedEvidence: null,
+    avSyncEvidence: null,
     responseComplete: false,
     speaking: false,
     silentFrames: 0,
@@ -1371,9 +1380,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
       }
-      if (voice.audioStartedElapsed !== null) {
-        await collectAvSyncEvidence(requestSequence);
-      }
+      const avSyncEvidence = ensureAvSyncEvidence(voice);
+      if (avSyncEvidence) await avSyncEvidence;
     }
     await refreshSessionEvidence();
     setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
