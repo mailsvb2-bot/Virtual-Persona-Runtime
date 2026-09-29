@@ -329,15 +329,19 @@ test("owner and visitor voice turns cross the real backend with different contex
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
+  const startedAt = Date.now();
   await setupReviewedPersona(request, csrf);
+  console.log("VOICE_E2E_PHASE reviewed-persona", Date.now() - startedAt);
 
   await installBrowserAudioFakes(page);
   await page.goto("/");
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
+  console.log("VOICE_E2E_PHASE bootstrap-ready", Date.now() - startedAt);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
+  console.log("VOICE_E2E_PHASE connect-actionability", Date.now() - startedAt);
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.
