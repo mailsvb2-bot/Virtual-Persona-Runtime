@@ -9,17 +9,85 @@
     Disconnected: "disconnected",
   };
   let trackSequence = 0;
+  let testDevicesReady = false;
+  const deviceChangeListeners = [];
+
+  class FakeTrack {
+    constructor(kind, deviceId = "expressive-mic") {
+      trackSequence += 1;
+      this.id = `expressive-track-${trackSequence}`;
+      this.kind = kind;
+      this.deviceId = deviceId;
+    }
+    stop() {}
+    getSettings() {
+      return this.kind === "audio" ? { deviceId: this.deviceId } : {};
+    }
+  }
+
+  class FakeMediaStream {
+    constructor(tracks = []) {
+      this.tracks = [...tracks];
+    }
+    getTracks() { return [...this.tracks]; }
+    getAudioTracks() { return this.tracks.filter((track) => track.kind === "audio"); }
+    addTrack(track) { this.tracks.push(track); }
+  }
+
+  class FakeAnalyser {
+    constructor() { this.fftSize = 256; }
+    connect() {}
+    disconnect() {}
+    getFloatTimeDomainData(samples) {
+      samples.fill(window.__vprExpressiveRemoteSpeech === true ? 0.12 : 0.0005);
+    }
+  }
+
+  class FakeGain {
+    constructor() { this.gain = { value: 1 }; }
+    connect() {}
+    disconnect() {}
+  }
+
+  class FakeAudioContext {
+    constructor(options) {
+      this.sampleRate = options?.sampleRate ?? 48000;
+      this.destination = {};
+      this.audioWorklet = { addModule: async () => undefined };
+    }
+    async resume() {}
+    async close() {}
+    createMediaStreamSource() {
+      return { connect() {}, disconnect() {} };
+    }
+    createAnalyser() { return new FakeAnalyser(); }
+    createGain() { return new FakeGain(); }
+  }
+
+  const mediaDevices = {
+    async enumerateDevices() {
+      if (!testDevicesReady) return [];
+      return [{
+        deviceId: "expressive-mic",
+        kind: "audioinput",
+        label: "Expressive test microphone",
+        groupId: "g1",
+        toJSON: () => ({}),
+      }];
+    },
+    addEventListener(type, listener) {
+      if (type !== "devicechange") return;
+      deviceChangeListeners.push(() => {
+        if (typeof listener === "function") listener(new Event("devicechange"));
+        else listener.handleEvent(new Event("devicechange"));
+      });
+    },
+  };
 
   class FakeRemoteTrack {
     constructor(kind) {
       this.kind = kind;
-      trackSequence += 1;
-      this.mediaStreamTrack = {
-        id: `expressive-provider-track-${trackSequence}`,
-        kind,
-        stop() {},
-        getSettings() { return kind === "audio" ? { deviceId: "expressive-mic" } : {}; },
-      };
+      this.mediaStreamTrack = new FakeTrack(kind);
     }
     attach(element) {
       element.style.width = "4096px";
@@ -52,9 +120,7 @@
           if (options.topic === "did.interrupt") window.__vprExpressiveRemoteSpeech = false;
         },
       };
-      window.__vprExpressiveDisconnect = () => {
-        this.emit(roomEvents.Disconnected);
-      };
+      window.__vprExpressiveDisconnect = () => this.emit(roomEvents.Disconnected);
       window.__vprExpressiveLoseAudio = () => {
         const track = this.audioTrack;
         if (!track) return;
@@ -94,24 +160,35 @@
       this.handlers.set(event, handlers);
       return this;
     }
-
     emit(event, ...args) {
       for (const handler of this.handlers.get(event) || []) handler(...args);
     }
-
     async connect() {
-      await new Promise((resolve) => window.setTimeout(resolve, 0));
-      window.__vprExpressiveProviderConnected?.();
+      testDevicesReady = true;
+      queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
       this.videoTrack = new FakeRemoteTrack("video");
       this.audioTrack = new FakeRemoteTrack("audio");
       this.emit(roomEvents.TrackSubscribed, this.videoTrack);
       this.emit(roomEvents.TrackSubscribed, this.audioTrack);
     }
-
     async disconnect() {}
   }
 
   window.__vprLiveKitCommands = commands;
   window.__vprExpressiveRemoteSpeech = false;
+  window.__vprExpressiveCreateMicStream = () =>
+    new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]);
+  window.__vprTestMediaRuntime = {
+    mediaDevices,
+    MediaStream: FakeMediaStream,
+    AudioContext: FakeAudioContext,
+    setSrcObject(element, value) {
+      element.__vprTestSrcObject = value;
+    },
+    requestVideoFrame(_element, callback) {
+      queueMicrotask(callback);
+      return 1;
+    },
+  };
   window.LivekitClient = { Room: FakeRoom, RoomEvent: roomEvents };
 })();
