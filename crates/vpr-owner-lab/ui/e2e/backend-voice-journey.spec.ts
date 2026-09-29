@@ -111,6 +111,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     };
     fakeWindow.__vprRequestedMicrophones = requestedMicrophones;
     fakeWindow.__vprInterruptPayloads = interruptPayloads;
+    document.documentElement.dataset.vprRequestedMicrophones = "[]";
+    document.documentElement.dataset.vprInterruptPayloads = "[]";
 
     class FakeTrack {
       id: string;
@@ -212,6 +214,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
           onmessage: null as ((event: { data: string }) => void) | null,
           send(payload: string): void {
             interruptPayloads.push(payload);
+            document.documentElement.dataset.vprInterruptPayloads = JSON.stringify(interruptPayloads);
             if (payload.includes("interrupt")) remoteSpeech = false;
             queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
           },
@@ -263,10 +266,19 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
           ? String(audio.deviceId.exact)
           : "builtin-mic";
         requestedMicrophones.push(requested);
+        document.documentElement.dataset.vprRequestedMicrophones = JSON.stringify(requestedMicrophones);
         return new FakeMediaStream([new FakeTrack("audio", requested)]) as unknown as MediaStream;
       },
       addEventListener: () => undefined,
     };
+
+    window.addEventListener("vpr:voice-control", (event) => {
+      if (!(event instanceof CustomEvent)) return;
+      const state = event.detail?.state;
+      if (state === "connected" || state === "disconnected" || state === "failed") {
+        fakeWindow.__vprSetPeerConnectionState?.(state);
+      }
+    });
 
     Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
     Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
@@ -377,9 +389,11 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Голосовой ответ владельцу",
   );
   await waitForCanonicalPlaybackEvidence(request);
-  await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones ?? [],
-  )).toContain("headset-mic");
+  await expect.poll(async () =>
+    JSON.parse(
+      await page.locator("html").getAttribute("data-vpr-requested-microphones") ?? "[]",
+    ) as string[]
+  ).toContain("headset-mic");
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
@@ -390,9 +404,9 @@ test("owner and visitor voice turns cross the real backend with different contex
     };
     return snapshot.media_events.some((event) => event.kind === "interruption_stopped");
   }).toBeTruthy();
-  const interruptPayloads = await page.evaluate(
-    () => (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads ?? [],
-  );
+  const interruptPayloads = JSON.parse(
+    await page.locator("html").getAttribute("data-vpr-interrupt-payloads") ?? "[]",
+  ) as string[];
   expect(interruptPayloads).toHaveLength(1);
   expect(JSON.parse(interruptPayloads[0] ?? "{}")).toMatchObject({
     type: "stream/interrupt",
@@ -400,17 +414,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   });
   expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
 
-  await page.evaluate(() => {
-    (window as unknown as {
-      __vprSetPeerConnectionState: (state: "disconnected") => void;
-    }).__vprSetPeerConnectionState("disconnected");
-  });
+  await page.locator("html").dispatchEvent("vpr:voice-control", { state: "disconnected" });
   await page.waitForTimeout(25);
-  await page.evaluate(() => {
-    (window as unknown as {
-      __vprSetPeerConnectionState: (state: "connected") => void;
-    }).__vprSetPeerConnectionState("connected");
-  });
+  await page.locator("html").dispatchEvent("vpr:voice-control", { state: "connected" });
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const snapshot = await evidence.json() as {
