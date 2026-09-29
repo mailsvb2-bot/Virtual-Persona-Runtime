@@ -377,38 +377,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
-  const startedAt = Date.now();
   await setupReviewedPersona(request, csrf);
-  console.log("EXPRESSIVE_E2E_PHASE reviewed-persona", Date.now() - startedAt);
 
   await installExpressiveBrowserFakes(page);
-  const browserRequestStarted = new Map<string, number>();
-  const bootstrapPaths = new Set([
-    "/api/bootstrap",
-    "/api/status",
-    "/api/persona/capture",
-    "/api/persona/reviewed",
-  ]);
-  page.on("request", (browserRequest) => {
-    const url = new URL(browserRequest.url());
-    if (bootstrapPaths.has(url.pathname)) {
-      browserRequestStarted.set(browserRequest.url(), Date.now());
-      console.log("EXPRESSIVE_BROWSER_REQUEST_START", url.pathname, Date.now() - startedAt);
-    }
-  });
-  page.on("response", (browserResponse) => {
-    const url = new URL(browserResponse.url());
-    if (bootstrapPaths.has(url.pathname)) {
-      const requestStarted = browserRequestStarted.get(browserResponse.url()) ?? startedAt;
-      console.log(
-        "EXPRESSIVE_BROWSER_REQUEST_END",
-        url.pathname,
-        browserResponse.status(),
-        Date.now() - requestStarted,
-        Date.now() - startedAt,
-      );
-    }
-  });
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -423,10 +394,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
-  console.log("EXPRESSIVE_E2E_PHASE bootstrap-ready", Date.now() - startedAt);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  console.log("EXPRESSIVE_E2E_PHASE connect-actionability", Date.now() - startedAt);
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
