@@ -12,13 +12,15 @@ import {
   runtimeMediaDevices,
   setMediaSrcObject,
 } from "./media-runtime.js";
+import {
+  SessionRuntimeState,
+  type LabStatus,
+  type ModalityReadiness,
+  type ModalityReadinessStatus,
+  type SessionAudience,
+} from "./session-runtime-state.js";
 
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
-type SessionAudience = "owner" | "visitor";
-type ConversationReadiness = "none" | "text" | "text_and_voice";
-type ModalityReadiness = "not_ready" | "preparing" | "ready" | "failed";
-type ModalityReadinessStatus = { text: ModalityReadiness; voice: ModalityReadiness; video: ModalityReadiness };
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; conversation_readiness: ConversationReadiness; modality_readiness: ModalityReadinessStatus; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
@@ -195,40 +197,6 @@ const readinessVideo = byId<HTMLElement>("readiness-video");
 
 let csrfToken = "";
 let egressEnabled = false;
-const INITIAL_LAB_STATUS: LabStatus = {
-  session_state: "none",
-  avatar_open: false,
-  egress_enabled: false,
-  conversation_readiness: "none",
-  modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" },
-  session_audience: null,
-  owner_context_state: "missing",
-  persona_version: 1,
-  reviewed_owner_claims: 0,
-};
-
-class SessionRuntimeState {
-  backend: LabStatus = INITIAL_LAB_STATUS;
-  realtime = { control: false, audio: false, video: false };
-  playbackId: string | null = null;
-  backendRevision = 0;
-
-  applyBackend(status: LabStatus): LabStatus {
-    this.backend = status;
-    this.backendRevision += 1;
-    return status;
-  }
-
-  patchBackend(patch: Partial<LabStatus>): LabStatus {
-    return this.applyBackend({ ...this.backend, ...patch });
-  }
-
-  resetRealtime(): void {
-    this.realtime = { control: false, audio: false, video: false };
-    this.playbackId = null;
-  }
-}
-
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
