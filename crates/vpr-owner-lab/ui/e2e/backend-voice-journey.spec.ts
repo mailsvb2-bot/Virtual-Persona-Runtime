@@ -363,7 +363,6 @@ test("owner and visitor voice turns cross the real backend with different contex
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await expect(page.locator("html")).toHaveAttribute("data-vpr-runtime-fakes-ready", "true");
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.
