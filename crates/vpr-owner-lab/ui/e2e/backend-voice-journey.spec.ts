@@ -84,6 +84,8 @@ const setupReviewedPersona = async (
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     let remoteSpeech = false;
+    let remoteTrackPublished = false;
+    let publishRemoteAudioTrack: (() => void) | null = null;
     let trackSequence = 0;
     let playbackSequence = 0;
     let activePeer: {
@@ -186,6 +188,11 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
       constructor() {
         activePeer = this;
+        publishRemoteAudioTrack = () => {
+          if (remoteTrackPublished) return;
+          remoteTrackPublished = true;
+          this.ontrack?.({ track: new FakeTrack("audio") });
+        };
       }
 
       createDataChannel(label: string) {
@@ -211,7 +218,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       }
 
       async setRemoteDescription(): Promise<void> {
-        queueMicrotask(() => this.ontrack?.({ track: new FakeTrack("audio") }));
+        // SDP negotiation does not imply that remote media is already flowing.
+        // The fixture publishes the remote audio track only when synthetic playback begins.
       }
       async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
@@ -267,6 +275,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     fakeWindow.__vprCreateMicStream = (deviceId: string) =>
       new FakeMediaStream([new FakeTrack("audio", deviceId)]) as unknown as MediaStream;
     fakeWindow.__vprStartVoicePlayback = async () => {
+      publishRemoteAudioTrack?.();
       remoteSpeech = true;
       playbackSequence += 1;
       providerDataChannel?.onmessage?.({
@@ -284,9 +293,12 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
           return;
         }
         if (path.endsWith("/api/avatar/answer")) {
-          // The backend has consumed the SDP answer and the application has consumed the
-          // successful response. Only now may the synthetic transport become connected.
-          fakeWindow.__vprSetPeerConnectionState?.("connected");
+          // Do not re-enter app networking from inside api()'s response hook. Let the
+          // /api/avatar/answer call return to connectWebRtcTransport first, then report
+          // transport readiness on the next browser task.
+          window.setTimeout(() => {
+            fakeWindow.__vprSetPeerConnectionState?.("connected");
+          }, 0);
           return;
         }
         if (path.endsWith("/api/voice/input/finish")) {

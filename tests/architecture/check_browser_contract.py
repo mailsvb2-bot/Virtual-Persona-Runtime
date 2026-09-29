@@ -432,8 +432,11 @@ for required in (
 
 for required in (
     'path.endsWith("/api/avatar/answer")',
+    'window.setTimeout(() => {',
     '__vprSetPeerConnectionState?.("connected")',
     "A local answer does not mean ICE/DTLS is connected",
+    "SDP negotiation does not imply that remote media is already flowing",
+    "publishRemoteAudioTrack?.()",
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
