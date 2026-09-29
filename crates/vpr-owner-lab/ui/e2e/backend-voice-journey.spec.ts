@@ -341,11 +341,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.
-  await page.evaluate(() => {
-    const element = document.getElementById("connect");
-    if (!(element instanceof HTMLButtonElement)) throw new Error("CONNECT_BUTTON_MISSING");
-    window.setTimeout(() => element.click(), 0);
-  });
+  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
+  await expect(connectAvatar).toBeEnabled();
+  await connectAvatar.click();
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
