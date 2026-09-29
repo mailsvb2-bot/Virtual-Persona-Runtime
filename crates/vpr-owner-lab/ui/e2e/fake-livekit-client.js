@@ -168,15 +168,28 @@
           new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
         );
       };
-      window.addEventListener("vpr:expressive-control", (event) => {
-        const action = event instanceof CustomEvent ? event.detail?.action : undefined;
-        if (action === "lose-video") window.__vprExpressiveLoseVideo?.();
-        if (action === "restore-video") window.__vprExpressiveRestoreVideo?.();
-        if (action === "lose-audio") window.__vprExpressiveLoseAudio?.();
-        if (action === "restore-audio") window.__vprExpressiveRestoreAudio?.();
-        if (action === "playback-done") window.__vprExpressivePlaybackDone?.();
-        if (action === "disconnect") window.__vprExpressiveDisconnect?.();
-      });
+      const controls = {
+        "lose-video": () => window.__vprExpressiveLoseVideo?.(),
+        "restore-video": () => window.__vprExpressiveRestoreVideo?.(),
+        "lose-audio": () => window.__vprExpressiveLoseAudio?.(),
+        "restore-audio": () => window.__vprExpressiveRestoreAudio?.(),
+        "playback-done": () => window.__vprExpressivePlaybackDone?.(),
+        "disconnect": () => window.__vprExpressiveDisconnect?.(),
+      };
+      for (const [action, handler] of Object.entries(controls)) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.vprFixtureAction = action;
+        button.textContent = action;
+        button.style.position = "fixed";
+        button.style.left = "0";
+        button.style.bottom = "0";
+        button.style.width = "2px";
+        button.style.height = "2px";
+        button.style.opacity = "0.01";
+        button.addEventListener("click", handler);
+        document.body.append(button);
+      }
     }
 
     on(event, handler) {
