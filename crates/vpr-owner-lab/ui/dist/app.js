@@ -17,7 +17,6 @@ const requestVideoFrame = (element, callback) => {
     nativeRequest.call(element, callback);
     return true;
 };
-
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
@@ -856,9 +855,6 @@ const connectAvatar = async () => {
         evidenceSessionSequence = start.evidence_session_sequence;
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
-        // The backend is the only authority for session lifecycle. Do not manufacture an
-        // optimistic "active" client snapshot: synchronise the accepted transition before
-        // transport setup so failures can always close the real backend session safely.
         await syncStatus();
         if (backendStatus.session_state !== "active" || backendStatus.session_audience !== audience) {
             throw new Error("SESSION_STATE_DIVERGED");
