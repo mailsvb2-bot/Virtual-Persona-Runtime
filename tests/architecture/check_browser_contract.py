@@ -181,9 +181,13 @@ for forbidden in (
         raise SystemExit(
             f"Owner Lab Expressive runtime must be owned by the fake LiveKit SDK boundary, not {forbidden}"
         )
-if "fake-livekit-client.js" not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must isolate the provider at the LiveKit SDK boundary")
+if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must load the fake SDK before navigation without network routing")
+if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
+    "const installMediaRuntime = () => {",
+    "async connect() {\n      installMediaRuntime();",
     "window.__vprTestMediaRuntime",
     "window.LivekitClient",
     "FakeAudioWorkletNode",

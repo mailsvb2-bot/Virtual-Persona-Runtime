@@ -179,6 +179,7 @@
       for (const handler of this.handlers.get(event) || []) handler(...args);
     }
     async connect() {
+      installMediaRuntime();
       testDevicesReady = true;
       queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
       this.videoTrack = new FakeRemoteTrack("video");
@@ -191,18 +192,22 @@
 
   window.__vprLiveKitCommands = commands;
   window.__vprExpressiveRemoteSpeech = false;
-  window.__vprTestMediaRuntime = {
-    mediaDevices,
-    MediaStream: FakeMediaStream,
-    AudioContext: FakeAudioContext,
-    AudioWorkletNode: FakeAudioWorkletNode,
-    setSrcObject(element, value) {
-      element.__vprTestSrcObject = value;
-    },
-    requestVideoFrame(_element, callback) {
-      queueMicrotask(callback);
-      return 1;
-    },
+  const installMediaRuntime = () => {
+    if (window.__vprTestMediaRuntime) return;
+    window.__vprTestMediaRuntime = {
+      mediaDevices,
+      MediaStream: FakeMediaStream,
+      AudioContext: FakeAudioContext,
+      AudioWorkletNode: FakeAudioWorkletNode,
+      setSrcObject(element, value) {
+        element.__vprTestSrcObject = value;
+      },
+      requestVideoFrame(_element, callback) {
+        queueMicrotask(callback);
+        return 1;
+      },
+    };
   };
+
   window.LivekitClient = { Room: FakeRoom, RoomEvent: roomEvents };
 })();

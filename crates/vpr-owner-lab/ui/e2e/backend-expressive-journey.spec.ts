@@ -144,15 +144,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
-  await page.route(
-    "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js",
-    async (route) => {
-      await route.fulfill({
-        path: "e2e/fake-livekit-client.js",
-        contentType: "application/javascript",
-      });
-    },
-  );
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
