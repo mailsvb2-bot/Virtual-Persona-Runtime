@@ -92,17 +92,14 @@ const recordStreamingVoiceTurn = async (
   await expect(voice).toHaveText("Остановить и отправить");
   await voice.click();
 
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
+  const root = page.locator("html");
+  const commands = async (): Promise<Array<{ topic: string; text: string }>> =>
+    JSON.parse(await root.getAttribute("data-vpr-live-kit-commands") ?? "[]");
+  await expect.poll(async () =>
+    (await commands()).filter((command) => command.topic === "did.speak").length
+  ).toBe(1);
 
-  const spoken = await page.evaluate(() => (
-    (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.find((command) => command.topic === "did.speak")?.text ?? ""
-  ));
+  const spoken = (await commands()).find((command) => command.topic === "did.speak")?.text ?? "";
   expect(spoken).toContain(reply);
 
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
@@ -114,16 +111,11 @@ const recordStreamingVoiceTurn = async (
   // make the same candidate pass or fail depending on runner scheduling.
   await expect(page.locator("#readiness-voice")).toHaveText("Готов");
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
-    fakeWindow.__vprExpressivePlaybackDone?.();
-  });
+  await root.dispatchEvent("vpr:expressive-control", { action: "playback-done" });
 
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
+  await expect.poll(async () =>
+    (await commands()).filter((command) => command.topic === "did.speak").length
+  ).toBe(1);
 };
 
 test("Expressive LiveKit voice path reaches canonical playback, A/V sync and recovery", async ({
@@ -156,59 +148,29 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator("#readiness-video")).toHaveText("Готов");
   await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
 
-  const layout = await page.evaluate(() => {
-    const stage = document.querySelector<HTMLElement>(".stage");
-    const avatar = document.querySelector<HTMLVideoElement>("#avatar");
-    if (!stage || !avatar) throw new Error("missing stage");
-    const stageRect = stage.getBoundingClientRect();
-    const avatarRect = avatar.getBoundingClientRect();
-    return {
-      overflow: document.documentElement.scrollWidth > window.innerWidth,
-      objectFit: getComputedStyle(avatar).objectFit,
-      stageWidth: stageRect.width,
-      stageHeight: stageRect.height,
-      avatarWidth: avatarRect.width,
-      avatarHeight: avatarRect.height,
-    };
-  });
-  expect(layout.overflow).toBe(false);
-  expect(layout.objectFit).toBe("contain");
-  expect(layout.avatarWidth).toBeLessThanOrEqual(layout.stageWidth);
-  expect(layout.avatarHeight).toBeLessThanOrEqual(layout.stageHeight);
-
+  // Layout containment is covered by the stable browser-contract suite; this
+  // provider journey owns LiveKit/backend behavior only.
   const voiceButton = page.locator("#voice");
   await expect(voiceButton).toBeEnabled();
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveLoseVideo?: () => void };
-    fakeWindow.__vprExpressiveLoseVideo?.();
-  });
+  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "lose-video" });
   await expect(page.locator(".stage")).not.toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
   await expect(page.locator("#status")).toContainText(
     "Видео-поток аватара потерян. Голос остаётся доступен",
   );
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveRestoreVideo?: () => void };
-    fakeWindow.__vprExpressiveRestoreVideo?.();
-  });
+  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "restore-video" });
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveLoseAudio?: () => void };
-    fakeWindow.__vprExpressiveLoseAudio?.();
-  });
+  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "lose-audio" });
   await expect(voiceButton).toBeEnabled();
   await expect(page.locator("#speak")).toBeEnabled();
   await expect(page.locator("#status")).toContainText(
     "Аудиопоток аватара потерян. Микрофон и текст остаются доступны",
   );
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveRestoreAudio?: () => void };
-    fakeWindow.__vprExpressiveRestoreAudio?.();
-  });
+  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "restore-audio" });
   await expect(voiceButton).toBeEnabled();
 
   await recordStreamingVoiceTurn(
@@ -269,12 +231,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator("#metric-playback")).toHaveText("подтверждён");
   await expect(page.locator("#metric-cost")).toHaveText("провайдер не сообщил стоимость");
 
-  const commands = await page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands ?? [],
-  );
-  const speak = commands.filter((command) => command.topic === "did.speak");
+  const liveKitCommands = JSON.parse(
+    await page.locator("html").getAttribute("data-vpr-live-kit-commands") ?? "[]",
+  ) as Array<{ topic: string; text: string }>;
+  const speak = liveKitCommands.filter((command) => command.topic === "did.speak");
   expect(speak).toHaveLength(1);
   expect(JSON.parse(speak[0]?.text ?? "{}").script.input).toBe(
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
@@ -286,11 +246,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await voiceButton.click();
   await expect(voiceButton).toHaveText("Остановить и отправить");
   await voiceButton.click();
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
+  await expect.poll(async () => {
+    const commands = JSON.parse(
+      await page.locator("html").getAttribute("data-vpr-live-kit-commands") ?? "[]",
+    ) as Array<{ topic: string; text: string }>;
+    return commands.filter((command) => command.topic === "did.speak").length;
+  }).toBe(1);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
@@ -298,18 +259,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect(page.locator("#status")).toContainText("TURN_CANCELLED");
 
   await page.waitForTimeout(800);
-  const commandsAfterInterrupt = await page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands ?? [],
-  );
+  const commandsAfterInterrupt = JSON.parse(
+    await page.locator("html").getAttribute("data-vpr-live-kit-commands") ?? "[]",
+  ) as Array<{ topic: string; text: string }>;
   expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(1);
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveDisconnect?: () => void };
-    fakeWindow.__vprExpressiveDisconnect?.();
-  });
+  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "disconnect" });
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
   const providerState = await request.get(`${providerUrl}/__state`);
