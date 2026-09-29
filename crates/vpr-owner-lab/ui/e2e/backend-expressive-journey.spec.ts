@@ -377,7 +377,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
+  const startedAt = Date.now();
   await setupReviewedPersona(request, csrf);
+  console.log("EXPRESSIVE_E2E_PHASE reviewed-persona", Date.now() - startedAt);
 
   await installExpressiveBrowserFakes(page);
   await page.route("**/api/evidence/media", async (route) => {
@@ -394,8 +396,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
+  console.log("EXPRESSIVE_E2E_PHASE bootstrap-ready", Date.now() - startedAt);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  console.log("EXPRESSIVE_E2E_PHASE connect-actionability", Date.now() - startedAt);
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
