@@ -272,13 +272,22 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       addEventListener: () => undefined,
     };
 
-    window.addEventListener("vpr:voice-control", (event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const state = event.detail?.state;
-      if (state === "connected" || state === "disconnected" || state === "failed") {
-        fakeWindow.__vprSetPeerConnectionState?.(state);
+    document.addEventListener("DOMContentLoaded", () => {
+      for (const state of ["connected", "disconnected", "failed"] as const) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.vprFixtureAction = `voice-${state}`;
+        button.textContent = `voice-${state}`;
+        button.style.position = "fixed";
+        button.style.left = "0";
+        button.style.bottom = "0";
+        button.style.width = "2px";
+        button.style.height = "2px";
+        button.style.opacity = "0.01";
+        button.addEventListener("click", () => fakeWindow.__vprSetPeerConnectionState?.(state));
+        document.body.append(button);
       }
-    });
+    }, { once: true });
 
     Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
     Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
@@ -414,9 +423,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   });
   expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
 
-  await page.locator("html").dispatchEvent("vpr:voice-control", { state: "disconnected" });
+  await page.locator('[data-vpr-fixture-action="voice-disconnected"]').click({ force: true });
   await page.waitForTimeout(25);
-  await page.locator("html").dispatchEvent("vpr:voice-control", { state: "connected" });
+  await page.locator('[data-vpr-fixture-action="voice-connected"]').click({ force: true });
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const snapshot = await evidence.json() as {
