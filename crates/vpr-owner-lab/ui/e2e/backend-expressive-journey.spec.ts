@@ -164,9 +164,16 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
-  const connectAvatar = page.locator("#connect");
-  await expect(connectAvatar).toBeEnabled();
-  await connectAvatar.click();
+  await page.evaluate(() => {
+    const connect = document.getElementById("connect");
+    const consent = document.getElementById("consent");
+    if (!(connect instanceof HTMLButtonElement)) throw new Error("CONNECT_CONTROL_MISSING");
+    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
+      throw new Error("CONNECT_CONSENT_NOT_PRESEEDED");
+    }
+    if (connect.disabled) throw new Error("CONNECT_CONTROL_DISABLED");
+    connect.click();
+  });
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");

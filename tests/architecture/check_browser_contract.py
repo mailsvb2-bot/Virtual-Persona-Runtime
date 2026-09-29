@@ -372,6 +372,24 @@ for source, required in (
     if required not in source:
         raise SystemExit(f"Owner Lab A/V sync sample-count contract missing: {required}")
 
+for provider_e2e, label in (
+    (voice_e2e, "Owner Lab voice"),
+    (expressive_e2e, "Owner Lab Expressive"),
+):
+    if 'expect(connectAvatar).toBeEnabled()' in provider_e2e:
+        raise SystemExit(
+            f"{label} provider E2E must not duplicate Playwright connect actionability; "
+            "browser-contract E2E owns that proof"
+        )
+    for required in (
+        'document.getElementById("connect")',
+        '"CONNECT_CONTROL_DISABLED"',
+        "connect.click()",
+    ):
+        if required not in provider_e2e:
+            raise SystemExit(f"{label} provider E2E missing direct DOM connect proof: {required}")
+
+
 for required in (
     "run_owner_lab_voice_backend.py",
     "voice-provider-fixture.mjs",
