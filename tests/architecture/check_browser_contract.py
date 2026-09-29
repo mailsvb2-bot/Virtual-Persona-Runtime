@@ -13,6 +13,7 @@ EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
+BOOTSTRAP_CONTEXT = UI / "src" / "bootstrap-context.ts"
 MEDIA_RUNTIME = UI / "src" / "media-runtime.ts"
 SESSION_RUNTIME_STATE = UI / "src" / "session-runtime-state.ts"
 VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
@@ -39,6 +40,7 @@ fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+bootstrap_context = BOOTSTRAP_CONTEXT.read_text(encoding="utf-8")
 media_runtime = MEDIA_RUNTIME.read_text(encoding="utf-8")
 session_runtime_state = SESSION_RUNTIME_STATE.read_text(encoding="utf-8")
 voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
@@ -324,18 +326,17 @@ for required in (
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
 
 for required in (
-    "realtimeReadiness = { control: false, audio: false, video: false }",
-    "realtimeReadiness.control",
-    "realtimeReadiness.audio",
-    "realtimeReadiness.video",
+    "sessionState.realtime.control",
+    "sessionState.realtime.audio",
+    "sessionState.realtime.video",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
-if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice";' not in app:
+if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
     raise SystemExit("Owner Lab microphone readiness must follow canonical voice-provider readiness")
-if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice"\n    && realtimeReadiness.audio' in app:
+if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice"\n    && sessionState.realtime.audio' in app:
     raise SystemExit("Owner Lab microphone input must not depend on the avatar output-audio track")
 if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
     raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
@@ -438,13 +439,20 @@ for provider_e2e, label in (
         if forbidden in provider_e2e:
             raise SystemExit(f"{label} provider E2E contains forbidden bootstrap shortcut: {forbidden}")
 
-for forbidden in (
-    "__vprBootstrap",
-    "vpr:bootstrap-ready",
-    'new CustomEvent("vpr:bootstrap"',
+for required in (
+    "export const publishBootstrap",
+    "export const whenBootstrap",
+    "BOOTSTRAP_CSRF_MISSING",
 ):
+    if required not in bootstrap_context:
+        raise SystemExit(f"Owner Lab bootstrap context contract missing: {required}")
+if 'from "./bootstrap-context.js"' not in app:
+    raise SystemExit("Owner Lab application must publish bootstrap through the shared context")
+if 'from "/bootstrap-context.js"' not in (UI / "reference-capture.js").read_text(encoding="utf-8"):
+    raise SystemExit("Owner Lab reference capture must consume the shared bootstrap context")
+for forbidden in ("__vprBootstrap", "vpr:bootstrap-ready", "vprProviderAutoConnect"):
     if forbidden in app:
-        raise SystemExit(f"Owner Lab production bootstrap contains forbidden test-visible hook: {forbidden}")
+        raise SystemExit(f"Owner Lab production bootstrap contains forbidden test shortcut: {forbidden}")
 
 
 for required in (
@@ -518,6 +526,7 @@ for required in (
     "npm run test:e2e:voice",
     "npm run test:e2e:expressive",
     "dist/owner-capture.js",
+    "dist/bootstrap-context.js",
     "dist/media-runtime.js",
     "dist/session-runtime-state.js",
 ):
