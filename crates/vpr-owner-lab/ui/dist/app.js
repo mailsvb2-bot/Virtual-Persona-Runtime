@@ -8,19 +8,19 @@ const notifyTestApiResponse = async (path) => {
 };
 const runtimeMediaDevices = () => testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
 const createRuntimeAudioContext = (options) => {
-    const Constructor = testMediaRuntime()?.AudioContext ?? window.AudioContext;
+    const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext);
     return new Constructor(options);
 };
 const createRuntimeAudioWorkletNode = (context, name) => {
-    const Constructor = testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode;
+    const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode);
     return new Constructor(context, name);
 };
 const createRuntimeMediaStream = (tracks) => {
-    const Constructor = testMediaRuntime()?.MediaStream ?? window.MediaStream;
+    const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream);
     return tracks ? new Constructor(tracks) : new Constructor();
 };
 const createRuntimePeerConnection = (configuration) => {
-    const Constructor = testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection;
+    const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection);
     return new Constructor(configuration);
 };
 const setMediaSrcObject = (element, value) => {
