@@ -86,9 +86,11 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
+    let remoteTrackPublished = false;
     let activePeer: {
       connectionState: string;
       onconnectionstatechange: (() => void) | null;
+      ontrack: ((event: { track: FakeTrack }) => void) | null;
     } | null = null;
     let providerDataChannel: {
       label: string;
@@ -102,29 +104,27 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     const requestedMicrophones: string[] = [];
     const interruptPayloads: string[] = [];
-    const deviceChangeListeners: Array<() => void> = [];
-    let testDevicesReady = false;
     const fakeWindow = window as unknown as {
       __vprRequestedMicrophones?: string[];
       __vprInterruptPayloads?: string[];
       __vprSetPeerConnectionState?: (state: "connected" | "disconnected" | "failed") => void;
-      __vprCreateMicStream?: (deviceId: string) => MediaStream;
-      __vprStartVoicePlayback?: () => Promise<void>;
-      __vprTestMediaRuntime?: unknown;
     };
     fakeWindow.__vprRequestedMicrophones = requestedMicrophones;
     fakeWindow.__vprInterruptPayloads = interruptPayloads;
 
     class FakeTrack {
       id: string;
-      kind: "audio";
-      constructor(kind: "audio" = "audio", readonly deviceId = "builtin-mic") {
+      constructor(
+        readonly kind: "audio" | "video" = "audio",
+        readonly deviceId = "builtin-mic",
+      ) {
         trackSequence += 1;
         this.id = `fake-track-${trackSequence}`;
-        this.kind = kind;
       }
       stop(): void {}
-      getSettings(): MediaTrackSettings { return { deviceId: this.deviceId }; }
+      getSettings(): MediaTrackSettings {
+        return this.kind === "audio" ? { deviceId: this.deviceId } : {};
+      }
     }
 
     class FakeMediaStream {
@@ -166,134 +166,6 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       createGain(): FakeGain { return new FakeGain(); }
     }
 
-    class FakePeerConnection {
-      connectionState = "new";
-      ontrack: ((event: { track: FakeTrack }) => void) | null = null;
-      onconnectionstatechange: (() => void) | null = null;
-      onicecandidate: ((event: unknown) => void) | null = null;
-
-      constructor() {
-        activePeer = this;
-      }
-
-      createDataChannel(label: string) {
-        const channel = {
-          label,
-          readyState: "open" as "open" | "closed",
-          onopen: null as (() => void) | null,
-          onclose: null as (() => void) | null,
-          onmessage: null as ((event: { data: string }) => void) | null,
-          send(payload: string): void {
-            interruptPayloads.push(payload);
-            remoteSpeech = false;
-            queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
-          },
-          close(): void {
-            channel.readyState = "closed";
-            channel.onclose?.();
-          },
-        };
-        providerDataChannel = channel;
-        queueMicrotask(() => channel.onopen?.());
-        return channel as unknown as RTCDataChannel;
-      }
-
-      async setRemoteDescription(): Promise<void> {
-        queueMicrotask(() => this.ontrack?.({ track: new FakeTrack("audio") }));
-      }
-      async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
-        return { type: "answer", sdp: "v=0 voice-browser-answer" };
-      }
-      async setLocalDescription(): Promise<void> {
-        // A local answer does not mean ICE/DTLS is connected. The provider harness advances
-        // connection state only after the backend has accepted /api/avatar/answer.
-      }
-      async getStats(): Promise<Map<string, object>> {
-        return new Map([
-          ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
-          ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
-        ]);
-      }
-      close(): void { this.connectionState = "closed"; }
-    }
-
-    fakeWindow.__vprSetPeerConnectionState = (state) => {
-      if (!activePeer) throw new Error("NO_ACTIVE_PEER");
-      activePeer.connectionState = state;
-      activePeer.onconnectionstatechange?.();
-    };
-
-    const mediaDevices = {
-      enumerateDevices: async () => {
-        if (!testDevicesReady) return [];
-        return [
-          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
-          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
-        ];
-      },
-      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
-        if (type !== "devicechange") return;
-        deviceChangeListeners.push(() => {
-          if (typeof listener === "function") listener(new Event("devicechange"));
-          else listener.handleEvent(new Event("devicechange"));
-        });
-      },
-    };
-
-    fakeWindow.__vprCreateMicStream = (deviceId: string) =>
-      new FakeMediaStream([new FakeTrack("audio", deviceId)]) as unknown as MediaStream;
-    fakeWindow.__vprStartVoicePlayback = async () => {
-      remoteSpeech = true;
-      playbackSequence += 1;
-      providerDataChannel?.onmessage?.({
-        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
-      });
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-    };
-
-    fakeWindow.__vprTestMediaRuntime = {
-      afterApiResponse: async (path: string) => {
-        if (path.endsWith("/api/avatar/start")) {
-          remoteSpeech = false;
-          testDevicesReady = true;
-          queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
-          return;
-        }
-        if (path.endsWith("/api/avatar/answer")) {
-          // The backend has consumed the SDP answer and the application has consumed the
-          // successful response. Only now may the synthetic transport become connected.
-          fakeWindow.__vprSetPeerConnectionState?.("connected");
-        }
-      },
-      mediaDevices,
-      AudioContext: FakeAudioContext,
-      MediaStream: FakeMediaStream,
-      RTCPeerConnection: FakePeerConnection,
-      setSrcObject(element: HTMLMediaElement, value: unknown) {
-        (element as HTMLMediaElement & { __vprTestSrcObject?: unknown }).__vprTestSrcObject = value;
-      },
-    };
-
-  });
-};
-
-const prepareVoiceCaptureFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const fakeWindow = window as unknown as {
-      __vprRequestedMicrophones?: string[];
-      __vprCreateMicStream?: (deviceId: string) => MediaStream;
-      __vprStartVoicePlayback?: () => Promise<void>;
-      __vprTestMediaRuntime?: {
-        afterApiResponse?: (path: string) => void | Promise<void>;
-        mediaDevices?: Record<string, unknown>;
-        AudioWorkletNode?: unknown;
-      };
-    };
-    const runtime = fakeWindow.__vprTestMediaRuntime;
-    if (!runtime || !fakeWindow.__vprCreateMicStream || !fakeWindow.__vprStartVoicePlayback) {
-      throw new Error("VOICE_TEST_RUNTIME_NOT_READY");
-    }
-
     class FakeAudioWorkletNode {
       port: { onmessage: ((event: { data: ArrayBuffer }) => void) | null } = {
         onmessage: null,
@@ -306,30 +178,122 @@ const prepareVoiceCaptureFakes = async (page: Page): Promise<void> => {
       disconnect(): void {}
     }
 
-    const mediaDevices = runtime.mediaDevices as {
-      enumerateDevices?: () => Promise<MediaDeviceInfo[]>;
-      addEventListener?: (type: string, listener: EventListenerOrEventListenerObject) => void;
-      getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
+    const publishRemoteAudioTrack = (): void => {
+      if (remoteTrackPublished || !activePeer) return;
+      remoteTrackPublished = true;
+      activePeer.ontrack?.({ track: new FakeTrack("audio") });
     };
-    mediaDevices.getUserMedia = async (constraints: MediaStreamConstraints) => {
-      const audio = typeof constraints.audio === "object" && constraints.audio !== null
-        ? constraints.audio
-        : {};
-      const requested = typeof audio.deviceId === "object"
-        && audio.deviceId !== null
-        && "exact" in audio.deviceId
-        ? String(audio.deviceId.exact)
-        : "builtin-mic";
-      fakeWindow.__vprRequestedMicrophones?.push(requested);
-      return fakeWindow.__vprCreateMicStream?.(requested) as MediaStream;
+
+    const startVoicePlayback = (): void => {
+      publishRemoteAudioTrack();
+      remoteSpeech = true;
+      playbackSequence += 1;
+      providerDataChannel?.onmessage?.({
+        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
+      });
     };
-    runtime.AudioWorkletNode = FakeAudioWorkletNode;
-    const previousHook = runtime.afterApiResponse;
-    runtime.afterApiResponse = async (path: string) => {
-      await previousHook?.(path);
-      if (path.endsWith("/api/voice/input/finish")) {
-        await fakeWindow.__vprStartVoicePlayback?.();
+
+    class FakePeerConnection {
+      connectionState = "new";
+      ontrack: ((event: { track: FakeTrack }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      onicecandidate: ((event: unknown) => void) | null = null;
+
+      constructor() {
+        activePeer = this;
       }
+
+      createDataChannel(label: string): RTCDataChannel {
+        const channel = {
+          label,
+          readyState: "open" as "open" | "closed",
+          onopen: null as (() => void) | null,
+          onclose: null as (() => void) | null,
+          onmessage: null as ((event: { data: string }) => void) | null,
+          send(payload: string): void {
+            interruptPayloads.push(payload);
+            if (payload.includes("interrupt")) remoteSpeech = false;
+            queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
+          },
+          close(): void {
+            channel.readyState = "closed";
+            channel.onclose?.();
+          },
+        };
+        providerDataChannel = channel;
+        queueMicrotask(() => channel.onopen?.());
+        return channel as unknown as RTCDataChannel;
+      }
+
+      async setRemoteDescription(): Promise<void> {}
+      async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
+        return { type: "answer", sdp: "v=0 voice-browser-answer" };
+      }
+      async setLocalDescription(): Promise<void> {}
+      async getStats(): Promise<Map<string, object>> {
+        return new Map([
+          ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
+          ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
+        ]);
+      }
+      close(): void {
+        this.connectionState = "closed";
+        this.onconnectionstatechange?.();
+      }
+    }
+
+    fakeWindow.__vprSetPeerConnectionState = (state) => {
+      if (!activePeer) throw new Error("NO_ACTIVE_PEER");
+      activePeer.connectionState = state;
+      activePeer.onconnectionstatechange?.();
+    };
+
+    const mediaDevices = {
+      enumerateDevices: async () => [
+        { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
+        { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
+      ],
+      getUserMedia: async (constraints: MediaStreamConstraints) => {
+        const audio = typeof constraints.audio === "object" && constraints.audio !== null
+          ? constraints.audio
+          : {};
+        const requested = typeof audio.deviceId === "object"
+          && audio.deviceId !== null
+          && "exact" in audio.deviceId
+          ? String(audio.deviceId.exact)
+          : "builtin-mic";
+        requestedMicrophones.push(requested);
+        return new FakeMediaStream([new FakeTrack("audio", requested)]) as unknown as MediaStream;
+      },
+      addEventListener: () => undefined,
+    };
+
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
+    Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
+    Object.defineProperty(window, "MediaStream", { configurable: true, value: FakeMediaStream });
+    Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: mediaDevices });
+    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
+      configurable: true,
+      get() { return (this as HTMLMediaElement & { __fixtureSrcObject?: unknown }).__fixtureSrcObject ?? null; },
+      set(value: unknown) { (this as HTMLMediaElement & { __fixtureSrcObject?: unknown }).__fixtureSrcObject = value; },
+    });
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const response = await nativeFetch(input, init);
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+      if (response.ok && url.endsWith("/api/avatar/answer")) {
+        window.setTimeout(() => fakeWindow.__vprSetPeerConnectionState?.("connected"), 0);
+      }
+      if (response.ok && url.endsWith("/api/voice/input/finish")) {
+        window.setTimeout(startVoicePlayback, 0);
+      }
+      return response;
     };
   });
 };
@@ -396,7 +360,6 @@ test("owner and visitor voice turns cross the real backend with different contex
   await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
-  await prepareVoiceCaptureFakes(page);
   await expect(page.locator("#voice")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
   const microphone = page.getByLabel("Микрофон");
