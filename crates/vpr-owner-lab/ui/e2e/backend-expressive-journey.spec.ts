@@ -86,53 +86,6 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
-
-    class FakeInputTrack {
-      id = "expressive-input-track";
-      kind: "audio" = "audio";
-      stop(): void {}
-      getSettings(): MediaTrackSettings { return { deviceId: "expressive-mic" }; }
-    }
-    class FakeInputStream {
-      private readonly tracks = [new FakeInputTrack()];
-      getTracks(): FakeInputTrack[] { return [...this.tracks]; }
-      getAudioTracks(): FakeInputTrack[] { return [...this.tracks]; }
-    }
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        enumerateDevices: async () => [
-          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
-        ],
-        getUserMedia: async () => new FakeInputStream() as unknown as MediaStream,
-        addEventListener: () => undefined,
-      },
-    });
-
-  });
-};
-
-const prepareExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    (window as typeof window & {
-      __vprInstallExpressiveRuntimeFakes?: () => void;
-    }).__vprInstallExpressiveRuntimeFakes = () => {
-    const install = (window as typeof window & {
-      __vprInstallExpressiveRuntimeFakes?: () => void;
-    }).__vprInstallExpressiveRuntimeFakes;
-    if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
-    install();
-  });
-};
-
-const recordStreamingVoiceTurnletNode,
-    });
-    };
-  });
-};
-
-const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
     let remoteSpeech = false;
     let trackSequence = 0;
     const commands: Array<{ topic: string; text: string }> = [];
@@ -170,6 +123,20 @@ const installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
       configurable: true,
       value: FakeMediaStream,
     });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: async () => [
+          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
+        ],
+        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]),
+        addEventListener: () => undefined,
+      },
+    });
+
+    (window as typeof window & {
+      __vprInstallExpressiveRuntimeFakes?: () => void;
+    }).__vprInstallExpressiveRuntimeFakes = () => {
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -427,7 +394,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
-  await prepareExpressiveRuntimeFakes(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
