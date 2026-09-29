@@ -108,6 +108,20 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
         addEventListener: () => undefined,
       },
     });
+
+    constconst installExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
+    const install = (window as typeof window & {
+      __vprInstallExpressiveRuntimeFakes?: () => void;
+    }).__vprInstallExpressiveRuntimeFakes;
+    if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
+    install();
+  });
+};
+
+const recordStreamingVoiceTurnletNode,
+    });
+    };
   });
 };
 
