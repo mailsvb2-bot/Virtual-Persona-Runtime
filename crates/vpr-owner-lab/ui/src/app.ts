@@ -130,28 +130,44 @@ type TestMediaRuntime = {
   requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
 };
 
-const testMediaRuntime = (window as typeof window & {
-  __vprTestMediaRuntime?: TestMediaRuntime;
-}).__vprTestMediaRuntime;
+const testMediaRuntime = (): TestMediaRuntime | undefined => (
+  window as typeof window & { __vprTestMediaRuntime?: TestMediaRuntime }
+).__vprTestMediaRuntime;
 const runtimeFetch = window.fetch.bind(window);
 const notifyTestApiResponse = async (path: string): Promise<void> => {
-  await testMediaRuntime?.afterApiResponse?.(path);
+  await testMediaRuntime()?.afterApiResponse?.(path);
 };
-const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
-const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext) as typeof AudioContext;
-const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
-const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream) as typeof MediaStream;
-const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+const runtimeMediaDevices = (): MediaDevices | TestMediaRuntime["mediaDevices"] =>
+  testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
+const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext => {
+  const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
+  return new Constructor(options);
+};
+const createRuntimeAudioWorkletNode = (
+  context: BaseAudioContext,
+  name: string,
+): AudioWorkletNode => {
+  const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
+  return new Constructor(context, name);
+};
+const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
+  const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
+  return new Constructor(tracks);
+};
+const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
+  const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
+  return new Constructor(configuration);
+};
 const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  if (testMediaRuntime?.setSrcObject) {
-    testMediaRuntime.setSrcObject(element, value);
+  if (testMediaRuntime()?.setSrcObject) {
+    testMediaRuntime()?.setSrcObject(element, value);
   } else {
     element.srcObject = value;
   }
 };
 const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  if (testMediaRuntime?.requestVideoFrame) {
-    testMediaRuntime.requestVideoFrame(element, callback);
+  if (testMediaRuntime()?.requestVideoFrame) {
+    testMediaRuntime()?.requestVideoFrame(element, callback);
     return true;
   }
   const nativeRequest = (element as HTMLVideoElement & {
@@ -167,7 +183,8 @@ const LIVEKIT_CLIENT_URL =
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
-  if (testMediaRuntime?.liveKitSdk) return testMediaRuntime.liveKitSdk;
+  const runtime = testMediaRuntime();
+  if (runtime?.liveKitSdk) return runtime.liveKitSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
   liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
@@ -651,12 +668,12 @@ const monitorRemoteAudio = (): void => {
 };
 
 const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void> => {
-  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = new RuntimeAudioContext();
+  if (!remoteEvidenceAudioContext) remoteEvidenceAudioContext = createRuntimeAudioContext();
   await remoteEvidenceAudioContext.resume();
   remoteAudioSource?.disconnect();
   remoteAudioAnalyser?.disconnect();
   remoteSilentGain?.disconnect();
-  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new RuntimeMediaStream([track]));
+  remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(createRuntimeMediaStream([track]));
   remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
   remoteAudioAnalyser.fftSize = 256;
   remoteSilentGain = remoteEvidenceAudioContext.createGain();
@@ -937,7 +954,7 @@ const connectWebRtcTransport = async (
   transport: Extract<RealtimeTransport, { kind: "web_rtc" }>,
   clientControl: ClientControl | null,
 ): Promise<void> => {
-  peer = new RuntimeRTCPeerConnection({
+  peer = createRuntimePeerConnection({
     iceServers: transport.ice_servers.map((server) => ({
       urls: server.urls,
       ...(server.username ? { username: server.username } : {}),
@@ -959,7 +976,7 @@ const connectWebRtcTransport = async (
     };
   }
   peer.ontrack = (event) => {
-    remoteMediaStream ??= new RuntimeMediaStream();
+    remoteMediaStream ??= createRuntimeMediaStream();
     if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
       remoteMediaStream.addTrack(event.track);
     }
@@ -1063,7 +1080,7 @@ const connectAvatar = async (): Promise<void> => {
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
-  remoteEvidenceAudioContext = new RuntimeAudioContext();
+  remoteEvidenceAudioContext = createRuntimeAudioContext();
   void remoteEvidenceAudioContext.resume();
   setStatus("Создаю защищённую сессию…");
   try {
@@ -1215,10 +1232,11 @@ const rememberMicrophoneDeviceId = (deviceId: string): void => {
 };
 
 const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<void> => {
-  if (!runtimeMediaDevices?.enumerateDevices) return;
+  const mediaDevices = runtimeMediaDevices();
+  if (!mediaDevices?.enumerateDevices) return;
   let devices: MediaDeviceInfo[];
   try {
-    devices = (await runtimeMediaDevices.enumerateDevices())
+    devices = (await mediaDevices.enumerateDevices())
       .filter((device) => device.kind === "audioinput");
   } catch {
     return;
@@ -1241,7 +1259,8 @@ const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<voi
 
 const ensureMicrophoneDeviceMonitoring = (): void => {
   if (microphoneDeviceListenerInstalled) return;
-  runtimeMediaDevices?.addEventListener?.("devicechange", () => {
+  const mediaDevices = runtimeMediaDevices();
+  mediaDevices?.addEventListener?.("devicechange", () => {
     if (backendSessionPresent()) void refreshMicrophoneDevices();
   });
   microphoneDeviceListenerInstalled = true;
@@ -1266,10 +1285,11 @@ const microphoneCaptureError = (error: unknown): Error => {
 };
 
 const startMicrophone = async (): Promise<void> => {
-  if (!runtimeMediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  const mediaDevices = runtimeMediaDevices();
+  if (!mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
     const selectedDeviceId = microphoneSelect.value.trim();
-    micStream = await runtimeMediaDevices.getUserMedia({
+    micStream = await mediaDevices.getUserMedia({
       audio: {
         ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         channelCount: 1,
@@ -1288,14 +1308,14 @@ const startMicrophone = async (): Promise<void> => {
   } catch (error) {
     throw microphoneCaptureError(error);
   }
-  audioContext = new RuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+  audioContext = createRuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
   if (audioContext.sampleRate !== 16_000) {
     stopMicrophoneCapture();
     throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
   }
   await audioContext.audioWorklet.addModule("/mic-worklet.js");
   micSource = audioContext.createMediaStreamSource(micStream);
-  micWorklet = new RuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
+  micWorklet = createRuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
 
   nextVoiceRequestSequence += 1;
   const requestSequence = nextVoiceRequestSequence;
