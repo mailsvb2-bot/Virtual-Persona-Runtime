@@ -12,6 +12,10 @@ use vpr_live_proof::{
     run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
 };
 
+mod candidate_bundle;
+#[cfg(test)]
+mod main_tests;
+
 #[derive(Serialize)]
 struct CliError<'a> {
     ok: bool,
@@ -51,7 +55,7 @@ struct DoctorRunReceipt<'a> {
     execution: DoctorExecutionReceipt,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoundaryError {
     InputPathInvalid,
     InputPathInsideWorktree,
@@ -128,6 +132,20 @@ fn run() -> Result<(), i32> {
             profile_input,
             owner_audio,
             visitor_audio,
+            bundle_output,
+        ] if mode == "candidate-bundle" => candidate_bundle::run(
+            Path::new(probe_audio),
+            Path::new(profile_input),
+            Path::new(owner_audio),
+            Path::new(visitor_audio),
+            Path::new(bundle_output),
+        ),
+        [
+            mode,
+            probe_audio,
+            profile_input,
+            owner_audio,
+            visitor_audio,
             provider_state_output,
             probe_output,
             receipt_output,
@@ -142,7 +160,7 @@ fn run() -> Result<(), i32> {
         ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>"
             );
             Err(2)
         }
@@ -515,10 +533,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BoundaryError> {
         return Err(BoundaryError::ArtifactWriteFailed);
     }
     drop(file);
-    fs::rename(&temp, path).map_err(|_| {
-        let _ = fs::remove_file(&temp);
-        BoundaryError::ArtifactWriteFailed
-    })
+    let published = fs::hard_link(&temp, path).map_err(|_| BoundaryError::ArtifactWriteFailed);
+    let _ = fs::remove_file(&temp);
+    published
 }
 
 fn emit_preflight(error: LiveProofPreflightError) -> i32 {
