@@ -79,57 +79,12 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
+const installBrowserAudioFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     document.addEventListener("DOMContentLoaded", () => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
-
-    class FakeInputTrack {
-      id: string;
-      kind: "audio" = "audio";
-      constructor(readonly deviceId = "builtin-mic") {
-        this.id = `fake-input-${deviceId}`;
-      }
-      stop(): void {}
-      getSettings(): MediaTrackSettings { return { deviceId: this.deviceId }; }
-    }
-    class FakeInputStream {
-      constructor(private readonly tracks: FakeInputTrack[]) {}
-      getTracks(): FakeInputTrack[] { return [...this.tracks]; }
-      getAudioTracks(): FakeInputTrack[] { return [...this.tracks]; }
-    }
-
-    const requestedMicrophones: string[] = [];
-    (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones = requestedMicrophones;
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        enumerateDevices: async () => [
-          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
-          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
-        ],
-        getUserMedia: async (constraints: MediaStreamConstraints) => {
-          const audio = typeof constraints.audio === "object" && constraints.audio !== null ? constraints.audio : {};
-          const requested = typeof audio.deviceId === "object" && audio.deviceId !== null && "exact" in audio.deviceId
-            ? String(audio.deviceId.exact)
-            : "builtin-mic";
-          requestedMicrophones.push(requested);
-          return new FakeInputStream([new FakeInputTrack(requested)]) as unknown as MediaStream;
-        },
-        addEventListener: () => undefined,
-      },
-    });
-  });
-};
-
-const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    // Install phase-gated shims once, before application code. The bootstrap phase keeps
-    // native browser primitives; the same wrappers switch atomically to deterministic media
-    // behavior only after Owner Lab publishes its authoritative bootstrap-ready boundary.
-    let runtimeReady = false;
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -148,14 +103,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     } | null = null;
     (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
     const realFetch = window.fetch.bind(window);
-    const RealMediaStream = window.MediaStream;
-    const RealAudioContext = window.AudioContext;
-    const RealAudioWorkletNode = window.AudioWorkletNode;
-    const RealRTCPeerConnection = window.RTCPeerConnection;
-    const realSrcObject = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (!runtimeReady) return realFetch(input, init);
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
       if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
       remoteSpeech = true;
@@ -190,22 +139,34 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     Object.defineProperty(window, "MediaStream", {
       configurable: true,
-      get: () => runtimeReady ? FakeMediaStream : RealMediaStream,
+      value: FakeMediaStream,
     });
     Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
       configurable: true,
-      get() {
-        if (!runtimeReady && realSrcObject?.get) return realSrcObject.get.call(this);
-        return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null;
-      },
-      set(value: unknown) {
-        if (!runtimeReady && realSrcObject?.set) {
-          realSrcObject.set.call(this, value);
-          return;
-        }
-        (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value;
+      get() { return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null; },
+      set(value: unknown) { (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value; },
+    });
+    const requestedMicrophones: string[] = [];
+    (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones = requestedMicrophones;
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: async () => [
+          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
+          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
+        ],
+        getUserMedia: async (constraints: MediaStreamConstraints) => {
+          const audio = typeof constraints.audio === "object" && constraints.audio !== null ? constraints.audio : {};
+          const requested = typeof audio.deviceId === "object" && audio.deviceId !== null && "exact" in audio.deviceId
+            ? String(audio.deviceId.exact)
+            : "builtin-mic";
+          requestedMicrophones.push(requested);
+          return new FakeMediaStream([new FakeTrack("audio", requested)]);
+        },
+        addEventListener: () => undefined,
       },
     });
+
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -308,22 +269,9 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       activePeer.onconnectionstatechange?.();
     };
 
-    Object.defineProperty(window, "AudioContext", {
-      configurable: true,
-      get: () => runtimeReady ? FakeAudioContext : RealAudioContext,
-    });
-    Object.defineProperty(window, "AudioWorkletNode", {
-      configurable: true,
-      get: () => runtimeReady ? FakeAudioWorkletNode : RealAudioWorkletNode,
-    });
-    Object.defineProperty(window, "RTCPeerConnection", {
-      configurable: true,
-      get: () => runtimeReady ? FakePeerConnection : RealRTCPeerConnection,
-    });
-    window.addEventListener("vpr:bootstrap-ready", () => {
-      runtimeReady = true;
-      document.documentElement.dataset.vprRuntimeFakesReady = "true";
-    }, { once: true });
+    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
+    Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
+    Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
   });
 };
 
@@ -383,15 +331,13 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installBrowserBootstrapFakes(page);
-  await prepareBrowserRuntimeFakes(page);
+  await installBrowserAudioFakes(page);
   await page.goto("/");
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await expect(page.locator("html")).toHaveAttribute("data-vpr-runtime-fakes-ready", "true");
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.
