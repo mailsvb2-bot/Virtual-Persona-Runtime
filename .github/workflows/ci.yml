@@ -110,6 +110,8 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Typecheck
         run: npm run check
+      - name: Parse all Playwright specs
+        run: npm run check:e2e-specs
       - name: Build
         run: npm run build
       - name: Generated bundle is current
