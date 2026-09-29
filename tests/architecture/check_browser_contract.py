@@ -14,6 +14,7 @@ EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
 MEDIA_RUNTIME = UI / "src" / "media-runtime.ts"
+SESSION_RUNTIME_STATE = UI / "src" / "session-runtime-state.ts"
 VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 STYLES = UI / "styles.css"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
@@ -39,6 +40,7 @@ expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
 media_runtime = MEDIA_RUNTIME.read_text(encoding="utf-8")
+session_runtime_state = SESSION_RUNTIME_STATE.read_text(encoding="utf-8")
 voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 styles = STYLES.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
@@ -80,13 +82,15 @@ for forbidden in ("let backendStatus", "let realtimeReadiness", "let providerPla
     if forbidden in app:
         raise SystemExit(f"Owner Lab contains split mutable session ownership: {forbidden}")
 for required in (
-    "class SessionRuntimeState",
+    "export class SessionRuntimeState",
     "applyBackend(status: LabStatus)",
     "patchBackend(patch: Partial<LabStatus>)",
     "resetRealtime(): void",
 ):
-    if required not in app:
+    if required not in session_runtime_state:
         raise SystemExit(f"Owner Lab centralized session runtime state missing: {required}")
+if 'from "./session-runtime-state.js"' not in app:
+    raise SystemExit("Owner Lab application must compose the extracted session runtime state")
 
 for required in (
     "/api/persona/reviewed",
@@ -515,6 +519,7 @@ for required in (
     "npm run test:e2e:expressive",
     "dist/owner-capture.js",
     "dist/media-runtime.js",
+    "dist/session-runtime-state.js",
 ):
     if required not in ci:
         raise SystemExit(f"Owner Lab CI missing browser-contract enforcement: {required}")
