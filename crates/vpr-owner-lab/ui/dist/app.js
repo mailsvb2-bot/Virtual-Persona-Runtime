@@ -1396,13 +1396,6 @@ void api("/api/bootstrap")
     .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
-    window.__vprBootstrap = {
-        csrfToken,
-        ready: false,
-    };
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
-        detail: { csrfToken },
-    }));
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
     if (backendStatus.session_audience)
@@ -1427,9 +1420,5 @@ void api("/api/bootstrap")
     }
     updateControls();
     bootstrapComplete = true;
-    const bootstrapState = window.__vprBootstrap;
-    if (bootstrapState)
-        bootstrapState.ready = true;
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
