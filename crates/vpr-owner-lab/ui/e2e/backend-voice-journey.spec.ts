@@ -240,33 +240,6 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       activePeer.onconnectionstatechange?.();
     };
 
-    const realFetch = window.fetch.bind(window);
-    const runtimeFetch = async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ): Promise<Response> => {
-      const target = typeof input === "string"
-        ? input
-        : input instanceof URL ? input.href : input.url;
-      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
-      const response = await realFetch(input, init);
-      if (target.endsWith("/api/avatar/start")) {
-        testDevicesReady = true;
-        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
-      }
-      if (!target.endsWith("/api/voice/input/finish")) return response;
-
-      // The single-thread Owner Lab backend must finish the HTTP request before the
-      // synthetic provider playback event can trigger any follow-up API work.
-      remoteSpeech = true;
-      playbackSequence += 1;
-      providerDataChannel?.onmessage?.({
-        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
-      });
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-      return response;
-    };
-
     const mediaDevices = {
       enumerateDevices: async () => {
         if (!testDevicesReady) {
@@ -299,7 +272,24 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     };
 
     fakeWindow.__vprTestMediaRuntime = {
-      fetch: runtimeFetch,
+      afterApiResponse: async (path: string) => {
+        if (path.endsWith("/api/avatar/start")) {
+          remoteSpeech = false;
+          testDevicesReady = true;
+          queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+          return;
+        }
+        if (!path.endsWith("/api/voice/input/finish")) return;
+
+        // The backend response is complete before synthetic provider playback starts,
+        // so provider events cannot re-enter the single-threaded HTTP server.
+        remoteSpeech = true;
+        playbackSequence += 1;
+        providerDataChannel?.onmessage?.({
+          data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
+        });
+        await new Promise((resolve) => window.setTimeout(resolve, 80));
+      },
       mediaDevices,
       AudioContext: FakeAudioContext,
       AudioWorkletNode: FakeAudioWorkletNode,
