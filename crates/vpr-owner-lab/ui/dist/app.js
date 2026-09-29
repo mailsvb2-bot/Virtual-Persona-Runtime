@@ -95,6 +95,7 @@ let egressEnabled = false;
 let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
+let microphoneDeviceListenerInstalled = false;
 let statusSyncTail = Promise.resolve();
 let peer = null;
 let liveKitRoom = null;
@@ -881,6 +882,8 @@ const connectAvatar = async () => {
         else {
             await connectLiveKitTransport(start.transport);
         }
+        ensureMicrophoneDeviceMonitoring();
+        await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
         const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
         setStatus(selectedAudience() === "visitor"
@@ -1026,6 +1029,15 @@ const refreshMicrophoneDevices = async (preferredDeviceId) => {
         if (requested)
             rememberMicrophoneDeviceId("");
     }
+};
+const ensureMicrophoneDeviceMonitoring = () => {
+    if (microphoneDeviceListenerInstalled)
+        return;
+    runtimeMediaDevices?.addEventListener?.("devicechange", () => {
+        if (backendSessionPresent())
+            void refreshMicrophoneDevices();
+    });
+    microphoneDeviceListenerInstalled = true;
 };
 const microphoneCaptureError = (error) => {
     if (!(error instanceof DOMException)) {
@@ -1363,11 +1375,7 @@ voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
     rememberMicrophoneDeviceId(microphoneSelect.value.trim());
 });
-runtimeMediaDevices?.addEventListener?.("devicechange", () => {
-    void refreshMicrophoneDevices();
-});
 window.addEventListener("pagehide", closeBackendOnUnload);
-void refreshMicrophoneDevices(storedMicrophoneDeviceId());
 void api("/api/bootstrap")
     .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
