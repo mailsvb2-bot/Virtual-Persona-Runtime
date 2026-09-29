@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { installProviderAutoConnect } from "./provider-bootstrap.js";
+
 const ownerLabUrl = "http://127.0.0.1:18791";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -80,16 +82,6 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const consent = document.getElementById("consent");
-      if (consent instanceof HTMLInputElement) consent.checked = true;
-    }, { once: true });
-  });
-};
-
-
 const recordStreamingVoiceTurn = async (
   page: Page,
   transcript: string,
@@ -143,8 +135,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installExpressiveBootstrapFakes(page);
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -156,24 +148,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  // Consent and connect-button actionability are separately covered by the browser-contract
-  // journey. This provider harness invokes the DOM control directly and verifies the real
-  // backend transition below.
-  await page.evaluate(() => {
-    const connect = document.getElementById("connect");
-    const consent = document.getElementById("consent");
-    if (!(connect instanceof HTMLButtonElement)) throw new Error("CONNECT_CONTROL_MISSING");
-    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
-      throw new Error("CONNECT_CONSENT_NOT_PRESEEDED");
-    }
-    if (connect.disabled) throw new Error("CONNECT_CONTROL_DISABLED");
-    connect.click();
-  });
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");

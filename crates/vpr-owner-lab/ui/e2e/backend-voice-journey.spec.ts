@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { installProviderAutoConnect } from "./provider-bootstrap.js";
+
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -77,15 +79,6 @@ const setupReviewedPersona = async (
     {},
   );
   expect(reviewed.ok()).toBeTruthy();
-};
-
-const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const consent = document.getElementById("consent");
-      if (consent instanceof HTMLInputElement) consent.checked = true;
-    }, { once: true });
-  });
 };
 
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
@@ -390,27 +383,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installBrowserBootstrapFakes(page);
   await prepareBrowserRuntimeFakes(page);
+  await installProviderAutoConnect(page);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
-  // harness pre-seeds the checkbox before app startup; the real backend still rejects start
-  // if the UI fails to submit consent=true.
-  await page.evaluate(() => {
-    const connect = document.getElementById("connect");
-    const consent = document.getElementById("consent");
-    if (!(connect instanceof HTMLButtonElement)) throw new Error("CONNECT_CONTROL_MISSING");
-    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
-      throw new Error("CONNECT_CONSENT_NOT_PRESEEDED");
-    }
-    if (connect.disabled) throw new Error("CONNECT_CONTROL_DISABLED");
-    connect.click();
-  });
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await prepareVoiceCaptureFakes(page);
   await expect(page.locator("#voice")).toBeEnabled();
