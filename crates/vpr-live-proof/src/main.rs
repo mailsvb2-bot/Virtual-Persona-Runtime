@@ -57,6 +57,7 @@ enum BoundaryError {
     OutputPathInvalid,
     OutputPathInsideWorktree,
     OutputPathsConflict,
+    OutputAlreadyExists,
     ProviderStateChanged,
     InputReadFailed,
     ArtifactWriteFailed,
@@ -70,6 +71,7 @@ impl BoundaryError {
             Self::OutputPathInvalid => "OUTPUT_PATH_INVALID",
             Self::OutputPathInsideWorktree => "OUTPUT_PATH_INSIDE_WORKTREE",
             Self::OutputPathsConflict => "OUTPUT_PATHS_CONFLICT",
+            Self::OutputAlreadyExists => "OUTPUT_ALREADY_EXISTS",
             Self::ProviderStateChanged => "PROVIDER_STATE_CHANGED",
             Self::InputReadFailed => "INPUT_READ_FAILED",
             Self::ArtifactWriteFailed => "ARTIFACT_WRITE_FAILED",
@@ -472,6 +474,9 @@ fn validated_output_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, B
     if resolved.starts_with(root) {
         return Err(BoundaryError::OutputPathInsideWorktree);
     }
+    if resolved.exists() {
+        return Err(BoundaryError::OutputAlreadyExists);
+    }
     Ok(resolved)
 }
 
@@ -499,7 +504,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BoundaryError> {
         .and_then(|value| value.to_str())
         .ok_or(BoundaryError::ArtifactWriteFailed)?;
     let temp = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
-    fs::write(&temp, bytes).map_err(|_| BoundaryError::ArtifactWriteFailed)?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = options
+        .open(&temp)
+        .map_err(|_| BoundaryError::ArtifactWriteFailed)?;
+    use std::io::Write as _;
+    if file.write_all(bytes).is_err() || file.sync_all().is_err() {
+        let _ = fs::remove_file(&temp);
+        return Err(BoundaryError::ArtifactWriteFailed);
+    }
+    drop(file);
     fs::rename(&temp, path).map_err(|_| {
         let _ = fs::remove_file(&temp);
         BoundaryError::ArtifactWriteFailed
