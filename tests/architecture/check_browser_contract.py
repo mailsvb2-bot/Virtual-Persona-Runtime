@@ -10,6 +10,7 @@ BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
+PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
@@ -33,6 +34,7 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
+provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
@@ -381,13 +383,22 @@ for provider_e2e, label in (
             f"{label} provider E2E must not duplicate Playwright connect actionability; "
             "browser-contract E2E owns that proof"
         )
-    for required in (
-        'document.getElementById("connect")',
-        '"CONNECT_CONTROL_DISABLED"',
-        "connect.click()",
-    ):
-        if required not in provider_e2e:
-            raise SystemExit(f"{label} provider E2E missing direct DOM connect proof: {required}")
+    if "installProviderAutoConnect(page)" not in provider_e2e:
+        raise SystemExit(f"{label} provider E2E must arm connect before navigation")
+    if 'document.getElementById("connect")' in provider_e2e:
+        raise SystemExit(
+            f"{label} provider E2E must not inject a late post-bootstrap connect RPC"
+        )
+
+for required in (
+    'window.addEventListener("vpr:bootstrap-ready"',
+    'document.getElementById("connect")',
+    '"CONNECT_CONTROL_DISABLED"',
+    'root.dataset.vprProviderAutoConnect = "clicked"',
+    "connect.click()",
+):
+    if required not in provider_bootstrap:
+        raise SystemExit(f"Owner Lab provider bootstrap harness missing: {required}")
 
 
 for required in (
@@ -418,6 +429,14 @@ for required in (
 ):
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
+
+for required in (
+    'path.endsWith("/api/avatar/answer")',
+    '__vprSetPeerConnectionState?.("connected")',
+    "A local answer does not mean ICE/DTLS is connected",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
 
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:

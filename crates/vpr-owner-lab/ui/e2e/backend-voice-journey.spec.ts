@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { installProviderAutoConnect } from "./provider-bootstrap.js";
+
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -77,15 +79,6 @@ const setupReviewedPersona = async (
     {},
   );
   expect(reviewed.ok()).toBeTruthy();
-};
-
-const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    document.addEventListener("DOMContentLoaded", () => {
-      const consent = document.getElementById("consent");
-      if (consent instanceof HTMLInputElement) consent.checked = true;
-    }, { once: true });
-  });
 };
 
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
@@ -212,8 +205,8 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         return { type: "answer", sdp: "v=0 voice-browser-answer" };
       }
       async setLocalDescription(): Promise<void> {
-        this.connectionState = "connected";
-        queueMicrotask(() => this.onconnectionstatechange?.());
+        // A local answer does not mean ICE/DTLS is connected. The provider harness advances
+        // connection state only after the backend has accepted /api/avatar/answer.
       }
       async getStats(): Promise<Map<string, object>> {
         return new Map([
@@ -260,10 +253,17 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     fakeWindow.__vprTestMediaRuntime = {
       afterApiResponse: async (path: string) => {
-        if (!path.endsWith("/api/avatar/start")) return;
-        remoteSpeech = false;
-        testDevicesReady = true;
-        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+        if (path.endsWith("/api/avatar/start")) {
+          remoteSpeech = false;
+          testDevicesReady = true;
+          queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+          return;
+        }
+        if (path.endsWith("/api/avatar/answer")) {
+          // The backend has consumed the SDP answer and the application has consumed the
+          // successful response. Only now may the synthetic transport become connected.
+          fakeWindow.__vprSetPeerConnectionState?.("connected");
+        }
       },
       mediaDevices,
       AudioContext: FakeAudioContext,
@@ -390,27 +390,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await installBrowserBootstrapFakes(page);
   await prepareBrowserRuntimeFakes(page);
+  await installProviderAutoConnect(page);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
-  // harness pre-seeds the checkbox before app startup; the real backend still rejects start
-  // if the UI fails to submit consent=true.
-  await page.evaluate(() => {
-    const connect = document.getElementById("connect");
-    const consent = document.getElementById("consent");
-    if (!(connect instanceof HTMLButtonElement)) throw new Error("CONNECT_CONTROL_MISSING");
-    if (!(consent instanceof HTMLInputElement) || !consent.checked) {
-      throw new Error("CONNECT_CONSENT_NOT_PRESEEDED");
-    }
-    if (connect.disabled) throw new Error("CONNECT_CONTROL_DISABLED");
-    connect.click();
-  });
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await prepareVoiceCaptureFakes(page);
   await expect(page.locator("#voice")).toBeEnabled();
