@@ -651,6 +651,20 @@ Deletion must be idempotent under retry, require the exact current Persona ident
 
 This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT add a production private-Persona delete API, durable erasure runtime or owner-facing production delete UI before RT1 entry.
 
+### Public session lease / revocation feasibility boundary
+
+A bounded pre-entry spike may freeze active public-session authority semantics needed by the publication state machine without implementing a production public endpoint.
+
+A future public-session lease is only a bounded authorization projection. It binds the publication, canonical Persona identity/version, current authorization epoch, publication-state version and an expiry. Provider session IDs and client tokens are not canonical authority.
+
+Lease issuance is allowed only from the exact current `PUBLISHED` state after server-side authorization and exact PersonaVersion validation. Existing sessions follow explicit lease/revocation semantics: authority is revalidated before a new turn or protected provider egress.
+
+`PAUSED`, `UNPUBLISHED`, effective consent/permission revoke, lease expiry, or PersonaVersion advance invalidates the older public-session authority. New turns fail closed. In-flight work is cancelled or drained without further protected provider egress. Server-side denial does not depend on browser disconnect or successful provider-session teardown, and late provider success cannot restore authority.
+
+Authorization/publication epochs are monotonic. A stale resume racing with a newer revoke cannot re-authorize an older lease. Retry must not duplicate an authority grant, and stale authority cannot become current again without a fresh server-side authorization check.
+
+This spike must remain contract-only and non-promoting while RT1 is blocked on RT0 exit. It MUST NOT expose a production public-session endpoint, implement durable lease state, claim real revoke latency evidence, or promote any RT1 capability beyond `RESEARCH_REQUIRED`.
+
 ## 20. Exit gate
 
 RT1 is complete only when:

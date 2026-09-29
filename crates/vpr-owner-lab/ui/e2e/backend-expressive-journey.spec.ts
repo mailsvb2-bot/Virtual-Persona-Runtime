@@ -285,6 +285,10 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       }
 
       async connect(): Promise<void> {
+        // Real LiveKit publishes remote tracks asynchronously after transport connect.
+        // Yield a browser task before emitting subscriptions so provider media callbacks
+        // cannot run inside the same DOM click dispatch that starts the session.
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         this.videoTrack = new FakeRemoteTrack("video");
         this.audioTrack = new FakeRemoteTrack("audio");
         this.emit(roomEvents.TrackSubscribed, this.videoTrack);
@@ -395,11 +399,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
-  await page.evaluate(() => {
-    const element = document.getElementById("connect");
-    if (!(element instanceof HTMLButtonElement)) throw new Error("CONNECT_BUTTON_MISSING");
-    element.click();
-  });
+  const connectAvatar = page.locator("#connect");
+  await expect(connectAvatar).toBeEnabled();
+  await connectAvatar.click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
