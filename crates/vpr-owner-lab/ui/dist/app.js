@@ -369,6 +369,12 @@ const collectAvSyncEvidence = async (requestSequence) => {
     if (sampleSequence > 1)
         await refreshSessionEvidence();
 };
+const ensureAvSyncEvidence = (voice) => {
+    if (!voice.responseComplete || voice.audioStartedElapsed === null)
+        return null;
+    voice.avSyncEvidence ??= collectAvSyncEvidence(voice.requestSequence);
+    return voice.avSyncEvidence;
+};
 const rms = (samples) => {
     let sum = 0;
     for (const sample of samples)
@@ -415,6 +421,9 @@ const monitorRemoteAudio = () => {
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
                 const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence).then(async () => {
                     await syncStatus();
+                    const avSyncEvidence = ensureAvSyncEvidence(voice);
+                    if (avSyncEvidence)
+                        await avSyncEvidence;
                 });
                 voice.audioStartedEvidence = audioStartedEvidence;
                 void audioStartedEvidence.catch(() => undefined);
@@ -1126,6 +1135,7 @@ const finishMicrophoneTurn = async () => {
         audioStarted: false,
         audioStartedElapsed: null,
         audioStartedEvidence: null,
+        avSyncEvidence: null,
         responseComplete: false,
         speaking: false,
         silentFrames: 0,
@@ -1166,9 +1176,9 @@ const finishMicrophoneTurn = async () => {
             if (voice.audioStartedEvidence) {
                 await voice.audioStartedEvidence;
             }
-            if (voice.audioStartedElapsed !== null) {
-                await collectAvSyncEvidence(requestSequence);
-            }
+            const avSyncEvidence = ensureAvSyncEvidence(voice);
+            if (avSyncEvidence)
+                await avSyncEvidence;
         }
         await refreshSessionEvidence();
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
