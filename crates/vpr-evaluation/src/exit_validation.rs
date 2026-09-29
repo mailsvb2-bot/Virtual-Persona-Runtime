@@ -117,7 +117,15 @@ pub fn derive_rt0_runtime_supporting_projection(
     })
 }
 
-pub(crate) fn validate_rt0_conversation_attempt_artifact(
+/// Validates one sanitized credentialed owner/visitor conversation-attempt artifact against its
+/// exact candidate and provider-state binding without requiring browser media evidence.
+///
+/// This is intentionally non-promoting: it validates the headless conversation receipt only.
+/// Browser playback/video/A-V-sync and human review remain separate RT0 exit evidence.
+///
+/// # Errors
+/// Returns a stable RT0 exit-evidence error for malformed, stale or cross-provider artifacts.
+pub fn validate_rt0_conversation_attempt_artifact(
     conversation_attempt_bytes: &[u8],
     exact_candidate_sha: &str,
     provider_state_digest: &str,

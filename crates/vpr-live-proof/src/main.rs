@@ -142,6 +142,18 @@ fn run() -> Result<(), i32> {
         ),
         [
             mode,
+            bundle_input,
+            provider_state_output,
+            probe_output,
+            receipt_output,
+        ] if mode == "candidate-bundle-extract" => candidate_bundle::extract(
+            Path::new(bundle_input),
+            Path::new(provider_state_output),
+            Path::new(probe_output),
+            Path::new(receipt_output),
+        ),
+        [
+            mode,
             probe_audio,
             profile_input,
             owner_audio,
@@ -160,7 +172,7 @@ fn run() -> Result<(), i32> {
         ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>\n       vpr-live-proof candidate-bundle-extract <candidate-bundle.json> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }

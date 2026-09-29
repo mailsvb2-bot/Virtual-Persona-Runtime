@@ -132,7 +132,26 @@ destination before any provider egress, requires the provider composition to rem
 between probe and conversation, re-verifies the clean Git candidate, serializes the whole capture,
 and publishes that one file with create-new semantics. An existing artifact is never overwritten.
 
-The older `candidate` mode remains available for tooling that still expects three separate files:
+Downstream RT0 evidence tools still consume the three canonical component artifacts. Do not
+copy/paste or hand-edit nested JSON out of the bundle. Extract them through the fail-closed canonical
+projection while the checkout is still on the exact candidate:
+
+```text
+cargo run -p vpr-live-proof -- candidate-bundle-extract \
+  /secure/evidence/candidate-bundle.json \
+  /secure/evidence/provider-state.json \
+  /secure/evidence/provider-probe.json \
+  /secure/evidence/conversation-attempt.json
+```
+
+Extraction performs no provider egress. It requires a clean checkout of the exact candidate encoded
+by the bundle, validates the bundle schema, recomputes and verifies the provider-state digest,
+validates the provider probe and sanitized owner/visitor conversation receipt, rejects output paths
+inside the worktree, refuses overwrite, and only then publishes the three canonical downstream
+artifacts. If any write or final candidate check fails, already-created projection files are removed.
+
+The older `candidate` mode remains available when three separate files are required directly during
+credentialed capture:
 
 ```text
 VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
@@ -145,7 +164,7 @@ VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
   /secure/evidence/conversation-attempt.json
 ```
 
-Both modes freeze the candidate and reject provider-state drift. The shared artifact writer now uses
+Both capture modes freeze the candidate and reject provider-state drift. The shared artifact writer now uses
 a same-directory temporary file plus an atomic create-new hard-link publication, so a destination
 that appears while provider work is running cannot be silently overwritten on platforms where
 rename would otherwise replace it.

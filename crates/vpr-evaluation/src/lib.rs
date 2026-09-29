@@ -55,7 +55,7 @@ pub use exit_support::{
 };
 pub use exit_validation::{
     Rt0RuntimeSupportingProjection, derive_rt0_runtime_supporting_projection,
-    validate_rt0_conversation_evidence_binding,
+    validate_rt0_conversation_attempt_artifact, validate_rt0_conversation_evidence_binding,
 };
 pub use session_binding::{
     BoundLabSessionEvidenceAggregate, LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
