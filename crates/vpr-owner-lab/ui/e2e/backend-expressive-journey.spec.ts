@@ -86,6 +86,7 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
+
     let remoteSpeech = false;
     let trackSequence = 0;
     const commands: Array<{ topic: string; text: string }> = [];
@@ -108,35 +109,13 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       constructor(tracks: FakeTrack[] = []) {
         this.tracks = [...tracks];
       }
-      getTracks(): FakeTrack[] {
-        return [...this.tracks];
-      }
+      getTracks(): FakeTrack[] { return [...this.tracks]; }
       getAudioTracks(): FakeTrack[] {
         return this.tracks.filter((track) => track.kind === "audio");
       }
-      addTrack(track: FakeTrack): void {
-        this.tracks.push(track);
-      }
+      addTrack(track: FakeTrack): void { this.tracks.push(track); }
     }
 
-    Object.defineProperty(window, "MediaStream", {
-      configurable: true,
-      value: FakeMediaStream,
-    });
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        enumerateDevices: async () => [
-          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
-        ],
-        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]),
-        addEventListener: () => undefined,
-      },
-    });
-
-    (window as typeof window & {
-      __vprInstallExpressiveRuntimeFakes?: () => void;
-    }).__vprInstallExpressiveRuntimeFakes = () => {
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -164,12 +143,8 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       createMediaStreamSource(): { connect: () => void; disconnect: () => void } {
         return { connect: () => undefined, disconnect: () => undefined };
       }
-      createAnalyser(): FakeAnalyser {
-        return new FakeAnalyser();
-      }
-      createGain(): FakeGain {
-        return new FakeGain();
-      }
+      createAnalyser(): FakeAnalyser { return new FakeAnalyser(); }
+      createGain(): FakeGain { return new FakeGain(); }
     }
 
     class FakeAudioWorkletNode {
@@ -288,9 +263,6 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       }
 
       async connect(): Promise<void> {
-        // Real LiveKit publishes remote tracks asynchronously after transport connect.
-        // Yield a browser task before emitting subscriptions so provider media callbacks
-        // cannot run inside the same DOM click dispatch that starts the session.
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         this.videoTrack = new FakeRemoteTrack("video");
         this.audioTrack = new FakeRemoteTrack("audio");
@@ -301,42 +273,46 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       async disconnect(): Promise<void> {}
     }
 
-    const fakeWindow = window as typeof window & {
-      LivekitClient?: unknown;
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    };
-    fakeWindow.__vprLiveKitCommands = commands;
-    fakeWindow.LivekitClient = {
-      Room: FakeRoom,
-      RoomEvent: roomEvents,
+    const mediaDevices = {
+      enumerateDevices: async () => [
+        {
+          deviceId: "expressive-mic",
+          kind: "audioinput",
+          label: "Expressive test microphone",
+          groupId: "g1",
+          toJSON: () => ({}),
+        },
+      ],
+      getUserMedia: async () =>
+        new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]) as unknown as MediaStream,
+      addEventListener: () => undefined,
     };
 
-    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
-      configurable: true,
-      value(callback: () => void): number {
+    const fakeWindow = window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+      __vprTestMediaRuntime?: unknown;
+    };
+    fakeWindow.__vprLiveKitCommands = commands;
+    fakeWindow.__vprTestMediaRuntime = {
+      mediaDevices,
+      MediaStream: FakeMediaStream,
+      AudioContext: FakeAudioContext,
+      AudioWorkletNode: FakeAudioWorkletNode,
+      liveKitSdk: {
+        Room: FakeRoom,
+        RoomEvent: roomEvents,
+      },
+      setSrcObject(element: HTMLMediaElement, value: unknown) {
+        (element as HTMLMediaElement & { __vprTestSrcObject?: unknown }).__vprTestSrcObject = value;
+      },
+      requestVideoFrame(_element: HTMLVideoElement, callback: () => void): number {
         queueMicrotask(callback);
         return 1;
       },
-    });
-    Object.defineProperty(window, "AudioContext", {
-      configurable: true,
-      value: FakeAudioContext,
-    });
-    Object.defineProperty(window, "AudioWorkletNode", {
-      configurable: true,
-      value: FakeAudioWorkletNode,
-    });
     };
+
     window.addEventListener("vpr:bootstrap-ready", () => {
-      window.setTimeout(() => {
-        const fakeWindow = window as typeof window & {
-          __vprInstallExpressiveRuntimeFakes?: () => void;
-        };
-        const install = fakeWindow.__vprInstallExpressiveRuntimeFakes;
-        if (!install) throw new Error("EXPRESSIVE_RUNTIME_INSTALLER_MISSING");
-        install();
-        document.documentElement.dataset.vprExpressiveRuntimeFakesReady = "true";
-      }, 0);
+      document.documentElement.dataset.vprExpressiveRuntimeFakesReady = "true";
     }, { once: true });
   });
 };
