@@ -119,7 +119,7 @@ type LiveKitSdk = {
 };
 
 type TestMediaRuntime = {
-  fetch?: typeof window.fetch;
+  afterApiResponse?: (path: string) => void | Promise<void>;
   mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
   AudioContext?: unknown;
   AudioWorkletNode?: unknown;
@@ -133,7 +133,10 @@ type TestMediaRuntime = {
 const testMediaRuntime = (window as typeof window & {
   __vprTestMediaRuntime?: TestMediaRuntime;
 }).__vprTestMediaRuntime;
-const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
+const runtimeFetch = window.fetch.bind(window);
+const notifyTestApiResponse = async (path: string): Promise<void> => {
+  await testMediaRuntime?.afterApiResponse?.(path);
+};
 const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
 const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext) as typeof AudioContext;
 const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
@@ -400,6 +403,7 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
+  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -420,6 +424,7 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
+  await notifyTestApiResponse(path);
   return payload as T;
 };
 
