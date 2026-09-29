@@ -4,10 +4,10 @@ import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 const testMediaRuntime = window.__vprTestMediaRuntime;
 const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
 const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
-const RuntimeAudioContext = testMediaRuntime?.AudioContext ?? window.AudioContext;
-const RuntimeAudioWorkletNode = testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode;
-const RuntimeMediaStream = testMediaRuntime?.MediaStream ?? window.MediaStream;
-const RuntimeRTCPeerConnection = testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection;
+const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext);
+const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode);
+const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream);
+const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection);
 const setMediaSrcObject = (element, value) => {
     if (testMediaRuntime?.setSrcObject) {
         testMediaRuntime.setSrcObject(element, value);
