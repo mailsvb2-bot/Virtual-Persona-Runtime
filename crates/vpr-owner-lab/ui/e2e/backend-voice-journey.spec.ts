@@ -89,7 +89,7 @@ const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
 };
 
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
+  await page.evaluate(() => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -360,11 +360,11 @@ test("owner and visitor voice turns cross the real backend with different contex
   await setupReviewedPersona(request, csrf);
 
   await installBrowserBootstrapFakes(page);
-  await prepareBrowserRuntimeFakes(page);
   await page.goto("/");
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
   )).toBeTruthy();
+  await prepareBrowserRuntimeFakes(page);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
