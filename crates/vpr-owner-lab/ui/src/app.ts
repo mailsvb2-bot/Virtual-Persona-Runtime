@@ -1043,15 +1043,17 @@ const connectAvatar = async (): Promise<void> => {
     const audience = audienceSelect.value as SessionAudience;
     const start = await api<StartResponse>("/api/avatar/start", { consent: true, audience });
     evidenceSessionSequence = start.evidence_session_sequence;
-    backendStatus = {
-      ...backendStatus,
-      session_state: "active",
-      avatar_open: true,
-      egress_enabled: egressEnabled,
-      session_audience: audience,
-    };
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
+
+    // The backend is the only authority for session lifecycle. Do not manufacture an
+    // optimistic "active" client snapshot: synchronise the accepted transition before
+    // transport setup so failures can always close the real backend session safely.
+    await syncStatus();
+    if (backendStatus.session_state !== "active" || backendStatus.session_audience !== audience) {
+      throw new Error("SESSION_STATE_DIVERGED");
+    }
+
     if (start.transport.kind === "web_rtc") {
       await connectWebRtcTransport(start.transport, start.client_control);
     } else {
