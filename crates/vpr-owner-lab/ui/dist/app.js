@@ -1,52 +1,13 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
+import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject } from "./media-runtime.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
-const mediaRuntime = () => window.__vprMediaRuntimeOverrides;
-const runtimeFetch = window.fetch.bind(window);
-const runtimeMediaDevices = () => mediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
-const createRuntimeAudioContext = (options) => {
-    const Constructor = (mediaRuntime()?.AudioContext ?? window.AudioContext);
-    return new Constructor(options);
-};
-const createRuntimeAudioWorkletNode = (context, name) => {
-    const Constructor = (mediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode);
-    return new Constructor(context, name);
-};
-const createRuntimeMediaStream = (tracks) => {
-    const Constructor = (mediaRuntime()?.MediaStream ?? window.MediaStream);
-    return tracks ? new Constructor(tracks) : new Constructor();
-};
-const createRuntimePeerConnection = (configuration) => {
-    const Constructor = (mediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection);
-    return new Constructor(configuration);
-};
-const setMediaSrcObject = (element, value) => {
-    const setter = mediaRuntime()?.setSrcObject;
-    if (setter) {
-        setter(element, value);
-    }
-    else {
-        element.srcObject = value;
-    }
-};
-const requestVideoFrame = (element, callback) => {
-    const request = mediaRuntime()?.requestVideoFrame;
-    if (request) {
-        request(element, callback);
-        return true;
-    }
-    const nativeRequest = element.requestVideoFrameCallback;
-    if (typeof nativeRequest !== "function")
-        return false;
-    nativeRequest.call(element, callback);
-    return true;
-};
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
-    const runtime = mediaRuntime();
-    if (runtime?.liveKitSdk)
-        return runtime.liveKitSdk;
+    const injectedSdk = mediaRuntime()?.liveKitSdk;
+    if (injectedSdk)
+        return injectedSdk;
     const existing = window.LivekitClient;
     if (existing)
         return existing;
