@@ -89,117 +89,6 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
   });
 };
 
-const prepareExpressiveRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
-    let trackSequence = 0;
-    let testDevicesReady = false;
-    const deviceChangeListeners: Array<() => void> = [];
-
-    class FakeTrack {
-      id: string;
-      constructor(readonly kind: "audio" | "video", readonly deviceId = "expressive-mic") {
-        trackSequence += 1;
-        this.id = `expressive-track-${trackSequence}`;
-      }
-      stop(): void {}
-      getSettings(): MediaTrackSettings {
-        return this.kind === "audio" ? { deviceId: this.deviceId } : {};
-      }
-    }
-
-    class FakeMediaStream {
-      private readonly tracks: FakeTrack[];
-      constructor(tracks: FakeTrack[] = []) {
-        this.tracks = [...tracks];
-      }
-      getTracks(): FakeTrack[] { return [...this.tracks]; }
-      getAudioTracks(): FakeTrack[] {
-        return this.tracks.filter((track) => track.kind === "audio");
-      }
-      addTrack(track: FakeTrack): void { this.tracks.push(track); }
-    }
-
-    class FakeAnalyser {
-      fftSize = 256;
-      connect(): void {}
-      disconnect(): void {}
-      getFloatTimeDomainData(samples: Float32Array): void {
-        const speaking = (window as typeof window & {
-          __vprExpressiveRemoteSpeech?: boolean;
-        }).__vprExpressiveRemoteSpeech === true;
-        samples.fill(speaking ? 0.12 : 0.0005);
-      }
-    }
-
-    class FakeGain {
-      gain = { value: 1 };
-      connect(): void {}
-      disconnect(): void {}
-    }
-
-    class FakeAudioContext {
-      sampleRate: number;
-      constructor(options?: AudioContextOptions) {
-        this.sampleRate = options?.sampleRate ?? 48_000;
-      }
-      destination = {};
-      audioWorklet = { addModule: async () => undefined };
-      async resume(): Promise<void> {}
-      async close(): Promise<void> {}
-      createMediaStreamSource(): { connect: () => void; disconnect: () => void } {
-        return { connect: () => undefined, disconnect: () => undefined };
-      }
-      createAnalyser(): FakeAnalyser { return new FakeAnalyser(); }
-      createGain(): FakeGain { return new FakeGain(); }
-    }
-
-    const mediaDevices = {
-      enumerateDevices: async () => {
-        if (!testDevicesReady) return [];
-        return [
-          {
-            deviceId: "expressive-mic",
-            kind: "audioinput",
-            label: "Expressive test microphone",
-            groupId: "g1",
-            toJSON: () => ({}),
-          },
-        ];
-      },
-      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
-        if (type !== "devicechange") return;
-        deviceChangeListeners.push(() => {
-          if (typeof listener === "function") listener(new Event("devicechange"));
-          else listener.handleEvent(new Event("devicechange"));
-        });
-      },
-    };
-
-    const fakeWindow = window as typeof window & {
-      __vprExpressiveProviderConnected?: () => void;
-      __vprExpressiveCreateMicStream?: () => MediaStream;
-      __vprTestMediaRuntime?: unknown;
-    };
-    fakeWindow.__vprExpressiveProviderConnected = () => {
-      testDevicesReady = true;
-      queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
-    };
-    fakeWindow.__vprExpressiveCreateMicStream = () =>
-      new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]) as unknown as MediaStream;
-    fakeWindow.__vprTestMediaRuntime = {
-      mediaDevices,
-      MediaStream: FakeMediaStream,
-      AudioContext: FakeAudioContext,
-      setSrcObject(element: HTMLMediaElement, value: unknown) {
-        (element as HTMLMediaElement & { __vprTestSrcObject?: unknown }).__vprTestSrcObject = value;
-      },
-      requestVideoFrame(_element: HTMLVideoElement, callback: () => void): number {
-        queueMicrotask(callback);
-        return 1;
-      },
-    };
-  });
-};
 
 const prepareExpressiveVoiceCaptureFakes = async (page: Page): Promise<void> => {
   await page.evaluate(() => {
@@ -290,7 +179,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBootstrapFakes(page);
-  await prepareExpressiveRuntimeFakes(page);
   await page.route(
     "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js",
     async (route) => {
