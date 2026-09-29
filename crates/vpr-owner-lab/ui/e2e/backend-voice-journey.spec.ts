@@ -356,6 +356,7 @@ test("owner and visitor voice turns cross the real backend with different contex
 
   await prepareBrowserRuntimeFakes(page);
   await page.goto("/");
+  await page.locator("#consent").check();
   const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
   await expect(connectAvatar).toBeEnabled();
   await connectAvatar.click();
