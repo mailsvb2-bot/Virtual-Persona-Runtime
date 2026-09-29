@@ -1,8 +1,8 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
-import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject } from "./media-runtime.js";
-import { SessionRuntimeState } from "./session-runtime-state.js";
+import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject, } from "./media-runtime.js";
+import { SessionRuntimeState, } from "./session-runtime-state.js";
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
@@ -221,7 +221,7 @@ const api = async (path, body) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-      return payload;
+    return payload;
 };
 const apiEvidenceJson = async (path, body, requestSequence) => {
     const response = await runtimeFetch(path, {
@@ -240,7 +240,7 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-      return payload;
+    return payload;
 };
 const apiBinary = async (path, body, requestSequence) => {
     const response = await runtimeFetch(path, {
