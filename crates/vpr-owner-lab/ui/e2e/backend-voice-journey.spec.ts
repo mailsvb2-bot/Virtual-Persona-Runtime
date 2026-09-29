@@ -111,8 +111,13 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     };
     fakeWindow.__vprRequestedMicrophones = requestedMicrophones;
     fakeWindow.__vprInterruptPayloads = interruptPayloads;
-    document.documentElement.dataset.vprRequestedMicrophones = "[]";
-    document.documentElement.dataset.vprInterruptPayloads = "[]";
+    const publishFixtureState = (): void => {
+      const root = document.documentElement;
+      if (!root) return;
+      root.dataset.vprRequestedMicrophones = JSON.stringify(requestedMicrophones);
+      root.dataset.vprInterruptPayloads = JSON.stringify(interruptPayloads);
+    };
+    document.addEventListener("DOMContentLoaded", publishFixtureState, { once: true });
 
     class FakeTrack {
       id: string;
@@ -214,7 +219,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
           onmessage: null as ((event: { data: string }) => void) | null,
           send(payload: string): void {
             interruptPayloads.push(payload);
-            document.documentElement.dataset.vprInterruptPayloads = JSON.stringify(interruptPayloads);
+            publishFixtureState();
             if (payload.includes("interrupt")) remoteSpeech = false;
             queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
           },
@@ -266,7 +271,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
           ? String(audio.deviceId.exact)
           : "builtin-mic";
         requestedMicrophones.push(requested);
-        document.documentElement.dataset.vprRequestedMicrophones = JSON.stringify(requestedMicrophones);
+        publishFixtureState();
         return new FakeMediaStream([new FakeTrack("audio", requested)]) as unknown as MediaStream;
       },
       addEventListener: () => undefined,
