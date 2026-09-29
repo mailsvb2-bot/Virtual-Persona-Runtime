@@ -10,6 +10,7 @@ const files = new Map([
   ["/app.js", "dist/app.js"],
   ["/owner-capture.js", "dist/owner-capture.js"],
   ["/voice-command-scheduler.js", "dist/voice-command-scheduler.js"],
+  ["/bootstrap-context.js", "dist/bootstrap-context.js"],
   ["/media-runtime.js", "dist/media-runtime.js"],
   ["/session-runtime-state.js", "dist/session-runtime-state.js"],
   ["/evidence-export.js", "dist/evidence-export.js"],
