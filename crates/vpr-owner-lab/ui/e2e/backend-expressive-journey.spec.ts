@@ -111,7 +111,7 @@ const recordStreamingVoiceTurn = async (
   // make the same candidate pass or fail depending on runner scheduling.
   await expect(page.locator("#readiness-voice")).toHaveText("Готов");
 
-  await root.dispatchEvent("vpr:expressive-control", { action: "playback-done" });
+  await page.locator('[data-vpr-fixture-action="playback-done"]').click({ force: true });
 
   await expect.poll(async () =>
     (await commands()).filter((command) => command.topic === "did.speak").length
@@ -152,25 +152,25 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   // provider journey owns LiveKit/backend behavior only.
   const voiceButton = page.locator("#voice");
   await expect(voiceButton).toBeEnabled();
-  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "lose-video" });
+  await page.locator('[data-vpr-fixture-action="lose-video"]').click({ force: true });
   await expect(page.locator(".stage")).not.toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
   await expect(page.locator("#status")).toContainText(
     "Видео-поток аватара потерян. Голос остаётся доступен",
   );
 
-  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "restore-video" });
+  await page.locator('[data-vpr-fixture-action="restore-video"]').click({ force: true });
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(voiceButton).toBeEnabled();
 
-  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "lose-audio" });
+  await page.locator('[data-vpr-fixture-action="lose-audio"]').click({ force: true });
   await expect(voiceButton).toBeEnabled();
   await expect(page.locator("#speak")).toBeEnabled();
   await expect(page.locator("#status")).toContainText(
     "Аудиопоток аватара потерян. Микрофон и текст остаются доступны",
   );
 
-  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "restore-audio" });
+  await page.locator('[data-vpr-fixture-action="restore-audio"]').click({ force: true });
   await expect(voiceButton).toBeEnabled();
 
   await recordStreamingVoiceTurn(
@@ -265,7 +265,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(1);
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
-  await page.locator("html").dispatchEvent("vpr:expressive-control", { action: "disconnect" });
+  await page.locator('[data-vpr-fixture-action="disconnect"]').click({ force: true });
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
 
   const providerState = await request.get(`${providerUrl}/__state`);
