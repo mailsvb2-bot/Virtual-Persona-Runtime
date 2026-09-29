@@ -1376,5 +1376,6 @@ void api("/api/bootstrap")
     const bootstrapState = window.__vprBootstrap;
     if (bootstrapState)
         bootstrapState.ready = true;
+    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
