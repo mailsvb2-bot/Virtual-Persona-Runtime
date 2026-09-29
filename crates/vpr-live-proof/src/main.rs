@@ -7,11 +7,14 @@ use std::process::Command;
 use serde::Serialize;
 use vpr_evaluation::ProviderStateManifest;
 use vpr_live_proof::{
-    LiveConversationAttemptError, LiveConversationAttemptReceipt, LiveProofPreflightError,
-    LiveProviderProbeError, LiveProviderProbeReceipt, inspect_provider_configuration, preflight,
-    prepare, run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
-    validate_provider_probe_audio,
+    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError,
+    inspect_provider_configuration, preflight, prepare, run_live_conversation_attempt,
+    run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
 };
+
+mod candidate_bundle;
+#[cfg(test)]
+mod main_tests;
 
 #[derive(Serialize)]
 struct CliError<'a> {
@@ -26,16 +29,6 @@ struct CandidateRunReceipt<'a> {
     ok: bool,
     candidate_sha: &'a str,
     provider_state_sha256: &'a str,
-}
-
-#[derive(Serialize)]
-struct CandidateBundle<'a> {
-    schema_version: &'static str,
-    candidate_sha: &'a str,
-    provider_state_sha256: &'a str,
-    provider_state: &'a ProviderStateManifest,
-    provider_probe: &'a LiveProviderProbeReceipt,
-    conversation_attempt: &'a LiveConversationAttemptReceipt,
 }
 
 #[derive(Serialize)]
@@ -136,7 +129,7 @@ fn run() -> Result<(), i32> {
         [mode, probe_audio, profile_input, owner_audio, visitor_audio, bundle_output]
             if mode == "candidate-bundle" =>
         {
-            run_candidate_bundle(
+            candidate_bundle::run(
                 Path::new(probe_audio),
                 Path::new(profile_input),
                 Path::new(owner_audio),
@@ -336,89 +329,6 @@ fn run_conversation(
         return Err(emit_preflight(error));
     }
     println!("{}", serde_json::to_string_pretty(&receipt).map_err(|_| 2)?);
-    Ok(())
-}
-
-fn run_candidate_bundle(
-    probe_audio_path: &Path,
-    profile_path: &Path,
-    owner_audio_path: &Path,
-    visitor_audio_path: &Path,
-    bundle_path: &Path,
-) -> Result<(), i32> {
-    let snapshot = repo_snapshot()?;
-    let probe_audio_path =
-        validated_input_path(probe_audio_path, &snapshot.root).map_err(emit_boundary)?;
-    let profile_path = validated_input_path(profile_path, &snapshot.root).map_err(emit_boundary)?;
-    let owner_audio_path =
-        validated_input_path(owner_audio_path, &snapshot.root).map_err(emit_boundary)?;
-    let visitor_audio_path =
-        validated_input_path(visitor_audio_path, &snapshot.root).map_err(emit_boundary)?;
-    let bundle_path = validated_output_path(bundle_path, &snapshot.root).map_err(emit_boundary)?;
-    ensure_unique_paths(&[
-        probe_audio_path.as_path(),
-        profile_path.as_path(),
-        owner_audio_path.as_path(),
-        visitor_audio_path.as_path(),
-        bundle_path.as_path(),
-    ])
-    .map_err(emit_boundary)?;
-
-    let probe_audio =
-        fs::read(&probe_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-    let profile =
-        fs::read(&profile_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-    let owner_audio =
-        fs::read(&owner_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-    let visitor_audio =
-        fs::read(&visitor_audio_path).map_err(|_| emit_boundary(BoundaryError::InputReadFailed))?;
-
-    validate_provider_probe_audio(&probe_audio).map_err(|error| emit_probe(&error))?;
-    validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
-        .map_err(emit_conversation)?;
-
-    let prepared_probe =
-        prepare(&snapshot.candidate, worktree_clean()?, egress_authorized()).map_err(emit_preflight)?;
-    let provider_state_sha256 = prepared_probe.receipt().provider_state_sha256.clone();
-    let provider_state = prepared_probe.receipt().provider_state.clone();
-    let probe =
-        run_provider_probe(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
-
-    let prepared_conversation =
-        prepare(&snapshot.candidate, worktree_clean()?, egress_authorized())
-            .map_err(emit_preflight)?;
-    if prepared_conversation.receipt().provider_state_sha256 != provider_state_sha256 {
-        return Err(emit_boundary(BoundaryError::ProviderStateChanged));
-    }
-    let receipt =
-        run_live_conversation_attempt(prepared_conversation, &profile, owner_audio, visitor_audio)
-            .map_err(emit_conversation)?;
-
-    verify_snapshot(&snapshot).map_err(emit_preflight)?;
-    let bundle = serde_json::to_vec_pretty(&CandidateBundle {
-        schema_version: "rt0-live-proof-candidate-bundle-0.1",
-        candidate_sha: &snapshot.candidate,
-        provider_state_sha256: &provider_state_sha256,
-        provider_state: &provider_state,
-        provider_probe: &probe,
-        conversation_attempt: &receipt,
-    })
-    .map_err(|_| 2)?;
-    atomic_write(&bundle_path, &bundle).map_err(emit_boundary)?;
-    if let Err(error) = verify_snapshot(&snapshot) {
-        let _ = fs::remove_file(&bundle_path);
-        return Err(emit_preflight(error));
-    }
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&CandidateRunReceipt {
-            ok: true,
-            candidate_sha: &snapshot.candidate,
-            provider_state_sha256: &provider_state_sha256,
-        })
-        .map_err(|_| 2)?
-    );
     Ok(())
 }
 
@@ -662,39 +572,3 @@ fn emit_error(code: &str, stage: Option<&str>) {
 }
 
 
-#[cfg(test)]
-mod atomic_write_tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_path(suffix: &str) -> PathBuf {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "vpr-live-proof-write-{}-{nanos}-{suffix}",
-            std::process::id()
-        ))
-    }
-
-    #[test]
-    fn atomic_write_publishes_new_file() {
-        let path = temp_path("new.json");
-        atomic_write(&path, b"candidate").expect("new artifact should publish");
-        assert_eq!(fs::read(&path).expect("published artifact"), b"candidate");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn atomic_write_never_overwrites_existing_artifact() {
-        let path = temp_path("existing.json");
-        fs::write(&path, b"immutable").expect("sentinel");
-        assert_eq!(
-            atomic_write(&path, b"replacement"),
-            Err(BoundaryError::ArtifactWriteFailed)
-        );
-        assert_eq!(fs::read(&path).expect("sentinel remains"), b"immutable");
-        let _ = fs::remove_file(path);
-    }
-}
