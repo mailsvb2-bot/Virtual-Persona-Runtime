@@ -4,8 +4,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vpr_evaluation::{
-    ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
-    sha256_hex, validate_candidate_sha, validate_live_provider_probe,
+    ProviderStateManifest, sha256_hex, validate_candidate_sha, validate_live_provider_probe,
     validate_provider_state_manifest, validate_rt0_conversation_attempt_artifact,
 };
 use vpr_live_proof::{
@@ -303,7 +302,8 @@ fn cleanup_outputs(paths: &[&Path]) {
 mod tests {
     use serde_json::json;
     use vpr_evaluation::{
-        AvatarProbeEvidence, LlmProbeEvidence, ProbeUsage, SttProbeEvidence,
+        AvatarProbeEvidence, LlmProbeEvidence, ProbeUsage, ProviderRole, ProviderStateBinding,
+        RT0_PROVIDER_STATE_SCHEMA, SttProbeEvidence,
     };
 
     use super::*;
