@@ -115,7 +115,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Generated bundle is current
-        run: git diff --exit-code -- dist/app.js dist/owner-capture.js
+        run: git diff --exit-code -- dist/app.js dist/owner-capture.js dist/media-runtime.js
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser contract E2E
