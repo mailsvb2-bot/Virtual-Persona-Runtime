@@ -152,22 +152,24 @@ const createRuntimeAudioWorkletNode = (
 };
 const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
   const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
-  return new Constructor(tracks);
+  return tracks ? new Constructor(tracks) : new Constructor();
 };
 const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
   const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
   return new Constructor(configuration);
 };
 const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  if (testMediaRuntime()?.setSrcObject) {
-    testMediaRuntime()?.setSrcObject(element, value);
+  const setter = testMediaRuntime()?.setSrcObject;
+  if (setter) {
+    setter(element, value);
   } else {
     element.srcObject = value;
   }
 };
 const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  if (testMediaRuntime()?.requestVideoFrame) {
-    testMediaRuntime()?.requestVideoFrame(element, callback);
+  const request = testMediaRuntime()?.requestVideoFrame;
+  if (request) {
+    request(element, callback);
     return true;
   }
   const nativeRequest = (element as HTMLVideoElement & {
