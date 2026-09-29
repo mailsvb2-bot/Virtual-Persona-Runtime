@@ -232,12 +232,21 @@ const acceptBootstrap = (token) => {
   });
 };
 
-const bootstrapSnapshot = window.__vprBootstrap;
-if (bootstrapSnapshot && typeof bootstrapSnapshot.csrfToken === "string") {
-  acceptBootstrap(bootstrapSnapshot.csrfToken);
-} else {
-  window.addEventListener("vpr:bootstrap", (event) => {
-    const detail = event instanceof CustomEvent ? event.detail : null;
-    acceptBootstrap(detail?.csrfToken ?? "");
-  }, { once: true });
-}
+const bootstrapReferenceCapture = async () => {
+  const response = await fetch("/api/bootstrap", {
+    method: "GET",
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  const payload = await response.json();
+  if (!response.ok || typeof payload?.csrf_token !== "string") {
+    throw new Error("REFERENCE_BOOTSTRAP_FAILED");
+  }
+  acceptBootstrap(payload.csrf_token);
+};
+
+void bootstrapReferenceCapture().catch((error) => {
+  const message = error instanceof Error ? error.message : "REFERENCE_BOOTSTRAP_FAILED";
+  setReferenceStatus("voice", message, "error");
+  setReferenceStatus("appearance", message, "error");
+});
