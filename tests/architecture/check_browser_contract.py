@@ -132,7 +132,7 @@ for required in (
     "av_sync_proven",
     "did.speak",
     "did.interrupt",
-    "vpr:expressive-control",
+    "data-vpr-fixture-action",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
     "#metric-stt",
     "#metric-llm-first",
@@ -194,7 +194,8 @@ for required in (
     'Object.defineProperty(navigator, "mediaDevices"',
     'Object.defineProperty(window, "AudioContext"',
     'Object.defineProperty(window, "MediaStream"',
-    '"vpr:expressive-control"',
+    "vprFixtureAction",
+    "__vprExpressiveDisconnect",
 ):
     if required not in fake_livekit:
         raise SystemExit(f"Owner Lab fake LiveKit SDK missing deterministic browser boundary: {required}")
