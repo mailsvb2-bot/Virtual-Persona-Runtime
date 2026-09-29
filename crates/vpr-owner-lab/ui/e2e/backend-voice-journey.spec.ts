@@ -124,8 +124,11 @@ const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
   });
 };
 
-const installBrowserRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
+const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    (window as unknown as {
+      __vprInstallBrowserRuntimeFakes?: () => void;
+    }).__vprInstallBrowserRuntimeFakes = () => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -292,6 +295,17 @@ const installBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
     Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
     Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
+    };
+  });
+};
+
+const installBrowserRuntimeFakes = async (page: Page): Promise<void> => {
+  await page.evaluate(() => {
+    const install = (window as unknown as {
+      __vprInstallBrowserRuntimeFakes?: () => void;
+    }).__vprInstallBrowserRuntimeFakes;
+    if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
+    install();
   });
 };
 
@@ -352,6 +366,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   await setupReviewedPersona(request, csrf);
 
   await installBrowserBootstrapFakes(page);
+  await prepareBrowserRuntimeFakes(page);
   await page.goto("/");
   await expect.poll(() => page.evaluate(
     () => (window as unknown as { __vprBootstrap?: { ready?: boolean } }).__vprBootstrap?.ready ?? false,
