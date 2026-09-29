@@ -410,7 +410,9 @@ fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpRespon
                 *state.active_voice_interrupt.lock() = None;
                 state.voice_cancel_requested.store(false, Ordering::Release);
                 state.voice_busy.store(false, Ordering::Release);
-                state.voice_streams.clear();
+                // Terminal voice events are part of the public close contract. Keep them
+                // available until the client consumes them; VoiceStreamRegistry removes each
+                // terminal stream after wait_events() observes it.
                 state.session_end_requested.store(false, Ordering::Release);
             }
             Ok(json_response(200, &serde_json::json!({"ok": true})))
