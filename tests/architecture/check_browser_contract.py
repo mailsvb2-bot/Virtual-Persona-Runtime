@@ -9,6 +9,7 @@ BACKEND_CONFIG = UI / "playwright.backend.config.ts"
 BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
+VOICE_MEDIA_FIXTURE = UI / "e2e" / "fake-webrtc-media-runtime.js"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
@@ -35,6 +36,7 @@ backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
 backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
+voice_media_fixture = VOICE_MEDIA_FIXTURE.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
@@ -192,14 +194,14 @@ for required in (
         raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
 
 
-def require_pre_navigation_media_runtime(source: str, installer: str, label: str) -> None:
+def require_pre_navigation_media_runtime(source: str, installer: str, fixture_path: str, label: str) -> None:
     declaration = (
         f"const {installer} = async (page: Page): Promise<void> => {{\n"
-        "  await page.addInitScript(() => {"
+        f'  await page.addInitScript({{ path: "{fixture_path}" }});'
     )
     if declaration not in source:
         raise SystemExit(
-            f"{label} media runtime must be installed with addInitScript before the live page starts"
+            f"{label} media runtime must be loaded as an isolated init-script fixture"
         )
     call = f"await {installer}(page);"
     goto = 'await page.goto("/");'
@@ -207,13 +209,12 @@ def require_pre_navigation_media_runtime(source: str, installer: str, label: str
     goto_index = source.find(goto)
     if call_index < 0 or goto_index < 0 or call_index > goto_index:
         raise SystemExit(f"{label} media runtime must be installed before page.goto")
-    if "return await navigator.mediaDevices?.enumerateDevices?.() ?? [];" in source:
-        raise SystemExit(f"{label} media E2E must never fall through to native device discovery")
 
 
 require_pre_navigation_media_runtime(
     voice_e2e,
     "prepareBrowserRuntimeFakes",
+    "e2e/fake-webrtc-media-runtime.js",
     "Owner Lab voice",
 )
 
@@ -492,15 +493,19 @@ for forbidden in (
     if forbidden in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E contains forbidden post-response orchestration: {forbidden}")
 for required in (
-    "async setLocalDescription(): Promise<void>",
+    "async setLocalDescription()",
     'this.connectionState = "connected"',
     "publishRemoteAudioTrack?.()",
-    'payload.includes("interrupt")',
-    "getUserMedia: async (constraints: MediaStreamConstraints)",
+    'payload.includes("stream/interrupt")',
+    "async getUserMedia(constraints)",
     "AudioWorkletNode: FakeAudioWorkletNode",
+    "beginSyntheticPlayback",
+    "UNEXPECTED_WEBRTC_CLIENT_COMMAND",
 ):
-    if required not in voice_e2e:
+    if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab voice fake transport lifecycle missing: {required}")
+if "navigator.mediaDevices" in voice_media_fixture:
+    raise SystemExit("Owner Lab WebRTC fixture must never fall through to native media devices")
 
 
 voice_goto = voice_e2e.find('await page.goto("/");')
