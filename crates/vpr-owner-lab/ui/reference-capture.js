@@ -1,3 +1,5 @@
+import { whenBootstrap } from "/bootstrap-context.js";
+
 const byId = (id) => {
   const element = document.getElementById(id);
   if (!element) throw new Error(`missing element ${id}`);
@@ -232,12 +234,10 @@ const acceptBootstrap = (token) => {
   });
 };
 
-const bootstrapSnapshot = window.__vprBootstrap;
-if (bootstrapSnapshot && typeof bootstrapSnapshot.csrfToken === "string") {
-  acceptBootstrap(bootstrapSnapshot.csrfToken);
-} else {
-  window.addEventListener("vpr:bootstrap", (event) => {
-    const detail = event instanceof CustomEvent ? event.detail : null;
-    acceptBootstrap(detail?.csrfToken ?? "");
-  }, { once: true });
-}
+void whenBootstrap()
+  .then(({ csrfToken }) => acceptBootstrap(csrfToken))
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : "REFERENCE_BOOTSTRAP_FAILED";
+    setReferenceStatus("voice", message, "error");
+    setReferenceStatus("appearance", message, "error");
+  });
