@@ -1,55 +1,26 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
-const testMediaRuntime = () => window.__vprTestMediaRuntime;
 const runtimeFetch = window.fetch.bind(window);
-const notifyTestApiResponse = async (path) => {
-    await testMediaRuntime()?.afterApiResponse?.(path);
-};
-const runtimeMediaDevices = () => testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
-const createRuntimeAudioContext = (options) => {
-    const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext);
-    return new Constructor(options);
-};
-const createRuntimeAudioWorkletNode = (context, name) => {
-    const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode);
-    return new Constructor(context, name);
-};
-const createRuntimeMediaStream = (tracks) => {
-    const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream);
-    return tracks ? new Constructor(tracks) : new Constructor();
-};
-const createRuntimePeerConnection = (configuration) => {
-    const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection);
-    return new Constructor(configuration);
-};
+const runtimeMediaDevices = () => navigator.mediaDevices;
+const createRuntimeAudioContext = (options) => new window.AudioContext(options);
+const createRuntimeAudioWorkletNode = (context, name) => new window.AudioWorkletNode(context, name);
+const createRuntimeMediaStream = (tracks) => tracks ? new window.MediaStream(tracks) : new window.MediaStream();
+const createRuntimePeerConnection = (configuration) => new window.RTCPeerConnection(configuration);
 const setMediaSrcObject = (element, value) => {
-    const setter = testMediaRuntime()?.setSrcObject;
-    if (setter) {
-        setter(element, value);
-    }
-    else {
-        element.srcObject = value;
-    }
+    element.srcObject = value;
 };
 const requestVideoFrame = (element, callback) => {
-    const request = testMediaRuntime()?.requestVideoFrame;
-    if (request) {
-        request(element, callback);
-        return true;
-    }
     const nativeRequest = element.requestVideoFrameCallback;
     if (typeof nativeRequest !== "function")
         return false;
     nativeRequest.call(element, callback);
     return true;
 };
+
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
-    const runtime = testMediaRuntime();
-    if (runtime?.liveKitSdk)
-        return runtime.liveKitSdk;
     const existing = window.LivekitClient;
     if (existing)
         return existing;
@@ -264,7 +235,6 @@ const api = async (path, body) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-    await notifyTestApiResponse(path);
     return payload;
 };
 const apiEvidenceJson = async (path, body, requestSequence) => {
@@ -284,7 +254,6 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
         const code = payload.code ?? `HTTP_${response.status}`;
         throw new Error(code);
     }
-    await notifyTestApiResponse(path);
     return payload;
 };
 const apiBinary = async (path, body, requestSequence) => {
@@ -885,15 +854,15 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         evidenceSessionSequence = start.evidence_session_sequence;
-        backendStatus = {
-            ...backendStatus,
-            session_state: "active",
-            avatar_open: true,
-            egress_enabled: egressEnabled,
-            session_audience: audience,
-        };
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
+        // The backend is the only authority for session lifecycle. Do not manufacture an
+        // optimistic "active" client snapshot: synchronise the accepted transition before
+        // transport setup so failures can always close the real backend session safely.
+        await syncStatus();
+        if (backendStatus.session_state !== "active" || backendStatus.session_audience !== audience) {
+            throw new Error("SESSION_STATE_DIVERGED");
+        }
         if (start.transport.kind === "web_rtc") {
             await connectWebRtcTransport(start.transport, start.client_control);
         }
@@ -1401,13 +1370,6 @@ void api("/api/bootstrap")
     .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
-    window.__vprBootstrap = {
-        csrfToken,
-        ready: false,
-    };
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
-        detail: { csrfToken },
-    }));
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
     if (backendStatus.session_audience)
@@ -1432,9 +1394,5 @@ void api("/api/bootstrap")
     }
     updateControls();
     bootstrapComplete = true;
-    const bootstrapState = window.__vprBootstrap;
-    if (bootstrapState)
-        bootstrapState.ready = true;
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
