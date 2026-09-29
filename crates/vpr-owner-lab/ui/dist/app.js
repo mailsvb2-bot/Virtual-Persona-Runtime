@@ -1,27 +1,39 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
-const testMediaRuntime = window.__vprTestMediaRuntime;
+const testMediaRuntime = () => window.__vprTestMediaRuntime;
 const runtimeFetch = window.fetch.bind(window);
 const notifyTestApiResponse = async (path) => {
-    await testMediaRuntime?.afterApiResponse?.(path);
+    await testMediaRuntime()?.afterApiResponse?.(path);
 };
-const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
-const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext);
-const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode);
-const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream);
-const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection);
+const runtimeMediaDevices = () => testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
+const createRuntimeAudioContext = (options) => {
+    const Constructor = testMediaRuntime()?.AudioContext ?? window.AudioContext;
+    return new Constructor(options);
+};
+const createRuntimeAudioWorkletNode = (context, name) => {
+    const Constructor = testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode;
+    return new Constructor(context, name);
+};
+const createRuntimeMediaStream = (tracks) => {
+    const Constructor = testMediaRuntime()?.MediaStream ?? window.MediaStream;
+    return new Constructor(tracks);
+};
+const createRuntimePeerConnection = (configuration) => {
+    const Constructor = testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection;
+    return new Constructor(configuration);
+};
 const setMediaSrcObject = (element, value) => {
-    if (testMediaRuntime?.setSrcObject) {
-        testMediaRuntime.setSrcObject(element, value);
+    if (testMediaRuntime()?.setSrcObject) {
+        testMediaRuntime()?.setSrcObject(element, value);
     }
     else {
         element.srcObject = value;
     }
 };
 const requestVideoFrame = (element, callback) => {
-    if (testMediaRuntime?.requestVideoFrame) {
-        testMediaRuntime.requestVideoFrame(element, callback);
+    if (testMediaRuntime()?.requestVideoFrame) {
+        testMediaRuntime()?.requestVideoFrame(element, callback);
         return true;
     }
     const nativeRequest = element.requestVideoFrameCallback;
@@ -33,8 +45,9 @@ const requestVideoFrame = (element, callback) => {
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
-    if (testMediaRuntime?.liveKitSdk)
-        return testMediaRuntime.liveKitSdk;
+    const runtime = testMediaRuntime();
+    if (runtime?.liveKitSdk)
+        return runtime.liveKitSdk;
     const existing = window.LivekitClient;
     if (existing)
         return existing;
@@ -485,12 +498,12 @@ const monitorRemoteAudio = () => {
 };
 const attachRemoteAudioEvidence = async (track) => {
     if (!remoteEvidenceAudioContext)
-        remoteEvidenceAudioContext = new RuntimeAudioContext();
+        remoteEvidenceAudioContext = createRuntimeAudioContext();
     await remoteEvidenceAudioContext.resume();
     remoteAudioSource?.disconnect();
     remoteAudioAnalyser?.disconnect();
     remoteSilentGain?.disconnect();
-    remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new RuntimeMediaStream([track]));
+    remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(createRuntimeMediaStream([track]));
     remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
     remoteAudioAnalyser.fftSize = 256;
     remoteSilentGain = remoteEvidenceAudioContext.createGain();
@@ -735,7 +748,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
-    peer = new RuntimeRTCPeerConnection({
+    peer = createRuntimePeerConnection({
         iceServers: transport.ice_servers.map((server) => ({
             urls: server.urls,
             ...(server.username ? { username: server.username } : {}),
@@ -757,7 +770,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         };
     }
     peer.ontrack = (event) => {
-        remoteMediaStream ??= new RuntimeMediaStream();
+        remoteMediaStream ??= createRuntimeMediaStream();
         if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
             remoteMediaStream.addTrack(event.track);
         }
@@ -865,7 +878,7 @@ const connectAvatar = async () => {
     evidenceSessionSequence = 0;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
-    remoteEvidenceAudioContext = new RuntimeAudioContext();
+    remoteEvidenceAudioContext = createRuntimeAudioContext();
     void remoteEvidenceAudioContext.resume();
     setStatus("Создаю защищённую сессию…");
     try {
@@ -1010,11 +1023,12 @@ const rememberMicrophoneDeviceId = (deviceId) => {
     }
 };
 const refreshMicrophoneDevices = async (preferredDeviceId) => {
-    if (!runtimeMediaDevices?.enumerateDevices)
+    const mediaDevices = runtimeMediaDevices();
+    if (!mediaDevices?.enumerateDevices)
         return;
     let devices;
     try {
-        devices = (await runtimeMediaDevices.enumerateDevices())
+        devices = (await mediaDevices.enumerateDevices())
             .filter((device) => device.kind === "audioinput");
     }
     catch {
@@ -1038,7 +1052,8 @@ const refreshMicrophoneDevices = async (preferredDeviceId) => {
 const ensureMicrophoneDeviceMonitoring = () => {
     if (microphoneDeviceListenerInstalled)
         return;
-    runtimeMediaDevices?.addEventListener?.("devicechange", () => {
+    const mediaDevices = runtimeMediaDevices();
+    mediaDevices?.addEventListener?.("devicechange", () => {
         if (backendSessionPresent())
             void refreshMicrophoneDevices();
     });
@@ -1062,11 +1077,12 @@ const microphoneCaptureError = (error) => {
     }
 };
 const startMicrophone = async () => {
-    if (!runtimeMediaDevices?.getUserMedia)
+    const mediaDevices = runtimeMediaDevices();
+    if (!mediaDevices?.getUserMedia)
         throw new Error("MIC_UNAVAILABLE");
     try {
         const selectedDeviceId = microphoneSelect.value.trim();
-        micStream = await runtimeMediaDevices.getUserMedia({
+        micStream = await mediaDevices.getUserMedia({
             audio: {
                 ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
                 channelCount: 1,
@@ -1086,14 +1102,14 @@ const startMicrophone = async () => {
     catch (error) {
         throw microphoneCaptureError(error);
     }
-    audioContext = new RuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+    audioContext = createRuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
     if (audioContext.sampleRate !== 16_000) {
         stopMicrophoneCapture();
         throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
     }
     await audioContext.audioWorklet.addModule("/mic-worklet.js");
     micSource = audioContext.createMediaStreamSource(micStream);
-    micWorklet = new RuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
+    micWorklet = createRuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
     nextVoiceRequestSequence += 1;
     const requestSequence = nextVoiceRequestSequence;
     micRequestSequence = requestSequence;
