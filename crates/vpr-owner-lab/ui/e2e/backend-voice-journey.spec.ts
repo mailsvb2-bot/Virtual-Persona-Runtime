@@ -126,9 +126,10 @@ const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
 
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
-    (window as unknown as {
-      __vprInstallBrowserRuntimeFakes?: () => void;
-    }).__vprInstallBrowserRuntimeFakes = () => {
+    // Install phase-gated shims once, before application code. The bootstrap phase keeps
+    // native browser primitives; the same wrappers switch atomically to deterministic media
+    // behavior only after Owner Lab publishes its authoritative bootstrap-ready boundary.
+    let runtimeReady = false;
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -147,8 +148,14 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     } | null = null;
     (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
     const realFetch = window.fetch.bind(window);
+    const RealMediaStream = window.MediaStream;
+    const RealAudioContext = window.AudioContext;
+    const RealAudioWorkletNode = window.AudioWorkletNode;
+    const RealRTCPeerConnection = window.RTCPeerConnection;
+    const realSrcObject = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "srcObject");
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!runtimeReady) return realFetch(input, init);
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
       if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
       remoteSpeech = true;
@@ -183,12 +190,21 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
 
     Object.defineProperty(window, "MediaStream", {
       configurable: true,
-      value: FakeMediaStream,
+      get: () => runtimeReady ? FakeMediaStream : RealMediaStream,
     });
     Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
       configurable: true,
-      get() { return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null; },
-      set(value: unknown) { (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value; },
+      get() {
+        if (!runtimeReady && realSrcObject?.get) return realSrcObject.get.call(this);
+        return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null;
+      },
+      set(value: unknown) {
+        if (!runtimeReady && realSrcObject?.set) {
+          realSrcObject.set.call(this, value);
+          return;
+        }
+        (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value;
+      },
     });
     class FakeAnalyser {
       fftSize = 256;
@@ -292,20 +308,21 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       activePeer.onconnectionstatechange?.();
     };
 
-    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
-    Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
-    Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
-    };
+    Object.defineProperty(window, "AudioContext", {
+      configurable: true,
+      get: () => runtimeReady ? FakeAudioContext : RealAudioContext,
+    });
+    Object.defineProperty(window, "AudioWorkletNode", {
+      configurable: true,
+      get: () => runtimeReady ? FakeAudioWorkletNode : RealAudioWorkletNode,
+    });
+    Object.defineProperty(window, "RTCPeerConnection", {
+      configurable: true,
+      get: () => runtimeReady ? FakePeerConnection : RealRTCPeerConnection,
+    });
     window.addEventListener("vpr:bootstrap-ready", () => {
-      window.setTimeout(() => {
-        const fakeWindow = window as unknown as {
-          __vprInstallBrowserRuntimeFakes?: () => void;
-        };
-        const install = fakeWindow.__vprInstallBrowserRuntimeFakes;
-        if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
-        install();
-        document.documentElement.dataset.vprRuntimeFakesReady = "true";
-      }, 0);
+      runtimeReady = true;
+      document.documentElement.dataset.vprRuntimeFakesReady = "true";
     }, { once: true });
   });
 };
