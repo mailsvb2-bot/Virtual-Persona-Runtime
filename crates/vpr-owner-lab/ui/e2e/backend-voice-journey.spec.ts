@@ -85,50 +85,11 @@ const installBrowserBootstrapFakes = async (page: Page): Promise<void> => {
       const consent = document.getElementById("consent");
       if (consent instanceof HTMLInputElement) consent.checked = true;
     }, { once: true });
-
-    class FakeInputTrack {
-      id: string;
-      kind: "audio" = "audio";
-      constructor(readonly deviceId = "builtin-mic") {
-        this.id = `fake-input-${deviceId}`;
-      }
-      stop(): void {}
-      getSettings(): MediaTrackSettings { return { deviceId: this.deviceId }; }
-    }
-    class FakeInputStream {
-      constructor(private readonly tracks: FakeInputTrack[]) {}
-      getTracks(): FakeInputTrack[] { return [...this.tracks]; }
-      getAudioTracks(): FakeInputTrack[] { return [...this.tracks]; }
-    }
-
-    const requestedMicrophones: string[] = [];
-    (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones = requestedMicrophones;
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        enumerateDevices: async () => [
-          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
-          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
-        ],
-        getUserMedia: async (constraints: MediaStreamConstraints) => {
-          const audio = typeof constraints.audio === "object" && constraints.audio !== null ? constraints.audio : {};
-          const requested = typeof audio.deviceId === "object" && audio.deviceId !== null && "exact" in audio.deviceId
-            ? String(audio.deviceId.exact)
-            : "builtin-mic";
-          requestedMicrophones.push(requested);
-          return new FakeInputStream([new FakeInputTrack(requested)]) as unknown as MediaStream;
-        },
-        addEventListener: () => undefined,
-      },
-    });
   });
 };
 
 const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
-    (window as unknown as {
-      __vprInstallBrowserRuntimeFakes?: () => void;
-    }).__vprInstallBrowserRuntimeFakes = () => {
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -145,21 +106,19 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       send: (payload: string) => void;
       close: () => void;
     } | null = null;
-    (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
-    const realFetch = window.fetch.bind(window);
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
-      if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
-      remoteSpeech = true;
-      playbackSequence += 1;
-      providerDataChannel?.onmessage?.({
-        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
-      });
-      const response = await realFetch(input, init);
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-      return response;
+
+    const requestedMicrophones: string[] = [];
+    const interruptPayloads: string[] = [];
+    const deviceChangeListeners: Array<() => void> = [];
+    let testDevicesReady = false;
+    const fakeWindow = window as unknown as {
+      __vprRequestedMicrophones?: string[];
+      __vprInterruptPayloads?: string[];
+      __vprSetPeerConnectionState?: (state: "connected" | "disconnected" | "failed") => void;
+      __vprTestMediaRuntime?: unknown;
     };
+    fakeWindow.__vprRequestedMicrophones = requestedMicrophones;
+    fakeWindow.__vprInterruptPayloads = interruptPayloads;
 
     class FakeTrack {
       id: string;
@@ -181,15 +140,6 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       addTrack(track: FakeTrack): void { this.tracks.push(track); }
     }
 
-    Object.defineProperty(window, "MediaStream", {
-      configurable: true,
-      value: FakeMediaStream,
-    });
-    Object.defineProperty(HTMLMediaElement.prototype, "srcObject", {
-      configurable: true,
-      get() { return (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc ?? null; },
-      set(value: unknown) { (this as HTMLMediaElement & { __vprSrc?: unknown }).__vprSrc = value; },
-    });
     class FakeAnalyser {
       fftSize = 256;
       connect(): void {}
@@ -198,11 +148,13 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         samples.fill(remoteSpeech ? 0.12 : 0.0005);
       }
     }
+
     class FakeGain {
       gain = { value: 1 };
       connect(): void {}
       disconnect(): void {}
     }
+
     class FakeAudioContext {
       sampleRate: number;
       constructor(options?: AudioContextOptions) {
@@ -234,27 +186,27 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
     class FakePeerConnection {
       connectionState = "new";
       ontrack: ((event: { track: FakeTrack }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      onicecandidate: ((event: unknown) => void) | null = null;
+
       constructor() {
         activePeer = this;
       }
-      onconnectionstatechange: (() => void) | null = null;
-      onicecandidate: ((event: unknown) => void) | null = null;
+
       createDataChannel(label: string) {
         const channel = {
           label,
-          readyState: "open" as const,
+          readyState: "open" as "open" | "closed",
           onopen: null as (() => void) | null,
           onclose: null as (() => void) | null,
           onmessage: null as ((event: { data: string }) => void) | null,
           send(payload: string): void {
-            (window as unknown as { __vprInterruptPayloads: string[] }).__vprInterruptPayloads.push(payload);
+            interruptPayloads.push(payload);
             remoteSpeech = false;
-            queueMicrotask(() => channel.onmessage?.({
-              data: "stream/done:{}",
-            }));
+            queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
           },
           close(): void {
-            (channel as { readyState: "open" | "closed" }).readyState = "closed";
+            channel.readyState = "closed";
             channel.onclose?.();
           },
         };
@@ -262,6 +214,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         queueMicrotask(() => channel.onopen?.());
         return channel as unknown as RTCDataChannel;
       }
+
       async setRemoteDescription(): Promise<void> {
         queueMicrotask(() => this.ontrack?.({ track: new FakeTrack("audio") }));
       }
@@ -272,10 +225,7 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
         this.connectionState = "connected";
         queueMicrotask(() => this.onconnectionstatechange?.());
       }
-      statsAttemptSequence = 0;
       async getStats(): Promise<Map<string, object>> {
-        this.statsAttemptSequence += 1;
-        if (this.statsAttemptSequence <= 2) return new Map();
         return new Map([
           ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
           ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
@@ -284,28 +234,82 @@ const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
       close(): void { this.connectionState = "closed"; }
     }
 
-    (window as unknown as {
-      __vprSetPeerConnectionState?: (state: "connected" | "disconnected" | "failed") => void;
-    }).__vprSetPeerConnectionState = (state) => {
+    fakeWindow.__vprSetPeerConnectionState = (state) => {
       if (!activePeer) throw new Error("NO_ACTIVE_PEER");
       activePeer.connectionState = state;
       activePeer.onconnectionstatechange?.();
     };
 
-    Object.defineProperty(window, "AudioContext", { configurable: true, value: FakeAudioContext });
-    Object.defineProperty(window, "AudioWorkletNode", { configurable: true, value: FakeAudioWorkletNode });
-    Object.defineProperty(window, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
-    };
-  });
-};
+    const realFetch = window.fetch.bind(window);
+    const runtimeFetch = async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const target = typeof input === "string"
+        ? input
+        : input instanceof URL ? input.href : input.url;
+      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
+      const response = await realFetch(input, init);
+      if (target.endsWith("/api/avatar/start")) {
+        testDevicesReady = true;
+        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
+      }
+      if (!target.endsWith("/api/voice/input/finish")) return response;
 
-const installBrowserRuntimeFakes = async (page: Page): Promise<void> => {
-  await page.evaluate(() => {
-    const install = (window as unknown as {
-      __vprInstallBrowserRuntimeFakes?: () => void;
-    }).__vprInstallBrowserRuntimeFakes;
-    if (!install) throw new Error("BROWSER_RUNTIME_INSTALLER_MISSING");
-    install();
+      // The single-thread Owner Lab backend must finish the HTTP request before the
+      // synthetic provider playback event can trigger any follow-up API work.
+      remoteSpeech = true;
+      playbackSequence += 1;
+      providerDataChannel?.onmessage?.({
+        data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
+      });
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+      return response;
+    };
+
+    const mediaDevices = {
+      enumerateDevices: async () => {
+        if (!testDevicesReady) {
+          return await navigator.mediaDevices?.enumerateDevices?.() ?? [];
+        }
+        return [
+          { deviceId: "builtin-mic", kind: "audioinput", label: "Встроенный микрофон", groupId: "g1", toJSON: () => ({}) },
+          { deviceId: "headset-mic", kind: "audioinput", label: "Микрофон гарнитуры", groupId: "g2", toJSON: () => ({}) },
+        ];
+      },
+      getUserMedia: async (constraints: MediaStreamConstraints) => {
+        const audio = typeof constraints.audio === "object" && constraints.audio !== null
+          ? constraints.audio
+          : {};
+        const requested = typeof audio.deviceId === "object"
+          && audio.deviceId !== null
+          && "exact" in audio.deviceId
+          ? String(audio.deviceId.exact)
+          : "builtin-mic";
+        requestedMicrophones.push(requested);
+        return new FakeMediaStream([new FakeTrack("audio", requested)]) as unknown as MediaStream;
+      },
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type !== "devicechange") return;
+        deviceChangeListeners.push(() => {
+          if (typeof listener === "function") listener(new Event("devicechange"));
+          else listener.handleEvent(new Event("devicechange"));
+        });
+      },
+    };
+
+    fakeWindow.__vprTestMediaRuntime = {
+      fetch: runtimeFetch,
+      mediaDevices,
+      AudioContext: FakeAudioContext,
+      AudioWorkletNode: FakeAudioWorkletNode,
+      MediaStream: FakeMediaStream,
+      RTCPeerConnection: FakePeerConnection,
+      setSrcObject(element: HTMLMediaElement, value: unknown) {
+        (element as HTMLMediaElement & { __vprTestSrcObject?: unknown }).__vprTestSrcObject = value;
+      },
+    };
+
   });
 };
 
@@ -373,7 +377,6 @@ test("owner and visitor voice turns cross the real backend with different contex
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
-  await installBrowserRuntimeFakes(page);
   // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
   // harness pre-seeds the checkbox before app startup; the real backend still rejects start
   // if the UI fails to submit consent=true.

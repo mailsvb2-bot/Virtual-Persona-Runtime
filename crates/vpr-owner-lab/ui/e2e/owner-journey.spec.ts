@@ -457,6 +457,13 @@ test("bootstrap applies one authoritative status snapshot before capture refresh
     owner_reviewed: true,
   }];
 
+  await page.addInitScript(() => {
+    (window as typeof window & { __vprBootstrapReadyEvents?: number }).__vprBootstrapReadyEvents = 0;
+    window.addEventListener("vpr:bootstrap-ready", () => {
+      const testWindow = window as typeof window & { __vprBootstrapReadyEvents?: number };
+      testWindow.__vprBootstrapReadyEvents = (testWindow.__vprBootstrapReadyEvents ?? 0) + 1;
+    });
+  });
   await installBrowserFakes(page);
   await installApiFixture(page, state);
   await page.goto("/");
@@ -466,6 +473,10 @@ test("bootstrap applies one authoritative status snapshot before capture refresh
   )).toBeTruthy();
 
   expect(state.apiPaths.filter((entry) => entry === "GET /api/status")).toHaveLength(1);
+  await expect.poll(() => page.evaluate(
+    () => (window as typeof window & { __vprBootstrapReadyEvents?: number })
+      .__vprBootstrapReadyEvents ?? 0,
+  )).toBe(1);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#connect")).toBeEnabled();
 });

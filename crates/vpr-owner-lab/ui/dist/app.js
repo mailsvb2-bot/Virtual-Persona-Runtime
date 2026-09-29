@@ -1,9 +1,37 @@
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
+const testMediaRuntime = window.__vprTestMediaRuntime;
+const runtimeFetch = testMediaRuntime?.fetch ?? window.fetch.bind(window);
+const runtimeMediaDevices = testMediaRuntime?.mediaDevices ?? navigator.mediaDevices;
+const RuntimeAudioContext = (testMediaRuntime?.AudioContext ?? window.AudioContext);
+const RuntimeAudioWorkletNode = (testMediaRuntime?.AudioWorkletNode ?? window.AudioWorkletNode);
+const RuntimeMediaStream = (testMediaRuntime?.MediaStream ?? window.MediaStream);
+const RuntimeRTCPeerConnection = (testMediaRuntime?.RTCPeerConnection ?? window.RTCPeerConnection);
+const setMediaSrcObject = (element, value) => {
+    if (testMediaRuntime?.setSrcObject) {
+        testMediaRuntime.setSrcObject(element, value);
+    }
+    else {
+        element.srcObject = value;
+    }
+};
+const requestVideoFrame = (element, callback) => {
+    if (testMediaRuntime?.requestVideoFrame) {
+        testMediaRuntime.requestVideoFrame(element, callback);
+        return true;
+    }
+    const nativeRequest = element.requestVideoFrameCallback;
+    if (typeof nativeRequest !== "function")
+        return false;
+    nativeRequest.call(element, callback);
+    return true;
+};
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
+    if (testMediaRuntime?.liveKitSdk)
+        return testMediaRuntime.liveKitSdk;
     const existing = window.LivekitClient;
     if (existing)
         return existing;
@@ -211,7 +239,7 @@ const api = async (path, body) => {
             credentials: "same-origin",
             cache: "no-store",
         };
-    const response = await fetch(path, init);
+    const response = await runtimeFetch(path, init);
     const payload = await response.json();
     if (!response.ok) {
         const code = payload.code ?? `HTTP_${response.status}`;
@@ -220,7 +248,7 @@ const api = async (path, body) => {
     return payload;
 };
 const apiEvidenceJson = async (path, body, requestSequence) => {
-    const response = await fetch(path, {
+    const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -239,7 +267,7 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
     return payload;
 };
 const apiBinary = async (path, body, requestSequence) => {
-    const response = await fetch(path, {
+    const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/octet-stream",
@@ -369,6 +397,12 @@ const collectAvSyncEvidence = async (requestSequence) => {
     if (sampleSequence > 1)
         await refreshSessionEvidence();
 };
+const ensureAvSyncEvidence = (voice) => {
+    if (!voice.responseComplete || voice.audioStartedElapsed === null)
+        return null;
+    voice.avSyncEvidence ??= collectAvSyncEvidence(voice.requestSequence);
+    return voice.avSyncEvidence;
+};
 const rms = (samples) => {
     let sum = 0;
     for (const sample of samples)
@@ -415,6 +449,9 @@ const monitorRemoteAudio = () => {
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
                 const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence).then(async () => {
                     await syncStatus();
+                    const avSyncEvidence = ensureAvSyncEvidence(voice);
+                    if (avSyncEvidence)
+                        await avSyncEvidence;
                 });
                 voice.audioStartedEvidence = audioStartedEvidence;
                 void audioStartedEvidence.catch(() => undefined);
@@ -442,12 +479,12 @@ const monitorRemoteAudio = () => {
 };
 const attachRemoteAudioEvidence = async (track) => {
     if (!remoteEvidenceAudioContext)
-        remoteEvidenceAudioContext = new AudioContext();
+        remoteEvidenceAudioContext = new RuntimeAudioContext();
     await remoteEvidenceAudioContext.resume();
     remoteAudioSource?.disconnect();
     remoteAudioAnalyser?.disconnect();
     remoteSilentGain?.disconnect();
-    remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new MediaStream([track]));
+    remoteAudioSource = remoteEvidenceAudioContext.createMediaStreamSource(new RuntimeMediaStream([track]));
     remoteAudioAnalyser = remoteEvidenceAudioContext.createAnalyser();
     remoteAudioAnalyser.fftSize = 256;
     remoteSilentGain = remoteEvidenceAudioContext.createGain();
@@ -589,11 +626,7 @@ const attachLiveKitTrack = (track) => {
         track.attach(video);
         realtimeReadiness.video = true;
         stage?.classList.add("has-video");
-        const requestFrame = video.requestVideoFrameCallback;
-        if (typeof requestFrame === "function") {
-            requestFrame.call(video, () => recordFirstVideoFrame());
-        }
-        else {
+        if (!requestVideoFrame(video, recordFirstVideoFrame)) {
             video.addEventListener("playing", recordFirstVideoFrame, { once: true });
         }
         setStatus("Видео подключено", "ready");
@@ -615,7 +648,7 @@ const detachLiveKitTrack = (track, element) => {
     }
     catch {
     }
-    element.srcObject = null;
+    setMediaSrcObject(element, null);
 };
 const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitAudioTrack) {
@@ -640,8 +673,8 @@ const clearRealtimeMedia = () => {
     realtimeReadiness = { control: false, audio: false, video: false };
     liveKitAudioTrack = null;
     liveKitVideoTrack = null;
-    video.srcObject = null;
-    avatarAudio.srcObject = null;
+    setMediaSrcObject(video, null);
+    setMediaSrcObject(avatarAudio, null);
     stage?.classList.remove("has-video");
     updateControls();
 };
@@ -696,7 +729,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
-    peer = new RTCPeerConnection({
+    peer = new RuntimeRTCPeerConnection({
         iceServers: transport.ice_servers.map((server) => ({
             urls: server.urls,
             ...(server.username ? { username: server.username } : {}),
@@ -718,19 +751,15 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         };
     }
     peer.ontrack = (event) => {
-        remoteMediaStream ??= new MediaStream();
+        remoteMediaStream ??= new RuntimeMediaStream();
         if (!remoteMediaStream.getTracks().some((track) => track.id === event.track.id)) {
             remoteMediaStream.addTrack(event.track);
         }
-        video.srcObject = remoteMediaStream;
+        setMediaSrcObject(video, remoteMediaStream);
         if (event.track.kind === "video") {
             realtimeReadiness.video = true;
             stage?.classList.add("has-video");
-            const requestFrame = video.requestVideoFrameCallback;
-            if (typeof requestFrame === "function") {
-                requestFrame.call(video, () => recordFirstVideoFrame());
-            }
-            else {
+            if (!requestVideoFrame(video, recordFirstVideoFrame)) {
                 video.addEventListener("playing", recordFirstVideoFrame, { once: true });
             }
             setStatus("Видео подключено", "ready");
@@ -830,7 +859,7 @@ const connectAvatar = async () => {
     evidenceSessionSequence = 0;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
-    remoteEvidenceAudioContext = new AudioContext();
+    remoteEvidenceAudioContext = new RuntimeAudioContext();
     void remoteEvidenceAudioContext.resume();
     setStatus("Создаю защищённую сессию…");
     try {
@@ -973,11 +1002,11 @@ const rememberMicrophoneDeviceId = (deviceId) => {
     }
 };
 const refreshMicrophoneDevices = async (preferredDeviceId) => {
-    if (!navigator.mediaDevices?.enumerateDevices)
+    if (!runtimeMediaDevices?.enumerateDevices)
         return;
     let devices;
     try {
-        devices = (await navigator.mediaDevices.enumerateDevices())
+        devices = (await runtimeMediaDevices.enumerateDevices())
             .filter((device) => device.kind === "audioinput");
     }
     catch {
@@ -1016,11 +1045,11 @@ const microphoneCaptureError = (error) => {
     }
 };
 const startMicrophone = async () => {
-    if (!navigator.mediaDevices?.getUserMedia)
+    if (!runtimeMediaDevices?.getUserMedia)
         throw new Error("MIC_UNAVAILABLE");
     try {
         const selectedDeviceId = microphoneSelect.value.trim();
-        micStream = await navigator.mediaDevices.getUserMedia({
+        micStream = await runtimeMediaDevices.getUserMedia({
             audio: {
                 ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
                 channelCount: 1,
@@ -1040,14 +1069,14 @@ const startMicrophone = async () => {
     catch (error) {
         throw microphoneCaptureError(error);
     }
-    audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+    audioContext = new RuntimeAudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
     if (audioContext.sampleRate !== 16_000) {
         stopMicrophoneCapture();
         throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
     }
     await audioContext.audioWorklet.addModule("/mic-worklet.js");
     micSource = audioContext.createMediaStreamSource(micStream);
-    micWorklet = new AudioWorkletNode(audioContext, "vpr-mic-capture");
+    micWorklet = new RuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
     nextVoiceRequestSequence += 1;
     const requestSequence = nextVoiceRequestSequence;
     micRequestSequence = requestSequence;
@@ -1126,6 +1155,7 @@ const finishMicrophoneTurn = async () => {
         audioStarted: false,
         audioStartedElapsed: null,
         audioStartedEvidence: null,
+        avSyncEvidence: null,
         responseComplete: false,
         speaking: false,
         silentFrames: 0,
@@ -1166,9 +1196,9 @@ const finishMicrophoneTurn = async () => {
             if (voice.audioStartedEvidence) {
                 await voice.audioStartedEvidence;
             }
-            if (voice.audioStartedElapsed !== null) {
-                await collectAvSyncEvidence(requestSequence);
-            }
+            const avSyncEvidence = ensureAvSyncEvidence(voice);
+            if (avSyncEvidence)
+                await avSyncEvidence;
         }
         await refreshSessionEvidence();
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
@@ -1302,7 +1332,7 @@ const endSession = async (kind) => {
 const closeBackendOnUnload = () => {
     if (!backendSessionPresent() || !csrfToken)
         return;
-    void fetch("/api/session/close", {
+    void runtimeFetch("/api/session/close", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
         body: "{}",
@@ -1333,7 +1363,7 @@ voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
     rememberMicrophoneDeviceId(microphoneSelect.value.trim());
 });
-navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+runtimeMediaDevices?.addEventListener?.("devicechange", () => {
     void refreshMicrophoneDevices();
 });
 window.addEventListener("pagehide", closeBackendOnUnload);
@@ -1376,5 +1406,6 @@ void api("/api/bootstrap")
     const bootstrapState = window.__vprBootstrap;
     if (bootstrapState)
         bootstrapState.ready = true;
+    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));

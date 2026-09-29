@@ -53,7 +53,7 @@ export const downloadSessionEvidence = async () => {
     document.body.append(link);
     link.click();
     link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
     return identity;
 };
 const exportButton = document.getElementById("export-evidence");
