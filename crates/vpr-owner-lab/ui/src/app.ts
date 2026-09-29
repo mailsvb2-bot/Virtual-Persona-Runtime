@@ -118,63 +118,23 @@ type LiveKitSdk = {
   };
 };
 
-type TestMediaRuntime = {
-  afterApiResponse?: (path: string) => void | Promise<void>;
-  mediaDevices?: Pick<MediaDevices, "enumerateDevices" | "getUserMedia" | "addEventListener">;
-  AudioContext?: unknown;
-  AudioWorkletNode?: unknown;
-  MediaStream?: unknown;
-  RTCPeerConnection?: unknown;
-  liveKitSdk?: LiveKitSdk;
-  setSrcObject?: (element: HTMLMediaElement, value: MediaProvider | null) => void;
-  requestVideoFrame?: (element: HTMLVideoElement, callback: () => void) => number;
-};
-
-const testMediaRuntime = (): TestMediaRuntime | undefined => (
-  window as typeof window & { __vprTestMediaRuntime?: TestMediaRuntime }
-).__vprTestMediaRuntime;
 const runtimeFetch = window.fetch.bind(window);
-const notifyTestApiResponse = async (path: string): Promise<void> => {
-  await testMediaRuntime()?.afterApiResponse?.(path);
-};
-const runtimeMediaDevices = (): MediaDevices | TestMediaRuntime["mediaDevices"] =>
-  testMediaRuntime()?.mediaDevices ?? navigator.mediaDevices;
-const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext => {
-  const Constructor = (testMediaRuntime()?.AudioContext ?? window.AudioContext) as typeof AudioContext;
-  return new Constructor(options);
-};
+const runtimeMediaDevices = (): MediaDevices => navigator.mediaDevices;
+const createRuntimeAudioContext = (options?: AudioContextOptions): AudioContext =>
+  new window.AudioContext(options);
 const createRuntimeAudioWorkletNode = (
   context: BaseAudioContext,
   name: string,
-): AudioWorkletNode => {
-  const Constructor = (testMediaRuntime()?.AudioWorkletNode ?? window.AudioWorkletNode) as typeof AudioWorkletNode;
-  return new Constructor(context, name);
-};
-const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream => {
-  const Constructor = (testMediaRuntime()?.MediaStream ?? window.MediaStream) as typeof MediaStream;
-  return tracks ? new Constructor(tracks) : new Constructor();
-};
-const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection => {
-  const Constructor = (testMediaRuntime()?.RTCPeerConnection ?? window.RTCPeerConnection) as typeof RTCPeerConnection;
-  return new Constructor(configuration);
-};
+): AudioWorkletNode => new window.AudioWorkletNode(context, name);
+const createRuntimeMediaStream = (tracks?: MediaStreamTrack[]): MediaStream =>
+  tracks ? new window.MediaStream(tracks) : new window.MediaStream();
+const createRuntimePeerConnection = (configuration?: RTCConfiguration): RTCPeerConnection =>
+  new window.RTCPeerConnection(configuration);
 const setMediaSrcObject = (element: HTMLMediaElement, value: MediaProvider | null): void => {
-  const setter = testMediaRuntime()?.setSrcObject;
-  if (setter) {
-    setter(element, value);
-  } else {
-    element.srcObject = value;
-  }
+  element.srcObject = value;
 };
 const requestVideoFrame = (element: HTMLVideoElement, callback: () => void): boolean => {
-  const request = testMediaRuntime()?.requestVideoFrame;
-  if (request) {
-    request(element, callback);
-    return true;
-  }
-  const nativeRequest = (element as HTMLVideoElement & {
-    requestVideoFrameCallback?: (callback: () => void) => number;
-  }).requestVideoFrameCallback;
+  const nativeRequest = element.requestVideoFrameCallback;
   if (typeof nativeRequest !== "function") return false;
   nativeRequest.call(element, callback);
   return true;
@@ -185,8 +145,6 @@ const LIVEKIT_CLIENT_URL =
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
-  const runtime = testMediaRuntime();
-  if (runtime?.liveKitSdk) return runtime.liveKitSdk;
   const existing = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
   if (existing) return existing;
   liveKitLoader ??= new Promise<LiveKitSdk>((resolve, reject) => {
@@ -422,7 +380,6 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
-  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -443,7 +400,6 @@ const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: 
     const code = (payload as ErrorPayload).code ?? `HTTP_${response.status}`;
     throw new Error(code);
   }
-  await notifyTestApiResponse(path);
   return payload as T;
 };
 
@@ -1624,13 +1580,6 @@ void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
     egressEnabled = bootstrap.egress_enabled;
-    (window as typeof window & { __vprBootstrap?: { csrfToken: string; ready: boolean } }).__vprBootstrap = {
-      csrfToken,
-      ready: false,
-    };
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap", {
-      detail: { csrfToken },
-    }));
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";
     if (backendStatus.session_audience) audienceSelect.value = backendStatus.session_audience;
@@ -1650,10 +1599,5 @@ void api<Bootstrap>("/api/bootstrap")
     }
     updateControls();
     bootstrapComplete = true;
-    const bootstrapState = (window as typeof window & {
-      __vprBootstrap?: { csrfToken: string; ready: boolean };
-    }).__vprBootstrap;
-    if (bootstrapState) bootstrapState.ready = true;
-    window.dispatchEvent(new CustomEvent("vpr:bootstrap-ready"));
   })
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
