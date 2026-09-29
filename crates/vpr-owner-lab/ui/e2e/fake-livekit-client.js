@@ -168,6 +168,15 @@
           new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
         );
       };
+      window.addEventListener("vpr:expressive-control", (event) => {
+        const action = event instanceof CustomEvent ? event.detail?.action : undefined;
+        if (action === "lose-video") window.__vprExpressiveLoseVideo?.();
+        if (action === "restore-video") window.__vprExpressiveRestoreVideo?.();
+        if (action === "lose-audio") window.__vprExpressiveLoseAudio?.();
+        if (action === "restore-audio") window.__vprExpressiveRestoreAudio?.();
+        if (action === "playback-done") window.__vprExpressivePlaybackDone?.();
+        if (action === "disconnect") window.__vprExpressiveDisconnect?.();
+      });
     }
 
     on(event, handler) {
