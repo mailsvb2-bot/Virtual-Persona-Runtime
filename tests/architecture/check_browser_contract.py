@@ -438,6 +438,21 @@ for required in (
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E connection-order guard missing: {required}")
 
+
+if "prepareVoiceCaptureFakes" in voice_e2e or "await page.evaluate(() => {" in voice_e2e[
+    voice_e2e.find('await expect(page.locator("#status")).toContainText("WebRTC согласован")'):
+    voice_e2e.find("const recordTextTurn")
+]:
+    raise SystemExit("Owner Lab voice E2E must not mutate media runtime after WebRTC connect")
+
+for required in (
+    "getUserMedia: async (constraints: MediaStreamConstraints)",
+    "AudioWorkletNode: FakeAudioWorkletNode",
+    'path.endsWith("/api/voice/input/finish")',
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E single-phase media runtime missing: {required}")
+
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
         raise SystemExit(f"Owner Lab backend provider fixture missing: {required}")
