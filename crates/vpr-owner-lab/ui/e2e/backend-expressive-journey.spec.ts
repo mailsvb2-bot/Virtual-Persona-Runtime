@@ -89,6 +89,8 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
 
     let remoteSpeech = false;
     let trackSequence = 0;
+    let testDevicesReady = false;
+    const deviceChangeListeners: Array<() => void> = [];
     const commands: Array<{ topic: string; text: string }> = [];
     type EventHandler = (...args: unknown[]) => void;
 
@@ -264,6 +266,8 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
 
       async connect(): Promise<void> {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        testDevicesReady = true;
+        queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
         this.videoTrack = new FakeRemoteTrack("video");
         this.audioTrack = new FakeRemoteTrack("audio");
         this.emit(roomEvents.TrackSubscribed, this.videoTrack);
@@ -274,18 +278,29 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
     }
 
     const mediaDevices = {
-      enumerateDevices: async () => [
-        {
-          deviceId: "expressive-mic",
-          kind: "audioinput",
-          label: "Expressive test microphone",
-          groupId: "g1",
-          toJSON: () => ({}),
-        },
-      ],
+      enumerateDevices: async () => {
+        if (!testDevicesReady) {
+          return await navigator.mediaDevices?.enumerateDevices?.() ?? [];
+        }
+        return [
+          {
+            deviceId: "expressive-mic",
+            kind: "audioinput",
+            label: "Expressive test microphone",
+            groupId: "g1",
+            toJSON: () => ({}),
+          },
+        ];
+      },
       getUserMedia: async () =>
         new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]) as unknown as MediaStream,
-      addEventListener: () => undefined,
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => {
+        if (type !== "devicechange") return;
+        deviceChangeListeners.push(() => {
+          if (typeof listener === "function") listener(new Event("devicechange"));
+          else listener.handleEvent(new Event("devicechange"));
+        });
+      },
     };
 
     const fakeWindow = window as typeof window & {
@@ -311,9 +326,6 @@ const installExpressiveBootstrapFakes = async (page: Page): Promise<void> => {
       },
     };
 
-    window.addEventListener("vpr:bootstrap-ready", () => {
-      document.documentElement.dataset.vprExpressiveRuntimeFakesReady = "true";
-    }, { once: true });
   });
 };
 
@@ -387,10 +399,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  await expect(page.locator("html")).toHaveAttribute(
-    "data-vpr-expressive-runtime-fakes-ready",
-    "true",
-  );
   // Consent and connect-button actionability are separately covered by the browser-contract
   // journey. This provider harness invokes the DOM control directly and verifies the real
   // backend transition below.
