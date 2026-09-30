@@ -184,6 +184,10 @@ for required_context_marker in (
         raise SystemExit(f"durable OwnerContext history boundary drifted: {required_context_marker}")
 if "fn from_snapshot(" in owner_context:
     raise SystemExit("current-only browser snapshot must never be a process-restore path")
+if "pub(crate) fn correct_claim(" in owner_context:
+    raise SystemExit("reviewed OwnerContext must not expose a non-durable correction bypass")
+if "pub(crate) fn correct_owner_claim(" in owner_lab:
+    raise SystemExit("OwnerLabEngine must not expose a non-durable Persona correction bypass")
 
 for required_profile_marker in (
     "previous_revisions: Vec<OwnerClaimRevision>",
