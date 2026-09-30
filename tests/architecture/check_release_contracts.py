@@ -207,8 +207,10 @@ if 'reviewed_owner_claims: if self.session_audience == Some(LabSessionAudience::
 
 for required_evidence_contract in (
     "rt0-live-provider-probe-0.3",
-    "rt0-evidence-inventory-0.7",
+    "rt0-evidence-inventory-0.8",
     "A standalone TTS provider is not required",
+    "vpr-rt0-owner-golden",
+    "vpr-rt0-supporting-capture",
 ):
     if required_evidence_contract not in evaluation_guide_text:
         raise SystemExit(

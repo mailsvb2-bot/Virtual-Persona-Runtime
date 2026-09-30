@@ -56,3 +56,13 @@ select { width:100%; }
 .row.compact { margin-top:0; }
 [hidden] { display:none !important; }
 @media (max-width:700px) { .panel-heading { flex-direction:column; } .inline-status { max-width:none; width:100%; } }
+
+
+.readiness-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-top:14px; }
+.readiness-card { border:1px solid #303a51; border-radius:14px; padding:13px; background:#0d111a; display:grid; gap:7px; }
+.readiness-card span { color:#9fb0d8; font-size:12px; }
+.readiness-card strong { font-size:15px; }
+.readiness-card strong[data-state="ready"] { color:#a8efcb; }
+.readiness-card strong[data-state="preparing"] { color:#f0d58b; }
+.readiness-card strong[data-state="failed"] { color:#ffbec7; }
+@media (max-width:700px) { .readiness-grid { grid-template-columns:1fr; } }

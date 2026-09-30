@@ -380,6 +380,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await page.getByRole("button", { name: "Подключить аватар" }).click();
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Готов");
+  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
 
   const voiceButton = page.locator("#voice");
   await expect(voiceButton).toBeEnabled();
@@ -421,6 +424,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     "Привет из браузера",
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
+  await expect(page.locator("#readiness-voice")).toHaveText("Готов");
+  await expect(page.locator("#readiness-video")).toHaveText("Готов");
 
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
