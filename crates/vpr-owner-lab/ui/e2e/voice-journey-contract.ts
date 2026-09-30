@@ -47,22 +47,6 @@ export type BrowserJourneyState = {
   interruptPayloads: string[];
 };
 
-export const waitForBrowserJourney = async (
-  request: APIRequestContext,
-  providerUrl: string,
-): Promise<BrowserJourneyState> => {
-  await expect.poll(async () => {
-    const response = await request.get(`${providerUrl}/__browser-journey`);
-    if (!response.ok()) return "checkpoint-unavailable";
-    const state = await response.json() as BrowserJourneyState;
-    return state.stage === "failed" ? `failed:${state.error ?? "unknown"}` : state.stage;
-  }, { timeout: 90_000, intervals: [100, 250, 500] }).toBe("complete");
-
-  const response = await request.get(`${providerUrl}/__browser-journey`);
-  expect(response.ok()).toBeTruthy();
-  return response.json() as Promise<BrowserJourneyState>;
-};
-
 const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
   expect(snapshot.canonical_playback_proven).toBeTruthy();
   expect(snapshot.av_sync_proven).toBeTruthy();
