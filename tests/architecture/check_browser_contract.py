@@ -662,6 +662,13 @@ for required in (
 ):
     if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab WebRTC fixture must derive remote playback from canonical voice events: {required}")
+
+for required in (
+    "async setRemoteDescription()",
+    "queueMicrotask(() => publishRemoteAudioTrack?.());",
+):
+    if required not in voice_media_fixture:
+        raise SystemExit(f"Owner Lab WebRTC fixture must establish remote media before playback begins: {required}")
 if "navigator.mediaDevices" in voice_media_fixture:
     raise SystemExit("Owner Lab WebRTC fixture must never fall through to native media devices")
 
