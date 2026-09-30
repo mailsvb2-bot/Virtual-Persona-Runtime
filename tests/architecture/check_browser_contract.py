@@ -32,6 +32,8 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 HTTP_CLIENT_CONTROL = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_client_control.rs"
+VOICE_STREAMING_TESTS = ROOT / "crates" / "vpr-owner-lab" / "src" / "state" / "voice_streaming_tests.rs"
+VOICE_STATE_TESTS = ROOT / "crates" / "vpr-owner-lab" / "src" / "state" / "voice_tests.rs"
 
 index_html = INDEX.read_text(encoding="utf-8")
 browser_e2e = E2E.read_text(encoding="utf-8")
@@ -65,6 +67,8 @@ ci = CI.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
+voice_streaming_tests = VOICE_STREAMING_TESTS.read_text(encoding="utf-8")
+voice_state_tests = VOICE_STATE_TESTS.read_text(encoding="utf-8")
 
 # Test doubles may replace browser media primitives only at the composition seam.
 # They must never participate in production HTTP completion ordering or mutate the
@@ -309,21 +313,28 @@ if 'page.route("**/__expressive_journey_report"' not in expressive_e2e:
 
 if 'page.route("**/__expressive_provider_state"' in expressive_e2e:
     raise SystemExit("Owner Lab Expressive journey must not depend on a Playwright provider-state callback")
+if 'fetch("http://127.0.0.1:18790' in expressive_journey_driver:
+    raise SystemExit("Owner Lab Expressive in-page journey must not bypass same-origin CSP")
 for required in (
-    'fetch("http://127.0.0.1:18790/__state"',
-    'mode: "cors"',
-    '"second-llm-open"',
-    'entry.bodyText.includes("Что думает владелец?")',
+    "expect(llmRequests.length).toBeGreaterThanOrEqual(1)",
+    "expect(llmRequests.length).toBeLessThanOrEqual(2)",
+    'commands.some((command) => command.topic === "did.interrupt")',
 ):
-    if required not in expressive_journey_driver:
-        raise SystemExit(f"Owner Lab Expressive interrupt must wait for the second LLM stream without renderer RPC: {required}")
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab Expressive browser boundary proof missing: {required}")
 for required in (
-    '"http://127.0.0.1:18791"',
-    '"access-control-allow-origin"',
-    'browserTestOrigins.has(origin)',
+    "streaming_voice_interrupt_cancels_remaining_llm_tail_after_first_segment",
+    "handle.interrupt().unwrap()",
 ):
-    if required not in voice_provider:
-        raise SystemExit(f"Owner Lab Expressive provider-state read must use an explicit local CORS allowlist: {required}")
+    if required not in voice_streaming_tests:
+        raise SystemExit(f"Owner Lab streaming cancellation proof missing: {required}")
+for required in (
+    "interrupt_handle_cancels_in_flight_voice_before_avatar_output",
+    "llm_started.recv_timeout",
+    "assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0)",
+):
+    if required not in voice_state_tests:
+        raise SystemExit(f"Owner Lab in-flight LLM cancellation proof missing: {required}")
 if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
