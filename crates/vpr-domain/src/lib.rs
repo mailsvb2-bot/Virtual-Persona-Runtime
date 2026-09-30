@@ -24,7 +24,7 @@ pub use preparation::{
 };
 pub use profile::{
     ClaimRevision, ClaimRevisionExhausted, OwnerClaimRecord, OwnerClaimRevision,
-    PersonaCaptureState, PersonaProfile, ProfileError,
+    PersonaCaptureState, PersonaProfile, ProfileError, TransactionalCorrectionError,
 };
 pub use reason::Rt0ReasonCode;
 pub use session::{
