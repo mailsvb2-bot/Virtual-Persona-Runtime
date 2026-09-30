@@ -4,6 +4,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use vpr_integration::ProviderErrorKind;
 
 struct Probe(AtomicBool);
 
@@ -86,6 +87,31 @@ fn legacy_agent_body() -> String {
 
 fn expressive_agent_body() -> String {
     r#"{"presenter":{"type":"expressive"}}"#.to_owned()
+}
+
+#[test]
+fn presenter_probe_is_read_only_and_uses_authorization() {
+    let (endpoint, captured) = serve(vec![("200 OK", expressive_agent_body())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(provider.probe_presenter_type().unwrap(), "expressive");
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /agents/agent-7 "));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
+}
+
+#[test]
+fn presenter_probe_reports_provider_policy_denial_without_creating_session() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    let error = provider.probe_presenter_type().unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
 }
 
 fn session() -> RealtimeAvatarSession {
@@ -283,6 +309,118 @@ fn malformed_client_playback_event_fails_closed() {
         let error = provider.parse_client_event(&live, message).unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     }
+}
+
+#[test]
+fn forbidden_presenter_metadata_falls_back_to_historical_stream_path() {
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("201 Created", create_body.to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+    let live = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap();
+
+    assert!(matches!(
+        live.transport,
+        RealtimeAvatarTransport::WebRtc { .. }
+    ));
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+}
+
+#[test]
+fn runtime_access_probe_uses_legacy_stream_only_when_metadata_is_forbidden() {
+    let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("201 Created", create_body.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access().unwrap(),
+        DidRuntimeAccessProbe::LegacyStreamFallback
+    );
+    let requests: Vec<String> = (0..3).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
+    assert!(requests[2].starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+}
+
+#[test]
+fn unauthorized_presenter_metadata_does_not_fall_back_to_stream_creation() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn account_auth_probe_uses_account_credits_and_basic_authorization() {
+    let (endpoint, captured) = serve(vec![("200 OK", "[]".to_owned())]);
+    let provider = adapter(endpoint);
+
+    provider.probe_account_auth_detailed().unwrap();
+
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /credits "));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
+}
+
+#[test]
+fn account_auth_probe_preserves_unauthorized_status() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_account_auth_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Unauthorized
+    );
+    assert!(captured.recv().unwrap().starts_with("GET /credits "));
+}
+
+#[test]
+fn detailed_probe_reports_401_without_stream_fallback() {
+    let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Unauthorized
+    );
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
+fn detailed_probe_reports_403_when_legacy_stream_is_forbidden() {
+    let (endpoint, captured) = serve(vec![
+        ("403 Forbidden", "{}".to_owned()),
+        ("403 Forbidden", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+
+    assert_eq!(
+        provider.probe_runtime_access_detailed().unwrap_err(),
+        DidRuntimeAccessFailure::Forbidden
+    );
+    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /agents/agent-7 "));
+    assert!(requests[1].starts_with("POST /agents/agent-7/streams "));
 }
 
 #[test]

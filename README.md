@@ -53,4 +53,60 @@ VPR_DID_API_KEY='<key>' VPR_DID_AGENT_ID='<agent-id>' \
 VPR_OWNER_LAB_ALLOW_EGRESS=true cargo run -p vpr-owner-lab
 ```
 
-STT provider values are `openai-transcription` (alias `openai`) and `deepgram`. LLM provider values are `openai-compatible` (alias `openai`), `anthropic`, and `gemini`. The browser captures push-to-talk audio with `AudioWorklet`, converts it locally to mono PCM S16LE at 16 kHz, and sends the binary utterance to the loopback backend. The backend runs one canonical authorized turn through STT -> LLM -> realtime avatar and returns transcript/reply plus latency/usage evidence. Raw microphone PCM is not returned as evidence, and provider credentials are never sent to the browser. Voice mode is still experimental and does not prove credentialed RT0 exit criteria.
+STT provider values are `openai-transcription` (alias `openai`) and `deepgram`. LLM provider values are `openai-compatible` (alias `openai`), `deepseek`, `anthropic`, and `gemini`. The browser captures push-to-talk audio with `AudioWorklet`, converts it locally to mono PCM S16LE at 16 kHz, and sends the binary utterance to the loopback backend. The backend runs one canonical authorized turn through STT -> LLM -> realtime avatar and returns transcript/reply plus latency/usage evidence. Raw microphone PCM is not returned as evidence, and provider credentials are never sent to the browser. Voice mode is still experimental and does not prove credentialed RT0 exit criteria.
+
+### Windows provider credentials
+
+On Windows, configure the RT0 provider stack once and store it in **Windows Credential Manager** for the current Windows user. This replaces the old CMD-only `set` workflow, whose values disappeared when that shell closed.
+
+If the CMD window that already contains the old `set VPR_...` values is still open, migrate those values without re-entering the keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env
+```
+
+Otherwise run the secure setup once:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set
+```
+
+The setup asks for the D-ID API key, D-ID agent ID, Deepgram API key, and DeepSeek API key. Secret values are entered without terminal echo. D-ID is validated before the profile is saved. The raw D-ID key format is `API_USERNAME:API_PASSWORD`; an accidental leading `Basic ` prefix is stripped before storage. The saved profile selects D-ID with the historical RT0 `VPR_DID_FLUENT` behavior (disabled/unset), Deepgram `nova-3`, and DeepSeek `deepseek-flash`.
+
+To replace only D-ID credentials while preserving the stored Deepgram and DeepSeek keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set-did
+```
+
+The replacement is probed before it overwrites the existing D-ID credentials. The probe first validates the API key against D-ID's read-only account-level `GET /credits` endpoint, then validates access to the configured Agent/runtime path. A failed probe leaves the previous secure profile unchanged.
+
+Check configuration without revealing keys:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- status
+```
+
+Remove the stored profile:
+
+```powershell
+cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
+```
+
+Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority, so CI and deliberate per-process overrides keep their existing behavior. API-key values are never printed or included in provider descriptors or evidence.
+
+For the Windows RT0 operator path, use the safe launcher:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
+```
+
+The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a safe D-ID credential/agent preflight (metadata lookup first; if metadata access is forbidden, it may create and immediately close one legacy stream to verify the historical runtime path), pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
+
+For deliberate manual runs, the lower-level process-scoped opt-in is still available:
+
+```powershell
+cargo run -p vpr-owner-lab -- --allow-egress
+```
+
+Closing the process returns to the fail-closed default; egress permission is not stored with provider credentials. The existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` environment variable remains supported for automation.

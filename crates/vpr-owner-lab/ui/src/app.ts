@@ -1,3 +1,4 @@
+import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 
@@ -631,8 +632,9 @@ const updateAudienceMode = (): void => {
 const updateControls = (): void => {
   const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
   const textReady = backendStatus.conversation_readiness !== "none";
-  const voiceReady = backendStatus.conversation_readiness === "text_and_voice"
-    && realtimeReadiness.audio;
+  // Microphone input is an independent canonical STT path. It must not wait for the
+  // avatar provider's remote output-audio track to be published or recovered.
+  const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
   const playbackReady = activeClientControl?.interrupt_requires_playback_id
     ? providerPlaybackId !== null
     : true;
@@ -738,9 +740,8 @@ const handleLiveKitTrackUnsubscribed = (track: LiveKitTrack): void => {
     detachLiveKitTrack(track, avatarAudio);
     liveKitAudioTrack = null;
     realtimeReadiness.audio = false;
-    stopMicrophoneCapture();
     setStatus(
-      "Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.",
+      "Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…",
       "error",
     );
     if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
@@ -789,28 +790,42 @@ const closePeerTransport = (): void => {
   capabilities.clear();
 };
 
-const handleUnexpectedLiveKitDisconnect = async (room: LiveKitRoom): Promise<void> => {
+const handleUnexpectedLiveKitDisconnect = async (
+  room: LiveKitRoom,
+  reason?: unknown,
+): Promise<void> => {
   if (liveKitRoom !== room) return;
+  const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
   liveKitRoom = null;
   stopMicrophoneCapture();
   stopRemoteEvidence();
   clearRealtimeMedia();
-  setStatus("LiveKit отключен. Завершаю зависшую сессию…", "error");
+  setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
   try {
     await api<{ ok: true }>("/api/session/close", {});
     await syncStatus();
     await refreshSessionEvidence();
-    setStatus(
-      "LiveKit отключен. Сессия закрыта — сохраните evidence snapshot и подключитесь снова.",
-      "error",
-    );
+    try {
+      await downloadSessionEvidence();
+      setStatus(
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`,
+        "error",
+      );
+    } catch (exportError) {
+      setStatus(
+        exportError instanceof Error
+          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+          : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`,
+        "error",
+      );
+    }
   } catch (error) {
     await syncStatus().catch(() => undefined);
     setStatus(
       error instanceof Error
-        ? `LiveKit отключен; cleanup: ${error.message}`
-        : "LiveKit отключен; cleanup failed",
+        ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
+        : `LiveKit отключен${reasonSuffix}; cleanup failed`,
       "error",
     );
   }
@@ -930,8 +945,8 @@ const connectLiveKitTransport = async (
         .catch(() => undefined);
     }
   });
-  room.on(sdk.RoomEvent.Disconnected, () => {
-    void handleUnexpectedLiveKitDisconnect(room);
+  room.on(sdk.RoomEvent.Disconnected, (reason?: unknown) => {
+    void handleUnexpectedLiveKitDisconnect(room, reason);
   });
   await room.connect(transport.server_url, transport.token);
   realtimeReadiness.control = true;
@@ -1081,16 +1096,39 @@ const flushMicrophonePcm = (): void => {
   micPendingPcm = new Uint8Array(0);
 };
 
+const microphoneCaptureError = (error: unknown): Error => {
+  if (!(error instanceof DOMException)) {
+    return error instanceof Error ? error : new Error("MIC_CAPTURE_FAILED");
+  }
+  switch (error.name) {
+    case "NotAllowedError":
+      return new Error("MIC_PERMISSION_DENIED");
+    case "NotFoundError":
+      return new Error("MIC_DEVICE_NOT_FOUND");
+    case "NotReadableError":
+      return new Error("MIC_DEVICE_UNAVAILABLE");
+    case "SecurityError":
+      return new Error("MIC_SECURITY_DENIED");
+    default:
+      return new Error(`MIC_CAPTURE_FAILED:${error.name}`);
+  }
+};
+
 const startMicrophone = async (): Promise<void> => {
-  micStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      channelCount: 1,
-      sampleRate: 16_000,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-  });
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16_000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  } catch (error) {
+    throw microphoneCaptureError(error);
+  }
   audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
   if (audioContext.sampleRate !== 16_000) {
     stopMicrophoneCapture();
@@ -1331,10 +1369,21 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
     await syncStatus();
     await refreshSessionEvidence();
-    setStatus(
-      kind === "revoke" ? "Доступ отозван. Сессию можно закрыть." : "Сессия закрыта",
-      "idle",
-    );
+    if (kind === "revoke") {
+      setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
+    } else {
+      try {
+        await downloadSessionEvidence();
+        setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+      } catch (exportError) {
+        setStatus(
+          exportError instanceof Error
+            ? `Сессия закрыта; evidence export: ${exportError.message}`
+            : "Сессия закрыта; evidence export failed",
+          "error",
+        );
+      }
+    }
   } catch (error) {
     await syncStatus().catch(() => undefined);
     setStatus(error instanceof Error ? `${error.message}; повторите завершение` : "Ошибка завершения", "error");

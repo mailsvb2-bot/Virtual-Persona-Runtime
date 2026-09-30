@@ -15,7 +15,7 @@ use super::{
 };
 
 const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
-const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_millis(1_000);
+const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]

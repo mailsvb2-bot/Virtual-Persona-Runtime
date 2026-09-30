@@ -81,16 +81,9 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   });
   expect(prematureExport.status()).toBe(409);
   expect(await prematureExport.json()).toMatchObject({ code: "EVIDENCE_SESSION_NOT_TERMINAL" });
-  await page.getByRole("button", { name: "Закрыть" }).click();
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
-  const blockedNextSession = await request.post(`${ownerLabUrl}/api/avatar/start`, {
-    headers: csrfHeaders(csrf),
-    data: { consent: true, audience: "visitor" },
-  });
-  expect(blockedNextSession.status()).toBe(409);
-  expect(await blockedNextSession.json()).toMatchObject({ code: "EVIDENCE_EXPORT_REQUIRED" });
   const ownerEvidenceDownloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  await page.getByRole("button", { name: "Закрыть" }).click();
+  await expect(page.locator("#status")).toContainText("Evidence snapshot сохранён");
   const ownerEvidenceDownload = await ownerEvidenceDownloadPromise;
   expect(ownerEvidenceDownload.suggestedFilename()).toBe("session-1-owner.json");
   const reviewedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
@@ -169,10 +162,9 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     entry.body.includes("revoked-must-not-egress")
   )).toBeFalsy();
 
-  await page.getByRole("button", { name: "Закрыть" }).click();
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
   const visitorEvidenceDownloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
+  await page.getByRole("button", { name: "Закрыть" }).click();
+  await expect(page.locator("#status")).toContainText("Evidence snapshot сохранён");
   const visitorEvidenceDownload = await visitorEvidenceDownloadPromise;
   expect(visitorEvidenceDownload.suggestedFilename()).toBe("session-2-visitor.json");
 
