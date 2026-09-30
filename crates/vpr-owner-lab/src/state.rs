@@ -208,31 +208,6 @@ impl OwnerLabEngine {
         Ok(())
     }
 
-    /// Corrects one owner-reviewed claim. The domain profile preserves the previous revision and
-    /// advances `PersonaVersion`; the next turn snapshots the corrected version.
-    ///
-    /// # Errors
-    /// Fails closed when no reviewed owner context is bound or the correction is rejected.
-    pub(crate) fn correct_owner_claim(
-        &mut self,
-        id: &ClaimId,
-        statement: impl Into<String>,
-        kind: ClaimKind,
-    ) -> Result<(), LabError> {
-        if self.session_audience == Some(LabSessionAudience::Visitor) {
-            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
-        }
-        let context = self
-            .reviewed_owner_context
-            .as_mut()
-            .ok_or(LabError::InvalidState)?;
-        context
-            .correct_claim(id, statement, kind)
-            .map_err(map_owner_context_error)?;
-        self.readiness.reset_for_profile(context.profile())?;
-        Ok(())
-    }
-
     #[must_use]
     pub fn status(&self) -> LabStatus {
         LabStatus {
