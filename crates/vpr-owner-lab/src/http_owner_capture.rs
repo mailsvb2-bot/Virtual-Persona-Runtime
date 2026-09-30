@@ -3,7 +3,10 @@ use serde::Deserialize;
 use tiny_http::Request;
 use vpr_capture::CaptureError;
 use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
-use vpr_owner_lab::{OwnerCaptureError, OwnerContextState, Rt0OwnerCapture};
+use vpr_owner_lab::{
+    OwnerCaptureError, OwnerContextState, ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot,
+    Rt0OwnerCapture, save_reviewed_persona,
+};
 
 use crate::{
     AppState, HttpResponse, error_response, json_response, lab_error_response, parse_empty_json,
@@ -155,6 +158,7 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
     engine
         .correct_owner_claim(&id, body.statement, kind)
         .map_err(|error| lab_error_response(&error))?;
+    persist_reviewed_persona(&engine)?;
     Ok(json_response(200, &engine.status()))
 }
 
@@ -190,9 +194,17 @@ fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpRespon
     let capture = slot
         .as_mut()
         .ok_or_else(|| error_response(409, "INVALID_STATE_TRANSITION"))?;
-    capture
-        .complete_initial_review()
-        .map_err(capture_error_response)?;
+
+    if capture.snapshot().capture_state != "reviewed" {
+        capture
+            .complete_initial_review()
+            .map_err(capture_error_response)?;
+    }
+
+    let reviewed_snapshot = reviewed_snapshot_from_capture(capture)?;
+    save_reviewed_persona(&reviewed_snapshot)
+        .map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))?;
+
     let reviewed = slot
         .take()
         .ok_or_else(|| error_response(500, "INTERNAL_ERROR"))?;
@@ -200,6 +212,44 @@ fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpRespon
         .bind_reviewed_profile(reviewed.into_profile())
         .map_err(|error| lab_error_response(&error))?;
     Ok(json_response(200, &engine.status()))
+}
+
+fn reviewed_snapshot_from_capture(
+    capture: &Rt0OwnerCapture,
+) -> Result<ReviewedOwnerContextSnapshot, HttpResponse> {
+    let snapshot = capture.snapshot();
+    if snapshot.capture_state != "reviewed" || snapshot.claims.is_empty() {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+
+    let claims = snapshot
+        .claims
+        .into_iter()
+        .map(|claim| {
+            if !claim.owner_reviewed {
+                return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+            }
+            Ok(ReviewedOwnerClaimSnapshot {
+                claim_id: claim.claim_id,
+                statement: claim.statement,
+                kind: claim.kind,
+                revision: claim.revision,
+            })
+        })
+        .collect::<Result<Vec<_>, HttpResponse>>()?;
+
+    Ok(ReviewedOwnerContextSnapshot {
+        persona_id: snapshot.persona_id,
+        persona_version: snapshot.persona_version,
+        claims,
+    })
+}
+
+fn persist_reviewed_persona(engine: &vpr_owner_lab::OwnerLabEngine) -> Result<(), HttpResponse> {
+    let snapshot = engine
+        .reviewed_owner_context_snapshot()
+        .map_err(|error| lab_error_response(&error))?;
+    save_reviewed_persona(&snapshot).map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))
 }
 
 fn with_capture<T>(

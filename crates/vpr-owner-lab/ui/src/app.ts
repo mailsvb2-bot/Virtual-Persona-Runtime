@@ -39,7 +39,7 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -159,6 +159,9 @@ const interruptButton = byId<HTMLButtonElement>("interrupt");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
+const microphoneSelect = byId<HTMLSelectElement>("microphone-device");
+const microphoneLevel = byId<HTMLMeterElement>("microphone-level");
+const microphoneLevelText = byId<HTMLElement>("microphone-level-text");
 const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
 const metricStt = byId<HTMLElement>("metric-stt");
@@ -218,6 +221,7 @@ let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
+const MICROPHONE_STORAGE_KEY = "vpr.owner-lab.microphone-device-id";
 const AV_SYNC_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
@@ -549,8 +553,13 @@ const monitorRemoteAudio = (): void => {
       if (!voice.audioStarted) {
         voice.audioStarted = true;
         voice.audioStartedElapsed = performance.now() - voice.startedAt;
-        void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
-          .catch(() => undefined);
+        const audioStartedEvidence = postMediaEvidence(
+          "audio_started",
+          voice.audioStartedElapsed,
+          voice.requestSequence,
+        );
+        voice.audioStartedEvidence = audioStartedEvidence;
+        void audioStartedEvidence.catch(() => undefined);
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -659,6 +668,7 @@ const ownerCapture = mountOwnerCapture({
   onStateChange: (state) => {
     ownerCaptureReviewed = state.reviewed;
     updateControls();
+    void syncStatus().catch(() => undefined);
   },
 });
 
@@ -1050,6 +1060,8 @@ const stopMicrophoneCapture = (): void => {
   micStream = null;
   audioContext = null;
   recording = false;
+  microphoneLevel.value = 0;
+  microphoneLevelText.textContent = "Сигнал появится во время записи.";
   updateControls();
 };
 
@@ -1096,6 +1108,48 @@ const flushMicrophonePcm = (): void => {
   micPendingPcm = new Uint8Array(0);
 };
 
+const storedMicrophoneDeviceId = (): string => {
+  try {
+    return window.localStorage.getItem(MICROPHONE_STORAGE_KEY)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+};
+
+const rememberMicrophoneDeviceId = (deviceId: string): void => {
+  try {
+    if (deviceId) window.localStorage.setItem(MICROPHONE_STORAGE_KEY, deviceId);
+    else window.localStorage.removeItem(MICROPHONE_STORAGE_KEY);
+  } catch {
+    // Device preference is a convenience only; capture must not depend on storage access.
+  }
+};
+
+const refreshMicrophoneDevices = async (preferredDeviceId?: string): Promise<void> => {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  let devices: MediaDeviceInfo[];
+  try {
+    devices = (await navigator.mediaDevices.enumerateDevices())
+      .filter((device) => device.kind === "audioinput");
+  } catch {
+    return;
+  }
+
+  const requested = (preferredDeviceId ?? microphoneSelect.value ?? storedMicrophoneDeviceId()).trim();
+  microphoneSelect.replaceChildren();
+  microphoneSelect.add(new Option("Системный микрофон по умолчанию", ""));
+  devices.forEach((device, index) => {
+    microphoneSelect.add(new Option(device.label || `Микрофон ${index + 1}`, device.deviceId));
+  });
+
+  if (requested && devices.some((device) => device.deviceId === requested)) {
+    microphoneSelect.value = requested;
+  } else {
+    microphoneSelect.value = "";
+    if (requested) rememberMicrophoneDeviceId("");
+  }
+};
+
 const microphoneCaptureError = (error: unknown): Error => {
   if (!(error instanceof DOMException)) {
     return error instanceof Error ? error : new Error("MIC_CAPTURE_FAILED");
@@ -1117,8 +1171,10 @@ const microphoneCaptureError = (error: unknown): Error => {
 const startMicrophone = async (): Promise<void> => {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
   try {
+    const selectedDeviceId = microphoneSelect.value.trim();
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: {
+        ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
         channelCount: 1,
         sampleRate: 16_000,
         echoCancellation: true,
@@ -1126,6 +1182,12 @@ const startMicrophone = async (): Promise<void> => {
         autoGainControl: true,
       },
     });
+    const activeDeviceId = micStream.getAudioTracks()[0]?.getSettings().deviceId ?? selectedDeviceId;
+    await refreshMicrophoneDevices(activeDeviceId);
+    if (activeDeviceId) {
+      microphoneSelect.value = activeDeviceId;
+      rememberMicrophoneDeviceId(activeDeviceId);
+    }
   } catch (error) {
     throw microphoneCaptureError(error);
   }
@@ -1158,6 +1220,13 @@ const startMicrophone = async (): Promise<void> => {
   micWorklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
     if (!recording) return;
     const samples = new Float32Array(event.data);
+    let energy = 0;
+    for (const sample of samples) energy += sample * sample;
+    const rms = samples.length === 0 ? 0 : Math.sqrt(energy / samples.length);
+    microphoneLevel.value = Math.min(1, rms * 8);
+    microphoneLevelText.textContent = rms < 0.001
+      ? "Сигнал почти нулевой — браузер не получает слышимый звук с выбранного микрофона."
+      : `Сигнал есть · RMS ${rms.toFixed(4)}`;
     const remaining = MAX_VOICE_SAMPLES - micSamplesSent;
     if (remaining <= 0) {
       void finishMicrophoneTurn();
@@ -1216,6 +1285,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     startedAt: performance.now(),
     audioStarted: false,
     audioStartedElapsed: null,
+    audioStartedEvidence: null,
     responseComplete: false,
     speaking: false,
     silentFrames: 0,
@@ -1257,8 +1327,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
+      if (voice.audioStartedEvidence) {
+        await voice.audioStartedEvidence;
+      }
       if (voice.audioStartedElapsed !== null) {
-        await collectAvSyncEvidence(requestSequence).catch(() => undefined);
+        await collectAvSyncEvidence(requestSequence);
       }
     }
     await refreshSessionEvidence();
@@ -1425,8 +1498,15 @@ interruptButton.addEventListener("click", () => void interruptAvatar());
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
+microphoneSelect.addEventListener("change", () => {
+  rememberMicrophoneDeviceId(microphoneSelect.value.trim());
+});
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  void refreshMicrophoneDevices();
+});
 window.addEventListener("pagehide", closeBackendOnUnload);
 
+void refreshMicrophoneDevices(storedMicrophoneDeviceId());
 void api<Bootstrap>("/api/bootstrap")
   .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;

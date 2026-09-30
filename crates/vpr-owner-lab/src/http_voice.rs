@@ -8,7 +8,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
-use vpr_owner_lab::{LabError, LabVoiceInput, LabVoiceResult, LabVoiceSegment};
+use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult, LabVoiceSegment};
 
 use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
@@ -458,7 +458,7 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
                     .evidence
                     .lock()
                     .bind_voice_segment(request_sequence, &segment)
-                    .map_err(|_| LabError::Internal)?;
+                    .map_err(map_evidence_error)?;
                 worker_state
                     .voice_streams
                     .push(request_sequence, VoiceStreamEvent::Segment { segment })
@@ -468,6 +468,15 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
         };
         finish_voice_stream(&worker_state, request_sequence, result);
     });
+}
+
+const fn map_evidence_error(error: LabEvidenceError) -> LabError {
+    match error {
+        LabEvidenceError::InvalidInput => LabError::InvalidInput,
+        LabEvidenceError::InvalidState | LabEvidenceError::DuplicateEvidence => {
+            LabError::InvalidState
+        }
+    }
 }
 
 fn fail_voice_evidence(state: &AppState, request_sequence: u64, error: &LabError) {

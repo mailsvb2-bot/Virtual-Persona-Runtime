@@ -2,6 +2,7 @@ mod binding;
 mod exit;
 mod exit_assembly;
 mod exit_context;
+mod exit_cost;
 mod exit_support;
 mod exit_validation;
 mod golden;
@@ -12,12 +13,13 @@ mod session_evidence;
 mod session_statistics;
 mod session_types;
 mod supporting_preflight;
+mod supporting_scaffold;
 
 pub use binding::{
     BoundGoldenReport, EvidenceBinding, EvidenceBindingError, EvidenceVerificationContext,
     GoldenEvidenceBundle, ProviderRole, ProviderStateBinding, ProviderStateManifest,
     RT0_EVIDENCE_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, evaluate_bound_golden_suite,
-    sha256_hex,
+    sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
 };
 
 pub use golden::{
@@ -47,7 +49,10 @@ pub use exit_support::{
     Rt0ExitSupportingArtifacts, evaluate_verified_rt0_exit_evidence,
     validate_rt0_exit_supporting_artifacts,
 };
-pub use exit_validation::validate_rt0_conversation_evidence_binding;
+pub use exit_validation::{
+    Rt0RuntimeSupportingProjection, derive_rt0_runtime_supporting_projection,
+    validate_rt0_conversation_evidence_binding,
+};
 pub use session_binding::{
     BoundLabSessionEvidenceAggregate, LabSessionBindingError, RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
     bind_owner_lab_session_evidence,
@@ -61,6 +66,8 @@ pub use session_evidence::{
     aggregate_owner_lab_session_evidence,
 };
 pub use session_types::{LabTextAttemptEvidence, LabTextAttemptStatus, SessionUsageEvidence};
+
+pub use supporting_scaffold::{RT0_RUNTIME_SUPPORTING_FILES, rt0_runtime_supporting_scaffold};
 
 pub use supporting_preflight::{
     RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,
