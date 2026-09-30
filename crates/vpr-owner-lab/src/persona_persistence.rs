@@ -261,17 +261,109 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn sample() -> ReviewedOwnerContextSnapshot {
-        ReviewedOwnerContextSnapshot {
+    fn revision(
+        revision: u64,
+        statement: &str,
+        kind: &str,
+        verification: &str,
+    ) -> DurableOwnerClaimRevisionSnapshot {
+        DurableOwnerClaimRevisionSnapshot {
+            revision,
+            statement: statement.into(),
+            kind: kind.into(),
+            source: "owner".into(),
+            verification: verification.into(),
+            derivation: "direct".into(),
+        }
+    }
+
+    fn sample() -> DurableReviewedOwnerContextSnapshot {
+        DurableReviewedOwnerContextSnapshot {
             persona_id: "persisted-owner".into(),
             persona_version: 3,
-            claims: vec![crate::ReviewedOwnerClaimSnapshot {
+            claims: vec![DurableReviewedOwnerClaimSnapshot {
                 claim_id: "preference-communication-style".into(),
-                statement: "Кратко и по существу".into(),
-                kind: "preference".into(),
-                revision: 3,
+                history_complete: true,
+                revisions: vec![
+                    revision(1, "Кратко", "preference", "unverified"),
+                    revision(2, "Кратко", "preference", "owner_verified"),
+                    revision(
+                        3,
+                        "Кратко и по существу",
+                        "preference",
+                        "owner_verified",
+                    ),
+                ],
             }],
         }
+    }
+
+    #[test]
+    fn v1_migration_preserves_only_known_revision_and_becomes_idempotent_v2() {
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 7,
+                "claims": [{
+                    "claim_id": "legacy-opinion",
+                    "statement": "Единственное известное значение",
+                    "kind": "opinion",
+                    "revision": 7
+                }]
+            }
+        })
+        .to_string();
+
+        let migrated = decode_persisted(&raw).unwrap();
+        assert!(migrated.migrated_legacy);
+        assert!(!migrated.snapshot.claims[0].history_complete);
+        assert_eq!(migrated.snapshot.claims[0].revisions.len(), 1);
+        assert_eq!(migrated.snapshot.claims[0].revisions[0].revision, 7);
+        assert_eq!(
+            migrated.snapshot.claims[0].revisions[0].statement,
+            "Единственное известное значение"
+        );
+
+        let v2 = serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone()))
+            .unwrap();
+        let decoded_again = decode_persisted(&v2).unwrap();
+        assert!(!decoded_again.migrated_legacy);
+        assert_eq!(decoded_again.snapshot, migrated.snapshot);
+    }
+
+    #[test]
+    fn explicit_file_load_migrates_v1_store_once() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("vpr-persona-v1-migrate-{unique}.json"));
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 4,
+                "claims": [{
+                    "claim_id": "legacy-claim",
+                    "statement": "Legacy current",
+                    "kind": "factual",
+                    "revision": 4
+                }]
+            }
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+
+        let first = load_file(&path).unwrap().unwrap();
+        assert!(!first.claims[0].history_complete);
+        let persisted_after = fs::read_to_string(&path).unwrap();
+        let probe: SchemaProbe = serde_json::from_str(&persisted_after).unwrap();
+        assert_eq!(probe.schema_version, STORE_SCHEMA_V2);
+        let second = load_file(&path).unwrap().unwrap();
+        assert_eq!(second, first);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
     }
 
     #[cfg(windows)]
@@ -292,8 +384,8 @@ mod tests {
         let _ = store.delete();
 
         let mut large = sample();
-        large.claims[0].statement = "Ж".repeat(4_000);
-        let raw = serde_json::to_string(&PersistedPersona::new(large.clone()))
+        large.claims[0].revisions[2].statement = "Ж".repeat(4_000);
+        let raw = serde_json::to_string(&PersistedPersonaV2::new(large.clone()))
             .expect("sample must serialize");
         assert!(raw.len() > 2_560);
 
@@ -304,14 +396,14 @@ mod tests {
             .load()
             .expect("chunked Credential Manager store must read Persona")
             .expect("stored Persona must exist");
-        let restored: PersistedPersona =
+        let restored: PersistedPersonaV2 =
             serde_json::from_str(&restored_raw).expect("stored Persona must decode");
         assert_eq!(restored.validate().unwrap(), large);
         store.delete().unwrap();
     }
 
     #[test]
-    fn explicit_file_store_round_trips_and_replaces_existing_snapshot() {
+    fn explicit_file_store_round_trips_and_replaces_exact_history() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -319,14 +411,21 @@ mod tests {
         let path = std::env::temp_dir().join(format!("vpr-persona-store-{unique}.json"));
         let first = sample();
         save_file(&path, &first).unwrap();
-        assert_eq!(load_file(&path).unwrap(), Some(first));
+        assert_eq!(load_file(&path).unwrap(), Some(first.clone()));
 
-        let mut second = sample();
+        let mut second = first;
         second.persona_version = 4;
-        second.claims[0].revision = 4;
-        second.claims[0].statement = "Обновлённый снимок".into();
+        second.claims[0].revisions.push(revision(
+            4,
+            "Обновлённый снимок",
+            "opinion",
+            "owner_verified",
+        ));
         save_file(&path, &second).unwrap();
-        assert_eq!(load_file(&path).unwrap(), Some(second));
+        let restored = load_file(&path).unwrap().unwrap();
+        assert_eq!(restored, second);
+        assert_eq!(restored.claims[0].revisions.len(), 4);
+        assert_eq!(restored.claims[0].revisions[2].statement, "Кратко и по существу");
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("tmp"));
