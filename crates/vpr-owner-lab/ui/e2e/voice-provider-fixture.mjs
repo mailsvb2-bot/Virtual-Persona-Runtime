@@ -9,14 +9,6 @@ let streamSequence = 0;
 let expressiveSessionSequence = 0;
 let sttSequence = 0;
 let llmSequence = 0;
-let browserJourney = {
-  stage: "idle",
-  error: null,
-  ownerEvidence: null,
-  visitorEvidence: null,
-  requestedMicrophones: [],
-  interruptPayloads: [],
-};
 
 const readBody = async (request) => {
   const chunks = [];
@@ -33,12 +25,6 @@ const sendJson = (response, status, payload, extraHeaders = {}) => {
     ...extraHeaders,
   });
   response.end(body);
-};
-
-const browserJourneyHeaders = {
-  "access-control-allow-origin": "http://127.0.0.1:18789",
-  "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "content-type",
 };
 
 const sendText = (response, status, contentType, body) => {
@@ -113,26 +99,6 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname === "/__state") {
     return sendJson(response, 200, { requests });
-  }
-
-  if (url.pathname === "/__browser-journey") {
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, browserJourneyHeaders);
-      return response.end();
-    }
-    if (request.method === "GET") {
-      return sendJson(response, 200, browserJourney, browserJourneyHeaders);
-    }
-    if (request.method === "POST") {
-      const body = await readBody(request);
-      try {
-        const update = JSON.parse(body.toString("utf8"));
-        browserJourney = { ...browserJourney, ...update };
-        return sendJson(response, 200, { ok: true }, browserJourneyHeaders);
-      } catch {
-        return sendJson(response, 400, { ok: false, code: "INVALID_BROWSER_JOURNEY" }, browserJourneyHeaders);
-      }
-    }
   }
 
   if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
