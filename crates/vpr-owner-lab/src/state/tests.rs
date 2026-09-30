@@ -347,6 +347,83 @@ fn reviewed_persona_readiness_tracks_media_and_resets_after_correction() {
 }
 
 #[test]
+fn failed_reviewed_persona_persistence_rolls_back_full_context_and_readiness() {
+    let (mut engine, _) = engine(true);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    engine.mark_video_ready_from_media().unwrap();
+    engine.mark_voice_ready_from_media().unwrap();
+
+    let claim = ClaimId::new("owner-fact").unwrap();
+    let before_snapshot = engine.reviewed_owner_context_snapshot().unwrap();
+    let before_readiness = engine.status().modality_readiness;
+    let before_history = engine
+        .reviewed_owner_context
+        .as_ref()
+        .unwrap()
+        .profile()
+        .claim(&claim)
+        .unwrap()
+        .previous_revisions()
+        .to_vec();
+
+    assert_eq!(
+        engine.correct_owner_claim_with_persistence(
+            &claim,
+            "Не должен сохраниться",
+            ClaimKind::Factual,
+            |_| Err("simulated durable-store failure".into()),
+        ),
+        Err(LabError::PersistenceFailed)
+    );
+
+    assert_eq!(
+        engine.reviewed_owner_context_snapshot().unwrap(),
+        before_snapshot
+    );
+    assert_eq!(engine.status().modality_readiness, before_readiness);
+    assert_eq!(
+        engine
+            .reviewed_owner_context
+            .as_ref()
+            .unwrap()
+            .profile()
+            .claim(&claim)
+            .unwrap()
+            .previous_revisions(),
+        before_history.as_slice()
+    );
+}
+
+#[test]
+fn successful_reviewed_persona_persistence_commits_exact_new_snapshot() {
+    let (mut engine, _) = engine(true);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+    let claim = ClaimId::new("owner-fact").unwrap();
+    let mut persisted = None;
+
+    engine
+        .correct_owner_claim_with_persistence(
+            &claim,
+            "Зафиксированный новый факт",
+            ClaimKind::Factual,
+            |snapshot| {
+                persisted = Some(snapshot.clone());
+                Ok(())
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        persisted,
+        Some(engine.reviewed_owner_context_snapshot().unwrap())
+    );
+    assert_eq!(engine.status().persona_version, 3);
+}
+
+#[test]
 fn provider_create_failure_marks_only_media_preparation_failed_and_allows_retry() {
     let (mut engine, _) = engine_with_failures(true, 1, 0);
     engine.bind_reviewed_profile(reviewed_profile()).unwrap();
