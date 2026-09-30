@@ -144,6 +144,7 @@ for required in (
     "absolute_offset_millis === 60",
     "#metric-stt",
     "#metric-llm",
+    "#metric-llm-first",
     "#metric-av-sync",
     "#metric-playback",
     "#metric-cost",
@@ -201,6 +202,7 @@ for required in (
 for required in (
     'id="metric-stt"',
     'id="metric-llm"',
+    'id="metric-llm-first"',
     'id="metric-server-total"',
     'id="metric-first-audio"',
     'id="metric-video-ready"',
@@ -214,6 +216,7 @@ for required in (
 for required in (
     "renderTelemetry",
     "sumKnownCost",
+    "llm_first_meaningful_millis",
     "провайдер не сообщил стоимость",
     "canonical_playback_proven",
     "av_sync_proven",
