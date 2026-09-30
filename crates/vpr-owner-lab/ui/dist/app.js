@@ -371,6 +371,16 @@ const collectAvSyncEvidence = async (requestSequence) => {
     if (sampleSequence > 1)
         await refreshSessionEvidence();
 };
+const collectVoiceAvSyncWhenReady = async (voice) => {
+    if (!voice.responseComplete
+        || voice.audioStartedElapsed === null
+        || voice.avSyncCollectionStarted)
+        return;
+    voice.avSyncCollectionStarted = true;
+    if (voice.audioStartedEvidence)
+        await voice.audioStartedEvidence;
+    await collectAvSyncEvidence(voice.requestSequence);
+};
 const rms = (samples) => {
     let sum = 0;
     for (const sample of samples)
@@ -420,6 +430,11 @@ const monitorRemoteAudio = () => {
                 });
                 voice.audioStartedEvidence = audioStartedEvidence;
                 void audioStartedEvidence.catch(() => undefined);
+                void collectVoiceAvSyncWhenReady(voice).catch((error) => {
+                    if (activeVoiceEvidence?.requestSequence === voice.requestSequence) {
+                        setStatus(error instanceof Error ? error.message : "Ошибка A/V evidence", "error");
+                    }
+                });
             }
         }
         else if (voice?.speaking) {
@@ -1140,6 +1155,7 @@ const finishMicrophoneTurn = async () => {
         audioStartedElapsed: null,
         audioStartedEvidence: null,
         responseComplete: false,
+        avSyncCollectionStarted: false,
         speaking: false,
         silentFrames: 0,
     };
@@ -1176,12 +1192,7 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
-            if (voice.audioStartedEvidence) {
-                await voice.audioStartedEvidence;
-            }
-            if (voice.audioStartedElapsed !== null) {
-                await collectAvSyncEvidence(requestSequence);
-            }
+            await collectVoiceAvSyncWhenReady(voice);
         }
         await refreshSessionEvidence();
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
