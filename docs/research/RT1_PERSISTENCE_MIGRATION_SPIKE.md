@@ -14,9 +14,11 @@ This spike answers only that boundary question. It does not choose PostgreSQL/SQ
 
 ## Current RT0 reality
 
-The current repository has no durable application database dependency. Owner Lab holds its Persona/runtime state in process memory. In particular, the runtime contains in-memory Persona identity, reviewed owner context, active session/avatar handles and counters. Restarting the process is not a production persistence contract.
+The current repository has no production durable database dependency and no RT1 application schema. It does, however, deliberately persist one bounded RT0 artifact: the **reviewed owner Persona snapshot** used to restore owner-reviewed material after a local Owner Lab process restart. On Windows that snapshot is stored in the current user's Credential Manager through the versioned chunked secure-store boundary; the explicit test/development file path remains an opt-in alternative.
 
-Therefore there is no legitimate automatic RT0 database migration to perform.
+Everything else that defines a live runtime remains process-local: active session/avatar handles, turn state, provider session/stream identifiers, consent/authority state, preparation jobs, counters and media transport material. Restart recovery of the reviewed Persona snapshot therefore does **not** make RT0 runtime/session state a production database.
+
+The reviewed snapshot is an experimental local bootstrap artifact, not the future RT1 durable schema. It must still enter RT1 only through an explicit owner-controlled migration/bootstrap that re-establishes authorization, current review and PersonaVersion. Therefore there is no legitimate automatic RT0 database migration to perform.
 
 ## Migration decision
 
@@ -46,6 +48,8 @@ For owner correction, the durable boundary must atomically preserve the old clai
 Preparation/publication projections are version-bound. After correction, stale projections fail closed until explicitly recomputed/revalidated.
 
 Retryable durable mutations require idempotency semantics so an uncertain retry cannot create duplicate Persona versions, duplicate claim revisions or duplicate publication transitions.
+
+The RT0 local reviewed-Persona store now uses commit-or-rollback semantics for owner claim correction: an unsuccessful durable save restores the exact canonical profile revision history and modality-readiness state. This is a safety property of the experimental local store only; it is not a substitute for the future RT1 durable transaction/audit model.
 
 ## Rollback
 
