@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use crate::{
-    ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, OwnerClaim, PersonaIdentity,
-    PersonaVersionExhausted, SourceKind, VerificationState,
+    ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, MAX_OWNER_CLAIM_CHARS, OwnerClaim,
+    PersonaIdentity, PersonaVersionExhausted, SourceKind, VerificationState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -138,6 +138,9 @@ impl OwnerClaimRecord {
         let statement = statement.into();
         if statement.trim().is_empty() {
             return Err(ProfileError::BlankClaimStatement);
+        }
+        if statement.chars().count() > MAX_OWNER_CLAIM_CHARS {
+            return Err(ProfileError::ClaimStatementTooLong);
         }
         let corrected = OwnerClaim {
             statement,
@@ -278,6 +281,47 @@ impl PersonaProfile {
         Ok(())
     }
 
+    /// Corrects one claim and lets the caller atomically commit the resulting profile.
+    ///
+    /// Only the touched current revision, its prior history length, and previous `PersonaVersion`
+    /// are retained for rollback; history is never cloned. The canonical `PersonaProfile` itself
+    /// remains non-cloneable. If the commit callback fails, the exact claim revision history and
+    /// `PersonaVersion` are restored before the error returns.
+    ///
+    /// # Errors
+    /// Returns a correction error when the mutation is invalid, or the caller's commit error after
+    /// restoring the exact pre-correction domain state.
+    pub fn correct_claim_transactional<E>(
+        &mut self,
+        id: &ClaimId,
+        statement: impl Into<String>,
+        kind: ClaimKind,
+        commit: impl FnOnce(&Self) -> Result<(), E>,
+    ) -> Result<(), TransactionalCorrectionError<E>> {
+        let record_index = self
+            .claims
+            .iter()
+            .position(|record| record.id() == id)
+            .ok_or(TransactionalCorrectionError::Correction(
+                ProfileError::ClaimNotFound,
+            ))?;
+        let previous_current = self.claims[record_index].current.clone();
+        let previous_history_len = self.claims[record_index].previous_revisions.len();
+        let previous_version = self.identity.version();
+
+        self.correct_claim(id, statement, kind)
+            .map_err(TransactionalCorrectionError::Correction)?;
+
+        if let Err(error) = commit(self) {
+            let record = &mut self.claims[record_index];
+            record.current = previous_current;
+            record.previous_revisions.truncate(previous_history_len);
+            self.identity.apply_version(previous_version);
+            return Err(TransactionalCorrectionError::Commit(error));
+        }
+        Ok(())
+    }
+
     /// Approves the initial reviewed identity/attribution boundary and advances Persona version.
     ///
     /// # Errors
@@ -305,10 +349,17 @@ impl PersonaProfile {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransactionalCorrectionError<E> {
+    Correction(ProfileError),
+    Commit(E),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileError {
     InvalidClaimProvenance,
     BlankClaimStatement,
+    ClaimStatementTooLong,
     DuplicateClaimId,
     EmptyCapture,
     ClaimNotFound,
@@ -323,6 +374,7 @@ impl Display for ProfileError {
         formatter.write_str(match self {
             Self::InvalidClaimProvenance => "captured claim must be direct owner material",
             Self::BlankClaimStatement => "owner claim statement must not be blank",
+            Self::ClaimStatementTooLong => "owner claim statement exceeds the canonical size limit",
             Self::DuplicateClaimId => "claim identity already exists in this persona",
             Self::EmptyCapture => "guided capture cannot be completed without claims",
             Self::ClaimNotFound => "claim was not found in this persona",
@@ -351,6 +403,9 @@ impl From<PersonaVersionExhausted> for ProfileError {
 fn validate_captured_claim(claim: &OwnerClaim) -> Result<(), ProfileError> {
     if claim.statement.trim().is_empty() {
         return Err(ProfileError::BlankClaimStatement);
+    }
+    if claim.statement.chars().count() > MAX_OWNER_CLAIM_CHARS {
+        return Err(ProfileError::ClaimStatementTooLong);
     }
     if claim.source != SourceKind::Owner
         || claim.verification != VerificationState::Unverified
@@ -396,6 +451,31 @@ mod tests {
     }
 
     #[test]
+    fn captured_and_corrected_claims_enforce_canonical_size_limit() {
+        let oversized = "Ж".repeat(MAX_OWNER_CLAIM_CHARS + 1);
+        let capture = OwnerClaimRecord::capture(
+            ClaimId::new("oversized").unwrap(),
+            OwnerClaim {
+                statement: oversized.clone(),
+                kind: ClaimKind::Factual,
+                source: SourceKind::Owner,
+                verification: VerificationState::Unverified,
+                derivation: DerivationKind::Direct,
+            },
+        );
+        assert_eq!(capture, Err(ProfileError::ClaimStatementTooLong));
+
+        let mut profile = profile();
+        let id = ClaimId::new("opinion-1").unwrap();
+        profile.add_captured_claim(captured_opinion()).unwrap();
+        profile.mark_capture_complete().unwrap();
+        assert_eq!(
+            profile.correct_claim(&id, oversized, ClaimKind::Opinion),
+            Err(ProfileError::ClaimStatementTooLong)
+        );
+    }
+
+    #[test]
     fn captured_claim_requires_explicit_review_before_attribution() {
         let record = captured_opinion();
         assert!(VerifiedOwnerOpinion::try_from(record.current().claim().clone()).is_err());
@@ -413,6 +493,35 @@ mod tests {
         assert_eq!(profile.identity().version().get(), 2);
         let claim = profile.claim(&id).unwrap().current().claim().clone();
         assert!(VerifiedOwnerOpinion::try_from(claim).is_ok());
+    }
+
+    #[test]
+    fn failed_transactional_correction_restores_exact_claim_history_and_version() {
+        let mut profile = profile();
+        let id = ClaimId::new("opinion-1").unwrap();
+        profile.add_captured_claim(captured_opinion()).unwrap();
+        profile.mark_capture_complete().unwrap();
+        profile.approve_claim(&id).unwrap();
+        profile.approve_initial_review().unwrap();
+
+        let before_record = profile.claim(&id).unwrap().clone();
+        let before_version = profile.identity().version();
+
+        let result = profile.correct_claim_transactional(
+            &id,
+            "Не должен сохраниться",
+            ClaimKind::Opinion,
+            |_| Err::<(), _>("durable commit failed"),
+        );
+
+        assert_eq!(
+            result,
+            Err(TransactionalCorrectionError::Commit(
+                "durable commit failed"
+            ))
+        );
+        assert_eq!(profile.claim(&id).unwrap(), &before_record);
+        assert_eq!(profile.identity().version(), before_version);
     }
 
     #[test]

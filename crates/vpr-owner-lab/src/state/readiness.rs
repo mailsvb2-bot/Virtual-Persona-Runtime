@@ -32,7 +32,7 @@ impl Default for LabModalityReadiness {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct LabReadinessState {
     readiness: Option<PersonaReadiness>,
     voice_job: Option<PreparationJob>,

@@ -156,9 +156,8 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
     engine
-        .correct_owner_claim(&id, body.statement, kind)
+        .correct_owner_claim_with_persistence(&id, body.statement, kind, save_reviewed_persona)
         .map_err(|error| lab_error_response(&error))?;
-    persist_reviewed_persona(&engine)?;
     Ok(json_response(200, &engine.status()))
 }
 
@@ -245,13 +244,6 @@ fn reviewed_snapshot_from_capture(
     })
 }
 
-fn persist_reviewed_persona(engine: &vpr_owner_lab::OwnerLabEngine) -> Result<(), HttpResponse> {
-    let snapshot = engine
-        .reviewed_owner_context_snapshot()
-        .map_err(|error| lab_error_response(&error))?;
-    save_reviewed_persona(&snapshot).map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))
-}
-
 fn with_capture<T>(
     state: &AppState,
     operation: impl FnOnce(&mut Rt0OwnerCapture) -> Result<T, OwnerCaptureError>,
@@ -266,7 +258,10 @@ fn with_capture<T>(
 fn capture_error_response(error: OwnerCaptureError) -> HttpResponse {
     match error {
         OwnerCaptureError::Capture(
-            CaptureError::BlankAnswer | CaptureError::Profile(ProfileError::BlankClaimStatement),
+            CaptureError::BlankAnswer
+            | CaptureError::Profile(
+                ProfileError::BlankClaimStatement | ProfileError::ClaimStatementTooLong,
+            ),
         ) => error_response(400, "INVALID_INPUT"),
         OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::ClaimNotFound)) => {
             error_response(404, "CLAIM_NOT_FOUND")

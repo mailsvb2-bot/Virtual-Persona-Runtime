@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+pub const MAX_OWNER_CLAIM_CHARS: usize = 4_096;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClaimKind {
     Factual,

@@ -12,7 +12,7 @@ use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
-use crate::owner_context::{OwnerContextError, ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
+use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
 use readiness::LabReadinessState;
 
 const PROVIDER_SCOPE: &str = "provider.egress";
@@ -111,6 +111,7 @@ pub enum LabError {
     InvalidState,
     Runtime(Rt0ReasonCode),
     Provider(Rt0ReasonCode),
+    PersistenceFailed,
     Internal,
 }
 
@@ -123,6 +124,7 @@ impl LabError {
             Self::InvalidInput => "INVALID_INPUT",
             Self::InvalidState => "INVALID_STATE_TRANSITION",
             Self::Runtime(reason) | Self::Provider(reason) => reason.as_str(),
+            Self::PersistenceFailed => "PERSONA_PERSISTENCE_FAILED",
             Self::Internal => "INTERNAL_ERROR",
         }
     }
@@ -229,23 +231,6 @@ impl OwnerLabEngine {
             .map_err(map_owner_context_error)?;
         self.readiness.reset_for_profile(context.profile())?;
         Ok(())
-    }
-
-    /// Returns an owner-only snapshot of the current reviewed claim revisions.
-    /// Previous revisions are intentionally not copied into this browser-facing view.
-    ///
-    /// # Errors
-    /// Returns `InvalidState` until explicit owner review has completed.
-    pub fn reviewed_owner_context_snapshot(
-        &self,
-    ) -> Result<ReviewedOwnerContextSnapshot, LabError> {
-        if self.session_audience == Some(LabSessionAudience::Visitor) {
-            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
-        }
-        self.reviewed_owner_context
-            .as_ref()
-            .map(ReviewedOwnerContext::snapshot)
-            .ok_or(LabError::InvalidState)
     }
 
     #[must_use]
@@ -569,6 +554,7 @@ const fn map_owner_context_error(error: OwnerContextError) -> LabError {
     match error {
         OwnerContextError::ProfileNotReviewed => LabError::InvalidState,
         OwnerContextError::CorrectionRejected => LabError::InvalidInput,
+        OwnerContextError::PersistenceFailed => LabError::PersistenceFailed,
     }
 }
 

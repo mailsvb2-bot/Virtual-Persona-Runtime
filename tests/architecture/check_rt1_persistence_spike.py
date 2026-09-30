@@ -10,12 +10,18 @@ RT1_SPEC = ROOT / "docs" / "releases" / "RT1_RELEASE_SPEC.md"
 OWNER_LAB_STATE = ROOT / "crates" / "vpr-owner-lab" / "src" / "state.rs"
 PROFILE = ROOT / "crates" / "vpr-domain" / "src" / "profile.rs"
 PREPARATION = ROOT / "crates" / "vpr-domain" / "src" / "preparation.rs"
+PERSONA_STORE = ROOT / "crates" / "vpr-owner-lab" / "src" / "persona_persistence.rs"
+WINDOWS_SECURE_STORE = ROOT / "crates" / "vpr-owner-lab" / "src" / "windows_secure_store.rs"
+OWNER_CAPTURE_HTTP = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_owner_capture.rs"
 
 contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
 spec = RT1_SPEC.read_text(encoding="utf-8")
 owner_lab = OWNER_LAB_STATE.read_text(encoding="utf-8")
 profile = PROFILE.read_text(encoding="utf-8")
 preparation = PREPARATION.read_text(encoding="utf-8")
+persona_store = PERSONA_STORE.read_text(encoding="utf-8")
+windows_secure_store = WINDOWS_SECURE_STORE.read_text(encoding="utf-8")
+owner_capture_http = OWNER_CAPTURE_HTTP.read_text(encoding="utf-8")
 
 if contract.get("schema") != "rt1-persistence-migration-spike-0.1":
     raise SystemExit("RT1 persistence spike schema drifted")
@@ -26,10 +32,14 @@ for flag in ("production", "durable_database_implemented", "migration_executed")
         raise SystemExit(f"RT1 persistence spike must remain non-promoting: {flag}")
 
 reality = contract.get("current_rt0_reality", {})
-if reality.get("durable_application_store_present") is not False:
-    raise SystemExit("research contract must not invent an RT0 durable application store")
-if reality.get("owner_lab_state") != "IN_PROCESS_ONLY":
-    raise SystemExit("RT0 Owner Lab state must remain described as process-local")
+if reality.get("production_durable_database_present") is not False:
+    raise SystemExit("RT0 must not claim a production durable database")
+if reality.get("experimental_reviewed_persona_store_present") is not True:
+    raise SystemExit("RT0 reviewed Persona persistence must be represented in the research contract")
+if reality.get("durable_store_scope") != "REVIEWED_PERSONA_SNAPSHOT_ONLY":
+    raise SystemExit("RT0 durable-store scope must remain limited to the reviewed Persona snapshot")
+if reality.get("runtime_session_turn_provider_state") != "IN_PROCESS_ONLY":
+    raise SystemExit("RT0 live runtime/session/provider state must remain process-local")
 if reality.get("automatic_rt0_to_rt1_migration_possible") is not False:
     raise SystemExit("automatic RT0->RT1 migration must remain disabled")
 
@@ -120,6 +130,30 @@ for required_source_marker in (
 ):
     if required_source_marker not in owner_lab:
         raise SystemExit(f"RT0 in-process state boundary changed: {required_source_marker}")
+
+for required_store_marker in (
+    "load_reviewed_persona",
+    "save_reviewed_persona",
+    "WINDOWS_STORE_PREFIX",
+    "owner-lab-reviewed-persona-v2",
+):
+    if required_store_marker not in persona_store:
+        raise SystemExit(f"reviewed Persona persistence boundary drifted: {required_store_marker}")
+
+for required_secure_store_marker in (
+    'state: "staging".into()',
+    'state: "ready".into()',
+    "sha256_hex",
+    "active_slot",
+    "MAX_CHUNKS",
+):
+    if required_secure_store_marker not in windows_secure_store:
+        raise SystemExit(
+            f"Windows reviewed Persona secure-store atomicity drifted: {required_secure_store_marker}"
+        )
+
+if "correct_owner_claim_with_persistence" not in owner_capture_http:
+    raise SystemExit("owner correction must remain coupled to atomic Persona persistence")
 
 for required_profile_marker in (
     "previous_revisions: Vec<OwnerClaimRevision>",

@@ -5,6 +5,8 @@ mod persona_persistence;
 mod provider_credentials;
 mod providers;
 mod state;
+#[cfg(windows)]
+mod windows_secure_store;
 
 pub use evidence::{
     LabAvSyncEvidenceInput, LabAvSyncReference, LabEvidenceError, LabMediaEvidenceInput,
