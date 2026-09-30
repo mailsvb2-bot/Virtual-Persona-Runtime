@@ -136,17 +136,6 @@ impl ReviewedOwnerContext {
     pub(crate) fn durable_snapshot(&self) -> DurableReviewedOwnerContextSnapshot {
         durable_snapshot_from_profile(&self.profile)
     }
-    pub(crate) fn correct_claim(
-        &mut self,
-        id: &ClaimId,
-        statement: impl Into<String>,
-        kind: ClaimKind,
-    ) -> Result<(), OwnerContextError> {
-        self.profile
-            .correct_claim(id, statement, kind)
-            .map_err(|_| OwnerContextError::CorrectionRejected)
-    }
-
     pub(crate) fn correct_claim_with_persistence(
         &mut self,
         id: &ClaimId,
@@ -396,10 +385,11 @@ mod tests {
         let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
         let id = ClaimId::new("opinion-working-style").unwrap();
         context
-            .correct_claim(
+            .correct_claim_with_persistence(
                 &id,
                 "Предпочитаю короткие циклы проверки",
                 ClaimKind::Preference,
+                |_| Ok(()),
             )
             .unwrap();
 
@@ -451,7 +441,12 @@ mod tests {
         let mut context = ReviewedOwnerContext::from_durable_snapshot(&durable).unwrap();
         let id = ClaimId::new("legacy-opinion").unwrap();
         context
-            .correct_claim(&id, "Новое точное значение", ClaimKind::Preference)
+            .correct_claim_with_persistence(
+                &id,
+                "Новое точное значение",
+                ClaimKind::Preference,
+                |_| Ok(()),
+            )
             .unwrap();
 
         let after = context.durable_snapshot();
