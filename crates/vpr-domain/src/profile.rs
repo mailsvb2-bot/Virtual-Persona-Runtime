@@ -16,6 +16,11 @@ impl ClaimRevision {
     }
 
     #[must_use]
+    pub fn new(value: u64) -> Option<Self> {
+        (value > 0).then_some(Self(value))
+    }
+
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -108,6 +113,61 @@ impl OwnerClaimRecord {
             && claim.derivation == DerivationKind::Direct
     }
 
+    #[must_use]
+    pub fn retained_revisions(&self) -> impl Iterator<Item = &OwnerClaimRevision> {
+        self.previous_revisions
+            .iter()
+            .chain(std::iter::once(&self.current))
+    }
+
+    #[must_use]
+    pub fn has_complete_history(&self) -> bool {
+        self.retained_revisions()
+            .next()
+            .is_some_and(|revision| revision.revision() == ClaimRevision::initial())
+    }
+
+    /// Restores retained claim history without fabricating revisions that are not present.
+    ///
+    /// A complete history starts at revision 1 with direct unverified owner material. A partial
+    /// legacy history may start later, but every retained revision must be contiguous direct owner
+    /// material and the current revision must be owner-verified.
+    ///
+    /// # Errors
+    /// Returns `ProfileError` when history is empty, non-contiguous, malformed, or not reviewed.
+    pub fn restore_retained_history(
+        id: ClaimId,
+        revisions: Vec<(u64, OwnerClaim)>,
+    ) -> Result<Self, ProfileError> {
+        let mut restored = Vec::with_capacity(revisions.len());
+        let mut expected = None;
+        let starts_at_initial = revisions
+            .first()
+            .is_some_and(|(revision, _)| *revision == ClaimRevision::initial().get());
+
+        for (index, (revision_number, claim)) in revisions.into_iter().enumerate() {
+            let revision =
+                ClaimRevision::new(revision_number).ok_or(ProfileError::InvalidClaimHistory)?;
+            if let Some(expected_revision) = expected
+                && revision != expected_revision
+            {
+                return Err(ProfileError::InvalidClaimHistory);
+            }
+            validate_restored_claim(&claim, index, starts_at_initial)?;
+            expected = Some(revision.next()?);
+            restored.push(OwnerClaimRevision { revision, claim });
+        }
+
+        let current = restored.pop().ok_or(ProfileError::InvalidClaimHistory)?;
+        if current.claim.verification != VerificationState::OwnerVerified {
+            return Err(ProfileError::InvalidClaimHistory);
+        }
+        Ok(Self {
+            id,
+            previous_revisions: restored,
+            current,
+        })
+    }
     /// Records explicit owner approval as a new claim revision.
     ///
     /// # Errors
