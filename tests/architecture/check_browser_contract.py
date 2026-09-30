@@ -457,6 +457,13 @@ if 'bootstrap does not touch microphone runtime before a realtime session' not i
 
 if 'page.addInitScript({ path: "e2e/voice-journey-driver.js" });' not in voice_e2e:
     raise SystemExit("Voice provider E2E must install its in-page driver before navigation")
+for required in (
+    "VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000",
+    "VOICE_JOURNEY_TEST_TIMEOUT_MS = 120_000",
+    "timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Voice provider E2E missing bounded terminal-report lifecycle: {required}")
 voice_after_navigation = voice_e2e.split('await page.goto("/");', 1)[1]
 for forbidden in (
     "page.locator(",
