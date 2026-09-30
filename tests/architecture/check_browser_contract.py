@@ -195,6 +195,18 @@ for required in ("Привет из браузера", "Что думает вл
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab Voice STT fixture missing canonical transcript: {required}")
 
+stt_request_index = voice_provider.find("const sttRequest = {")
+stt_push_index = voice_provider.find("requests.push(sttRequest);")
+stt_data_index = voice_provider.find('socket.on("data"')
+if not (0 <= stt_request_index < stt_push_index < stt_data_index):
+    raise SystemExit("Owner Lab streaming STT fixture must record provider calls at WebSocket open, before CloseStream")
+for required in (
+    "sttRequest.bodyLength = audioBytes;",
+    "sttRequest.completed = true;",
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab streaming STT fixture missing terminal enrichment: {required}")
+
 if "/__browser-journey" in voice_provider or "browserJourney" in voice_provider:
     raise SystemExit("Owner Lab provider fixture must not own browser journey control state")
 if "http://127.0.0.1:18790" in voice_journey_driver:
