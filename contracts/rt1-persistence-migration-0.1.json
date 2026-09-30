@@ -6,8 +6,10 @@
   "migration_executed": false,
   "purpose": "bounded contract-level feasibility proof only",
   "current_rt0_reality": {
-    "durable_application_store_present": false,
-    "owner_lab_state": "IN_PROCESS_ONLY",
+    "production_durable_database_present": false,
+    "experimental_reviewed_persona_store_present": true,
+    "durable_store_scope": "REVIEWED_PERSONA_SNAPSHOT_ONLY",
+    "runtime_session_turn_provider_state": "IN_PROCESS_ONLY",
     "automatic_rt0_to_rt1_migration_possible": false
   },
   "migration_policy": {
