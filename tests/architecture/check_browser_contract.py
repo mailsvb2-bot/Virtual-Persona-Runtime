@@ -334,6 +334,23 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
+for forbidden in (
+    "sessionState.realtime.control =",
+    "sessionState.realtime.audio =",
+    "sessionState.realtime.video =",
+    "sessionState.playbackId =",
+):
+    if forbidden in app:
+        raise SystemExit(f"Owner Lab session state must not be mutated outside SessionRuntimeState: {forbidden}")
+for required in (
+    "setRealtimeReadiness",
+    "setPlaybackId",
+    "private backendValue",
+    "private realtimeValue",
+    "private playbackIdValue",
+):
+    if required not in session_runtime_state:
+        raise SystemExit(f"Owner Lab session state owner missing canonical transition API: {required}")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
