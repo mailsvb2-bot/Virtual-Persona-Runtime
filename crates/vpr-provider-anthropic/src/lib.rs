@@ -5,6 +5,7 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
+    build_provider_http_client,
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
     ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
 };
@@ -73,10 +74,8 @@ impl AnthropicLlm {
         if config.max_tokens == 0 {
             return Err(invalid_response());
         }
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|error| map_transport_error(&error))?;
+        let client =
+            build_provider_http_client(config.timeout).map_err(|error| map_transport_error(&error))?;
         Ok(Self { client, config })
     }
 
