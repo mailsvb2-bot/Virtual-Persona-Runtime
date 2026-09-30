@@ -2,18 +2,58 @@ import {
   expect,
   test,
   type APIRequestContext,
-  type Page,
 } from "@playwright/test";
 
 import { installProviderAutoConnect } from "./provider-bootstrap.js";
 
 const ownerLabUrl = "http://127.0.0.1:18791";
 const providerUrl = "http://127.0.0.1:18790";
+const EXPRESSIVE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
+const EXPRESSIVE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
   "Я создаю виртуальных персонажей",
   "Отвечай кратко и спокойно",
   "Точность важнее уверенного выдумывания",
 ];
+
+type ExpressiveJourneyReport = {
+  status: "ok" | "failed";
+  error?: string;
+  layout?: {
+    overflow: boolean;
+    objectFit: string;
+    stageWidth: number;
+    stageHeight: number;
+    avatarWidth: number;
+    avatarHeight: number;
+  };
+  evidence?: {
+    canonical_playback_proven: boolean;
+    av_sync_proven: boolean;
+    av_sync_samples: Array<{
+      sample_sequence: number;
+      reference: string;
+      absolute_offset_millis: number;
+    }>;
+    media_events: Array<{ kind: string }>;
+    voice_attempts: Array<{
+      status: string;
+      canonical_playback_confirmed: boolean;
+    }>;
+  };
+  metrics?: {
+    stt: string;
+    llm: string;
+    llmFirst: string;
+    serverTotal: string;
+    firstAudio: string;
+    videoReady: string;
+    avSync: string;
+    playback: string;
+    cost: string;
+  };
+  commands?: Array<{ topic: string; text: string }>;
+};
 
 const csrfHeaders = (csrf: string) => ({
   "content-type": "application/json",
@@ -82,65 +122,47 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const recordStreamingVoiceTurn = async (
-  page: Page,
-  transcript: string,
-  reply: string,
-): Promise<void> => {
-  const voice = page.locator("#voice");
-  await voice.click();
-  await expect(voice).toHaveText("Остановить и отправить");
-  await voice.click();
-
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
-
-  const spoken = await page.evaluate(() => (
-    (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.find((command) => command.topic === "did.speak")?.text ?? ""
-  ));
-  expect(spoken).toContain(reply);
-
-  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
-
-  // Do not end fake provider playback until the browser has actually observed remote
-  // audio and the backend has accepted canonical audio_started evidence. Otherwise
-  // a fast playback_done can race requestAnimationFrame-based audio observation and
-  // make the same candidate pass or fail depending on runner scheduling.
-  await expect(page.locator("#readiness-voice")).toHaveText("Готов");
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
-    fakeWindow.__vprExpressivePlaybackDone?.();
-  });
-
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
-};
-
 test("Expressive LiveKit voice path reaches canonical playback, A/V sync and recovery", async ({
   page,
   request,
 }) => {
+  test.setTimeout(EXPRESSIVE_JOURNEY_TEST_TIMEOUT_MS);
+
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
+  let report: ExpressiveJourneyReport | null = null;
+  let lastJourneyPhase = "not-started";
+  await page.route("**/__expressive_journey_report", async (route) => {
+    const incoming = route.request();
+    if (incoming.method() !== "POST") {
+      await route.fulfill({ status: 405 });
+      return;
+    }
+    try {
+      const payload = JSON.parse(incoming.postData() ?? "") as
+        | ExpressiveJourneyReport
+        | { kind: "phase"; phase: string };
+      if ("kind" in payload && payload.kind === "phase") {
+        lastJourneyPhase = payload.phase;
+      } else {
+        report = payload as ExpressiveJourneyReport;
+      }
+    } catch {
+      report = { status: "failed", error: "INVALID_EXPRESSIVE_JOURNEY_REPORT" };
+    }
+    await route.fulfill({ status: 204 });
+  });
+
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
   await page.route("**/api/evidence/media", async (route) => {
-    const request = route.request();
-    if (request.method() === "POST") {
-      const body = request.postDataJSON() as { kind?: string } | null;
+    const incoming = route.request();
+    if (incoming.method() === "POST") {
+      const body = incoming.postDataJSON() as { kind?: string } | null;
       if (body?.kind === "audio_started") {
         await new Promise<void>((resolve) => setTimeout(resolve, 300));
       }
@@ -148,169 +170,65 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
-  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
-  await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await expect(page.locator("#status")).toContainText("LiveKit согласован");
-  await expect(page.locator(".stage")).toHaveClass(/has-video/);
-  await expect(page.locator("#readiness-text")).toHaveText("Готов");
-  await expect(page.locator("#readiness-video")).toHaveText("Готов");
-  await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
 
-  const layout = await page.evaluate(() => {
-    const stage = document.querySelector<HTMLElement>(".stage");
-    const avatar = document.querySelector<HTMLVideoElement>("#avatar");
-    if (!stage || !avatar) throw new Error("missing stage");
-    const stageRect = stage.getBoundingClientRect();
-    const avatarRect = avatar.getBoundingClientRect();
-    return {
-      overflow: document.documentElement.scrollWidth > window.innerWidth,
-      objectFit: getComputedStyle(avatar).objectFit,
-      stageWidth: stageRect.width,
-      stageHeight: stageRect.height,
-      avatarWidth: avatarRect.width,
-      avatarHeight: avatarRect.height,
-    };
-  });
-  expect(layout.overflow).toBe(false);
-  expect(layout.objectFit).toBe("contain");
-  expect(layout.avatarWidth).toBeLessThanOrEqual(layout.stageWidth);
-  expect(layout.avatarHeight).toBeLessThanOrEqual(layout.stageHeight);
+  await expect.poll(() => {
+    if (!report) return `pending:${lastJourneyPhase}`;
+    return report.status === "failed"
+      ? `failed:${report.error ?? "unknown"}@phase:${lastJourneyPhase}`
+      : report.status;
+  }, {
+    timeout: EXPRESSIVE_JOURNEY_COMPLETION_TIMEOUT_MS,
+    intervals: [100, 250, 500],
+    message: "Expressive journey must publish a terminal same-origin report",
+  }).toBe("ok");
 
-  const voiceButton = page.locator("#voice");
-  await expect(voiceButton).toBeEnabled();
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveLoseVideo?: () => void };
-    fakeWindow.__vprExpressiveLoseVideo?.();
-  });
-  await expect(page.locator(".stage")).not.toHaveClass(/has-video/);
-  await expect(voiceButton).toBeEnabled();
-  await expect(page.locator("#status")).toContainText(
-    "Видео-поток аватара потерян. Голос остаётся доступен",
+  expect(report).not.toBeNull();
+  expect(report?.status).toBe("ok");
+
+  const layout = report?.layout;
+  expect(layout).toBeDefined();
+  expect(layout?.overflow).toBe(false);
+  expect(layout?.objectFit).toBe("contain");
+  expect(layout?.avatarWidth ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    layout?.stageWidth ?? 0,
+  );
+  expect(layout?.avatarHeight ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
+    layout?.stageHeight ?? 0,
   );
 
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveRestoreVideo?: () => void };
-    fakeWindow.__vprExpressiveRestoreVideo?.();
-  });
-  await expect(page.locator(".stage")).toHaveClass(/has-video/);
-  await expect(voiceButton).toBeEnabled();
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveLoseAudio?: () => void };
-    fakeWindow.__vprExpressiveLoseAudio?.();
-  });
-  await expect(voiceButton).toBeEnabled();
-  await expect(page.locator("#speak")).toBeEnabled();
-  await expect(page.locator("#status")).toContainText(
-    "Аудиопоток аватара потерян. Микрофон и текст остаются доступны",
-  );
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveRestoreAudio?: () => void };
-    fakeWindow.__vprExpressiveRestoreAudio?.();
-  });
-  await expect(voiceButton).toBeEnabled();
-
-  await recordStreamingVoiceTurn(
-    page,
-    "Привет из браузера",
-    "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
-  );
-  await expect(page.locator("#readiness-voice")).toHaveText("Готов");
-  await expect(page.locator("#readiness-video")).toHaveText("Готов");
-
-  await expect.poll(async () => {
-    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    if (!evidence.ok()) {
-      return false;
-    }
-    const snapshot = await evidence.json() as {
-      canonical_playback_proven: boolean;
-      av_sync_proven: boolean;
-      voice_attempts: Array<{
-        status: string;
-        canonical_playback_confirmed: boolean;
-      }>;
-    };
-    return snapshot.canonical_playback_proven
-      && snapshot.av_sync_proven
-      && snapshot.voice_attempts.some((attempt) =>
-        attempt.status === "completed" && attempt.canonical_playback_confirmed
-      );
-  }, { timeout: 10_000 }).toBeTruthy();
-
-  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-  const snapshot = await evidence.json() as {
-    canonical_playback_proven: boolean;
-    av_sync_proven: boolean;
-    av_sync_samples: Array<{
-      sample_sequence: number;
-      reference: string;
-      absolute_offset_millis: number;
-    }>;
-    media_events: Array<{ kind: string }>;
-  };
-  expect(snapshot.canonical_playback_proven).toBeTruthy();
-  expect(snapshot.av_sync_proven).toBeTruthy();
-  expect(snapshot.av_sync_samples).toHaveLength(3);
-  expect(snapshot.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
-  expect(snapshot.av_sync_samples.every((sample) =>
+  const evidence = report?.evidence;
+  expect(evidence).toBeDefined();
+  expect(evidence?.canonical_playback_proven).toBeTruthy();
+  expect(evidence?.av_sync_proven).toBeTruthy();
+  expect(evidence?.av_sync_samples).toHaveLength(3);
+  expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
+  expect(evidence?.av_sync_samples.every((sample) =>
     sample.reference === "web_rtc_estimated_playout_timestamp"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
+  expect(evidence?.voice_attempts.some((attempt) =>
+    attempt.status === "completed" && attempt.canonical_playback_confirmed
+  )).toBeTruthy();
 
-  await expect(page.locator("#metric-stt")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-llm")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-llm-first")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-server-total")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-first-audio")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-video-ready")).toHaveText(/\d+ мс/);
-  await expect(page.locator("#metric-av-sync")).toHaveText("60 мс · 3 изм.");
-  await expect(page.locator("#metric-playback")).toHaveText("подтверждён");
-  await expect(page.locator("#metric-cost")).toHaveText("провайдер не сообщил стоимость");
+  const metrics = report?.metrics;
+  expect(metrics).toBeDefined();
+  expect(metrics?.stt).toMatch(/\d+ мс/);
+  expect(metrics?.llm).toMatch(/\d+ мс/);
+  expect(metrics?.llmFirst).toMatch(/\d+ мс/);
+  expect(metrics?.serverTotal).toMatch(/\d+ мс/);
+  expect(metrics?.firstAudio).toMatch(/\d+ мс/);
+  expect(metrics?.videoReady).toMatch(/\d+ мс/);
+  expect(metrics?.avSync).toBe("60 мс · 3 изм.");
+  expect(metrics?.playback).toBe("подтверждён");
+  expect(metrics?.cost).toBe("провайдер не сообщил стоимость");
 
-  const commands = await page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands ?? [],
-  );
+  const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
   expect(speak).toHaveLength(1);
   expect(JSON.parse(speak[0]?.text ?? "{}").script.input).toBe(
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
-
-  // Start a second voice turn and interrupt it while the LLM tail is still open.
-  // Client-text avatars receive only a complete generated reply, so the interrupted turn must
-  // never emit even a partial did.speak command.
-  await voiceButton.click();
-  await expect(voiceButton).toHaveText("Остановить и отправить");
-  await voiceButton.click();
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(1);
-
-  const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
-  await expect(interrupt).toBeEnabled();
-  await interrupt.click();
-  await expect(page.locator("#status")).toContainText("TURN_CANCELLED");
-
-  await page.waitForTimeout(800);
-  const commandsAfterInterrupt = await page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands ?? [],
-  );
-  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(1);
-  expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressiveDisconnect?: () => void };
-    fakeWindow.__vprExpressiveDisconnect?.();
-  });
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  expect(commands.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
   const providerState = await request.get(`${providerUrl}/__state`);
   expect(providerState.ok()).toBeTruthy();
