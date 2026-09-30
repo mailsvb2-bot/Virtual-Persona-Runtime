@@ -393,19 +393,33 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_snapshot_round_trips_exact_current_state() {
+    fn durable_snapshot_round_trips_exact_revision_history() {
         let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
         let id = ClaimId::new("opinion-working-style").unwrap();
         context
             .correct_claim(
                 &id,
                 "Предпочитаю короткие циклы проверки",
-                ClaimKind::Opinion,
+                ClaimKind::Preference,
             )
             .unwrap();
-        let snapshot = context.snapshot();
-        let restored = ReviewedOwnerContext::from_snapshot(&snapshot).unwrap();
-        assert_eq!(restored.snapshot(), snapshot);
+
+        let durable = context.durable_snapshot();
+        assert!(durable.claims[0].history_complete);
+        assert_eq!(durable.claims[0].revisions.len(), 3);
+        assert_eq!(durable.claims[0].revisions[0].statement, "Люблю быстрые итерации");
+        assert_eq!(durable.claims[0].revisions[0].verification, "unverified");
+        assert_eq!(durable.claims[0].revisions[1].statement, "Люблю быстрые итерации");
+        assert_eq!(durable.claims[0].revisions[1].verification, "owner_verified");
+        assert_eq!(
+            durable.claims[0].revisions[2].statement,
+            "Предпочитаю короткие циклы проверки"
+        );
+        assert_eq!(durable.claims[0].revisions[2].kind, "preference");
+
+        let restored = ReviewedOwnerContext::from_durable_snapshot(&durable).unwrap();
+        assert_eq!(restored.durable_snapshot(), durable);
+        assert_eq!(restored.snapshot(), context.snapshot());
     }
 
     #[test]
