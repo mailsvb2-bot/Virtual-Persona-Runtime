@@ -307,17 +307,23 @@ for required in (
 if 'page.route("**/__expressive_journey_report"' not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E missing same-origin terminal-report mailbox")
 
-if 'page.route("**/__expressive_provider_state"' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E missing same-origin provider-state bridge")
+if 'page.route("**/__expressive_provider_state"' in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive journey must not depend on a Playwright provider-state callback")
 for required in (
-    'fetch("/__expressive_provider_state"',
+    'fetch("http://127.0.0.1:18790/__state"',
+    'mode: "cors"',
     '"second-llm-open"',
     'entry.bodyText.includes("Что думает владелец?")',
 ):
     if required not in expressive_journey_driver:
-        raise SystemExit(f"Owner Lab Expressive interrupt must wait for the second LLM stream: {required}")
-if "http://127.0.0.1:18790" in expressive_journey_driver:
-    raise SystemExit("Owner Lab Expressive in-page driver must not call the provider cross-origin")
+        raise SystemExit(f"Owner Lab Expressive interrupt must wait for the second LLM stream without renderer RPC: {required}")
+for required in (
+    '"http://127.0.0.1:18791"',
+    '"access-control-allow-origin"',
+    'browserTestOrigins.has(origin)',
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab Expressive provider-state read must use an explicit local CORS allowlist: {required}")
 if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
