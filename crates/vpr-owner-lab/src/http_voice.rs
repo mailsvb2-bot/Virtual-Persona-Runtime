@@ -138,12 +138,18 @@ impl VoiceStreamRegistry {
         Ok(())
     }
 
-    fn finish(&self, request_sequence: u64, event: VoiceStreamEvent) {
+    fn finish<F>(&self, request_sequence: u64, event: VoiceStreamEvent, before_publish: F)
+    where
+        F: FnOnce(),
+    {
         let mut streams = self.streams.lock();
         if let Some(stream) = streams.get_mut(&request_sequence) {
             stream.events.push_back(event);
             stream.terminal = true;
         }
+        // Keep terminal-state mutation and the lifecycle gate ordered under the same
+        // registry lock so a waiter cannot observe terminal=true while voice_busy is stale.
+        before_publish();
         drop(streams);
         self.changed.notify_all();
     }
@@ -574,9 +580,9 @@ fn finish_voice_stream(
             }
         }
     };
-    // A terminal stream event is a public lifecycle boundary. Release the single-turn
-    // busy/cancel gate before making that terminal state observable so a client that
-    // immediately starts the next text/voice turn cannot race the worker's RAII drop.
-    release_voice_busy(state);
-    state.voice_streams.finish(request_sequence, event);
+    // A terminal stream event is a public lifecycle boundary. Mark it terminal and release
+    // the single-turn gate atomically from the waiter's point of view, then publish it.
+    state
+        .voice_streams
+        .finish(request_sequence, event, || release_voice_busy(state));
 }
