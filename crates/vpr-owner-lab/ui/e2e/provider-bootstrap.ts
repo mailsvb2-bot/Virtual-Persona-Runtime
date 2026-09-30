@@ -1,41 +1,53 @@
 import type { Page } from "@playwright/test";
 
 /**
- * Arms provider-integration journeys before navigation.
+ * Arms the real Owner Lab consent/connect controls before navigation.
  *
- * Browser-contract E2E owns human click/actionability proof. Provider journeys only need the
- * canonical connect event to happen after the app has completed bootstrap. Installing this hook
- * at document creation avoids a late Playwright/CDP mutation racing the live renderer.
+ * Media-provider E2E must not depend on post-navigation CDP actionability while the
+ * browser is bringing up synthetic media primitives. This harness stays entirely in
+ * the test document: it waits for the application's visible ready state, checks the
+ * real consent checkbox, and invokes the real Connect button. Production exposes no
+ * test event, callback, or alternate connect path.
  */
 export const installProviderAutoConnect = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
-    window.addEventListener("vpr:bootstrap-ready", () => {
+    const arm = (): void => {
       const root = document.documentElement;
       const connect = document.getElementById("connect");
       const consent = document.getElementById("consent");
+      const status = document.getElementById("status");
 
-      if (!(connect instanceof HTMLButtonElement)) {
-        root.dataset.vprProviderAutoConnect = "CONNECT_CONTROL_MISSING";
-        return;
-      }
-      if (!(consent instanceof HTMLInputElement)) {
-        root.dataset.vprProviderAutoConnect = "CONNECT_CONSENT_MISSING";
-        return;
-      }
-      // Provider E2E owns the provider/backend path, not the human consent-click proof.
-      // Set consent at the exact bootstrap-ready boundary so DOM parsing/order cannot race it.
-      consent.checked = true;
-      if (!consent.checked) {
-        root.dataset.vprProviderAutoConnect = "CONNECT_CONSENT_NOT_PRESEEDED";
-        return;
-      }
-      if (connect.disabled) {
-        root.dataset.vprProviderAutoConnect = "CONNECT_CONTROL_DISABLED";
+      if (
+        !(connect instanceof HTMLButtonElement)
+        || !(consent instanceof HTMLInputElement)
+        || !(status instanceof HTMLElement)
+      ) {
+        root.dataset.vprProviderAutoConnect = "controls-missing";
         return;
       }
 
-      root.dataset.vprProviderAutoConnect = "clicked";
-      connect.click();
-    }, { once: true });
+      const tryConnect = (): boolean => {
+        const applicationReady = status.textContent?.includes("Готов к подключению") === true;
+        if (!applicationReady || connect.disabled) return false;
+        consent.checked = true;
+        root.dataset.vprProviderAutoConnect = "clicked";
+        connect.click();
+        return true;
+      };
+
+      if (tryConnect()) return;
+      const observer = new MutationObserver(() => {
+        if (!tryConnect()) return;
+        observer.disconnect();
+      });
+      observer.observe(connect, { attributes: true, attributeFilter: ["disabled"] });
+      observer.observe(status, { childList: true, subtree: true, characterData: true });
+    };
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", arm, { once: true });
+    } else {
+      arm();
+    }
   });
 };

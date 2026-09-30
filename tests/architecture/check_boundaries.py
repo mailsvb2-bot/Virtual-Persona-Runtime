@@ -484,6 +484,7 @@ owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
 owner_lab_providers = (owner_lab_src / "providers.rs").read_text(encoding="utf-8")
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
 owner_lab_app = (owner_lab_ui_root / "src" / "app.ts").read_text(encoding="utf-8")
+owner_lab_media_runtime = (owner_lab_ui_root / "src" / "media-runtime.ts").read_text(encoding="utf-8")
 owner_lab_bundle = owner_lab_ui_root / "dist" / "app.js"
 if not owner_lab_bundle.is_file():
     raise SystemExit("Owner Lab browser bundle must remain versioned for Rust include_str embedding")
@@ -495,6 +496,28 @@ owner_lab_ui_files = [
     and path.suffix in {".ts", ".js", ".html", ".css", ".json"}
 ]
 owner_lab_ui = "\n".join(path.read_text(encoding="utf-8") for path in owner_lab_ui_files)
+owner_lab_runtime_root_files = {
+    "index.html",
+    "styles.css",
+    "reference-capture.js",
+    "mic-worklet.js",
+}
+owner_lab_production_ui_files = [
+    path
+    for path in owner_lab_ui_files
+    if (
+        path.relative_to(owner_lab_ui_root).parts[0] in {"src", "dist"}
+        or path.relative_to(owner_lab_ui_root).as_posix() in owner_lab_runtime_root_files
+    )
+]
+if not owner_lab_production_ui_files or any(
+    "e2e" in path.relative_to(owner_lab_ui_root).parts
+    for path in owner_lab_production_ui_files
+):
+    raise SystemExit("Owner Lab production UI boundary must exclude E2E harnesses")
+owner_lab_production_ui = "\n".join(
+    path.read_text(encoding="utf-8") for path in owner_lab_production_ui_files
+)
 if 'format!("127.0.0.1:{port}")' not in owner_lab_main:
     raise SystemExit("Owner Lab HTTP listener must remain loopback-only")
 for required in (
@@ -529,10 +552,10 @@ for required in (
 if "if !self.egress_enabled" not in owner_lab_state or "if !request.consent" not in owner_lab_state:
     raise SystemExit("Owner Lab production start path must retain process egress and explicit-consent gates")
 for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secret-key"):
-    if forbidden in owner_lab_ui:
-        raise SystemExit(f"Owner Lab UI must not contain provider secrets/endpoints: {forbidden}")
-if 'fetch("http' in owner_lab_ui or "fetch('http" in owner_lab_ui:
-    raise SystemExit("Owner Lab UI must use same-origin backend APIs only")
+    if forbidden in owner_lab_production_ui:
+        raise SystemExit(f"Owner Lab production UI must not contain provider secrets/endpoints: {forbidden}")
+if 'fetch("http' in owner_lab_production_ui or "fetch('http" in owner_lab_production_ui:
+    raise SystemExit("Owner Lab production UI must use same-origin backend APIs only")
 for forbidden_did_wire in ("JanusDataChannel", "stream/started", "stream/done", "stream/interrupt"):
     if forbidden_did_wire in owner_lab_app:
         raise SystemExit(
@@ -648,8 +671,8 @@ for forbidden_browser_secret in (
     "VPR_OWNER_LAB_STT_ENDPOINT",
     "VPR_OWNER_LAB_LLM_ENDPOINT",
 ):
-    if forbidden_browser_secret in owner_lab_ui:
-        raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
+    if forbidden_browser_secret in owner_lab_production_ui:
+        raise SystemExit(f"Owner Lab production browser must not own provider configuration: {forbidden_browser_secret}")
 for required_live_mic in (
     "AudioWorkletNode",
     "apiBinary",
@@ -677,14 +700,8 @@ if any(
         "new RuntimeAudioContext({ sampleRate: 16_000",
         "createRuntimeAudioContext({ sampleRate: 16_000",
     )
-) and not any(
-    native_fallback in owner_lab_app
-    for native_fallback in (
-        "testMediaRuntime?.AudioContext ?? window.AudioContext",
-        "testMediaRuntime()?.AudioContext ?? window.AudioContext",
-    )
-):
-    raise SystemExit("Owner Lab test media seam must preserve native AudioContext fallback")
+) and "mediaRuntime()?.AudioContext ?? window.AudioContext" not in owner_lab_media_runtime:
+    raise SystemExit("Owner Lab media adapter must preserve native AudioContext fallback")
 if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
     raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
 if (

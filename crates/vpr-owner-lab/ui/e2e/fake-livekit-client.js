@@ -179,7 +179,6 @@
       for (const handler of this.handlers.get(event) || []) handler(...args);
     }
     async connect() {
-      installMediaRuntime();
       testDevicesReady = true;
       queueMicrotask(() => deviceChangeListeners.forEach((listener) => listener()));
       this.videoTrack = new FakeRemoteTrack("video");
@@ -193,8 +192,8 @@
   window.__vprLiveKitCommands = commands;
   window.__vprExpressiveRemoteSpeech = false;
   const installMediaRuntime = () => {
-    if (window.__vprTestMediaRuntime) return;
-    window.__vprTestMediaRuntime = {
+    if (window.__vprMediaRuntime) return;
+    window.__vprMediaRuntime = {
       mediaDevices,
       MediaStream: FakeMediaStream,
       AudioContext: FakeAudioContext,
@@ -209,5 +208,6 @@
     };
   };
 
+  installMediaRuntime();
   window.LivekitClient = { Room: FakeRoom, RoomEvent: roomEvents };
 })();

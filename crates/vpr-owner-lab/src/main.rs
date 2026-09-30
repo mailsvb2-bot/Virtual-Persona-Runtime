@@ -42,6 +42,9 @@ const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
+const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js");
+const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
+const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
@@ -191,6 +194,15 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         }
         (&Method::Get, "/voice-command-scheduler.js") => {
             static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/bootstrap-context.js") => {
+            static_response(BOOTSTRAP_CONTEXT_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/media-runtime.js") => {
+            static_response(MEDIA_RUNTIME_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/session-runtime-state.js") => {
+            static_response(SESSION_RUNTIME_STATE_JS, "text/javascript; charset=utf-8")
         }
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")

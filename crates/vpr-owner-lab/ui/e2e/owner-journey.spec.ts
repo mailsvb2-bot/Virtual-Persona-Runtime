@@ -33,6 +33,7 @@ type FixtureState = {
   directSpeech: string[];
   textMessages: string[];
   apiPaths: string[];
+  staleStatusOnceAfterStart: boolean;
   voiceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
   appearanceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
 };
@@ -220,6 +221,15 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       return json(route, { csrf_token: csrfToken, egress_enabled: true });
     }
     if (request.method() === "GET" && path === "/api/status") {
+      if (state.staleStatusOnceAfterStart && state.startAudiences.length > 0) {
+        state.staleStatusOnceAfterStart = false;
+        return json(route, {
+          ...statusSnapshot(state),
+          session_state: "none",
+          avatar_open: false,
+          session_audience: null,
+        });
+      }
       return json(route, statusSnapshot(state));
     }
     if (request.method() === "GET" && path === "/api/persona/capture") {
@@ -437,8 +447,40 @@ const initialState = (): FixtureState => ({
   directSpeech: [],
   textMessages: [],
   apiPaths: [],
+  staleStatusOnceAfterStart: false,
   voiceReference: null,
   appearanceReference: null,
+});
+
+
+test("connect closes a started backend session when authoritative start status mismatches", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "owner-authoritative-start-e2e";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.staleStatusOnceAfterStart = true;
+  state.claims = [{
+    claim_id: "opinion-working-style",
+    statement: "Отвечай кратко и спокойно",
+    kind: "opinion",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.locator("#consent").check();
+  await page.getByRole("button", { name: "Подключить аватар" }).click();
+
+  await expect(page.locator("#status")).toContainText("SESSION_START_STATE_MISMATCH");
+  await expect.poll(() => state.sessionState).toBe("closed");
+  expect(state.apiPaths).toContain("POST /api/avatar/start");
+  expect(state.apiPaths).toContain("POST /api/session/close");
+  expect(state.apiPaths).not.toContain("POST /api/avatar/answer");
 });
 
 
@@ -459,7 +501,7 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
 
   await page.addInitScript(() => {
     const testWindow = window as typeof window & {
-      __vprTestMediaRuntime?: unknown;
+      __vprMediaRuntime?: unknown;
       __vprBootstrapMediaAccesses?: number;
     };
     testWindow.__vprBootstrapMediaAccesses = 0;
@@ -467,7 +509,7 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
       testWindow.__vprBootstrapMediaAccesses = (testWindow.__vprBootstrapMediaAccesses ?? 0) + 1;
       throw new Error("MEDIA_RUNTIME_TOUCHED_DURING_BOOTSTRAP");
     };
-    testWindow.__vprTestMediaRuntime = {
+    testWindow.__vprMediaRuntime = {
       mediaDevices: {
         enumerateDevices: async () => unexpectedMediaAccess(),
         getUserMedia: async () => unexpectedMediaAccess(),
@@ -477,10 +519,7 @@ test("bootstrap does not touch microphone runtime before a realtime session", as
   });
   await installApiFixture(page, state);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrap?: { ready?: boolean } })
-      .__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
+  await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#connect")).toBeEnabled();
   await expect.poll(() => page.evaluate(
     () => (window as typeof window & { __vprBootstrapMediaAccesses?: number })
@@ -503,28 +542,14 @@ test("bootstrap applies one authoritative status snapshot before capture refresh
     owner_reviewed: true,
   }];
 
-  await page.addInitScript(() => {
-    (window as typeof window & { __vprBootstrapReadyEvents?: number }).__vprBootstrapReadyEvents = 0;
-    window.addEventListener("vpr:bootstrap-ready", () => {
-      const testWindow = window as typeof window & { __vprBootstrapReadyEvents?: number };
-      testWindow.__vprBootstrapReadyEvents = (testWindow.__vprBootstrapReadyEvents ?? 0) + 1;
-    });
-  });
   await installBrowserFakes(page);
   await installApiFixture(page, state);
   await page.goto("/");
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrap?: { ready?: boolean } })
-      .__vprBootstrap?.ready ?? false,
-  )).toBeTruthy();
 
-  expect(state.apiPaths.filter((entry) => entry === "GET /api/status")).toHaveLength(1);
-  await expect.poll(() => page.evaluate(
-    () => (window as typeof window & { __vprBootstrapReadyEvents?: number })
-      .__vprBootstrapReadyEvents ?? 0,
-  )).toBe(1);
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
   await expect(page.locator("#connect")).toBeEnabled();
+  expect(state.apiPaths.filter((entry) => entry === "GET /api/status")).toHaveLength(1);
 });
 
 test("owner can upload and clear local voice/appearance references without raw retention", async ({ page }) => {
@@ -765,6 +790,7 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByLabel("Текстовый разговор").fill("Проверка owner scope");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Owner scoped text reply");
+  await expect(page.locator("#voice")).toBeEnabled();
   await expect.poll(() => state.textMessages).toEqual(["owner:Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
