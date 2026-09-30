@@ -119,10 +119,14 @@ impl Rt0OwnerCapture {
     }
 
     #[must_use]
+    pub(crate) fn profile(&self) -> &PersonaProfile {
+        self.interview.profile()
+    }
+
+    #[must_use]
     pub fn into_profile(self) -> PersonaProfile {
         self.interview.into_profile()
-    }
-}
+    }}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct OwnerCaptureSnapshot {
