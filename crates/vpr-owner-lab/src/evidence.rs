@@ -181,6 +181,7 @@ impl LabSessionEvidenceRecorder {
                 failure_code: None,
                 stt_millis: None,
                 llm_millis: None,
+                llm_first_meaningful_millis: None,
                 avatar_millis: None,
                 server_total_millis: None,
                 stt_usage: None,
@@ -206,12 +207,23 @@ impl LabSessionEvidenceRecorder {
         if attempt.status != LabVoiceAttemptStatus::Pending {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
+        if result.evidence_turn_sequence == 0
+            || result.evidence_output_sequence == 0
+            || result.stt_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.llm_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.llm_first_meaningful_millis > result.llm_millis
+            || result.avatar_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
+        {
+            return Err(LabEvidenceError::InvalidInput);
+        }
         attempt.canonical_turn_sequence = Some(result.evidence_turn_sequence);
         attempt.canonical_output_sequence = Some(result.evidence_output_sequence);
         attempt.canonical_playback_confirmed = false;
         attempt.status = LabVoiceAttemptStatus::Completed;
         attempt.stt_millis = Some(result.stt_millis);
         attempt.llm_millis = Some(result.llm_millis);
+        attempt.llm_first_meaningful_millis = Some(result.llm_first_meaningful_millis);
         attempt.avatar_millis = Some(result.avatar_millis);
         attempt.server_total_millis = Some(result.total_millis);
         attempt.stt_usage = Some(result.stt_usage.clone());
