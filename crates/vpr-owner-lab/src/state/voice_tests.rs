@@ -390,10 +390,11 @@ fn corrected_reviewed_claim_is_used_by_the_next_canonical_voice_turn() {
     engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     let id = ClaimId::new("opinion-working-style").unwrap();
     engine
-        .correct_owner_claim(
+        .correct_owner_claim_with_persistence(
             &id,
             "Предпочитаю короткие циклы проверки",
             ClaimKind::Opinion,
+            |_| Ok(()),
         )
         .unwrap();
     assert_eq!(engine.status().persona_version, 3);
@@ -423,10 +424,11 @@ fn visitor_voice_turn_excludes_reviewed_owner_context_and_blocks_direct_speech()
     ));
     let owner_claim_id = ClaimId::new("opinion-working-style").unwrap();
     assert_eq!(
-        engine.correct_owner_claim(
+        engine.correct_owner_claim_with_persistence(
             &owner_claim_id,
             "Попытка visitor-перезаписи",
             ClaimKind::Opinion,
+            |_| panic!("visitor correction must never reach persistence"),
         ),
         Err(LabError::Runtime(
             vpr_domain::Rt0ReasonCode::AuthScopeDenied
