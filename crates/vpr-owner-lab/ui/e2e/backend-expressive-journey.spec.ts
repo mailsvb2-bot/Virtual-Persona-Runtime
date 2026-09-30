@@ -342,12 +342,17 @@ const recordStreamingVoiceTurn = async (
   await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
   await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 
+  // Do not end fake provider playback until the browser has actually observed remote
+  // audio and the backend has accepted canonical audio_started evidence. Otherwise
+  // a fast playback_done can race requestAnimationFrame-based audio observation and
+  // make the same candidate pass or fail depending on runner scheduling.
+  await expect(page.locator("#readiness-voice")).toHaveText("Готов");
+
   await page.evaluate(() => {
     const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
     fakeWindow.__vprExpressivePlaybackDone?.();
   });
 
-  await page.waitForTimeout(100);
   await expect.poll(async () => page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
