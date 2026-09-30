@@ -327,10 +327,12 @@ test("owner and visitor voice turns cross the real backend with different contex
   request,
 }) => {
   test.setTimeout(VOICE_JOURNEY_TEST_TIMEOUT_MS);
+  console.log("[voice-journey-controller] setup-start");
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
+  console.log("[voice-journey-controller] persona-ready");
 
   let report: VoiceJourneyReport | null = null;
   let lastJourneyPhase = "not-started";
@@ -346,8 +348,10 @@ test("owner and visitor voice turns cross the real backend with different contex
         | { kind: "phase"; phase: string };
       if ("kind" in payload && payload.kind === "phase") {
         lastJourneyPhase = payload.phase;
+        console.log(`[voice-journey-phase] ${lastJourneyPhase}`);
       } else {
         report = payload as VoiceJourneyReport;
+        console.log(`[voice-journey-terminal] ${report.status}`);
       }
     } catch {
       report = { status: "failed", error: "INVALID_JOURNEY_REPORT" };
@@ -358,7 +362,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   await installBrowserAudioFakes(page);
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/voice-journey-driver.js" });
+  console.log("[voice-journey-controller] navigation-start");
   await page.goto("/");
+  console.log("[voice-journey-controller] navigation-complete");
 
   await expect.poll(() => {
     if (!report) return `pending:${lastJourneyPhase}`;
