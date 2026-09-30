@@ -418,7 +418,13 @@ fn successful_reviewed_persona_persistence_commits_exact_new_snapshot() {
 
     assert_eq!(
         persisted,
-        Some(engine.reviewed_owner_context_snapshot().unwrap())
+        Some(
+            engine
+                .reviewed_owner_context
+                .as_ref()
+                .unwrap()
+                .durable_snapshot()
+        )
     );
     assert_eq!(engine.status().persona_version, 3);
 }
