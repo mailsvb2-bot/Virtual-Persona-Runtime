@@ -96,11 +96,12 @@ for forbidden in ("let backendStatus", "let realtimeReadiness", "let providerPla
 for required in (
     "export class SessionRuntimeState",
     "applyBackend(status: LabStatus)",
-    "patchBackend(patch: Partial<LabStatus>)",
     "resetRealtime(): void",
 ):
     if required not in session_runtime_state:
         raise SystemExit(f"Owner Lab centralized session runtime state missing: {required}")
+if "patchBackend(" in session_runtime_state:
+    raise SystemExit("Owner Lab backend state must only accept complete authoritative snapshots")
 if 'from "./session-runtime-state.js"' not in app:
     raise SystemExit("Owner Lab application must compose the extracted session runtime state")
 
