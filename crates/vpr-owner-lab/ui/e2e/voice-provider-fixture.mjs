@@ -292,6 +292,43 @@ server.on("upgrade", (request, socket) => {
 
   let pending = Buffer.alloc(0);
   let audioBytes = 0;
+  let socketClosed = false;
+  const isExpectedSocketClose = (error) =>
+    error?.code === "EPIPE" || error?.code === "ECONNRESET";
+  const markSocketClosed = () => { socketClosed = true; };
+  const writeFrame = (frame) => {
+    if (socketClosed || socket.destroyed || socket.writableEnded) return false;
+    try {
+      socket.write(frame);
+      return true;
+    } catch (error) {
+      if (isExpectedSocketClose(error)) {
+        markSocketClosed();
+        return false;
+      }
+      throw error;
+    }
+  };
+  const endSocket = (frame) => {
+    if (socketClosed || socket.destroyed || socket.writableEnded) return;
+    try {
+      socket.end(frame);
+    } catch (error) {
+      if (isExpectedSocketClose(error)) {
+        markSocketClosed();
+        return;
+      }
+      throw error;
+    }
+  };
+  socket.on("close", markSocketClosed);
+  socket.on("error", (error) => {
+    if (isExpectedSocketClose(error)) {
+      markSocketClosed();
+      return;
+    }
+    throw error;
+  });
   socket.on("data", (chunk) => {
     pending = Buffer.concat([pending, chunk]);
     const decoded = decodeClientFrames(pending);
@@ -318,7 +355,7 @@ server.on("upgrade", (request, socket) => {
       const transcript = sttSequence === 1
         ? "Привет из браузера"
         : "Что думает владелец?";
-      socket.write(websocketFrame(
+      const interimWritten = writeFrame(websocketFrame(
         0x1,
         JSON.stringify({
           type: "Results",
@@ -326,7 +363,8 @@ server.on("upgrade", (request, socket) => {
           channel: { alternatives: [{ transcript: "Привет" }] },
         }),
       ));
-      socket.write(websocketFrame(
+      if (!interimWritten) continue;
+      const finalWritten = writeFrame(websocketFrame(
         0x1,
         JSON.stringify({
           type: "Results",
@@ -334,7 +372,8 @@ server.on("upgrade", (request, socket) => {
           channel: { alternatives: [{ transcript }] },
         }),
       ));
-      socket.end(websocketFrame(0x8));
+      if (!finalWritten) continue;
+      endSocket(websocketFrame(0x8));
     }
   });
 });
