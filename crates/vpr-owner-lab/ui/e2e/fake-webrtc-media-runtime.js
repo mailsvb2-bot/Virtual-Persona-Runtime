@@ -15,6 +15,30 @@
   window.__vprRequestedMicrophones = requestedMicrophones;
   window.__vprInterruptPayloads = interruptPayloads;
 
+  const realFetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const target = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.href
+        : input.url;
+    if (target.endsWith("/api/avatar/start")) {
+      remoteSpeech = false;
+    }
+    const response = await realFetch(input, init);
+    if (target.endsWith("/api/voice/events") && response.ok) {
+      try {
+        const batch = await response.clone().json();
+        if (batch.events?.some((event) => event.kind === "segment")) {
+          beginSyntheticPlayback?.();
+        }
+      } catch {
+        // Production owns response parsing; the fixture only mirrors provider playback timing.
+      }
+    }
+    return response;
+  };
+
   // Select the same persisted preference path the production UI uses. This avoids
   // late Playwright DOM mutation after the synthetic media runtime is active.
   try {
@@ -206,6 +230,7 @@
   };
 
   beginSyntheticPlayback = () => {
+    if (remoteSpeech) return;
     publishRemoteAudioTrack?.();
     remoteSpeech = true;
     playbackSequence += 1;
