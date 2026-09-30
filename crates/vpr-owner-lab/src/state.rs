@@ -246,7 +246,10 @@ impl OwnerLabEngine {
         kind: ClaimKind,
         persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
     ) -> Result<(), LabError> {
-        let previous = self.reviewed_owner_context_snapshot()?;
+        let previous_context = self
+            .reviewed_owner_context
+            .clone()
+            .ok_or(LabError::InvalidState)?;
         let previous_readiness = self.readiness.clone();
         self.correct_owner_claim(id, statement, kind)?;
         let current = self.reviewed_owner_context_snapshot()?;
@@ -254,22 +257,9 @@ impl OwnerLabEngine {
             return Ok(());
         }
 
-        self.restore_reviewed_owner_context_after_failed_persistence(
-            &previous,
-            previous_readiness,
-        )?;
+        self.reviewed_owner_context = Some(previous_context);
+        self.readiness = previous_readiness;
         Err(LabError::PersistenceFailed)
-    }
-
-    fn restore_reviewed_owner_context_after_failed_persistence(
-        &mut self,
-        snapshot: &ReviewedOwnerContextSnapshot,
-        readiness: LabReadinessState,
-    ) -> Result<(), LabError> {
-        let context = ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
-        self.reviewed_owner_context = Some(context);
-        self.readiness = readiness;
-        Ok(())
     }
 
     /// Returns an owner-only snapshot of the current reviewed claim revisions.
