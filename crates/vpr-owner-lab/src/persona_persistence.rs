@@ -370,6 +370,36 @@ mod tests {
         let _ = fs::remove_file(path.with_extension("tmp"));
     }
 
+    #[test]
+    fn invalid_v1_is_not_rewritten_as_v2() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("vpr-persona-v1-invalid-{unique}.json"));
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 4,
+                "claims": [{
+                    "claim_id": "legacy-claim",
+                    "statement": "Legacy current",
+                    "kind": "not-a-real-kind",
+                    "revision": 4
+                }]
+            }
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+
+        assert!(load_file(&path).is_err());
+        let unchanged = fs::read_to_string(&path).unwrap();
+        let probe: SchemaProbe = serde_json::from_str(&unchanged).unwrap();
+        assert_eq!(probe.schema_version, STORE_SCHEMA_V1);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
+    }
     #[cfg(windows)]
     #[test]
     fn windows_chunked_store_round_trips_reviewed_persona_beyond_single_blob_limit() {
