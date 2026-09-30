@@ -2,8 +2,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 
 use crate::{
-    ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, OwnerClaim, PersonaIdentity,
-    PersonaVersionExhausted, SourceKind, VerificationState,
+    ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, MAX_OWNER_CLAIM_CHARS, OwnerClaim,
+    PersonaIdentity, PersonaVersionExhausted, SourceKind, VerificationState,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -138,6 +138,9 @@ impl OwnerClaimRecord {
         let statement = statement.into();
         if statement.trim().is_empty() {
             return Err(ProfileError::BlankClaimStatement);
+        }
+        if statement.chars().count() > MAX_OWNER_CLAIM_CHARS {
+            return Err(ProfileError::ClaimStatementTooLong);
         }
         let corrected = OwnerClaim {
             statement,
@@ -309,6 +312,7 @@ impl PersonaProfile {
 pub enum ProfileError {
     InvalidClaimProvenance,
     BlankClaimStatement,
+    ClaimStatementTooLong,
     DuplicateClaimId,
     EmptyCapture,
     ClaimNotFound,
@@ -323,6 +327,7 @@ impl Display for ProfileError {
         formatter.write_str(match self {
             Self::InvalidClaimProvenance => "captured claim must be direct owner material",
             Self::BlankClaimStatement => "owner claim statement must not be blank",
+            Self::ClaimStatementTooLong => "owner claim statement exceeds the canonical size limit",
             Self::DuplicateClaimId => "claim identity already exists in this persona",
             Self::EmptyCapture => "guided capture cannot be completed without claims",
             Self::ClaimNotFound => "claim was not found in this persona",
@@ -351,6 +356,9 @@ impl From<PersonaVersionExhausted> for ProfileError {
 fn validate_captured_claim(claim: &OwnerClaim) -> Result<(), ProfileError> {
     if claim.statement.trim().is_empty() {
         return Err(ProfileError::BlankClaimStatement);
+    }
+    if claim.statement.chars().count() > MAX_OWNER_CLAIM_CHARS {
+        return Err(ProfileError::ClaimStatementTooLong);
     }
     if claim.source != SourceKind::Owner
         || claim.verification != VerificationState::Unverified
@@ -393,6 +401,31 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn captured_and_corrected_claims_enforce_canonical_size_limit() {
+        let oversized = "Ж".repeat(MAX_OWNER_CLAIM_CHARS + 1);
+        let capture = OwnerClaimRecord::capture(
+            ClaimId::new("oversized").unwrap(),
+            OwnerClaim {
+                statement: oversized.clone(),
+                kind: ClaimKind::Factual,
+                source: SourceKind::Owner,
+                verification: VerificationState::Unverified,
+                derivation: DerivationKind::Direct,
+            },
+        );
+        assert_eq!(capture, Err(ProfileError::ClaimStatementTooLong));
+
+        let mut profile = profile();
+        let id = ClaimId::new("opinion-1").unwrap();
+        profile.add_captured_claim(captured_opinion()).unwrap();
+        profile.mark_capture_complete().unwrap();
+        assert_eq!(
+            profile.correct_claim(&id, oversized, ClaimKind::Opinion),
+            Err(ProfileError::ClaimStatementTooLong)
+        );
     }
 
     #[test]
