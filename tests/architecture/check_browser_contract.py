@@ -10,6 +10,8 @@ BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 VOICE_MEDIA_FIXTURE = UI / "e2e" / "fake-webrtc-media-runtime.js"
+VOICE_JOURNEY_DRIVER = UI / "e2e" / "voice-journey-driver.js"
+VOICE_JOURNEY_CONTRACT = UI / "e2e" / "voice-journey-contract.ts"
 PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
@@ -38,6 +40,8 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 voice_media_fixture = VOICE_MEDIA_FIXTURE.read_text(encoding="utf-8")
+voice_journey_driver = VOICE_JOURNEY_DRIVER.read_text(encoding="utf-8")
+voice_journey_contract = VOICE_JOURNEY_CONTRACT.read_text(encoding="utf-8")
 provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
