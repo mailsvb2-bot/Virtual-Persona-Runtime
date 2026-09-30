@@ -762,4 +762,8 @@ fn provider_failures_map_to_stable_rt0_reason_codes() {
         provider_reason_code(ProviderErrorKind::Cancelled),
         Rt0ReasonCode::TurnCancelled
     );
+    assert_eq!(
+        provider_reason_code(ProviderErrorKind::InsufficientCredits),
+        Rt0ReasonCode::BudgetExhausted
+    );
 }

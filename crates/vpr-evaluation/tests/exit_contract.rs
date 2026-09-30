@@ -6,10 +6,11 @@ use vpr_evaluation::{
     ConversationPairEvidence, CostEvidence, EvidenceOrigin, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, HumanDimensions, HumanEvaluationEvidence,
     KnownLimitationsEvidence, LatencyDistributionMillis, LiveProviderProbeReceipt,
-    LlmProbeEvidence, ParticipantRole, PrivacyPermissionEvidence, ProbeUsage, ProviderRole,
-    QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus,
-    Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitVerificationContext,
-    SttProbeEvidence, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    LlmProbeEvidence, OwnerGoldenVerificationContext, ParticipantRole, PrivacyPermissionEvidence,
+    ProbeUsage, ProviderRole, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA,
+    RT0_LIVE_PROVIDER_PROBE_SCHEMA, RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError,
+    Rt0ExitFailureCode, Rt0ExitVerificationContext, SttProbeEvidence,
+    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     evaluate_bound_golden_suite, evaluate_rt0_exit_evidence, sha256_hex,
 };
 
@@ -280,12 +281,69 @@ fn passing_cost_evidence() -> CostEvidence {
     }
 }
 
+fn owner_golden_digests(provider_state_bytes: &[u8]) -> (String, String, String) {
+    let provider_state = serde_json::from_slice(provider_state_bytes).unwrap();
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &provider_state,
+        provider_state_bytes,
+    );
+    (
+        sha256_hex(&owner_golden.suite_bytes),
+        sha256_hex(&owner_golden.bundle_bytes),
+        sha256_hex(&owner_golden.report_bytes),
+    )
+}
+
+fn passing_quality_evidence() -> QualityEvidence {
+    QualityEvidence {
+        origin: EvidenceOrigin::Real,
+        text_first_meaningful_response: LatencyDistributionMillis {
+            samples: 2,
+            p50: 1_000,
+            p95: 2_500,
+        },
+        first_meaningful_audio: LatencyDistributionMillis {
+            samples: 2,
+            p50: 500,
+            p95: 500,
+        },
+        interruption_stop: LatencyDistributionMillis {
+            samples: 1,
+            p50: 250,
+            p95: 250,
+        },
+        first_useful_video: LatencyDistributionMillis {
+            samples: 2,
+            p50: 700,
+            p95: 700,
+        },
+        av_sync_absolute_offset: LatencyDistributionMillis {
+            samples: 6,
+            p50: 60,
+            p95: 120,
+        },
+        recoverable_reconnect: LatencyDistributionMillis {
+            samples: 2,
+            p50: 800,
+            p95: 800,
+        },
+        artifact_sha256: digest('2'),
+    }
+}
+
 fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0ExitEvidence {
+    let (owner_suite_sha, owner_evidence_sha, owner_report_sha) =
+        owner_golden_digests(provider_state_bytes);
     Rt0ExitEvidence {
         schema_version: RT0_EXIT_EVIDENCE_SCHEMA.into(),
         candidate_sha: CANDIDATE.into(),
         release_spec_sha256: sha256_hex(RELEASE_SPEC),
         golden_report_sha256: sha256_hex(golden_bytes),
+        owner_golden_suite_sha256: owner_suite_sha,
+        owner_golden_evidence_sha256: owner_evidence_sha,
+        owner_golden_report_sha256: owner_report_sha,
         provider_state_sha256: sha256_hex(provider_state_bytes),
         live_provider_probe_sha256: sha256_hex(&live_provider_probe_bytes(provider_state_bytes)),
         conversation_attempt_sha256: sha256_hex(&conversation_attempt_bytes(provider_state_bytes)),
@@ -309,40 +367,7 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             revoke_deny_path: CheckStatus::Passed,
             artifact_sha256: digest('1'),
         },
-        quality: QualityEvidence {
-            origin: EvidenceOrigin::Real,
-            text_first_meaningful_response: LatencyDistributionMillis {
-                samples: 2,
-                p50: 1_000,
-                p95: 2_500,
-            },
-            first_meaningful_audio: LatencyDistributionMillis {
-                samples: 2,
-                p50: 500,
-                p95: 500,
-            },
-            interruption_stop: LatencyDistributionMillis {
-                samples: 1,
-                p50: 250,
-                p95: 250,
-            },
-            first_useful_video: LatencyDistributionMillis {
-                samples: 2,
-                p50: 700,
-                p95: 700,
-            },
-            av_sync_absolute_offset: LatencyDistributionMillis {
-                samples: 6,
-                p50: 60,
-                p95: 120,
-            },
-            recoverable_reconnect: LatencyDistributionMillis {
-                samples: 2,
-                p50: 800,
-                p95: 800,
-            },
-            artifact_sha256: digest('2'),
-        },
+        quality: passing_quality_evidence(),
         cost: passing_cost_evidence(),
         privacy_permissions: PrivacyPermissionEvidence {
             origin: EvidenceOrigin::Real,
@@ -458,6 +483,20 @@ fn evaluate_with_runtime_snapshots(
     runtime: (&[u8], &BoundLabSessionEvidenceAggregate, &[u8], &[&[u8]]),
 ) -> Result<vpr_evaluation::Rt0ExitReport, Rt0ExitEvidenceError> {
     let exit_bytes = serde_json::to_vec(evidence).unwrap();
+    let owner_golden = support::owner_fixture(
+        release_spec,
+        candidate,
+        &fixture.provider_state,
+        &fixture.provider_state_bytes,
+    );
+    let owner_golden_context = OwnerGoldenVerificationContext {
+        suite: &owner_golden.suite,
+        suite_bytes: &owner_golden.suite_bytes,
+        report: &owner_golden.report,
+        report_bytes: &owner_golden.report_bytes,
+        evidence_bundle: &owner_golden.bundle,
+        evidence_bytes: &owner_golden.bundle_bytes,
+    };
     evaluate_rt0_exit_evidence(
         evidence,
         golden.0,
@@ -466,6 +505,7 @@ fn evaluate_with_runtime_snapshots(
             golden_report_bytes: golden.1,
             golden_evidence_bundle: &fixture.bundle,
             golden_evidence_bytes: &fixture.bundle_bytes,
+            owner_golden: &owner_golden_context,
             provider_state: &fixture.provider_state,
             provider_state_bytes: &fixture.provider_state_bytes,
             live_provider_probe: live_provider_probe.0,
@@ -1148,6 +1188,20 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
     let bound_session_aggregate_bytes = serde_json::to_vec(&bound_session_aggregate).unwrap();
     let (owner_snapshot, visitor_snapshot) = session_snapshot_bytes();
     let session_snapshot_artifacts = [owner_snapshot.as_slice(), visitor_snapshot.as_slice()];
+    let owner_golden = support::owner_fixture(
+        RELEASE_SPEC,
+        CANDIDATE,
+        &provider_state,
+        &provider_state_bytes,
+    );
+    let owner_golden_context = OwnerGoldenVerificationContext {
+        suite: &owner_golden.suite,
+        suite_bytes: &owner_golden.suite_bytes,
+        report: &owner_golden.report,
+        report_bytes: &owner_golden.report_bytes,
+        evidence_bundle: &owner_golden.bundle,
+        evidence_bytes: &owner_golden.bundle_bytes,
+    };
     assert_eq!(
         evaluate_rt0_exit_evidence(
             &evidence,
@@ -1157,6 +1211,7 @@ fn provider_state_content_is_recomputed_instead_of_trusted_from_golden_report() 
                 golden_report_bytes: &golden_bytes,
                 golden_evidence_bundle: &fixture.bundle,
                 golden_evidence_bytes: &fixture.bundle_bytes,
+                owner_golden: &owner_golden_context,
                 provider_state: &provider_state,
                 provider_state_bytes: &provider_state_bytes,
                 live_provider_probe: &live_provider_probe,

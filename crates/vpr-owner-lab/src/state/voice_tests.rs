@@ -15,9 +15,10 @@ use vpr_integration::{
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
+use super::readiness::{LabModalityReadiness, LabModalityState};
 use super::{
-    LabError, LabSessionAudience, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
+    ConversationReadiness, LabError, LabSessionAudience, OwnerContextState, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 #[derive(Default)]
@@ -289,6 +290,41 @@ fn reviewed_visitor_voice_engine() -> (OwnerLabEngine, Arc<VoiceStats>) {
 
 fn sample_pcm() -> Vec<u8> {
     vec![0_u8; 3_200]
+}
+
+#[test]
+fn configured_voice_stack_is_not_conversation_ready_before_persona_review() {
+    let stats = Arc::new(VoiceStats::default());
+    let engine = OwnerLabEngine::new(
+        Box::new(VoiceAvatar {
+            stats: Arc::clone(&stats),
+        }),
+        true,
+    )
+    .unwrap()
+    .with_voice(
+        Box::new(ImmediateStt {
+            stats: Arc::clone(&stats),
+        }),
+        Box::new(VoiceLlm {
+            stats,
+            block_until_cancelled: false,
+            started: None,
+        }),
+    );
+
+    assert_eq!(
+        engine.status().conversation_readiness,
+        ConversationReadiness::None
+    );
+    assert_eq!(
+        engine.status().modality_readiness,
+        LabModalityReadiness {
+            text: LabModalityState::NotReady,
+            voice: LabModalityState::NotReady,
+            video: LabModalityState::NotReady,
+        }
+    );
 }
 
 #[test]

@@ -59,9 +59,12 @@ const metricVideoReady = byId("metric-video-ready");
 const metricAvSync = byId("metric-av-sync");
 const metricPlayback = byId("metric-playback");
 const metricCost = byId("metric-cost");
+const readinessText = byId("readiness-text");
+const readinessVoice = byId("readiness-voice");
+const readinessVideo = byId("readiness-video");
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer = null;
 let liveKitRoom = null;
@@ -408,7 +411,9 @@ const monitorRemoteAudio = () => {
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
-                const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence);
+                const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence).then(async () => {
+                    await syncStatus();
+                });
                 voice.audioStartedEvidence = audioStartedEvidence;
                 void audioStartedEvidence.catch(() => undefined);
             }
@@ -456,10 +461,31 @@ const recordFirstVideoFrame = () => {
         return;
     videoEvidencePosted = true;
     void postMediaEvidence("video_ready", performance.now() - connectEvidenceStartedAt)
+        .then(() => syncStatus())
         .catch(() => undefined);
+};
+const modalityLabel = (state) => {
+    switch (state) {
+        case "ready": return "Готов";
+        case "preparing": return "Подготовка…";
+        case "failed": return "Ошибка подготовки";
+        default: return "Не готов";
+    }
+};
+const renderModalityReadiness = (readiness) => {
+    const entries = [
+        [readinessText, readiness.text],
+        [readinessVoice, readiness.voice],
+        [readinessVideo, readiness.video],
+    ];
+    entries.forEach(([node, state]) => {
+        node.textContent = modalityLabel(state);
+        node.dataset.state = state;
+    });
 };
 const syncStatus = async () => {
     backendStatus = await api("/api/status");
+    renderModalityReadiness(backendStatus.modality_readiness);
     updateControls();
     showEvidence(backendStatus);
     return backendStatus;
@@ -815,7 +841,7 @@ const connectAvatar = async () => {
         else {
             await connectLiveKitTransport(start.transport);
         }
-        updateControls();
+        await syncStatus();
         const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
         setStatus(selectedAudience() === "visitor"
             ? `Visitor-сессия ${transportName} согласована`

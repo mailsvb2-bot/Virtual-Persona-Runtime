@@ -41,7 +41,7 @@ A successful synthetic or mock run is **not** RT0 exit evidence. Release evidenc
 
 For browser-collected Owner Lab evidence, terminate or revoke each owner/visitor session and use `Скачать evidence snapshot` before starting the next session. Owner Lab returns the sanitized snapshot as exact response bytes and blocks the next session with `EVIDENCE_EXPORT_REQUIRED` until that export request succeeds; after reload, the server-side gate still blocks a new session and the independent export action remains available. Keep both downloaded snapshot files with the exact candidate evidence directory consumed by the inventory and exit tools.
 
-`vpr-rt0-evidence-inventory` is a non-promoting filesystem preflight for an external RT0 evidence directory. Schema `rt0-evidence-inventory-0.7` hashes the expected evidence artifacts, parses the canonical `exit-evidence.json`, checks its exact candidate/provider-state and top-level artifact-digest bindings, binds the exact `release-spec.md` bytes independently to both `exit-evidence.json` and `bound-golden-report.json`, recomputes the archived bound Golden report from the exact `private-golden-evidence.json` bytes using the compiled mandatory RT0 Golden suite, and applies the same canonical semantic validator used by the exit gate to `provider-probe.json`, and reuses the same canonical supporting-artifact validator as the release exit gate for CI/E2E plus the seven real supporting JSON claims and `known-limitations.md`. It also checks the exact candidate/provider-state bindings exposed by the bound Golden report, live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate. The live-provider probe schema `rt0-live-provider-probe-0.3` independently carries sanitized credentialed reachability evidence for the canonical STT + LLM + realtime-avatar composition used by the candidate, including stage latency, usage/cost counters and private-input/output digests/counts without serializing raw transcript, generated reply, signaling or credentials. A standalone TTS provider is not required when the selected realtime-avatar provider performs speech synthesis as part of its browser-connected spoken-avatar path; audible playback and rendered-video proof still come from the browser Owner Lab session evidence. Raw sanitized `rt0-owner-lab-session-evidence-0.6` JSON snapshots are discovered in the evidence directory, matched by exact byte digest to the ordered `snapshot_sha256` list in the bound aggregate, and recomputed into the canonical session binding. Each snapshot carries the server-derived owner/visitor participant role; inventory `0.7` reuses the canonical conversation-binding validator so the credentialed conversation receipt and raw role-bound snapshots must reproduce the owner/visitor Russian, completed-turn, playback/voice, rendered-video, and interruption claims in the exit manifest. Missing, tampered, duplicate, stale, cross-candidate/provider, detached supporting claims, or extra/unbound session snapshots keep the inventory incomplete. Snapshot filenames are not trusted as evidence identity. It does not evaluate conversation quality, human review, latency thresholds, privacy outcomes, or release readiness.
+`vpr-rt0-evidence-inventory` is a non-promoting filesystem preflight for an external RT0 evidence directory. Schema `rt0-evidence-inventory-0.8` hashes the expected evidence artifacts, parses the canonical `exit-evidence.json`, checks its exact candidate/provider-state and top-level artifact-digest bindings, binds the exact `release-spec.md` bytes independently to both `exit-evidence.json` and `bound-golden-report.json`, recomputes the archived bound Golden report from the exact `private-golden-evidence.json` bytes using the compiled mandatory RT0 Golden suite, and applies the same canonical semantic validator used by the exit gate to `provider-probe.json`, and reuses the same canonical supporting-artifact validator as the release exit gate for CI/E2E plus the seven real supporting JSON claims and `known-limitations.md`. It also checks the exact candidate/provider-state bindings exposed by the bound Golden report, live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate. The live-provider probe schema `rt0-live-provider-probe-0.3` independently carries sanitized credentialed reachability evidence for the canonical STT + LLM + realtime-avatar composition used by the candidate, including stage latency, usage/cost counters and private-input/output digests/counts without serializing raw transcript, generated reply, signaling or credentials. A standalone TTS provider is not required when the selected realtime-avatar provider performs speech synthesis as part of its browser-connected spoken-avatar path; audible playback and rendered-video proof still come from the browser Owner Lab session evidence. Raw sanitized `rt0-owner-lab-session-evidence-0.6` JSON snapshots are discovered in the evidence directory, matched by exact byte digest to the ordered `snapshot_sha256` list in the bound aggregate, and recomputed into the canonical session binding. Each snapshot carries the server-derived owner/visitor participant role; inventory `0.8` reuses the canonical conversation-binding validator so the credentialed conversation receipt and raw role-bound snapshots must reproduce the owner/visitor Russian, completed-turn, playback/voice, rendered-video, and interruption claims in the exit manifest. Missing, tampered, duplicate, stale, cross-candidate/provider, detached supporting claims, or extra/unbound session snapshots keep the inventory incomplete. Snapshot filenames are not trusted as evidence identity. It does not evaluate conversation quality, human review, latency thresholds, privacy outcomes, or release readiness.
 
 Use canonical filenames in the private evidence directory and run:
 
@@ -51,7 +51,7 @@ cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
   "$(git rev-parse HEAD)"
 ```
 
-Exit `0` means only that every expected inventory slot is present, `exit-evidence.json` is structurally bound to the presented core/supporting artifacts for the exact candidate/provider state, the external runtime receipts agree with those bindings, and the raw session snapshots exactly reproduce the archived bound session aggregate. The canonical inventory requires the exact `release-spec.md` and `private-golden-evidence.json` bytes, `conversation-attempt.json`, `bound-session-aggregate.json`, all ten supporting-evidence files, and every raw session snapshot named by that aggregate's `snapshot_sha256` list; malformed, stale, cross-candidate, cross-provider, detached, missing, tampered, duplicate, or unbound evidence keeps the inventory incomplete. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
+Exit `0` means only that every expected inventory slot is present, `exit-evidence.json` is structurally bound to the presented core/supporting artifacts for the exact candidate/provider state, the external runtime receipts agree with those bindings, and the raw session snapshots exactly reproduce the archived bound session aggregate. The canonical inventory requires the exact `release-spec.md`, baseline `private-golden-evidence.json`, owner-specific `owner-golden-suite.json`, `owner-golden-evidence.json`, and `owner-golden-report.json`, plus `conversation-attempt.json`, `bound-session-aggregate.json`, all ten supporting-evidence files, and every raw session snapshot named by that aggregate's `snapshot_sha256` list; malformed, stale, cross-candidate, cross-provider, detached, missing, tampered, duplicate, or unbound evidence keeps the inventory incomplete. The JSON field is deliberately named `inventory_complete`; the tool never emits a `ready` claim. Exit `1` means files are missing or core bindings do not match. Exit `2` is command/input failure. A complete inventory must still pass `vpr-rt0-exit-evidence` and the underlying artifacts must genuinely represent the real evidence they claim.
 
 ## RT0 supporting-evidence scaffold
 
@@ -103,6 +103,41 @@ session-backed QualityContract latency distributions.
 This command is intentionally non-promoting. It does not infer acceptance, privacy/permission,
 cost, Golden or human-review results because those require separate real observations or review.
 
+## RT0 reviewed manual supporting capture
+
+After the real acceptance/privacy/cost review and human evaluation have been completed, do not edit
+their canonical supporting JSON bindings by hand. Put the reviewed observations in one private input
+file and run:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-supporting-capture -- \
+  /secure/input/rt0-reviewed-observations.json \
+  /secure/evidence/rt0-candidate/supporting \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  "$(git rev-parse HEAD)"
+```
+
+The input schema is `rt0-manual-supporting-observations-0.1` and requires
+`attestation="reviewed_real_observations"`. The command derives the exact candidate and
+provider-state bindings itself, emits `origin="real"` only from that explicit reviewed-observation
+attestation, preserves every passed/failed observation unchanged, requires all five human-review
+dimensions to have actually been recorded, and rejects duplicate cost-role declarations. It also
+constructs the known-limitations review marker instead of trusting a hand-edited marker in the body.
+
+The command replaces only the exact untouched synthetic placeholders previously created by
+`vpr-rt0-supporting-scaffold`. If any of those five files has already been edited or reviewed, it
+fails closed rather than overwriting it. Capture is serialized by a safe cross-platform process-lifetime file lock via `fs2::FileExt`.
+The underlying operating-system lock remains held for the lifetime of the open file handle, so a
+live or suspended owner cannot lose ownership merely because time passes, while process/handle exit
+releases ownership automatically. All five new files are staged before replacement, and an ordinary write
+failure rolls back earlier replacements to the exact scaffold bytes before the transaction marker is
+released. A bound commit journal is published atomically before replacement; after an interrupted
+process, the single recovery owner either restores the exact scaffold and safely retries a mid-commit
+transaction, or recognizes that all five intended bytes were already committed and re-emits the
+receipt path without rewriting them. A different candidate, provider state, private input or output
+digest fails closed instead of silently recovering another transaction. This is a capture/shape/binding tool only: it does not infer
+that an observation passed and cannot make RT0 release-ready.
+
 ## RT0 supporting-evidence preflight
 
 Before assembling `exit-evidence.json`, `vpr-rt0-supporting-preflight` can validate the ten
@@ -129,6 +164,30 @@ A successful report emits exact SHA-256 digests for all ten supporting artifacts
 acceptance/privacy/usability results into passes. The final exit gate remains responsible for the
 substantive RT0 thresholds and for binding these artifact bytes to `exit-evidence.json`.
 
+## RT0 private owner-specific Golden report
+
+The mandatory private owner-specific Golden suite is runtime input, not repository content. After the
+owner-specific suite and its exact bound evidence bundle have been prepared for the same candidate,
+ReleaseSpec and provider state as the rest of the RT0 evidence, generate the sanitized bound report
+through the canonical owner-specific evaluator:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-owner-golden -- \
+  /secure/evidence/rt0-candidate/owner-golden-suite.json \
+  /secure/evidence/rt0-candidate/owner-golden-evidence.json \
+  docs/releases/RT0_RELEASE_SPEC.md \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/owner-golden-report.json \
+  "$(git rev-parse HEAD)"
+```
+
+The command refuses a suite that is not explicitly owner-specific, reuses the normal exact-candidate,
+ReleaseSpec and provider-state binding checks, writes only the sanitized `BoundGoldenReport`, and
+never overwrites an existing report. Exit `0` means every owner-specific Golden case passed; exit
+`1` means the report was validly generated but one or more cases failed; exit `2` means the suite,
+binding, input or output operation was invalid. Raw owner prompts, expected private tokens and
+observations remain in the private suite/evidence inputs and are not copied into the report.
+
 ## RT0 exit-manifest assembler
 
 After the core and supporting artifacts have been captured, use the non-promoting assembler instead
@@ -138,6 +197,9 @@ of manually copying statuses and SHA-256 values into `exit-evidence.json`:
 cargo run -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/bound-golden-report.json \
+  /secure/evidence/rt0-candidate/owner-golden-suite.json \
+  /secure/evidence/rt0-candidate/owner-golden-evidence.json \
+  /secure/evidence/rt0-candidate/owner-golden-report.json \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/provider-probe.json \
   /secure/evidence/rt0-candidate/conversation-attempt.json \
@@ -147,8 +209,8 @@ cargo run -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
   "$(git rev-parse HEAD)"
 ```
 
-The assembler first runs the canonical supporting-evidence preflight, validates the bound Golden
-report against the exact candidate, ReleaseSpec bytes and provider state, validates the live-provider
+The assembler first runs the canonical supporting-evidence preflight, validates the baseline bound Golden
+report against the exact candidate, ReleaseSpec bytes and provider state, requires the owner-specific Golden suite/evidence/report triplet and binds their exact SHA-256 digests into the exit manifest, validates the live-provider
 probe through the canonical probe validator, and reuses the canonical conversation-attempt and bound
 session-aggregate validators. It also reuses the canonical browser-quality binding, so the presented
 quality claim must already match the bound aggregate for first audio, interruption stop, first video,
@@ -167,7 +229,7 @@ operator-error reduction step, never RT0 exit evidence by itself.
 
 ## RT0 exit-evidence gate
 
-`vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as a successful bound Golden report. The exit checker also re-evaluates the archived private Golden evidence against the compiled mandatory RT0 minimum suite before trusting that report. It does not create evidence and cannot turn mock/synthetic results into real evidence.
+`vpr-rt0-exit-evidence` checks whether one sanitized release-evidence manifest is complete and bound to the same exact candidate as both the mandatory baseline Golden report and the private owner-specific Golden report. The exit checker re-evaluates the archived baseline private Golden evidence against the compiled mandatory RT0 minimum suite and independently re-evaluates the supplied owner-specific Golden suite against its exact evidence, ReleaseSpec and provider state before trusting either report. It does not create evidence and cannot turn mock/synthetic results into real evidence.
 
 The gate requires real owner and visitor Russian voice/video conversations, owner interruption, the ReleaseSpec acceptance matrix, measured QualityContract latency distributions, measured cost, zero accepted private-context leakage and false owner attribution, revocation/egress-denial proof, all five mandatory human-review dimensions, an explicit usability decision, and reviewed known limitations. Thresholds are taken unchanged from `RT0_RELEASE_SPEC.md`.
 
@@ -178,6 +240,9 @@ cargo run -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
   /secure/path/rt0-exit-evidence.json \
   /secure/path/bound-golden-report.json \
   /secure/path/private-golden-evidence.json \
+  /secure/path/owner-golden-suite.json \
+  /secure/path/owner-golden-evidence.json \
+  /secure/path/owner-golden-report.json \
   /secure/path/rt0-provider-state.json \
   /secure/path/live-provider-probe.json \
   /secure/path/conversation-attempt.json \
@@ -189,7 +254,7 @@ cargo run -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
   "$(git rev-parse HEAD)"
 ```
 
-The exit checker recomputes the sanitized provider-state digest from the separate provider-state file and requires its parsed contents to exactly match the provider state embedded in the Golden report. It also recomputes the SHA-256 of the separate credentialed live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate, and requires all three artifacts to be bound to the same exact candidate and provider state. The release CLI additionally requires the canonical supporting-evidence directory containing `ci-evidence.json`, `e2e-evidence.json`, `owner-conversation.json`, `visitor-conversation.json`, `acceptance.json`, `quality.json`, `cost.json`, `privacy-permissions.json`, `human-evaluation.json`, and `known-limitations.md`. Its verified entry point hashes the exact bytes of all ten files and requires each digest to equal the corresponding digest declared inside `exit-evidence.json`. For RT0 cost evidence, the release contract additionally requires explicit, independent coverage for each cost signal across all three material provider roles (`stt`, `llm`, and `avatar`). Estimate coverage and provider-charge coverage are never merged: a duration plus STT/LLM estimate and an avatar-only provider charge are still two incomplete signals and cannot close RT0. Provider charge and estimate remain separate signals; neither is invented when a provider does not expose it.
+The exit checker first verifies the exact SHA-256 bindings for the owner-specific Golden suite, evidence bundle, and report, recomputes that owner report from the supplied private suite/evidence plus exact ReleaseSpec/provider state/candidate, and rejects any mismatch. It then recomputes the sanitized provider-state digest from the separate provider-state file and requires its parsed contents to exactly match the provider state embedded in the Golden report. It also recomputes the SHA-256 of the separate credentialed live-provider probe, credentialed owner/visitor conversation-attempt receipt, and bound Owner Lab session aggregate, and requires all three artifacts to be bound to the same exact candidate and provider state. The release CLI additionally requires the canonical supporting-evidence directory containing `ci-evidence.json`, `e2e-evidence.json`, `owner-conversation.json`, `visitor-conversation.json`, `acceptance.json`, `quality.json`, `cost.json`, `privacy-permissions.json`, `human-evaluation.json`, and `known-limitations.md`. Its verified entry point hashes the exact bytes of all ten files and requires each digest to equal the corresponding digest declared inside `exit-evidence.json`. For RT0 cost evidence, the release contract additionally requires explicit, independent coverage for each cost signal across all three material provider roles (`stt`, `llm`, and `avatar`). Estimate coverage and provider-charge coverage are never merged: a duration plus STT/LLM estimate and an avatar-only provider charge are still two incomplete signals and cannot close RT0. Provider charge and estimate remain separate signals; neither is invented when a provider does not expose it.
 
 For the nine JSON supporting artifacts it then parses those same bytes and requires exact equality with the canonical supporting projection. Every projection omits only `artifact_sha256`; CI/E2E additionally carry `candidate_sha`, while owner/visitor conversation, acceptance, quality, cost, privacy/permissions, and human-evaluation projections carry both `candidate_sha` and `provider_state_sha256`. Reusing passed automation from another commit or real evidence from another candidate/provider state therefore fails structurally even after an honest digest rebind. `known-limitations.md` remains a reviewed document bound by its exact byte digest rather than a JSON projection; additionally, its first non-empty `RT0-Review-Status: passed|failed` marker is parsed from those exact bytes and must equal the manifest `review_status`, so review status cannot be flipped independently and rescued by rehashing the document. One or more raw sanitized Owner Lab session snapshots are mandatory verifier inputs: the gate recomputes the bound aggregate from those exact bytes, candidate and provider state, then requires exact equality with the archived bound aggregate. Runtime-backed `canonical_playback_proven=true` and A/V-sync proof are accepted only through that recomputation. For session-derived quality, the recomputed aggregate must exactly equal the supporting QualityEvidence distributions for `text_first_meaningful_response`, `first_meaningful_audio`, `interruption_stop`, `first_useful_video`, `av_sync_absolute_offset`, and `recoverable_reconnect`; a detached or hand-edited distribution is rejected structurally before thresholds are evaluated. Text first-response timing comes from the backend-observed first non-empty streaming LLM chunk on a canonical text turn; the other five metrics remain browser/media-derived. A/V sync additionally requires every completed playback turn to have the required three request-scoped samples. A valid rehashed probe from another commit or provider configuration is rejected structurally. It also re-runs the bound Golden evaluator over the private Golden evidence bundle using the compiled mandatory `rt0_golden_minimum.json` suite, the exact ReleaseSpec bytes, provider state, and candidate SHA; the recomputed report must exactly match the archived sanitized Golden report. This prevents shortened/forged Golden reports and cross-provider/model/representation reuse.
 

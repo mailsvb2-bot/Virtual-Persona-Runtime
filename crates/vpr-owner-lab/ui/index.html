@@ -50,6 +50,21 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="readiness-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Шаг 2 · готовность модальностей</p>
+          <h2 id="readiness-heading">Готовность Persona к тесту</h2>
+          <p class="hint">Текст становится готов после review. Голос и видео считаются готовыми только после принятого media-evidence текущей версии Persona; изменение Persona сбрасывает старую готовность.</p>
+        </div>
+      </div>
+      <div class="readiness-grid" aria-live="polite">
+        <div class="readiness-card"><span>Текст</span><strong id="readiness-text" data-state="not_ready">Не готов</strong></div>
+        <div class="readiness-card"><span>Голос</span><strong id="readiness-voice" data-state="not_ready">Не готов</strong></div>
+        <div class="readiness-card"><span>Видео</span><strong id="readiness-video" data-state="not_ready">Не готов</strong></div>
+      </div>
+    </section>
+
     <section class="stage">
       <video id="avatar" autoplay playsinline></video>
       <audio id="avatar-audio" autoplay hidden></audio>

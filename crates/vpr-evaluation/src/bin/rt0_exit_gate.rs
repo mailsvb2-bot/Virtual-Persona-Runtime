@@ -2,9 +2,10 @@ use std::{env, fs, path::Path};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle,
-    LiveProviderProbeReceipt, ProviderStateManifest, Rt0ExitEvidence, Rt0ExitSupportingArtifacts,
-    Rt0ExitVerificationContext, evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
+    BoundGoldenReport, BoundLabSessionEvidenceAggregate, GoldenEvidenceBundle, GoldenSuite,
+    LiveProviderProbeReceipt, OwnerGoldenVerificationContext, ProviderStateManifest,
+    Rt0ExitEvidence, Rt0ExitSupportingArtifacts, Rt0ExitVerificationContext,
+    evaluate_verified_rt0_exit_evidence as evaluate_rt0_exit_evidence,
 };
 
 #[derive(Serialize)]
@@ -69,25 +70,31 @@ fn main() {
 
 fn run() -> Result<(), i32> {
     let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() < 11 {
+    if args.len() < 14 {
         return usage();
     }
 
     let exit_evidence_path = &args[0];
     let golden_report_path = &args[1];
     let golden_evidence_path = &args[2];
-    let provider_state_path = &args[3];
-    let live_provider_probe_path = &args[4];
-    let conversation_attempt_path = &args[5];
-    let bound_session_aggregate_path = &args[6];
-    let supporting_artifacts_dir = &args[7];
-    let snapshot_paths = &args[8..args.len() - 2];
+    let owner_golden_suite_path = &args[3];
+    let owner_golden_evidence_path = &args[4];
+    let owner_golden_report_path = &args[5];
+    let provider_state_path = &args[6];
+    let live_provider_probe_path = &args[7];
+    let conversation_attempt_path = &args[8];
+    let bound_session_aggregate_path = &args[9];
+    let supporting_artifacts_dir = &args[10];
+    let snapshot_paths = &args[11..args.len() - 2];
     let release_spec_path = &args[args.len() - 2];
     let candidate_sha = &args[args.len() - 1];
 
     let exit_evidence_bytes = read(exit_evidence_path)?;
     let golden_report_bytes = read(golden_report_path)?;
     let golden_evidence_bytes = read(golden_evidence_path)?;
+    let owner_golden_suite_bytes = read(owner_golden_suite_path)?;
+    let owner_golden_evidence_bytes = read(owner_golden_evidence_path)?;
+    let owner_golden_report_bytes = read(owner_golden_report_path)?;
     let provider_state_bytes = read(provider_state_path)?;
     let live_provider_probe_bytes = read(live_provider_probe_path)?;
     let conversation_attempt_bytes = read(conversation_attempt_path)?;
@@ -103,10 +110,22 @@ fn run() -> Result<(), i32> {
     let evidence: Rt0ExitEvidence = parse(&exit_evidence_bytes)?;
     let golden_report: BoundGoldenReport = parse(&golden_report_bytes)?;
     let golden_evidence_bundle: GoldenEvidenceBundle = parse(&golden_evidence_bytes)?;
+    let owner_golden_suite: GoldenSuite = parse(&owner_golden_suite_bytes)?;
+    let owner_golden_evidence_bundle: GoldenEvidenceBundle = parse(&owner_golden_evidence_bytes)?;
+    let owner_golden_report: BoundGoldenReport = parse(&owner_golden_report_bytes)?;
     let provider_state: ProviderStateManifest = parse(&provider_state_bytes)?;
     let live_provider_probe: LiveProviderProbeReceipt = parse(&live_provider_probe_bytes)?;
     let bound_session_aggregate: BoundLabSessionEvidenceAggregate =
         parse(&bound_session_aggregate_bytes)?;
+
+    let owner_golden = OwnerGoldenVerificationContext {
+        suite: &owner_golden_suite,
+        suite_bytes: &owner_golden_suite_bytes,
+        report: &owner_golden_report,
+        report_bytes: &owner_golden_report_bytes,
+        evidence_bundle: &owner_golden_evidence_bundle,
+        evidence_bytes: &owner_golden_evidence_bytes,
+    };
 
     let report = match evaluate_rt0_exit_evidence(
         &evidence,
@@ -116,6 +135,7 @@ fn run() -> Result<(), i32> {
             golden_report_bytes: &golden_report_bytes,
             golden_evidence_bundle: &golden_evidence_bundle,
             golden_evidence_bytes: &golden_evidence_bytes,
+            owner_golden: &owner_golden,
             provider_state: &provider_state,
             provider_state_bytes: &provider_state_bytes,
             live_provider_probe: &live_provider_probe,
@@ -173,7 +193,7 @@ fn emit_error<T: Serialize>(code: T) -> Result<(), i32> {
 
 fn usage() -> Result<(), i32> {
     eprintln!(
-        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <supporting-evidence-dir> <session-snapshot.json>... <release-spec.md> <exact-candidate-sha>"
+        "usage: vpr-rt0-exit-evidence <exit-evidence.json> <golden-report.json> <golden-evidence.json> <private-owner-golden-suite.json> <private-owner-golden-evidence.json> <private-owner-golden-report.json> <provider-state.json> <live-provider-probe.json> <conversation-attempt.json> <bound-session-aggregate.json> <supporting-evidence-dir> <session-snapshot.json>... <release-spec.md> <exact-candidate-sha>"
     );
     Err(2)
 }

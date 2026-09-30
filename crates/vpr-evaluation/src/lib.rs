@@ -1,6 +1,7 @@
 mod binding;
 mod exit;
 mod exit_assembly;
+mod exit_checks;
 mod exit_context;
 mod exit_cost;
 mod exit_support;
@@ -8,6 +9,7 @@ mod exit_validation;
 mod golden;
 mod known_limitations;
 mod live_provider;
+mod owner_golden;
 mod session_binding;
 mod session_evidence;
 mod session_statistics;
@@ -35,6 +37,8 @@ pub use live_provider::{
     validate_live_provider_probe,
 };
 
+pub use owner_golden::{OwnerGoldenError, evaluate_bound_owner_golden_suite};
+
 pub use exit::{
     AcceptanceEvidence, ArtifactCheckEvidence, AutomatedEvidence, CheckStatus,
     ConversationEvidence, ConversationPairEvidence, CostEvidence, EvidenceOrigin, HumanDimensions,
@@ -44,7 +48,7 @@ pub use exit::{
     evaluate_rt0_exit_evidence,
 };
 pub use exit_assembly::{Rt0ExitAssemblyError, Rt0ExitAssemblyInputs, assemble_rt0_exit_evidence};
-pub use exit_context::Rt0ExitVerificationContext;
+pub use exit_context::{OwnerGoldenVerificationContext, Rt0ExitVerificationContext};
 pub use exit_support::{
     Rt0ExitSupportingArtifacts, evaluate_verified_rt0_exit_evidence,
     validate_rt0_exit_supporting_artifacts,
@@ -67,7 +71,10 @@ pub use session_evidence::{
 };
 pub use session_types::{LabTextAttemptEvidence, LabTextAttemptStatus, SessionUsageEvidence};
 
-pub use supporting_scaffold::{RT0_RUNTIME_SUPPORTING_FILES, rt0_runtime_supporting_scaffold};
+pub use supporting_scaffold::{
+    RT0_MANUAL_SUPPORTING_FILES, RT0_RUNTIME_SUPPORTING_FILES, rt0_manual_supporting_scaffold,
+    rt0_runtime_supporting_scaffold,
+};
 
 pub use supporting_preflight::{
     RT0_SUPPORTING_PREFLIGHT_SCHEMA, Rt0SupportingArtifactDigests, Rt0SupportingPreflightArtifacts,

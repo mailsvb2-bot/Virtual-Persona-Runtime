@@ -19,6 +19,7 @@ vpr-evaluation = { path = "../vpr-evaluation" }
 vpr-integration = { path = "../vpr-integration" }
 vpr-policy = { path = "../vpr-policy" }
 vpr-provider-did-agent-streams = { path = "../vpr-provider-did-agent-streams" }
+vpr-provider-local-open-source = { path = "../vpr-provider-local-open-source" }
 vpr-provider-anthropic = { path = "../vpr-provider-anthropic" }
 vpr-provider-deepgram-stt = { path = "../vpr-provider-deepgram-stt" }
 vpr-provider-gemini = { path = "../vpr-provider-gemini" }

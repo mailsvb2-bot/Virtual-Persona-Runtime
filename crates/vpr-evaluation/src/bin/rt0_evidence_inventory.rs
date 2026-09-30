@@ -1,10 +1,13 @@
 use std::{env, fs, path::Path};
 
+#[path = "rt0_evidence_inventory/owner_golden.rs"]
+mod owner_golden;
 #[path = "rt0_evidence_inventory/session_snapshots.rs"]
 mod session_snapshots;
 #[path = "rt0_evidence_inventory/supporting.rs"]
 mod supporting;
 
+use owner_golden::recompute_owner_golden_report;
 use serde::{Deserialize, Serialize};
 use session_snapshots::{SessionSnapshotChecks, collect_session_snapshot_checks};
 use supporting::SupportingArtifactBytes;
@@ -16,7 +19,7 @@ use vpr_evaluation::{
     validate_live_provider_probe, validate_rt0_exit_supporting_artifacts,
 };
 
-const SCHEMA: &str = "rt0-evidence-inventory-0.7";
+const SCHEMA: &str = "rt0-evidence-inventory-0.8";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../../docs/evaluation/rt0_golden_minimum.json");
 const LIVE_CONVERSATION_ATTEMPT_SCHEMA: &str = "rt0-live-conversation-attempt-0.1";
@@ -27,6 +30,9 @@ const REQUIRED: &[&str] = &[
     "bound-session-aggregate.json",
     "bound-golden-report.json",
     "private-golden-evidence.json",
+    "owner-golden-suite.json",
+    "owner-golden-evidence.json",
+    "owner-golden-report.json",
     "exit-evidence.json",
     "release-spec.md",
     "ci-evidence.json",
@@ -58,6 +64,12 @@ struct BindingChecks {
     golden_evidence_digest_matches_report: Option<bool>,
     golden_report_recomputed: Option<bool>,
     exit_golden_report_digest_matches: Option<bool>,
+    owner_golden_suite_digest_matches_exit: Option<bool>,
+    owner_golden_evidence_digest_matches_exit: Option<bool>,
+    owner_golden_report_digest_matches_exit: Option<bool>,
+    owner_golden_recomputed: Option<bool>,
+    owner_golden_candidate_matches: Option<bool>,
+    owner_golden_provider_state_matches: Option<bool>,
     exit_provider_state_matches: Option<bool>,
     exit_probe_digest_matches: Option<bool>,
     exit_conversation_digest_matches: Option<bool>,
@@ -85,6 +97,12 @@ impl BindingChecks {
                 self.golden_evidence_digest_matches_report,
                 self.golden_report_recomputed,
                 self.exit_golden_report_digest_matches,
+                self.owner_golden_suite_digest_matches_exit,
+                self.owner_golden_evidence_digest_matches_exit,
+                self.owner_golden_report_digest_matches_exit,
+                self.owner_golden_recomputed,
+                self.owner_golden_candidate_matches,
+                self.owner_golden_provider_state_matches,
                 self.exit_provider_state_matches,
                 self.exit_probe_digest_matches,
                 self.exit_conversation_digest_matches,
@@ -113,6 +131,12 @@ struct ExitBindingChecks {
     golden_evidence_digest_matches_report: Option<bool>,
     golden_report_recomputed: Option<bool>,
     golden_report_digest_matches: Option<bool>,
+    owner_suite_digest_matches: Option<bool>,
+    owner_evidence_digest_matches: Option<bool>,
+    owner_report_digest_matches: Option<bool>,
+    owner_recomputed: Option<bool>,
+    owner_candidate_matches: Option<bool>,
+    owner_provider_state_matches: Option<bool>,
     provider_state_matches: Option<bool>,
     probe_digest_matches: Option<bool>,
     conversation_digest_matches: Option<bool>,
@@ -143,6 +167,9 @@ struct ParsedBindingArtifacts {
     provider: Option<ProviderStateManifest>,
     golden: Option<BoundGoldenReport>,
     golden_evidence: Option<GoldenEvidenceBundle>,
+    owner_golden_suite: Option<GoldenSuite>,
+    owner_golden_evidence: Option<GoldenEvidenceBundle>,
+    owner_golden_report: Option<BoundGoldenReport>,
     probe: Option<LiveProviderProbeReceipt>,
     conversation: Option<ExternalBindingView>,
     session: Option<BoundLabSessionEvidenceAggregate>,
@@ -150,6 +177,8 @@ struct ParsedBindingArtifacts {
     supporting: Option<SupportingArtifactBytes>,
     provider_state_bytes: Option<Vec<u8>>,
     golden_evidence_bytes: Option<Vec<u8>>,
+    owner_golden_suite_bytes: Option<Vec<u8>>,
+    owner_golden_evidence_bytes: Option<Vec<u8>>,
     release_spec_bytes: Option<Vec<u8>>,
 }
 
@@ -159,6 +188,9 @@ impl ParsedBindingArtifacts {
             provider: parse_optional(&root.join("provider-state.json")),
             golden: parse_optional(&root.join("bound-golden-report.json")),
             golden_evidence: parse_optional(&root.join("private-golden-evidence.json")),
+            owner_golden_suite: parse_optional(&root.join("owner-golden-suite.json")),
+            owner_golden_evidence: parse_optional(&root.join("owner-golden-evidence.json")),
+            owner_golden_report: parse_optional(&root.join("owner-golden-report.json")),
             probe: parse_optional(&root.join("provider-probe.json")),
             conversation: parse_optional(&root.join("conversation-attempt.json")),
             session: parse_optional(&root.join("bound-session-aggregate.json")),
@@ -166,6 +198,8 @@ impl ParsedBindingArtifacts {
             supporting: SupportingArtifactBytes::read(root),
             provider_state_bytes: fs::read(root.join("provider-state.json")).ok(),
             golden_evidence_bytes: fs::read(root.join("private-golden-evidence.json")).ok(),
+            owner_golden_suite_bytes: fs::read(root.join("owner-golden-suite.json")).ok(),
+            owner_golden_evidence_bytes: fs::read(root.join("owner-golden-evidence.json")).ok(),
             release_spec_bytes: fs::read(root.join("release-spec.md")).ok(),
         }
     }
@@ -291,6 +325,12 @@ fn inspect_binding_checks(
         golden_evidence_digest_matches_report: exit.golden_evidence_digest_matches_report,
         golden_report_recomputed: exit.golden_report_recomputed,
         exit_golden_report_digest_matches: exit.golden_report_digest_matches,
+        owner_golden_suite_digest_matches_exit: exit.owner_suite_digest_matches,
+        owner_golden_evidence_digest_matches_exit: exit.owner_evidence_digest_matches,
+        owner_golden_report_digest_matches_exit: exit.owner_report_digest_matches,
+        owner_golden_recomputed: exit.owner_recomputed,
+        owner_golden_candidate_matches: exit.owner_candidate_matches,
+        owner_golden_provider_state_matches: exit.owner_provider_state_matches,
         exit_provider_state_matches: exit.provider_state_matches,
         exit_probe_digest_matches: exit.probe_digest_matches,
         exit_conversation_digest_matches: exit.conversation_digest_matches,
@@ -344,6 +384,34 @@ fn inspect_exit_binding_checks(
             "bound-golden-report.json",
             |evidence| &evidence.golden_report_sha256,
         ),
+        owner_suite_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "owner-golden-suite.json",
+            |evidence| &evidence.owner_golden_suite_sha256,
+        ),
+        owner_evidence_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "owner-golden-evidence.json",
+            |evidence| &evidence.owner_golden_evidence_sha256,
+        ),
+        owner_report_digest_matches: exit_digest_matches(
+            parsed.exit.as_ref(),
+            root,
+            "owner-golden-report.json",
+            |evidence| &evidence.owner_golden_report_sha256,
+        ),
+        owner_recomputed: recompute_owner_golden_report(parsed, candidate_sha),
+        owner_candidate_matches: parsed
+            .owner_golden_report
+            .as_ref()
+            .map(|report| report.binding.candidate_sha == candidate_sha),
+        owner_provider_state_matches: parsed
+            .owner_golden_report
+            .as_ref()
+            .zip(provider_digest)
+            .map(|(report, digest)| report.binding.provider_state_sha256 == digest),
         provider_state_matches: parsed
             .exit
             .as_ref()

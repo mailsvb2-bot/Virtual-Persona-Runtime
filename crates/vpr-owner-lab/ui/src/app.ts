@@ -5,7 +5,9 @@ import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 type Bootstrap = { csrf_token: string; egress_enabled: boolean };
 type SessionAudience = "owner" | "visitor";
 type ConversationReadiness = "none" | "text" | "text_and_voice";
-type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; conversation_readiness: ConversationReadiness; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
+type ModalityReadiness = "not_ready" | "preparing" | "ready" | "failed";
+type ModalityReadinessStatus = { text: ModalityReadiness; voice: ModalityReadiness; video: ModalityReadiness };
+type LabStatus = { session_state: string; avatar_open: boolean; egress_enabled: boolean; conversation_readiness: ConversationReadiness; modality_readiness: ModalityReadinessStatus; session_audience: SessionAudience | null; owner_context_state: "missing" | "reviewed"; persona_version: number; reviewed_owner_claims: number };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
@@ -174,10 +176,13 @@ const metricVideoReady = byId<HTMLElement>("metric-video-ready");
 const metricAvSync = byId<HTMLElement>("metric-av-sync");
 const metricPlayback = byId<HTMLElement>("metric-playback");
 const metricCost = byId<HTMLElement>("metric-cost");
+const readinessText = byId<HTMLElement>("readiness-text");
+const readinessVoice = byId<HTMLElement>("readiness-voice");
+const readinessVideo = byId<HTMLElement>("readiness-video");
 
 let csrfToken = "";
 let egressEnabled = false;
-let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
+let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
@@ -557,7 +562,9 @@ const monitorRemoteAudio = (): void => {
           "audio_started",
           voice.audioStartedElapsed,
           voice.requestSequence,
-        );
+        ).then(async () => {
+          await syncStatus();
+        });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence.catch(() => undefined);
       }
@@ -606,11 +613,34 @@ const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
   void postMediaEvidence("video_ready", performance.now() - connectEvidenceStartedAt)
+    .then(() => syncStatus())
     .catch(() => undefined);
+};
+
+const modalityLabel = (state: ModalityReadiness): string => {
+  switch (state) {
+    case "ready": return "Готов";
+    case "preparing": return "Подготовка…";
+    case "failed": return "Ошибка подготовки";
+    default: return "Не готов";
+  }
+};
+
+const renderModalityReadiness = (readiness: ModalityReadinessStatus): void => {
+  const entries: Array<[HTMLElement, ModalityReadiness]> = [
+    [readinessText, readiness.text],
+    [readinessVoice, readiness.voice],
+    [readinessVideo, readiness.video],
+  ];
+  entries.forEach(([node, state]) => {
+    node.textContent = modalityLabel(state);
+    node.dataset.state = state;
+  });
 };
 
 const syncStatus = async (): Promise<LabStatus> => {
   backendStatus = await api<LabStatus>("/api/status");
+  renderModalityReadiness(backendStatus.modality_readiness);
   updateControls();
   showEvidence(backendStatus);
   return backendStatus;
@@ -998,7 +1028,7 @@ const connectAvatar = async (): Promise<void> => {
       await connectLiveKitTransport(start.transport);
     }
 
-    updateControls();
+    await syncStatus();
     const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
     setStatus(
       selectedAudience() === "visitor"

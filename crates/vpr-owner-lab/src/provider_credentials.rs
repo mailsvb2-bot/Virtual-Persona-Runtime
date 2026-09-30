@@ -13,6 +13,12 @@ pub struct ProviderCredentialProfile {
     pub did_agent_id: String,
     pub did_endpoint: String,
     pub did_fluent: bool,
+    #[serde(default = "default_avatar_provider")]
+    pub avatar_provider: String,
+    #[serde(default)]
+    pub local_avatar_endpoint: Option<String>,
+    #[serde(default)]
+    pub local_avatar_api_token: Option<String>,
     pub stt_provider: String,
     pub stt_endpoint: String,
     pub stt_api_key: String,
@@ -37,6 +43,9 @@ impl ProviderCredentialProfile {
             did_agent_id: did_agent_id.trim().to_owned(),
             did_endpoint: "https://api.d-id.com".into(),
             did_fluent: false,
+            avatar_provider: "did".into(),
+            local_avatar_endpoint: None,
+            local_avatar_api_token: None,
             stt_provider: "deepgram".into(),
             stt_endpoint: "https://api.deepgram.com/v1/listen".into(),
             stt_api_key: deepgram_api_key,
@@ -53,6 +62,29 @@ impl ProviderCredentialProfile {
         self.did_api_key = normalize_did_api_key(did_api_key);
         did_agent_id.trim().clone_into(&mut self.did_agent_id);
         self.did_fluent = false;
+        self.avatar_provider = "did".into();
+    }
+
+    /// Selects the self-hosted avatar worker while preserving D-ID as a fallback provider.
+    ///
+    /// # Errors
+    /// Returns a redacted configuration error when endpoint or token is empty, or when the
+    /// resulting provider profile is incomplete.
+    pub fn select_local_avatar(&mut self, endpoint: &str, api_token: &str) -> Result<(), String> {
+        let endpoint = endpoint.trim();
+        let api_token = api_token.trim();
+        if endpoint.is_empty() || api_token.is_empty() {
+            return Err("local avatar endpoint/token cannot be empty".into());
+        }
+        self.avatar_provider = "local-open-source".into();
+        self.local_avatar_endpoint = Some(endpoint.to_owned());
+        self.local_avatar_api_token = Some(api_token.to_owned());
+        self.validate()
+    }
+
+    /// Selects the stored D-ID binding without deleting a configured local fallback.
+    pub fn select_did_avatar(&mut self) {
+        self.avatar_provider = "did".into();
     }
 
     /// Validates that the stored profile is complete and has the expected schema.
@@ -66,6 +98,7 @@ impl ProviderCredentialProfile {
         for (label, value) in [
             ("D-ID API key", self.did_api_key.as_str()),
             ("D-ID agent ID", self.did_agent_id.as_str()),
+            ("avatar provider", self.avatar_provider.as_str()),
             ("STT provider", self.stt_provider.as_str()),
             ("STT endpoint", self.stt_endpoint.as_str()),
             ("STT API key", self.stt_api_key.as_str()),
@@ -79,8 +112,31 @@ impl ProviderCredentialProfile {
                 return Err(format!("secure provider profile field {label} is empty"));
             }
         }
+        match self.avatar_provider.as_str() {
+            "did" | "d-id" | "did-agent-streams" => {}
+            "local" | "local-open-source" => {
+                if self
+                    .local_avatar_endpoint
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty())
+                    || self
+                        .local_avatar_api_token
+                        .as_deref()
+                        .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err(
+                        "secure provider profile local avatar configuration is incomplete".into(),
+                    );
+                }
+            }
+            _ => return Err("secure provider profile avatar provider is unsupported".into()),
+        }
         Ok(())
     }
+}
+
+fn default_avatar_provider() -> String {
+    "did".into()
 }
 
 fn normalize_did_api_key(value: &str) -> String {
@@ -213,6 +269,52 @@ mod tests {
         assert_eq!(profile.stt_api_key, "deepgram-secret");
         assert_eq!(profile.llm_api_key, "deepseek-secret");
         assert!(!profile.did_fluent);
+    }
+
+    #[test]
+    fn historical_profile_without_avatar_fields_defaults_to_did() {
+        let raw = r#"{
+            "schema_version":"vpr-rt0-provider-profile-1",
+            "did_api_key":"did-secret",
+            "did_agent_id":"did-agent",
+            "did_endpoint":"https://api.d-id.com",
+            "did_fluent":false,
+            "stt_provider":"deepgram",
+            "stt_endpoint":"https://api.deepgram.com/v1/listen",
+            "stt_api_key":"deepgram-secret",
+            "stt_model":"nova-3",
+            "llm_provider":"deepseek",
+            "llm_endpoint":"https://api.deepseek.com/chat/completions",
+            "llm_api_key":"deepseek-secret",
+            "llm_model":"deepseek-flash"
+        }"#;
+        let profile: ProviderCredentialProfile = serde_json::from_str(raw).unwrap();
+        assert_eq!(profile.avatar_provider, "did");
+        assert!(profile.local_avatar_endpoint.is_none());
+        assert!(profile.local_avatar_api_token.is_none());
+        assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn local_avatar_selection_is_persistable_without_deleting_did_fallback() {
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "did-secret",
+            "did-agent",
+            "deepgram-secret".into(),
+            "deepseek-secret".into(),
+        );
+        profile
+            .select_local_avatar("https://avatar.example.test", "worker-secret")
+            .unwrap();
+        assert_eq!(profile.avatar_provider, "local-open-source");
+        assert_eq!(profile.did_agent_id, "did-agent");
+        assert_eq!(
+            profile.local_avatar_endpoint.as_deref(),
+            Some("https://avatar.example.test")
+        );
+        assert!(profile.validate().is_ok());
+        profile.select_did_avatar();
+        assert_eq!(profile.avatar_provider, "did");
     }
 
     #[test]
