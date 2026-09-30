@@ -9,6 +9,8 @@ import { installProviderAutoConnect } from "./provider-bootstrap.js";
 
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
+const VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
+const VOICE_JOURNEY_TEST_TIMEOUT_MS = 120_000;
 const ownerAnswers = [
   "Я создаю виртуальных персонажей",
   "Отвечай кратко и спокойно",
@@ -324,6 +326,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   page,
   request,
 }) => {
+  test.setTimeout(VOICE_JOURNEY_TEST_TIMEOUT_MS);
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
@@ -342,6 +345,9 @@ test("owner and visitor voice turns cross the real backend with different contex
     return state.report.status === "failed"
       ? `failed:${state.report.error ?? "unknown"}`
       : state.report.status;
+  }, {
+    timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
+    message: "Voice journey must publish one terminal mailbox report within its bounded lifecycle",
   }).toBe("ok");
 
   const journeyState = await request.get(`${providerUrl}/__journey_state`);
