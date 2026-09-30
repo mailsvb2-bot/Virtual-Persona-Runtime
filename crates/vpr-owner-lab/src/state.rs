@@ -111,6 +111,7 @@ pub enum LabError {
     InvalidState,
     Runtime(Rt0ReasonCode),
     Provider(Rt0ReasonCode),
+    PersistenceFailed,
     Internal,
 }
 
@@ -123,6 +124,7 @@ impl LabError {
             Self::InvalidInput => "INVALID_INPUT",
             Self::InvalidState => "INVALID_STATE_TRANSITION",
             Self::Runtime(reason) | Self::Provider(reason) => reason.as_str(),
+            Self::PersistenceFailed => "PERSONA_PERSISTENCE_FAILED",
             Self::Internal => "INTERNAL_ERROR",
         }
     }
@@ -228,6 +230,40 @@ impl OwnerLabEngine {
             .correct_claim(id, statement, kind)
             .map_err(map_owner_context_error)?;
         self.readiness.reset_for_profile(context.profile())?;
+        Ok(())
+    }
+
+    /// Corrects one reviewed owner claim and commits the resulting snapshot atomically with
+    /// durable persistence. A failed commit restores the exact pre-correction snapshot before
+    /// returning a persistence error, so in-memory PersonaVersion can never run ahead of storage.
+    ///
+    /// # Errors
+    /// Returns the canonical correction error, or `PersistenceFailed` after a failed durable commit.
+    pub fn correct_owner_claim_with_persistence(
+        &mut self,
+        id: &ClaimId,
+        statement: impl Into<String>,
+        kind: ClaimKind,
+        persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
+    ) -> Result<(), LabError> {
+        let previous = self.reviewed_owner_context_snapshot()?;
+        self.correct_owner_claim(id, statement, kind)?;
+        let current = self.reviewed_owner_context_snapshot()?;
+        if persist(&current).is_ok() {
+            return Ok(());
+        }
+
+        self.restore_reviewed_owner_context_after_failed_persistence(&previous)?;
+        Err(LabError::PersistenceFailed)
+    }
+
+    fn restore_reviewed_owner_context_after_failed_persistence(
+        &mut self,
+        snapshot: &ReviewedOwnerContextSnapshot,
+    ) -> Result<(), LabError> {
+        let context = ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
+        self.readiness.reset_for_profile(context.profile())?;
+        self.reviewed_owner_context = Some(context);
         Ok(())
     }
 
