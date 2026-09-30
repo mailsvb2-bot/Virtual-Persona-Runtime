@@ -272,7 +272,7 @@ fn lab_reason(error: &LabError) -> Rt0ReasonCode {
         LabError::ConsentRequired => Rt0ReasonCode::ConsentRequired,
         LabError::InvalidInput | LabError::InvalidState => Rt0ReasonCode::InvalidStateTransition,
         LabError::Runtime(reason) | LabError::Provider(reason) => *reason,
-        LabError::Internal => Rt0ReasonCode::InternalError,
+        LabError::PersistenceFailed | LabError::Internal => Rt0ReasonCode::InternalError,
     }
 }
 
