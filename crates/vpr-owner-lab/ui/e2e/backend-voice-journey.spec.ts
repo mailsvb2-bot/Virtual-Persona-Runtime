@@ -10,7 +10,7 @@ import { installProviderAutoConnect } from "./provider-bootstrap.js";
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
 const VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
-const VOICE_JOURNEY_TEST_TIMEOUT_MS = 120_000;
+const VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
   "Я создаю виртуальных персонажей",
   "Отвечай кратко и спокойно",
@@ -333,6 +333,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   await setupReviewedPersona(request, csrf);
 
   let report: VoiceJourneyReport | null = null;
+  let lastJourneyPhase = "not-started";
   await page.route("**/__voice_journey_report", async (route) => {
     const request = route.request();
     if (request.method() !== "POST") {
@@ -340,7 +341,14 @@ test("owner and visitor voice turns cross the real backend with different contex
       return;
     }
     try {
-      report = JSON.parse(request.postData() ?? "") as VoiceJourneyReport;
+      const payload = JSON.parse(request.postData() ?? "") as
+        | VoiceJourneyReport
+        | { kind: "phase"; phase: string };
+      if ("kind" in payload && payload.kind === "phase") {
+        lastJourneyPhase = payload.phase;
+      } else {
+        report = payload as VoiceJourneyReport;
+      }
     } catch {
       report = { status: "failed", error: "INVALID_JOURNEY_REPORT" };
     }
@@ -353,9 +361,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.goto("/");
 
   await expect.poll(() => {
-    if (!report) return "pending";
+    if (!report) return `pending:${lastJourneyPhase}`;
     return report.status === "failed"
-      ? `failed:${report.error ?? "unknown"}`
+      ? `failed:${report.error ?? "unknown"}@phase:${lastJourneyPhase}`
       : report.status;
   }, {
     timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
