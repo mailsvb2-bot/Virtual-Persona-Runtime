@@ -140,6 +140,10 @@ for required in (
     "did.speak",
     "did.interrupt",
     "__vprExpressiveDisconnect",
+    "__vprExpressiveLoseVideo",
+    "__vprExpressiveRestoreVideo",
+    "Голос остаётся доступен",
+    "voiceButton).toBeEnabled",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
     "absolute_offset_millis === 60",
     "#metric-stt",
@@ -198,6 +202,18 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
+
+for required in (
+    "handleLiveKitTrackUnsubscribed",
+    "detachLiveKitTrack",
+    "Видео-поток аватара потерян. Голос остаётся доступен",
+    "Transport/control readiness is independent from video-track readiness",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab video-loss voice fallback missing: {required}")
+
+if 'realtimeTransportReady = false;\n    stage?.classList.remove("has-video");\n    stopMicrophoneCapture();' in app:
+    raise SystemExit("LiveKit video loss must not disable the whole transport or microphone")
 
 for required in (
     'id="metric-stt"',
