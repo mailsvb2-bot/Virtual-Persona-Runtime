@@ -234,8 +234,8 @@ impl OwnerLabEngine {
     }
 
     /// Corrects one reviewed owner claim and commits the resulting snapshot atomically with
-    /// durable persistence. A failed commit restores the exact pre-correction snapshot before
-    /// returning a persistence error, so in-memory PersonaVersion can never run ahead of storage.
+    /// durable persistence. The domain layer rolls back only the touched claim revision and
+    /// PersonaVersion if persistence fails; readiness is reset only after a successful commit.
     ///
     /// # Errors
     /// Returns the canonical correction error, or `PersistenceFailed` after a failed durable commit.
@@ -246,20 +246,18 @@ impl OwnerLabEngine {
         kind: ClaimKind,
         persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
     ) -> Result<(), LabError> {
-        let previous_context = self
-            .reviewed_owner_context
-            .clone()
-            .ok_or(LabError::InvalidState)?;
-        let previous_readiness = self.readiness.clone();
-        self.correct_owner_claim(id, statement, kind)?;
-        let current = self.reviewed_owner_context_snapshot()?;
-        if persist(&current).is_ok() {
-            return Ok(());
+        if self.session_audience == Some(LabSessionAudience::Visitor) {
+            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
         }
-
-        self.reviewed_owner_context = Some(previous_context);
-        self.readiness = previous_readiness;
-        Err(LabError::PersistenceFailed)
+        let context = self
+            .reviewed_owner_context
+            .as_mut()
+            .ok_or(LabError::InvalidState)?;
+        context
+            .correct_claim_with_persistence(id, statement, kind, persist)
+            .map_err(map_owner_context_error)?;
+        self.readiness.reset_for_profile(context.profile())?;
+        Ok(())
     }
 
     /// Returns an owner-only snapshot of the current reviewed claim revisions.
@@ -600,6 +598,7 @@ const fn map_owner_context_error(error: OwnerContextError) -> LabError {
     match error {
         OwnerContextError::ProfileNotReviewed => LabError::InvalidState,
         OwnerContextError::CorrectionRejected => LabError::InvalidInput,
+        OwnerContextError::PersistenceFailed => LabError::PersistenceFailed,
     }
 }
 
