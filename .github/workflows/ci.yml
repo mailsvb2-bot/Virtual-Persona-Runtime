@@ -22,7 +22,7 @@ jobs:
           rustup show active-toolchain
           rustc --version
           cargo --version
-          rustc --version | grep '^rustc 1\.85\.0 '
+          rustc --version | grep '^rustc 1\.88\.0 '
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
