@@ -86,18 +86,6 @@ const record = (kind, request, url, body) => {
   });
 };
 
-const browserTestOrigins = new Set([
-  "http://127.0.0.1:18789",
-  "http://127.0.0.1:18791",
-]);
-
-const browserTestHeaders = (request) => {
-  const origin = request.headers.origin;
-  return typeof origin === "string" && browserTestOrigins.has(origin)
-    ? { "access-control-allow-origin": origin, "vary": "Origin" }
-    : {};
-};
-
 const llmEventStream = (reply) => [
   `data: ${JSON.stringify({ choices: [{ delta: { content: reply } }], usage: null })}\n\n`,
   `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 4 } })}\n\n`,
@@ -110,7 +98,7 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { ok: true });
   }
   if (request.method === "GET" && url.pathname === "/__state") {
-    return sendJson(response, 200, { requests }, browserTestHeaders(request));
+    return sendJson(response, 200, { requests });
   }
 
   if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
