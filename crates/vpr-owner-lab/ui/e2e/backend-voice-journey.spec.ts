@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { installProviderAutoConnect } from "./provider-bootstrap.js";
+
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -140,11 +142,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   await setupReviewedPersona(request, csrf);
 
   await prepareBrowserRuntimeFakes(page);
+  await installProviderAutoConnect(page);
   await page.goto("/");
-  await page.locator("#consent").check();
-  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
-  await expect(connectAvatar).toBeEnabled();
-  await connectAvatar.click();
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
@@ -164,9 +164,11 @@ test("owner and visitor voice turns cross the real backend with different contex
     "Голосовой ответ владельцу",
   );
   await waitForCanonicalPlaybackEvidence(request);
-  await expect.poll(() => page.evaluate(
-    () => (window as unknown as { __vprRequestedMicrophones?: string[] }).__vprRequestedMicrophones ?? [],
-  )).toContain("headset-mic");
+  await expect.poll(async () =>
+    JSON.parse(
+      await page.locator("html").getAttribute("data-vpr-requested-microphones") ?? "[]",
+    ) as string[]
+  ).toContain("headset-mic");
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
@@ -177,9 +179,9 @@ test("owner and visitor voice turns cross the real backend with different contex
     };
     return snapshot.media_events.some((event) => event.kind === "interruption_stopped");
   }).toBeTruthy();
-  const interruptPayloads = await page.evaluate(
-    () => (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads ?? [],
-  );
+  const interruptPayloads = JSON.parse(
+    await page.locator("html").getAttribute("data-vpr-interrupt-payloads") ?? "[]",
+  ) as string[];
   expect(interruptPayloads).toHaveLength(1);
   expect(JSON.parse(interruptPayloads[0] ?? "{}")).toMatchObject({
     type: "stream/interrupt",
@@ -187,17 +189,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   });
   expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
 
-  await page.evaluate(() => {
-    (window as unknown as {
-      __vprSetPeerConnectionState: (state: "disconnected") => void;
-    }).__vprSetPeerConnectionState("disconnected");
-  });
+  await page.locator('[data-vpr-fixture-action="voice-disconnected"]').click({ force: true });
   await page.waitForTimeout(25);
-  await page.evaluate(() => {
-    (window as unknown as {
-      __vprSetPeerConnectionState: (state: "connected") => void;
-    }).__vprSetPeerConnectionState("connected");
-  });
+  await page.locator('[data-vpr-fixture-action="voice-connected"]').click({ force: true });
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
     const snapshot = await evidence.json() as {
