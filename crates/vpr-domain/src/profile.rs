@@ -140,7 +140,7 @@ impl OwnerClaimRecord {
         revisions: Vec<(u64, OwnerClaim)>,
     ) -> Result<Self, ProfileError> {
         let mut restored = Vec::with_capacity(revisions.len());
-        let mut expected = None;
+        let mut previous_revision = None;
         let starts_at_initial = revisions
             .first()
             .is_some_and(|(revision, _)| *revision == ClaimRevision::initial().get());
@@ -148,13 +148,13 @@ impl OwnerClaimRecord {
         for (index, (revision_number, claim)) in revisions.into_iter().enumerate() {
             let revision =
                 ClaimRevision::new(revision_number).ok_or(ProfileError::InvalidClaimHistory)?;
-            if let Some(expected_revision) = expected
-                && revision != expected_revision
+            if let Some(previous) = previous_revision
+                && previous.next()? != revision
             {
                 return Err(ProfileError::InvalidClaimHistory);
             }
             validate_restored_claim(&claim, index, starts_at_initial)?;
-            expected = Some(revision.next()?);
+            previous_revision = Some(revision);
             restored.push(OwnerClaimRevision { revision, claim });
         }
 
@@ -762,6 +762,26 @@ mod tests {
         assert!(!record.has_complete_history());
         assert!(record.previous_revisions().is_empty());
         assert_eq!(record.current().revision().get(), 7);
+    }
+
+    #[test]
+    fn retained_history_allows_exhausted_current_revision() {
+        let record = OwnerClaimRecord::restore_retained_history(
+            ClaimId::new("exhausted-current").unwrap(),
+            vec![(
+                u64::MAX,
+                OwnerClaim {
+                    statement: "Последняя возможная ревизия".into(),
+                    kind: ClaimKind::Factual,
+                    source: SourceKind::Owner,
+                    verification: VerificationState::OwnerVerified,
+                    derivation: DerivationKind::Direct,
+                },
+            )],
+        )
+        .unwrap();
+        assert_eq!(record.current().revision().get(), u64::MAX);
+        assert!(!record.has_complete_history());
     }
 
     #[test]
