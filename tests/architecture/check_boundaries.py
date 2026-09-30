@@ -496,6 +496,28 @@ owner_lab_ui_files = [
     and path.suffix in {".ts", ".js", ".html", ".css", ".json"}
 ]
 owner_lab_ui = "\n".join(path.read_text(encoding="utf-8") for path in owner_lab_ui_files)
+owner_lab_runtime_root_files = {
+    "index.html",
+    "styles.css",
+    "reference-capture.js",
+    "mic-worklet.js",
+}
+owner_lab_production_ui_files = [
+    path
+    for path in owner_lab_ui_files
+    if (
+        path.relative_to(owner_lab_ui_root).parts[0] in {"src", "dist"}
+        or path.relative_to(owner_lab_ui_root).as_posix() in owner_lab_runtime_root_files
+    )
+]
+if not owner_lab_production_ui_files or any(
+    "e2e" in path.relative_to(owner_lab_ui_root).parts
+    for path in owner_lab_production_ui_files
+):
+    raise SystemExit("Owner Lab production UI boundary must exclude E2E harnesses")
+owner_lab_production_ui = "\n".join(
+    path.read_text(encoding="utf-8") for path in owner_lab_production_ui_files
+)
 if 'format!("127.0.0.1:{port}")' not in owner_lab_main:
     raise SystemExit("Owner Lab HTTP listener must remain loopback-only")
 for required in (
@@ -530,10 +552,10 @@ for required in (
 if "if !self.egress_enabled" not in owner_lab_state or "if !request.consent" not in owner_lab_state:
     raise SystemExit("Owner Lab production start path must retain process egress and explicit-consent gates")
 for forbidden in ("VPR_DID_API_KEY", "api.d-id.com", "integration-secret", "secret-key"):
-    if forbidden in owner_lab_ui:
-        raise SystemExit(f"Owner Lab UI must not contain provider secrets/endpoints: {forbidden}")
-if 'fetch("http' in owner_lab_ui or "fetch('http" in owner_lab_ui:
-    raise SystemExit("Owner Lab UI must use same-origin backend APIs only")
+    if forbidden in owner_lab_production_ui:
+        raise SystemExit(f"Owner Lab production UI must not contain provider secrets/endpoints: {forbidden}")
+if 'fetch("http' in owner_lab_production_ui or "fetch('http" in owner_lab_production_ui:
+    raise SystemExit("Owner Lab production UI must use same-origin backend APIs only")
 for forbidden_did_wire in ("JanusDataChannel", "stream/started", "stream/done", "stream/interrupt"):
     if forbidden_did_wire in owner_lab_app:
         raise SystemExit(
@@ -649,8 +671,8 @@ for forbidden_browser_secret in (
     "VPR_OWNER_LAB_STT_ENDPOINT",
     "VPR_OWNER_LAB_LLM_ENDPOINT",
 ):
-    if forbidden_browser_secret in owner_lab_ui:
-        raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
+    if forbidden_browser_secret in owner_lab_production_ui:
+        raise SystemExit(f"Owner Lab production browser must not own provider configuration: {forbidden_browser_secret}")
 for required_live_mic in (
     "AudioWorkletNode",
     "apiBinary",
