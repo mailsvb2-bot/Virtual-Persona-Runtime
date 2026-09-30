@@ -174,20 +174,18 @@ mod tests {
             std::process::id()
         );
         let prefix: &'static str = Box::leak(prefix.into_boxed_str());
-        let store = ChunkedCredentialStore::new(
-            "Virtual-Persona-Runtime-Test",
-            prefix,
-            None,
-        );
+        let store = ChunkedCredentialStore::new("Virtual-Persona-Runtime-Test", prefix, None);
         let _ = store.delete();
 
         let mut large = sample();
         large.claims[0].statement = "Ж".repeat(4_000);
-        let raw =
-            serde_json::to_string(&PersistedPersona::new(large.clone())).expect("sample must serialize");
+        let raw = serde_json::to_string(&PersistedPersona::new(large.clone()))
+            .expect("sample must serialize");
         assert!(raw.len() > 2_560);
 
-        store.save(&raw).expect("chunked Credential Manager store must accept large Persona");
+        store
+            .save(&raw)
+            .expect("chunked Credential Manager store must accept large Persona");
         let restored_raw = store
             .load()
             .expect("chunked Credential Manager store must read Persona")
