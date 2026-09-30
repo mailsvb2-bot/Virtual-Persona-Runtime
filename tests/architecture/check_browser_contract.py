@@ -325,16 +325,17 @@ for required in (
     if required not in app:
         raise SystemExit(f"Owner Lab microphone device selection missing: {required}")
 
-if "data-vpr-requested-microphones" not in voice_e2e:
-    raise SystemExit("Owner Lab microphone selection browser proof must observe the requested-device evidence")
 for required in (
     "__vprRequestedMicrophones",
     "Микрофон гарнитуры",
-    "vprRequestedMicrophones",
     'localStorage.setItem("vpr.owner-lab.microphone-device-id", "headset-mic")',
 ):
     if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab microphone fixture contract missing: {required}")
+if "__vprRequestedMicrophones" not in voice_journey_driver:
+    raise SystemExit("Owner Lab Voice driver must capture the microphone request evidence")
+if 'expect(journey.requestedMicrophones).toContain("headset-mic")' not in voice_journey_contract:
+    raise SystemExit("Owner Lab Voice contract must assert the persisted microphone preference was requested")
 
 for required in (
     "estimatedPlayoutTimestamp",
