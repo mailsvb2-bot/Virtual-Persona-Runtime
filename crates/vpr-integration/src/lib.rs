@@ -1,5 +1,8 @@
 mod avatar;
+mod provider_http;
 mod transport;
+
+pub use provider_http::build_provider_http_client;
 
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
