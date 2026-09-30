@@ -9,6 +9,7 @@ mod known_limitations;
 mod live_provider;
 mod session_binding;
 mod session_evidence;
+mod session_statistics;
 mod session_types;
 mod supporting_preflight;
 
