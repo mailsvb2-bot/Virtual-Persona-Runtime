@@ -15,6 +15,7 @@ EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend
 APP = UI / "src" / "app.ts"
 REFERENCE_CAPTURE = UI / "reference-capture.js"
 BOOTSTRAP_CONTEXT = UI / "dist" / "bootstrap-context.js"
+PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
 EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
@@ -39,6 +40,7 @@ expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
 reference_capture = REFERENCE_CAPTURE.read_text(encoding="utf-8")
 bootstrap_context = BOOTSTRAP_CONTEXT.read_text(encoding="utf-8")
+provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
 evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
@@ -405,3 +407,22 @@ for required in (
         raise SystemExit(f"Owner Lab CI missing browser-contract enforcement: {required}")
 
 print("owner-lab-browser-contract: PASS")
+
+if 'await installProviderAutoConnect(page);' not in voice_e2e:
+    raise SystemExit("Voice provider E2E must delegate initial consent/connect to pre-navigation composition")
+for forbidden in ('page.locator("#consent").check()', 'getByRole("checkbox").check()'):
+    if forbidden in voice_e2e:
+        raise SystemExit(f"Voice provider E2E must not duplicate human consent actionability: {forbidden}")
+for required in (
+    'page.addInitScript',
+    'document.getElementById("connect")',
+    'document.getElementById("consent")',
+    'consent.checked = true',
+    'connect.click()',
+    'MutationObserver',
+):
+    if required not in provider_bootstrap:
+        raise SystemExit(f"Provider auto-connect harness missing real DOM path: {required}")
+for forbidden in ("__vprBootstrap", "vpr:bootstrap-ready", "afterApiResponse"):
+    if forbidden in provider_bootstrap:
+        raise SystemExit(f"Provider auto-connect harness depends on forbidden production orchestration: {forbidden}")
