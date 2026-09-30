@@ -98,11 +98,21 @@
   };
 
   const run = async () => {
-    await postJourney({ stage: "running", error: null });
+    let phase = "driver-started";
+    const checkpoint = async (nextPhase) => {
+      phase = nextPhase;
+      document.documentElement.dataset.vprVoiceJourneyPhase = phase;
+      await postJourney({ phase });
+    };
+    document.documentElement.dataset.vprVoiceJourneyPhase = phase;
+    await postJourney({ stage: "running", phase, error: null });
 
     await waitForStatus("WebRTC согласован");
+    await checkpoint("owner-connected");
     await recordTextTurn("Текстовый вопрос владельца", "Ответ: Текстовый ответ владельцу");
+    await checkpoint("owner-text-complete");
     await recordVoiceTurn("Голосовой ответ владельцу");
+    await checkpoint("owner-playback-proven");
 
     const interrupt = byId("interrupt");
     await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
@@ -111,6 +121,7 @@
       (snapshot) => snapshot.media_events?.some((event) => event.kind === "interruption_stopped"),
       "interruption-stopped",
     );
+    await checkpoint("owner-interrupt-proven");
 
     const setPeerState = window.__vprSetPeerConnectionState;
     if (typeof setPeerState !== "function") throw new Error("VOICE_JOURNEY_PEER_CONTROL_MISSING");
@@ -123,13 +134,16 @@
       ),
       "reconnect-restored",
     );
+    await checkpoint("owner-reconnect-proven");
 
     await recordTextTurn("Спровоцируй отказ провайдера", "PROVIDER_UNAVAILABLE");
     await recordTextTurn("Восстановление после отказа", "Ответ: Ответ после восстановления");
+    await checkpoint("owner-recovery-complete");
 
     const ownerEvidence = await fetchEvidence();
     byId("close").click();
     await waitForStatus("Сессия закрыта");
+    await checkpoint("owner-closed");
 
     const audience = byId("session-audience");
     audience.value = "visitor";
@@ -138,18 +152,23 @@
     byId("consent").checked = true;
     byId("connect").click();
     await waitForStatus("Visitor-сессия WebRTC согласована");
+    await checkpoint("visitor-connected");
 
     await recordTextTurn("Текстовый вопрос visitor", "Ответ: Текстовый ответ visitor");
+    await checkpoint("visitor-text-complete");
     await recordVoiceTurn("В visitor scope нет подтверждённых данных владельца");
+    await checkpoint("visitor-playback-proven");
     const visitorEvidence = await fetchEvidence();
 
     byId("revoke").click();
     await waitForStatus("Доступ отозван");
     byId("close").click();
     await waitForStatus("Сессия закрыта");
+    await checkpoint("visitor-closed");
 
     await postJourney({
       stage: "complete",
+      phase: "complete",
       ownerEvidence,
       visitorEvidence,
       requestedMicrophones: window.__vprRequestedMicrophones ?? [],
@@ -161,8 +180,10 @@
     void run().catch(async (error) => {
       const message = error instanceof Error ? error.message : String(error);
       try {
+        const current = document.documentElement.dataset.vprVoiceJourneyPhase ?? "unreported";
         await postJourney({
           stage: "failed",
+          phase: current,
           error: message,
           requestedMicrophones: window.__vprRequestedMicrophones ?? [],
           interruptPayloads: window.__vprInterruptPayloads ?? [],
