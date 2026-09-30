@@ -163,7 +163,7 @@ for required in (
     "Спровоцируй отказ провайдера",
     "Восстановление после отказа",
     'failure_code: "PROVIDER_UNAVAILABLE"',
-    'document.getElementById("interrupt")',
+    'element("interrupt", HTMLButtonElement)',
 ):
     if required not in voice_proof:
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
@@ -471,12 +471,12 @@ for forbidden in (
             f"Voice provider E2E must not issue post-navigation Playwright renderer RPC: {forbidden}"
         )
 for required in (
-    'document.getElementById("message")',
-    'document.getElementById("voice")',
-    'document.getElementById("interrupt")',
-    'document.getElementById("session-audience")',
-    'document.getElementById("close")',
-    'document.getElementById("revoke")',
+    'element("message", HTMLTextAreaElement)',
+    'element("voice", HTMLButtonElement)',
+    'element("interrupt", HTMLButtonElement)',
+    'element("session-audience", HTMLSelectElement)',
+    'element("close", HTMLButtonElement)',
+    'element("revoke", HTMLButtonElement)',
     'microphone.value = "headset-mic"',
     '__vprSetPeerConnectionState',
     '"/__voice_journey_report"',
