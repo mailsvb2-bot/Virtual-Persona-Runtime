@@ -69,10 +69,6 @@ export class SessionRuntimeState {
     return status;
   }
 
-  patchBackend(patch: Partial<LabStatus>): LabStatus {
-    return this.applyBackend({ ...this.backendValue, ...patch });
-  }
-
   setRealtimeReadiness(patch: Partial<RealtimeReadiness>): RealtimeReadiness {
     this.realtimeValue = { ...this.realtimeValue, ...patch };
     return this.realtimeValue;
