@@ -33,6 +33,7 @@ type FixtureState = {
   directSpeech: string[];
   textMessages: string[];
   apiPaths: string[];
+  staleStatusOnceAfterStart: boolean;
   voiceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
   appearanceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
 };
@@ -218,6 +219,15 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       return json(route, { csrf_token: csrfToken, egress_enabled: true });
     }
     if (request.method() === "GET" && path === "/api/status") {
+      if (state.staleStatusOnceAfterStart && state.startAudiences.length > 0) {
+        state.staleStatusOnceAfterStart = false;
+        return json(route, {
+          ...statusSnapshot(state),
+          session_state: "none",
+          avatar_open: false,
+          session_audience: null,
+        });
+      }
       return json(route, statusSnapshot(state));
     }
     if (request.method() === "GET" && path === "/api/persona/capture") {
@@ -435,6 +445,7 @@ const initialState = (): FixtureState => ({
   directSpeech: [],
   textMessages: [],
   apiPaths: [],
+  staleStatusOnceAfterStart: false,
   voiceReference: null,
   appearanceReference: null,
 });
@@ -778,6 +789,36 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   expect(state.personaVersion).toBe(3);
   expect(state.claims[0]?.revision).toBe(2);
   expect(state.apiPaths).toContain("POST /api/session/revoke");
+});
+
+test("connect closes a started backend session when authoritative start status mismatches", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "owner-authoritative-start-e2e";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.staleStatusOnceAfterStart = true;
+  state.claims = [{
+    claim_id: "opinion-working-style",
+    statement: "Отвечай кратко и спокойно",
+    kind: "opinion",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.locator("#consent").check();
+  await page.getByRole("button", { name: "Подключить аватар" }).click();
+
+  await expect(page.locator("#status")).toContainText("SESSION_START_STATE_MISMATCH");
+  await expect.poll(() => state.sessionState).toBe("closed");
+  expect(state.apiPaths).toContain("POST /api/avatar/start");
+  expect(state.apiPaths).toContain("POST /api/session/close");
+  expect(state.apiPaths).not.toContain("POST /api/avatar/answer");
 });
 
 test("LiveKit avatar stays contained and unexpected disconnect closes the backend session", async ({ page }) => {
