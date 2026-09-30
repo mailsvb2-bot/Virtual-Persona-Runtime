@@ -421,6 +421,13 @@ const attachLiveKitTrack = (track) => {
         }
     }
 };
+const clearRealtimeMedia = () => {
+    realtimeTransportReady = false;
+    video.srcObject = null;
+    avatarAudio.srcObject = null;
+    stage?.classList.remove("has-video");
+    updateControls();
+};
 const closePeerTransport = () => {
     stopMicrophoneCapture();
     stopRemoteEvidence();
@@ -430,16 +437,36 @@ const closePeerTransport = () => {
     activeClientControl = null;
     peer?.close();
     peer = null;
-    void liveKitRoom?.disconnect().catch(() => undefined);
+    const room = liveKitRoom;
     liveKitRoom = null;
-    realtimeTransportReady = false;
-    video.srcObject = null;
-    avatarAudio.srcObject = null;
-    stage?.classList.remove("has-video");
+    void room?.disconnect().catch(() => undefined);
+    clearRealtimeMedia();
     answerSubmitted = false;
     pendingIce = [];
     capabilities.clear();
-    updateControls();
+};
+const handleUnexpectedLiveKitDisconnect = async (room) => {
+    if (liveKitRoom !== room)
+        return;
+    liveKitRoom = null;
+    stopMicrophoneCapture();
+    stopRemoteEvidence();
+    clearRealtimeMedia();
+    setStatus("LiveKit отключен. Завершаю зависшую сессию…", "error");
+    if (!backendSessionPresent())
+        return;
+    try {
+        await api("/api/session/close", {});
+        await syncStatus();
+        await refreshSessionEvidence();
+        setStatus("LiveKit отключен. Сессия закрыта — сохраните evidence snapshot и подключитесь снова.", "error");
+    }
+    catch (error) {
+        await syncStatus().catch(() => undefined);
+        setStatus(error instanceof Error
+            ? `LiveKit отключен; cleanup: ${error.message}`
+            : "LiveKit отключен; cleanup failed", "error");
+    }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
     peer = new RTCPeerConnection({
@@ -548,8 +575,7 @@ const connectLiveKitTransport = async (transport) => {
         }
     });
     room.on(sdk.RoomEvent.Disconnected, () => {
-        realtimeTransportReady = false;
-        updateControls();
+        void handleUnexpectedLiveKitDisconnect(room);
     });
     await room.connect(transport.server_url, transport.token);
     realtimeTransportReady = true;
