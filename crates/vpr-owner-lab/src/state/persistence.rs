@@ -24,7 +24,7 @@ impl OwnerLabEngine {
 
     /// Corrects one reviewed owner claim and commits the resulting snapshot atomically with
     /// durable persistence. The domain layer rolls back only the touched claim revision and
-    /// PersonaVersion if persistence fails; readiness is reset only after a successful commit.
+    /// `PersonaVersion` if persistence fails; readiness is reset only after a successful commit.
     ///
     /// # Errors
     /// Returns the canonical correction error, or `PersistenceFailed` after a failed durable commit.
