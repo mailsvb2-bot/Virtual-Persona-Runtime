@@ -140,7 +140,7 @@ impl OwnerClaimRecord {
         revisions: Vec<(u64, OwnerClaim)>,
     ) -> Result<Self, ProfileError> {
         let mut restored = Vec::with_capacity(revisions.len());
-        let mut previous_revision = None;
+        let mut previous_revision: Option<ClaimRevision> = None;
         let starts_at_initial = revisions
             .first()
             .is_some_and(|(revision, _)| *revision == ClaimRevision::initial().get());
