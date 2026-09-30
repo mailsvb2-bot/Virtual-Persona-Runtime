@@ -525,3 +525,15 @@ for forbidden in (
 ):
     if forbidden in voice_provider:
         raise SystemExit(f"Voice provider fixture must not own browser journey mailbox: {forbidden}")
+
+for required in (
+    'target.endsWith("/api/voice/events")',
+    'event.kind === "segment"',
+    "beginRemotePlayback();",
+    'report === null ? `pending:${lastJourneyPhase}` : "terminal"',
+    "Voice journey failed:",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Voice provider E2E missing causal playback/terminal lifecycle: {required}")
+if 'if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);' in voice_e2e:
+    raise SystemExit("Voice provider E2E must not fabricate remote playback before provider delivery")
