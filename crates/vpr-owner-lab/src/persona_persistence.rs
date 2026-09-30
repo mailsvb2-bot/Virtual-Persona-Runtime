@@ -216,7 +216,7 @@ mod tests {
         save_file(&path, &second).unwrap();
         assert_eq!(load_file(&path).unwrap(), Some(second));
 
-        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("tmp"));
     }
 }
