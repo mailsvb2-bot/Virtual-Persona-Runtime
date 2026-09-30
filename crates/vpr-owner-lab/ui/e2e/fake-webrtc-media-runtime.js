@@ -109,11 +109,7 @@
       samples.fill(0.2);
       queueMicrotask(() => this.port.onmessage?.({ data: samples.buffer }));
     }
-    disconnect() {
-      // The provider begins playback after the microphone turn closes. This is owned
-      // entirely by the fake transport; production HTTP completion does not drive it.
-      window.setTimeout(() => beginSyntheticPlayback?.(), 0);
-    }
+    disconnect() {}
   }
 
   class FakePeerConnection {
@@ -217,6 +213,7 @@
       data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
     });
   };
+  window.__vprBeginSyntheticPlayback = () => beginSyntheticPlayback?.();
 
   window.__vprSetPeerConnectionState = (state) => {
     if (!activePeer) throw new Error("NO_ACTIVE_PEER");
