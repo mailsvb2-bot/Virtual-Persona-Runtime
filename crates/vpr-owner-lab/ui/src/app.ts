@@ -1362,6 +1362,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     silentFrames: 0,
   };
 
+  let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;
   try {
     const started = await apiEvidenceJson<VoiceStartAck>(
       "/api/voice/input/finish",
@@ -1405,7 +1406,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       if (avSyncEvidence) await avSyncEvidence;
     }
     await refreshSessionEvidence();
-    setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
+    terminalStatus = {
+      text: `Вы: ${result.transcript} · Ответ: ${result.reply}`,
+      kind: "ready",
+    };
   } catch (error) {
     if (!finishAccepted) {
       await apiEvidenceJson<{ ok: true }>(
@@ -1416,11 +1420,15 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     }
     if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence) activeVoiceEvidence = null;
     await refreshSessionEvidence();
-    setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
+    terminalStatus = {
+      text: error instanceof Error ? error.message : "Ошибка голосового запроса",
+      kind: "error",
+    };
   } finally {
     resetMicrophoneUpload();
     voiceRequestInFlight = false;
     updateControls();
+    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
   }
 };
 
@@ -1447,16 +1455,21 @@ const speak = async (): Promise<void> => {
   const requestSequence = ++nextTextRequestSequence;
   textRequestInFlight = true;
   updateControls();
+  let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;
   try {
     const result = await apiEvidenceJson<TextResult>("/api/text/turn", { text }, requestSequence);
-    setStatus(`Ответ: ${result.reply}`, "ready");
     message.value = "";
     await refreshSessionEvidence();
+    terminalStatus = { text: `Ответ: ${result.reply}`, kind: "ready" };
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : "Ошибка текстового разговора", "error");
+    terminalStatus = {
+      text: error instanceof Error ? error.message : "Ошибка текстового разговора",
+      kind: "error",
+    };
   } finally {
     textRequestInFlight = false;
     updateControls();
+    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
   }
 };
 
