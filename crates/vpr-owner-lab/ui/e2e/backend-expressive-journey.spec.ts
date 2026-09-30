@@ -242,25 +242,34 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       query: string;
       authorization: string | null;
       contentType: string | null;
+      bodyLength: number;
       bodyText: string;
+      completed?: boolean;
     }>;
   };
   const sttRequests = requests.filter((entry) => entry.kind === "stt");
   const llmRequests = requests.filter((entry) => entry.kind === "llm");
   const avatarRequests = requests.filter((entry) => entry.kind === "avatar");
 
+  // Provider-call evidence is recorded when each Deepgram WebSocket opens. The interrupted
+  // second turn may or may not reach CloseStream before cancellation, so completion is not
+  // a stable boundary; opening the authorized stream is.
   expect(sttRequests).toHaveLength(2);
-  expect(sttRequests[0]?.method).toBe("WEBSOCKET");
-  expect(sttRequests[0]?.path).toBe("/v1/listen");
-  expect(sttRequests[0]?.query).toContain("model=nova-3");
-  expect(sttRequests[0]?.query).toContain("encoding=linear16");
-  expect(sttRequests[0]?.query).toContain("sample_rate=16000");
-  expect(sttRequests[0]?.query).toContain("channels=1");
-  expect(sttRequests[0]?.query).toContain("interim_results=true");
-  expect(sttRequests[0]?.query).toContain("smart_format=true");
-  expect(sttRequests[0]?.query).toContain("language=ru");
-  expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
-  expect(sttRequests[0]?.contentType).toBeNull();
+  expect(sttRequests.every((entry) => entry.method === "WEBSOCKET")).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.path === "/v1/listen")).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("model=nova-3"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("encoding=linear16"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("sample_rate=16000"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("channels=1"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("interim_results=true"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("smart_format=true"))).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.query.includes("language=ru"))).toBeTruthy();
+  expect(sttRequests.every(
+    (entry) => entry.authorization === "Token expressive-stt-e2e-secret",
+  )).toBeTruthy();
+  expect(sttRequests.every((entry) => entry.contentType === null)).toBeTruthy();
+  expect(sttRequests[0]?.completed).toBe(true);
+  expect(sttRequests[0]?.bodyLength ?? 0).toBeGreaterThan(0);
 
   // The browser contract ends at canonical interrupt: cancellation may beat LLM dispatch,
   // or it may cancel an already-open LLM stream. Both are correct as long as no second did.speak
