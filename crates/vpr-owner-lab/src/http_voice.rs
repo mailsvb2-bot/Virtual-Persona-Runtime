@@ -526,7 +526,7 @@ const fn lab_error_status(error: &LabError) -> u16 {
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
         LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
         LabError::Provider(_) => 502,
-        LabError::Internal => 500,
+        LabError::PersistenceFailed | LabError::Internal => 500,
     }
 }
 
