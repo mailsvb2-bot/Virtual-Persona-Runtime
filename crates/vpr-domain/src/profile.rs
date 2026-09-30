@@ -171,7 +171,7 @@ pub enum PersonaCaptureState {
     Reviewed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct PersonaProfile {
     identity: PersonaIdentity,
     constitution: ConstitutionBoundary,
@@ -281,6 +281,43 @@ impl PersonaProfile {
         Ok(())
     }
 
+    /// Corrects one claim and lets the caller atomically commit the resulting profile.
+    ///
+    /// Only the touched claim record and previous PersonaVersion are retained for rollback;
+    /// the canonical PersonaProfile itself remains non-cloneable. If the commit callback fails,
+    /// the exact claim revision history and PersonaVersion are restored before the error returns.
+    ///
+    /// # Errors
+    /// Returns a correction error when the mutation is invalid, or the caller's commit error after
+    /// restoring the exact pre-correction domain state.
+    pub fn correct_claim_transactional<E>(
+        &mut self,
+        id: &ClaimId,
+        statement: impl Into<String>,
+        kind: ClaimKind,
+        commit: impl FnOnce(&Self) -> Result<(), E>,
+    ) -> Result<(), TransactionalCorrectionError<E>> {
+        let record_index = self
+            .claims
+            .iter()
+            .position(|record| record.id() == id)
+            .ok_or(TransactionalCorrectionError::Correction(
+                ProfileError::ClaimNotFound,
+            ))?;
+        let previous_record = self.claims[record_index].clone();
+        let previous_version = self.identity.version();
+
+        self.correct_claim(id, statement, kind)
+            .map_err(TransactionalCorrectionError::Correction)?;
+
+        if let Err(error) = commit(self) {
+            self.claims[record_index] = previous_record;
+            self.identity.apply_version(previous_version);
+            return Err(TransactionalCorrectionError::Commit(error));
+        }
+        Ok(())
+    }
+
     /// Approves the initial reviewed identity/attribution boundary and advances Persona version.
     ///
     /// # Errors
@@ -306,6 +343,12 @@ impl PersonaProfile {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransactionalCorrectionError<E> {
+    Correction(ProfileError),
+    Commit(E),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -446,6 +489,33 @@ mod tests {
         assert_eq!(profile.identity().version().get(), 2);
         let claim = profile.claim(&id).unwrap().current().claim().clone();
         assert!(VerifiedOwnerOpinion::try_from(claim).is_ok());
+    }
+
+    #[test]
+    fn failed_transactional_correction_restores_exact_claim_history_and_version() {
+        let mut profile = profile();
+        let id = ClaimId::new("opinion-1").unwrap();
+        profile.add_captured_claim(captured_opinion()).unwrap();
+        profile.mark_capture_complete().unwrap();
+        profile.approve_claim(&id).unwrap();
+        profile.approve_initial_review().unwrap();
+
+        let before_record = profile.claim(&id).unwrap().clone();
+        let before_version = profile.identity().version();
+
+        let result = profile.correct_claim_transactional(
+            &id,
+            "Не должен сохраниться",
+            ClaimKind::Opinion,
+            |_| Err::<(), _>("durable commit failed"),
+        );
+
+        assert_eq!(
+            result,
+            Err(TransactionalCorrectionError::Commit("durable commit failed"))
+        );
+        assert_eq!(profile.claim(&id).unwrap(), &before_record);
+        assert_eq!(profile.identity().version(), before_version);
     }
 
     #[test]
