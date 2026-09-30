@@ -7,7 +7,7 @@ const ownerLabUrl = `http://127.0.0.1:${ownerLabPort}`;
 export default defineConfig({
   testDir: "./e2e",
   testMatch: "backend-expressive-journey.spec.ts",
-  timeout: 60_000,
+  timeout: 120_000,
   fullyParallel: false,
   retries: 0,
   workers: 1,

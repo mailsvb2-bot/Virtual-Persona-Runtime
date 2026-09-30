@@ -81,6 +81,10 @@ const setupReviewedPersona = async (
 
 const installBrowserAudioFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const consent = document.getElementById("consent");
+      if (consent instanceof HTMLInputElement) consent.checked = true;
+    }, { once: true });
     let remoteSpeech = false;
     let trackSequence = 0;
     let playbackSequence = 0;
@@ -330,8 +334,12 @@ test("owner and visitor voice turns cross the real backend with different contex
   await installBrowserAudioFakes(page);
   await page.goto("/");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Подключить аватар" }).click();
+  await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
+  // Consent UI actionability is covered in owner-journey.spec.ts. This provider-integration
+  // harness pre-seeds the checkbox before app startup; the real backend still rejects start
+  // if the UI fails to submit consent=true.
+  await expect(page.locator("#connect")).toBeEnabled();
+  await page.locator("#connect").evaluate((element) => (element as HTMLButtonElement).click());
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();

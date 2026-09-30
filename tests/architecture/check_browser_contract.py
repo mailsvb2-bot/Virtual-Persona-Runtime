@@ -13,6 +13,7 @@ EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
+REFERENCE_CAPTURE = UI / "reference-capture.js"
 VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
 EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
@@ -35,6 +36,7 @@ expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+reference_capture = REFERENCE_CAPTURE.read_text(encoding="utf-8")
 voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
 evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
@@ -60,6 +62,24 @@ for forbidden in (
         raise SystemExit(
             f"Production Owner Lab app contains forbidden test orchestration hook: {forbidden}"
         )
+
+for forbidden in (
+    "__vprBootstrap",
+    'CustomEvent("vpr:bootstrap")',
+    'CustomEvent("vpr:bootstrap-ready")',
+):
+    if forbidden in reference_capture:
+        raise SystemExit(
+            f"Reference capture contains forbidden bootstrap/test orchestration hook: {forbidden}"
+        )
+for required in (
+    'fetch("/api/bootstrap"',
+    "payload.csrf_token",
+    "releaseAttemptedFileIfCurrent",
+    "recorderChunks = []",
+):
+    if required not in reference_capture:
+        raise SystemExit(f"Reference capture must bootstrap directly and release raw sources: {required}")
 
 for required in (
     "/api/persona/reviewed",

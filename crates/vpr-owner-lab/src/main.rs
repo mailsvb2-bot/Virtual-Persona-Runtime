@@ -3,6 +3,7 @@ mod http_client_control;
 mod http_evidence;
 mod http_json;
 mod http_owner_capture;
+mod http_references;
 #[cfg(test)]
 mod http_security_tests;
 mod http_text;
@@ -40,6 +41,7 @@ const APP_JS: &str = include_str!("../ui/dist/app.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
+const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 
@@ -48,6 +50,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
+    reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
@@ -92,11 +95,6 @@ struct IceBody {
     sdp_mline_index: Option<u16>,
 }
 
-#[derive(Deserialize)]
-struct SpeakBody {
-    text: String,
-}
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -139,6 +137,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
+        reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
@@ -194,6 +193,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
         }
+        (&Method::Get, "/reference-capture.js") => {
+            static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
+        }
         (&Method::Get, "/styles.css") => static_response(STYLES_CSS, "text/css; charset=utf-8"),
         (&Method::Get, "/mic-worklet.js") => {
             static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8")
@@ -203,6 +205,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
         (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
+        (&Method::Get, "/api/references") => {
+            http_references::snapshot_response(&state.reference_intake)
+        }
         (&Method::Get, "/api/evidence/session") => match http_evidence::snapshot(&state.evidence) {
             Ok(snapshot) => json_response(200, &snapshot),
             Err(error) => error_response(http_evidence::error_status(error), error.code()),
@@ -242,6 +247,14 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
                 error_response(403, "CSRF_DENIED")
             }
         }
+        (&Method::Post, "/api/references/intake") => {
+            if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
+                http_references::intake_response(&mut request, &state.reference_intake)
+                    .unwrap_or_else(|response| response)
+            } else {
+                error_response(403, "CSRF_DENIED")
+            }
+        }
         (&Method::Post, path) if path.starts_with("/api/") => {
             if valid_post_headers(&request, &state.csrf_token, state.port) {
                 route_post(path, &mut request, state)
@@ -263,6 +276,10 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
     }
     if let Some(result) = http_avatar_input::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
+    }
+    if path == "/api/references/clear" {
+        return http_references::clear_response(request, &state.reference_intake)
+            .unwrap_or_else(|response| response);
     }
     match path {
         "/api/avatar/start" => http_evidence::ensure_previous_exported(

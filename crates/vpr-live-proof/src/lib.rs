@@ -22,6 +22,13 @@ pub use vpr_evaluation::{
 
 pub const RT0_LIVE_PROOF_PREFLIGHT_SCHEMA: &str = "rt0-live-proof-preflight-0.1";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderConfigurationInspection {
+    pub candidate_sha: String,
+    pub provider_state_sha256: String,
+    pub provider_state: ProviderStateManifest,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LiveProofPreflightReceipt {
@@ -73,6 +80,13 @@ pub fn prepare(
     if !egress_authorized {
         return Err(LiveProofPreflightError::EgressNotAuthorized);
     }
+    prepare_provider_configuration(candidate_sha, worktree_clean)
+}
+
+fn prepare_provider_configuration(
+    candidate_sha: &str,
+    worktree_clean: bool,
+) -> Result<PreparedLiveProof, LiveProofPreflightError> {
     if !valid_git_sha(candidate_sha) {
         return Err(LiveProofPreflightError::CandidateInvalid);
     }
@@ -92,6 +106,26 @@ pub fn prepare(
             provider_state,
         },
         providers,
+    })
+}
+
+/// Inspects the exact local RT0 candidate and configured provider composition without egress.
+///
+/// Input-file validation is deliberately outside this API; callers must not infer that private
+/// evidence inputs were checked merely because provider configuration is valid.
+///
+/// # Errors
+/// Fails closed for an invalid/dirty candidate or incomplete/rejected provider configuration.
+pub fn inspect_provider_configuration(
+    candidate_sha: &str,
+    worktree_clean: bool,
+) -> Result<ProviderConfigurationInspection, LiveProofPreflightError> {
+    let prepared = prepare_provider_configuration(candidate_sha, worktree_clean)?;
+    let receipt = prepared.receipt();
+    Ok(ProviderConfigurationInspection {
+        candidate_sha: receipt.candidate_sha.clone(),
+        provider_state_sha256: receipt.provider_state_sha256.clone(),
+        provider_state: receipt.provider_state.clone(),
     })
 }
 

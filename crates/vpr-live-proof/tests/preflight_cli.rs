@@ -250,6 +250,115 @@ fn output_path_must_be_absolute_and_outside_worktree() {
     assert!(!inside.exists());
 }
 
+fn doctor_command(
+    repo: &TempRepo,
+    probe_audio: &Path,
+    profile: &Path,
+    owner_audio: &Path,
+    visitor_audio: &Path,
+) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
+    command
+        .current_dir(repo.path())
+        .arg("doctor")
+        .arg(probe_audio)
+        .arg(profile)
+        .arg(owner_audio)
+        .arg(visitor_audio)
+        .env_clear();
+    for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
+#[test]
+fn doctor_validates_candidate_inputs_and_provider_config_without_egress() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "doctor-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+
+    let mut command = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio);
+    configure_live(
+        &mut command,
+        "did-doctor-secret",
+        "stt-doctor-secret",
+        "llm-doctor-secret",
+    );
+    command
+        .env_remove("VPR_LIVE_PROOF_ALLOW_EGRESS")
+        .env("VPR_DID_ENDPOINT", "http://127.0.0.1:9")
+        .env("VPR_OWNER_LAB_STT_ENDPOINT", "http://127.0.0.1:9/stt")
+        .env("VPR_OWNER_LAB_LLM_ENDPOINT", "http://127.0.0.1:9/llm");
+    let output = command.output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(receipt["schema_version"], "rt0-live-proof-doctor-0.1");
+    assert_eq!(receipt["input_validation_passed"], true);
+    assert_eq!(receipt["provider_configuration_passed"], true);
+    assert_eq!(receipt["egress_performed"], false);
+    assert_eq!(receipt["release_evidence"], false);
+    assert_eq!(receipt["candidate_sha"].as_str().unwrap().len(), 40);
+    assert_eq!(receipt["provider_state_sha256"].as_str().unwrap().len(), 64);
+
+    let all_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for secret in [
+        "did-doctor-secret",
+        "stt-doctor-secret",
+        "llm-doctor-secret",
+    ] {
+        assert!(!all_output.contains(secret));
+    }
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn doctor_rejects_invalid_private_inputs_before_provider_configuration() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "doctor-invalid-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+
+    let output = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("INVALID_INPUT"));
+    assert!(!stderr.contains("PROVIDER_CONFIGURATION_INVALID"));
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
+fn doctor_rejects_incomplete_provider_configuration_without_secret_echo() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "doctor-config-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+
+    let output = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio)
+        .env("VPR_DID_API_KEY", "doctor-do-not-echo")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("PROVIDER_CONFIGURATION_INVALID"));
+    assert!(!stderr.contains("doctor-do-not-echo"));
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
 fn probe_command(repo: &TempRepo, audio: &Path, provider: &Path, probe: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
     command

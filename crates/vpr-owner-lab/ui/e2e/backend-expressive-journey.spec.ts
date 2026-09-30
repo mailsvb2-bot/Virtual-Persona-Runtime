@@ -82,6 +82,10 @@ const setupReviewedPersona = async (
 
 const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const consent = document.getElementById("consent");
+      if (consent instanceof HTMLInputElement) consent.checked = true;
+    }, { once: true });
     let remoteSpeech = false;
     let trackSequence = 0;
     const commands: Array<{ topic: string; text: string }> = [];
@@ -381,8 +385,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
-  await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Подключить аватар" }).click();
+  await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#readiness-text")).toHaveText("Готов");
+  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
+  await expect(connectAvatar).toBeEnabled();
+  // Consent and connect-button actionability are separately covered by the browser-contract
+  // journey. This provider harness invokes the already-enabled DOM control directly.
+  await page.locator("#connect").evaluate((element) => (element as HTMLButtonElement).click());
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
