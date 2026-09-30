@@ -506,7 +506,7 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
         LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
         LabError::Provider(_) => 502,
-        LabError::Internal => 500,
+        LabError::PersistenceFailed | LabError::Internal => 500,
     };
     error_response(status, error.code())
 }
