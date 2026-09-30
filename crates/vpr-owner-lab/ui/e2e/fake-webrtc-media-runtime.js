@@ -123,6 +123,8 @@
       this.onconnectionstatechange = null;
       this.onicecandidate = null;
       activePeer = this;
+      remoteSpeech = false;
+      remoteTrackPublished = false;
       publishRemoteAudioTrack = () => {
         if (remoteTrackPublished) return;
         remoteTrackPublished = true;
