@@ -37,6 +37,22 @@ ci = CI.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 
+# Production Owner Lab must not wait on, expose, or dispatch browser-test orchestration.
+# Test fixtures belong behind the E2E composition boundary; coupling normal HTTP/bootstrap
+# completion to test callbacks made renderer timing part of production control flow.
+for forbidden in (
+    "__vprTestMediaRuntime",
+    "notifyTestApiResponse",
+    "afterApiResponse",
+    "__vprBootstrap",
+    'CustomEvent("vpr:bootstrap")',
+    'CustomEvent("vpr:bootstrap-ready")',
+):
+    if forbidden in app:
+        raise SystemExit(
+            f"Production Owner Lab app contains forbidden test orchestration hook: {forbidden}"
+        )
+
 for required in (
     "/api/persona/reviewed",
     "/api/session/revoke",
