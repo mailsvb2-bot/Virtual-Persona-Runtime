@@ -121,7 +121,6 @@ impl Display for PolicyRevisionExhausted {
 
 impl Error for PolicyRevisionExhausted {}
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
