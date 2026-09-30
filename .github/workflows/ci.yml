@@ -92,9 +92,12 @@ jobs:
         run: |
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup show active-toolchain
-          rustc --version
+          $rustVersion = rustc --version
+          $rustVersion
           cargo --version
-          rustc --version | Select-String '^rustc 1\.88\.0 '
+          if ($rustVersion -notmatch '^rustc 1\.88\.0 ') {
+            throw "Unexpected Rust toolchain: $rustVersion"
+          }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows owner-lab library tests
