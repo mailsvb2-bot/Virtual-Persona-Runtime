@@ -17,6 +17,8 @@ pub struct OpenAiCompatibleConfig {
     api_key: String,
     model: String,
     timeout: Duration,
+    max_tokens: Option<u32>,
+    reasoning_effort: Option<String>,
 }
 
 impl OpenAiCompatibleConfig {
@@ -32,6 +34,8 @@ impl OpenAiCompatibleConfig {
             api_key: api_key.into(),
             model: model.into(),
             timeout: DEFAULT_TIMEOUT,
+            max_tokens: None,
+            reasoning_effort: None,
         }
     }
 
@@ -47,6 +51,23 @@ impl OpenAiCompatibleConfig {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        if max_tokens > 0 {
+            self.max_tokens = Some(max_tokens);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn with_reasoning_effort(mut self, reasoning_effort: impl Into<String>) -> Self {
+        let reasoning_effort = reasoning_effort.into();
+        if !reasoning_effort.trim().is_empty() {
+            self.reasoning_effort = Some(reasoning_effort);
+        }
         self
     }
 
@@ -98,6 +119,8 @@ impl OpenAiCompatibleLlm {
             stream_options: StreamOptions {
                 include_usage: true,
             },
+            max_tokens: self.config.max_tokens,
+            reasoning_effort: self.config.reasoning_effort.as_deref(),
         };
         let response = self
             .client
@@ -175,6 +198,10 @@ struct ChatRequest<'a> {
     messages: [ChatMessage<'a>; 1],
     stream: bool,
     stream_options: StreamOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -283,6 +310,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
     use std::thread;
     use vpr_integration::GeneratedTextBuffer;
 
@@ -310,6 +338,24 @@ mod tests {
         format!("http://{address}/v1/chat/completions")
     }
 
+    fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let status = status.to_owned();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 8192];
+            let read = stream.read(&mut request).unwrap();
+            let _ = tx.send(String::from_utf8_lossy(&request[..read]).into_owned());
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n{body}"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        (format!("http://{address}/v1/chat/completions"), rx)
+    }
+
     fn adapter(endpoint: String) -> OpenAiCompatibleLlm {
         OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
             endpoint,
@@ -317,6 +363,31 @@ mod tests {
             "test-model",
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn optional_realtime_generation_controls_are_sent_only_when_configured() {
+        let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\n\n");
+        let provider = OpenAiCompatibleLlm::new(
+            OpenAiCompatibleConfig::new(endpoint, "secret", "test-model")
+                .with_reasoning_effort("none")
+                .with_max_tokens(96),
+        )
+        .unwrap();
+        let probe = Probe(AtomicBool::new(false));
+        provider
+            .stream(
+                &LlmRequest {
+                    locale: "ru-RU".into(),
+                    context: "Коротко".into(),
+                },
+                &probe,
+                &mut GeneratedTextBuffer::default(),
+            )
+            .unwrap();
+        let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.contains("\"max_tokens\":96"));
+        assert!(request.contains("\"reasoning_effort\":\"none\""));
     }
 
     #[test]
