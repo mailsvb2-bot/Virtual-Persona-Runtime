@@ -151,6 +151,7 @@ for required in (
     '"model=nova-3"',
     '"language=ru"',
     '"reasoning_effort":"none"',
+    '"thinking":{"type":"disabled"}',
     '"max_tokens":96',
     '"model":"deepseek-flash"',
     "Сессия закрыта",
