@@ -521,8 +521,7 @@ for forbidden in (
 for required in (
     "__vprSetPeerConnectionState",
     "vprFixtureAction",
-    "voice-disconnected",
-    "voice-connected",
+    '["connected", "disconnected", "failed"]',
 ):
     if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab voice reconnect fixture contract missing: {required}")
