@@ -5,6 +5,23 @@ use crate::owner_context::{ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
 use super::{LabError, OwnerLabEngine, map_owner_context_error};
 
 impl OwnerLabEngine {
+    /// Returns an owner-only snapshot of the current reviewed claim revisions.
+    /// Previous revisions are intentionally not copied into this browser-facing view.
+    ///
+    /// # Errors
+    /// Returns `InvalidState` until explicit owner review has completed.
+    pub fn reviewed_owner_context_snapshot(
+        &self,
+    ) -> Result<ReviewedOwnerContextSnapshot, LabError> {
+        if self.session_audience == Some(super::LabSessionAudience::Visitor) {
+            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
+        }
+        self.reviewed_owner_context
+            .as_ref()
+            .map(ReviewedOwnerContext::snapshot)
+            .ok_or(LabError::InvalidState)
+    }
+
     /// Corrects one reviewed owner claim and commits the resulting snapshot atomically with
     /// durable persistence. The domain layer rolls back only the touched claim revision and
     /// PersonaVersion if persistence fails; readiness is reset only after a successful commit.
