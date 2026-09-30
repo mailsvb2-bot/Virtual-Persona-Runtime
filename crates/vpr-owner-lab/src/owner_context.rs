@@ -52,14 +52,7 @@ pub(crate) struct ReviewedOwnerContext {
 
 impl ReviewedOwnerContext {
     pub(crate) fn new(profile: PersonaProfile) -> Result<Self, OwnerContextError> {
-        if profile.identity().mode() != PersonaMode::DigitalTwin
-            || profile.capture_state() != PersonaCaptureState::Reviewed
-            || profile.claims().is_empty()
-            || !profile
-                .claims()
-                .iter()
-                .all(vpr_domain::OwnerClaimRecord::is_owner_reviewed)
-        {
+        if !is_reviewed_profile(&profile) {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
         Ok(Self { profile })
@@ -216,6 +209,21 @@ fn snapshot_from_profile(profile: &PersonaProfile) -> ReviewedOwnerContextSnapsh
     }
 }
 
+pub(crate) fn durable_snapshot_from_reviewed_profile(
+    profile: &PersonaProfile,
+) -> Result<DurableReviewedOwnerContextSnapshot, OwnerContextError> {
+    if !is_reviewed_profile(profile) {
+        return Err(OwnerContextError::ProfileNotReviewed);
+    }
+    Ok(durable_snapshot_from_profile(profile))
+}
+
+fn is_reviewed_profile(profile: &PersonaProfile) -> bool {
+    profile.identity().mode() == PersonaMode::DigitalTwin
+        && profile.capture_state() == PersonaCaptureState::Reviewed
+        && !profile.claims().is_empty()
+        && profile.claims().iter().all(OwnerClaimRecord::is_owner_reviewed)
+}
 pub(crate) fn durable_snapshot_from_profile(
     profile: &PersonaProfile,
 ) -> DurableReviewedOwnerContextSnapshot {
