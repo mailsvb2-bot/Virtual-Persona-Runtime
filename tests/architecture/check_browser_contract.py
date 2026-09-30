@@ -47,8 +47,7 @@ session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
 
-# Recovery invariant: production Owner Lab must not wait on or expose browser-test orchestration.
-# Test media/runtime fixtures belong to E2E composition, not the production HTTP/bootstrap lifecycle.
+# Recovery invariant: browser-test orchestration must remain outside production Owner Lab.
 for forbidden in (
     "__vprTestMediaRuntime",
     "notifyTestApiResponse",
@@ -143,6 +142,8 @@ for required in (
     "did.speak",
     "did.interrupt",
     "__vprExpressiveDisconnect",
+    "__vprExpressiveLoseAudio",
+    "__vprExpressiveRestoreAudio",
     "__vprExpressiveLoseVideo",
     "__vprExpressiveRestoreVideo",
     "Голос остаётся доступен",
@@ -220,8 +221,19 @@ for required in (
         raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
-if '&& realtimeReadiness.audio' not in app:
-    raise SystemExit("Owner Lab voice readiness must require the realtime audio modality")
+if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice";' not in app:
+    raise SystemExit("Owner Lab microphone readiness must follow canonical voice-provider readiness")
+if 'const voiceReady = backendStatus.conversation_readiness === "text_and_voice"\n    && realtimeReadiness.audio' in app:
+    raise SystemExit("Owner Lab microphone input must not depend on the avatar output-audio track")
+for required in (
+    "MIC_PERMISSION_DENIED",
+    "MIC_DEVICE_NOT_FOUND",
+    "MIC_DEVICE_UNAVAILABLE",
+    "MIC_SECURITY_DENIED",
+    "MIC_UNAVAILABLE",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab microphone diagnostic contract missing: {required}")
 if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
     raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
 for required in (
