@@ -455,6 +455,24 @@ for required in (
 if 'bootstrap does not touch microphone runtime before a realtime session' not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing bootstrap media-boundary regression coverage")
 
+for forbidden in (
+    'backendStatus = {\n      ...backendStatus,\n      session_state: "active"',
+    'sessionState.patchBackend({\n      session_state: "active"',
+):
+    if forbidden in app:
+        raise SystemExit("Owner Lab connect must not manufacture authoritative backend session state")
+for required in (
+    "let backendSessionStarted = false;",
+    "backendSessionStarted = true;",
+    "const startedStatus = await syncStatus();",
+    'throw new Error("SESSION_START_STATE_MISMATCH")',
+    "if (backendSessionStarted || backendSessionPresent())",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab authoritative connect lifecycle missing: {required}")
+if "connect closes a started backend session when authoritative start status mismatches" not in browser_e2e:
+    raise SystemExit("Owner Lab browser proof missing authoritative start cleanup regression coverage")
+
 if 'page.addInitScript({ path: "e2e/voice-journey-driver.js" });' not in voice_e2e:
     raise SystemExit("Voice provider E2E must install its in-page driver before navigation")
 for required in (
