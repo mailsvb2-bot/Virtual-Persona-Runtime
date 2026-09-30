@@ -154,13 +154,14 @@ for required in ("VPR_DID_ENDPOINT", "VPR_DID_API_KEY", "cargo", "vpr-owner-lab"
 # - the contract module owns evidence/provider assertions.
 for required in (
     'page.addInitScript({ path: "e2e/voice-journey-driver.js" })',
-    "waitForBrowserJourney",
+    'page.route("**/__browser-journey"',
+    "expect.poll",
     "assertBrowserJourneyEvidence",
     "assertProviderRequests",
     'await page.goto("/");',
 ):
     if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab Voice controller missing external-evidence contract: {required}")
+        raise SystemExit(f"Owner Lab Voice controller missing same-origin evidence contract: {required}")
 
 for required in (
     "Текстовый вопрос владельца",
@@ -171,13 +172,18 @@ for required in (
     "interruption_stopped",
     "reconnect_restored",
     "/api/evidence/session",
-    "/__browser-journey",
+    'const reportUrl = "/__browser-journey";',
 ):
     if required not in voice_journey_driver:
         raise SystemExit(f"Owner Lab Voice in-page driver missing canonical journey step: {required}")
 for required in ("Привет из браузера", "Что думает владелец?"):
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab Voice STT fixture missing canonical transcript: {required}")
+
+if "/__browser-journey" in voice_provider or "browserJourney" in voice_provider:
+    raise SystemExit("Owner Lab provider fixture must not own browser journey control state")
+if "http://127.0.0.1:18790" in voice_journey_driver:
+    raise SystemExit("Owner Lab Voice driver must not depend on cross-origin provider control-plane calls")
 
 for required in (
     "voice_attempts",
