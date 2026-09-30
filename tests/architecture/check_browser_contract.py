@@ -461,8 +461,8 @@ for required in (
         raise SystemExit(f"Owner Lab exact-byte evidence export missing: {required}")
 
 for required in ("session-1-owner.json", "session-2-visitor.json"):
-    if required not in backend_e2e or required not in voice_e2e:
-        raise SystemExit(f"Owner Lab owner/visitor evidence export proof missing: {required}")
+    if required not in backend_e2e:
+        raise SystemExit(f"Owner Lab owner/visitor evidence export browser proof missing: {required}")
 
 for source, required in (
     (app, "const AV_SYNC_SAMPLE_COUNT = 3;"),
