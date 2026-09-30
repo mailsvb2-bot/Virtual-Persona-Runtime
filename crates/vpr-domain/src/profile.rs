@@ -113,7 +113,6 @@ impl OwnerClaimRecord {
             && claim.derivation == DerivationKind::Direct
     }
 
-    #[must_use]
     pub fn retained_revisions(&self) -> impl Iterator<Item = &OwnerClaimRevision> {
         self.previous_revisions
             .iter()
