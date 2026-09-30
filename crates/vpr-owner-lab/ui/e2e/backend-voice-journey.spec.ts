@@ -9,7 +9,7 @@ import { installProviderAutoConnect } from "./provider-bootstrap.js";
 import {
   assertBrowserJourneyEvidence,
   assertProviderRequests,
-  waitForBrowserJourney,
+  type BrowserJourneyState,
 } from "./voice-journey-contract.js";
 
 const ownerLabUrl = "http://127.0.0.1:18789";
@@ -102,13 +102,39 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
+  let journey: BrowserJourneyState = {
+    stage: "idle",
+    error: null,
+    ownerEvidence: null,
+    visitorEvidence: null,
+    requestedMicrophones: [],
+    interruptPayloads: [],
+  };
+  await page.route("**/__browser-journey", async (route) => {
+    const incoming = route.request();
+    if (incoming.method() !== "POST") {
+      await route.fulfill({ status: 405 });
+      return;
+    }
+    try {
+      const update = JSON.parse(incoming.postData() ?? "{}") as Partial<BrowserJourneyState>;
+      journey = { ...journey, ...update };
+    } catch {
+      journey = { ...journey, stage: "failed", error: "INVALID_BROWSER_JOURNEY" };
+    }
+    await route.fulfill({ status: 204 });
+  });
+
   await installVoiceJourney(page);
   await page.goto("/");
 
   // No Playwright/CDP page RPC is allowed after navigation in this media-provider journey.
-  // The in-page driver exercises the real DOM controls; assertions consume only external
-  // backend/provider evidence so Chromium media scheduling cannot deadlock the test controller.
-  const journey = await waitForBrowserJourney(request, providerUrl);
+  // The in-page driver exercises the real DOM controls; the controller only observes the
+  // same-origin mailbox and external backend/provider evidence.
+  await expect.poll(() => (
+    journey.stage === "failed" ? `failed:${journey.error ?? "unknown"}` : journey.stage
+  ), { timeout: 90_000, intervals: [100, 250, 500] }).toBe("complete");
+
   assertBrowserJourneyEvidence(journey);
   await assertProviderRequests(request, providerUrl, ownerAnswers);
 });
