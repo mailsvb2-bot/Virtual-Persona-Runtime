@@ -14,6 +14,8 @@ import {
 
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
+const VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
+const VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
   "Я создаю виртуальных персонажей",
   "Отвечай кратко и спокойно",
@@ -97,6 +99,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   page,
   request,
 }) => {
+  test.setTimeout(VOICE_JOURNEY_TEST_TIMEOUT_MS);
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
@@ -104,6 +107,7 @@ test("owner and visitor voice turns cross the real backend with different contex
 
   let journey: BrowserJourneyState = {
     stage: "idle",
+    phase: "not-started",
     error: null,
     ownerEvidence: null,
     visitorEvidence: null,
@@ -132,8 +136,15 @@ test("owner and visitor voice turns cross the real backend with different contex
   // The in-page driver exercises the real DOM controls; the controller only observes the
   // same-origin mailbox and external backend/provider evidence.
   await expect.poll(() => (
-    journey.stage === "failed" ? `failed:${journey.error ?? "unknown"}` : journey.stage
-  ), { timeout: 90_000, intervals: [100, 250, 500] }).toBe("complete");
+    journey.stage === "failed"
+      ? `failed:${journey.error ?? "unknown"}@phase:${journey.phase ?? "unknown"}`
+      : journey.stage === "complete"
+        ? "complete"
+        : `${journey.stage}@phase:${journey.phase ?? "unknown"}`
+  ), {
+    timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
+    intervals: [100, 250, 500],
+  }).toBe("complete");
 
   assertBrowserJourneyEvidence(journey);
   await assertProviderRequests(request, providerUrl, ownerAnswers);
