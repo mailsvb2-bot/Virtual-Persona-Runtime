@@ -193,6 +193,28 @@ if "waitForBrowserJourney" in voice_journey_contract:
     raise SystemExit("Owner Lab Voice contract must not retain the removed cross-origin polling path")
 
 for required in (
+    "VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000",
+    "VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000",
+    "test.setTimeout(VOICE_JOURNEY_TEST_TIMEOUT_MS)",
+    'phase: "not-started"',
+    '@phase:',
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab Voice controller missing bounded phase-aware lifecycle: {required}")
+for required in (
+    'phase: string | null;',
+    'checkpoint("owner-connected")',
+    'checkpoint("owner-playback-proven")',
+    'checkpoint("owner-interrupt-proven")',
+    'checkpoint("owner-reconnect-proven")',
+    'checkpoint("visitor-connected")',
+    'checkpoint("visitor-playback-proven")',
+):
+    source = voice_journey_contract if required == 'phase: string | null;' else voice_journey_driver
+    if required not in source:
+        raise SystemExit(f"Owner Lab Voice journey missing phase diagnostics: {required}")
+
+for required in (
     "voice_attempts",
     "canonical_playback_proven",
     "av_sync_proven",
