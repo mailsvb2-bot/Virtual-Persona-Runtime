@@ -40,6 +40,7 @@ export type EvidenceSnapshot = {
 
 export type BrowserJourneyState = {
   stage: "idle" | "running" | "complete" | "failed";
+  phase: string | null;
   error: string | null;
   ownerEvidence: EvidenceSnapshot | null;
   visitorEvidence: EvidenceSnapshot | null;
