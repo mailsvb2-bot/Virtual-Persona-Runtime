@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
 #[cfg(windows)]
-const WINDOWS_PROFILE_ACCOUNT: &str = "rt0-provider-profile-v1";
+const WINDOWS_LEGACY_PROFILE_ACCOUNT: &str = "rt0-provider-profile-v1";
+#[cfg(windows)]
+const WINDOWS_PROFILE_STORE_PREFIX: &str = "rt0-provider-profile-v2";
 const PROFILE_SCHEMA: &str = "vpr-rt0-provider-profile-1";
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -180,20 +182,22 @@ pub fn delete_provider_profile() -> Result<(), String> {
 #[cfg(windows)]
 mod platform {
     use super::{
-        ProviderCredentialProfile, WINDOWS_PROFILE_ACCOUNT, WINDOWS_SERVICE, normalize_did_api_key,
+        ProviderCredentialProfile, WINDOWS_LEGACY_PROFILE_ACCOUNT, WINDOWS_PROFILE_STORE_PREFIX,
+        WINDOWS_SERVICE, normalize_did_api_key,
     };
-    use keyring::{Entry, Error as KeyringError};
+    use crate::windows_secure_store::ChunkedCredentialStore;
 
-    fn entry() -> Result<Entry, String> {
-        Entry::new(WINDOWS_SERVICE, WINDOWS_PROFILE_ACCOUNT)
-            .map_err(|_| "Windows Credential Manager entry initialization failed".into())
+    fn store() -> ChunkedCredentialStore {
+        ChunkedCredentialStore::new(
+            WINDOWS_SERVICE,
+            WINDOWS_PROFILE_STORE_PREFIX,
+            Some(WINDOWS_LEGACY_PROFILE_ACCOUNT),
+        )
     }
 
     pub(super) fn load() -> Result<Option<ProviderCredentialProfile>, String> {
-        let raw = match entry()?.get_password() {
-            Ok(raw) => raw,
-            Err(KeyringError::NoEntry) => return Ok(None),
-            Err(_) => return Err("Windows Credential Manager read failed".into()),
+        let Some(raw) = store().load()? else {
+            return Ok(None);
         };
         let mut profile: ProviderCredentialProfile = serde_json::from_str(&raw)
             .map_err(|_| "Windows Credential Manager contains an invalid VPR provider profile")?;
@@ -210,16 +214,15 @@ mod platform {
     pub(super) fn save(profile: &ProviderCredentialProfile) -> Result<(), String> {
         let raw = serde_json::to_string(profile)
             .map_err(|_| "secure provider profile serialization failed")?;
-        entry()?
-            .set_password(&raw)
-            .map_err(|_| "Windows Credential Manager write failed".to_string())
+        store()
+            .save(&raw)
+            .map_err(|_| "Windows Credential Manager write failed".to_owned())
     }
 
     pub(super) fn delete() -> Result<(), String> {
-        match entry()?.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-            Err(_) => Err("Windows Credential Manager delete failed".into()),
-        }
+        store()
+            .delete()
+            .map_err(|_| "Windows Credential Manager delete failed".to_owned())
     }
 }
 
