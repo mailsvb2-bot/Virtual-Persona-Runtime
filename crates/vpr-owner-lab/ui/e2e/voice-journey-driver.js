@@ -65,10 +65,15 @@
       "voice-recording-started",
     );
     voice.click();
-    await waitFor(
-      () => statusText().includes(expectedTranscript) && statusText().includes(expectedReply),
-      "voice-response-complete",
-    );
+    try {
+      await waitFor(
+        () => statusText().includes(expectedTranscript) && statusText().includes(expectedReply),
+        "voice-response-complete",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${message};status=${statusText()}`);
+    }
   };
 
   const exportSnapshot = async () => {
