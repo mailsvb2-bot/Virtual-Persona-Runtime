@@ -283,10 +283,10 @@ impl PersonaProfile {
 
     /// Corrects one claim and lets the caller atomically commit the resulting profile.
     ///
-    /// Only the touched current revision, its prior history length, and previous PersonaVersion
-    /// are retained for rollback; history is never cloned. The canonical PersonaProfile itself
+    /// Only the touched current revision, its prior history length, and previous `PersonaVersion`
+    /// are retained for rollback; history is never cloned. The canonical `PersonaProfile` itself
     /// remains non-cloneable. If the commit callback fails, the exact claim revision history and
-    /// PersonaVersion are restored before the error returns.
+    /// `PersonaVersion` are restored before the error returns.
     ///
     /// # Errors
     /// Returns a correction error when the mutation is invalid, or the caller's commit error after
