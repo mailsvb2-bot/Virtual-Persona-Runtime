@@ -1,5 +1,5 @@
 (() => {
-  const reportUrl = "http://127.0.0.1:18792/report/voice";
+  const reportUrl = "/__journey/report/voice";
 
   const delay = (millis) => new Promise((resolve) => window.setTimeout(resolve, millis));
 
@@ -28,7 +28,6 @@
       method: "POST",
       headers: { "content-type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(update),
-      mode: "no-cors",
       cache: "no-store",
     });
   };
