@@ -497,10 +497,11 @@ mod tests {
         let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
         let id = ClaimId::new("opinion-working-style").unwrap();
         context
-            .correct_claim(
+            .correct_claim_with_persistence(
                 &id,
                 "Предпочитаю короткие циклы проверки",
                 ClaimKind::Opinion,
+                |_| Ok(()),
             )
             .unwrap();
 
