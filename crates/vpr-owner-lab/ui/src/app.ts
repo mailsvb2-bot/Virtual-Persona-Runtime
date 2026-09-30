@@ -42,7 +42,7 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; responseComplete: boolean; avSyncCollectionStarted: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -521,6 +521,17 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   if (sampleSequence > 1) await refreshSessionEvidence();
 };
 
+const collectVoiceAvSyncWhenReady = async (voice: ActiveVoiceEvidence): Promise<void> => {
+  if (
+    !voice.responseComplete
+    || voice.audioStartedElapsed === null
+    || voice.avSyncCollectionStarted
+  ) return;
+  voice.avSyncCollectionStarted = true;
+  if (voice.audioStartedEvidence) await voice.audioStartedEvidence;
+  await collectAvSyncEvidence(voice.requestSequence);
+};
+
 const rms = (samples: Float32Array): number => {
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
@@ -571,6 +582,11 @@ const monitorRemoteAudio = (): void => {
         });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence.catch(() => undefined);
+        void collectVoiceAvSyncWhenReady(voice).catch((error: unknown) => {
+          if (activeVoiceEvidence?.requestSequence === voice.requestSequence) {
+            setStatus(error instanceof Error ? error.message : "Ошибка A/V evidence", "error");
+          }
+        });
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -1344,6 +1360,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStartedElapsed: null,
     audioStartedEvidence: null,
     responseComplete: false,
+    avSyncCollectionStarted: false,
     speaking: false,
     silentFrames: 0,
   };
@@ -1384,12 +1401,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
-      if (voice.audioStartedEvidence) {
-        await voice.audioStartedEvidence;
-      }
-      if (voice.audioStartedElapsed !== null) {
-        await collectAvSyncEvidence(requestSequence);
-      }
+      await collectVoiceAvSyncWhenReady(voice);
     }
     await refreshSessionEvidence();
     setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
