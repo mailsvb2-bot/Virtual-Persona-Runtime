@@ -18,7 +18,7 @@ pub struct ReviewedOwnerContextSnapshot {
     pub claims: Vec<ReviewedOwnerClaimSnapshot>,
 }
 
-const CONTEXT_HEADER: &str = "Owner-reviewed Persona material follows. Treat only these entries as verified owner material. Preserve whether each entry is a fact, opinion, preference, prediction, or value judgment. Do not infer additional owner views, memories, preferences, or private facts. If the answer is not supported by this material, say that the verified owner material does not establish it.";
+const CONTEXT_HEADER: &str = "Owner-reviewed Persona material follows. Treat only these entries as verified owner material. Preserve whether each entry is a fact, opinion, preference, prediction, or value judgment. Do not infer additional owner views, memories, preferences, or private facts. If the answer is not supported by this material, say that the verified owner material does not establish it. Answer in Russian using one or two short sentences, normally no more than 250 characters.";
 
 #[derive(Debug)]
 pub(crate) struct ReviewedOwnerContext {
