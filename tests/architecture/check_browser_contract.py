@@ -426,3 +426,15 @@ for required in (
 for forbidden in ("__vprBootstrap", "vpr:bootstrap-ready", "afterApiResponse"):
     if forbidden in provider_bootstrap:
         raise SystemExit(f"Provider auto-connect harness depends on forbidden production orchestration: {forbidden}")
+
+for required in (
+    "let bootstrapComplete = false;",
+    "let statusSyncTail: Promise<void> = Promise.resolve();",
+    "statusSyncTail = run.then(() => undefined, () => undefined);",
+    "if (bootstrapComplete)",
+    "bootstrapComplete = true;",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab bootstrap status serialization missing: {required}")
+if 'bootstrap applies one authoritative status snapshot before capture refreshes can resync' not in owner_e2e:
+    raise SystemExit("Owner Lab browser proof missing bootstrap/status race regression coverage")

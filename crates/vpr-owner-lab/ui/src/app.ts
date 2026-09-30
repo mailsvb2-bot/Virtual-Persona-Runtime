@@ -185,6 +185,8 @@ let csrfToken = "";
 let egressEnabled = false;
 let backendStatus: LabStatus = { session_state: "none", avatar_open: false, egress_enabled: false, conversation_readiness: "none", modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" }, session_audience: null, owner_context_state: "missing", persona_version: 1, reviewed_owner_claims: 0 };
 let ownerCaptureReviewed = false;
+let bootstrapComplete = false;
+let statusSyncTail: Promise<void> = Promise.resolve();
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
 let liveKitAudioTrack: LiveKitTrack | null = null;
@@ -639,12 +641,19 @@ const renderModalityReadiness = (readiness: ModalityReadinessStatus): void => {
   });
 };
 
-const syncStatus = async (): Promise<LabStatus> => {
-  backendStatus = await api<LabStatus>("/api/status");
-  renderModalityReadiness(backendStatus.modality_readiness);
-  updateControls();
-  showEvidence(backendStatus);
-  return backendStatus;
+const syncStatus = (): Promise<LabStatus> => {
+  const run = statusSyncTail
+    .catch(() => undefined)
+    .then(async () => {
+      const status = await api<LabStatus>("/api/status");
+      backendStatus = status;
+      renderModalityReadiness(status.modality_readiness);
+      updateControls();
+      showEvidence(status);
+      return status;
+    });
+  statusSyncTail = run.then(() => undefined, () => undefined);
+  return run;
 };
 
 const postIce = async (candidate: IceCandidatePayload): Promise<void> => {
@@ -699,7 +708,9 @@ const ownerCapture = mountOwnerCapture({
   onStateChange: (state) => {
     ownerCaptureReviewed = state.reviewed;
     updateControls();
-    void syncStatus().catch(() => undefined);
+    if (bootstrapComplete) {
+      void syncStatus().catch(() => undefined);
+    }
   },
 });
 
@@ -1561,5 +1572,6 @@ void api<Bootstrap>("/api/bootstrap")
       setStatus("Persona подтверждена. Готов к подключению", "ready");
     }
     updateControls();
+    bootstrapComplete = true;
   })
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
