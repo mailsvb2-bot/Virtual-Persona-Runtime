@@ -14,8 +14,8 @@ toolchain = tomllib.loads(TOOLCHAIN.read_text(encoding="utf-8"))
 dependabot = DEPENDABOT.read_text(encoding="utf-8")
 
 channel = toolchain.get("toolchain", {}).get("channel")
-if channel != "1.85.0":
-    raise SystemExit(f"Rust CI toolchain must remain pinned to declared MSRV 1.85.0, got {channel!r}")
+if channel != "1.88.0":
+    raise SystemExit(f"Rust CI toolchain must remain pinned to declared MSRV 1.88.0, got {channel!r}")
 
 components = set(toolchain.get("toolchain", {}).get("components", []))
 if components != {"clippy", "rustfmt"}:
