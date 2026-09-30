@@ -191,6 +191,36 @@ for required in (
         raise SystemExit(f"Owner Lab browser interruption must cancel the active canonical voice turn: {required}")
 
 for required in (
+    'id="microphone-device"',
+    "Системный микрофон по умолчанию",
+    'id="microphone-level"',
+    'id="microphone-level-text"',
+):
+    if required not in index_html:
+        raise SystemExit(f"Owner Lab microphone selection DOM missing: {required}")
+
+for required in (
+    "enumerateDevices",
+    "MICROPHONE_STORAGE_KEY",
+    'deviceId: { exact: selectedDeviceId }',
+    "getAudioTracks",
+    '"devicechange"',
+    "microphoneLevel.value",
+    "Сигнал почти нулевой",
+    "RMS",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab microphone device selection missing: {required}")
+
+for required in (
+    "__vprRequestedMicrophones",
+    'selectOption("headset-mic")',
+    "Микрофон гарнитуры",
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab microphone selection browser proof missing: {required}")
+
+for required in (
     "estimatedPlayoutTimestamp",
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",

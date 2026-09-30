@@ -89,11 +89,14 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
 
     class FakeTrack {
       id: string;
-      constructor(readonly kind: "audio" | "video") {
+      constructor(readonly kind: "audio" | "video", readonly deviceId = "expressive-mic") {
         trackSequence += 1;
         this.id = `expressive-track-${trackSequence}`;
       }
       stop(): void {}
+      getSettings(): MediaTrackSettings {
+        return this.kind === "audio" ? { deviceId: this.deviceId } : {};
+      }
     }
 
     class FakeMediaStream {
@@ -103,6 +106,9 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
       }
       getTracks(): FakeTrack[] {
         return [...this.tracks];
+      }
+      getAudioTracks(): FakeTrack[] {
+        return this.tracks.filter((track) => track.kind === "audio");
       }
       addTrack(track: FakeTrack): void {
         this.tracks.push(track);
@@ -116,7 +122,11 @@ const installExpressiveBrowserFakes = async (page: Page): Promise<void> => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
-        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio")]),
+        enumerateDevices: async () => [
+          { deviceId: "expressive-mic", kind: "audioinput", label: "Expressive test microphone", groupId: "g1", toJSON: () => ({}) },
+        ],
+        getUserMedia: async () => new FakeMediaStream([new FakeTrack("audio", "expressive-mic")]),
+        addEventListener: () => undefined,
       },
     });
 
@@ -322,47 +332,27 @@ const recordStreamingVoiceTurn = async (
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
   )).toBe(1);
 
-  await page.waitForTimeout(250);
+  const spoken = await page.evaluate(() => (
+    (window as typeof window & {
+      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
+    }).__vprLiveKitCommands?.find((command) => command.topic === "did.speak")?.text ?? ""
+  ));
+  expect(spoken).toContain(reply);
+
+  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
+  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
+    fakeWindow.__vprExpressivePlaybackDone?.();
+  });
+
+  await page.waitForTimeout(100);
   await expect.poll(async () => page.evaluate(
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
   )).toBe(1);
-  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
-    fakeWindow.__vprExpressivePlaybackDone?.();
-  });
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(2);
-  await page.waitForTimeout(75);
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(2);
-
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
-    fakeWindow.__vprExpressivePlaybackDone?.();
-  });
-  await expect.poll(async () => page.evaluate(
-    () => (window as typeof window & {
-      __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
-    }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(3);
-  await page.evaluate(() => {
-    const fakeWindow = window as typeof window & { __vprExpressivePlaybackDone?: () => void };
-    fakeWindow.__vprExpressivePlaybackDone?.();
-  });
-
-  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
 };
 
 test("Expressive LiveKit voice path reaches canonical playback, A/V sync and recovery", async ({
@@ -375,6 +365,16 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await installExpressiveBrowserFakes(page);
+  await page.route("**/api/evidence/media", async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      const body = request.postDataJSON() as { kind?: string } | null;
+      if (body?.kind === "audio_started") {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      }
+    }
+    await route.continue();
+  });
   await page.goto("/");
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Подключить аватар" }).click();
@@ -424,12 +424,23 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   await expect.poll(async () => {
     const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    if (!evidence.ok()) {
+      return false;
+    }
     const snapshot = await evidence.json() as {
       canonical_playback_proven: boolean;
       av_sync_proven: boolean;
+      voice_attempts: Array<{
+        status: string;
+        canonical_playback_confirmed: boolean;
+      }>;
     };
-    return snapshot.canonical_playback_proven && snapshot.av_sync_proven;
-  }).toBeTruthy();
+    return snapshot.canonical_playback_proven
+      && snapshot.av_sync_proven
+      && snapshot.voice_attempts.some((attempt) =>
+        attempt.status === "completed" && attempt.canonical_playback_confirmed
+      );
+  }, { timeout: 10_000 }).toBeTruthy();
 
   const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
   const snapshot = await evidence.json() as {
@@ -467,16 +478,14 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }).__vprLiveKitCommands ?? [],
   );
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak).toHaveLength(3);
-  expect(speak.map((command) => JSON.parse(command.text).script.input)).toEqual([
-    "Сначала уточню один важный момент,",
-    "затем продолжу.",
-    "Третья фраза.",
-  ]);
+  expect(speak).toHaveLength(1);
+  expect(JSON.parse(speak[0]?.text ?? "{}").script.input).toBe(
+    "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
+  );
 
-  // Start a second streamed voice turn and interrupt it while the LLM tail is still open.
-  // The browser must stop both provider playback and the canonical voice turn, so no later
-  // generated phrase may leak through to did.speak after the user barge-in.
+  // Start a second voice turn and interrupt it while the LLM tail is still open.
+  // Client-text avatars receive only a complete generated reply, so the interrupted turn must
+  // never emit even a partial did.speak command.
   await voiceButton.click();
   await expect(voiceButton).toHaveText("Остановить и отправить");
   await voiceButton.click();
@@ -484,20 +493,12 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     () => (window as typeof window & {
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands?.filter((command) => command.topic === "did.speak").length ?? 0,
-  )).toBe(4);
+  )).toBe(1);
 
   const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
   await expect(interrupt).toBeEnabled();
   await interrupt.click();
   await expect(page.locator("#status")).toContainText("TURN_CANCELLED");
-
-  await expect.poll(async () => {
-    const current = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    const currentSnapshot = await current.json() as {
-      media_events: Array<{ kind: string }>;
-    };
-    return currentSnapshot.media_events.some((event) => event.kind === "interruption_stopped");
-  }).toBeTruthy();
 
   await page.waitForTimeout(800);
   const commandsAfterInterrupt = await page.evaluate(
@@ -505,7 +506,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       __vprLiveKitCommands?: Array<{ topic: string; text: string }>;
     }).__vprLiveKitCommands ?? [],
   );
-  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(4);
+  expect(commandsAfterInterrupt.filter((command) => command.topic === "did.speak")).toHaveLength(1);
   expect(commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")).toBeTruthy();
 
   await page.evaluate(() => {

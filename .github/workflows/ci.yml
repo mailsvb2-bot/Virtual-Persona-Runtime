@@ -42,6 +42,10 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked --workspace --all-targets
+      - name: Owner Lab Persona full process restart E2E
+        run: |
+          cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+          python3 tests/e2e/test_owner_lab_persona_restart.py
 
   windows-owner-lab:
     runs-on: windows-latest
@@ -55,6 +59,20 @@ jobs:
       - name: Compile Owner Lab on Windows
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Owner Lab Windows library tests
+        run: cargo test --locked -p vpr-owner-lab --lib
+
+  windows-owner-lab-credentials:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: |
+          rustup component add rustfmt clippy
+          rustc --version
+          cargo --version
+      - name: Compile Windows credential path
+        run: cargo check --locked -p vpr-owner-lab --all-targets
+      - name: Windows owner-lab library tests
         run: cargo test --locked -p vpr-owner-lab --lib
 
   owner-lab-ui:
