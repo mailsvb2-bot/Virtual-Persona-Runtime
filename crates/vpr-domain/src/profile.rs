@@ -283,9 +283,10 @@ impl PersonaProfile {
 
     /// Corrects one claim and lets the caller atomically commit the resulting profile.
     ///
-    /// Only the touched claim record and previous PersonaVersion are retained for rollback;
-    /// the canonical PersonaProfile itself remains non-cloneable. If the commit callback fails,
-    /// the exact claim revision history and PersonaVersion are restored before the error returns.
+    /// Only the touched current revision, its prior history length, and previous PersonaVersion
+    /// are retained for rollback; history is never cloned. The canonical PersonaProfile itself
+    /// remains non-cloneable. If the commit callback fails, the exact claim revision history and
+    /// PersonaVersion are restored before the error returns.
     ///
     /// # Errors
     /// Returns a correction error when the mutation is invalid, or the caller's commit error after
@@ -304,14 +305,17 @@ impl PersonaProfile {
             .ok_or(TransactionalCorrectionError::Correction(
                 ProfileError::ClaimNotFound,
             ))?;
-        let previous_record = self.claims[record_index].clone();
+        let previous_current = self.claims[record_index].current.clone();
+        let previous_history_len = self.claims[record_index].previous_revisions.len();
         let previous_version = self.identity.version();
 
         self.correct_claim(id, statement, kind)
             .map_err(TransactionalCorrectionError::Correction)?;
 
         if let Err(error) = commit(self) {
-            self.claims[record_index] = previous_record;
+            let record = &mut self.claims[record_index];
+            record.current = previous_current;
+            record.previous_revisions.truncate(previous_history_len);
             self.identity.apply_version(previous_version);
             return Err(TransactionalCorrectionError::Commit(error));
         }
