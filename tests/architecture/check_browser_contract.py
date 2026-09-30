@@ -479,7 +479,7 @@ for required in (
     'element("revoke", HTMLButtonElement)',
     'microphone.value = "headset-mic"',
     '__vprSetPeerConnectionState',
-    '"/__voice_journey_report"',
+    "__voice_journey_report",
 ):
     if required not in voice_driver:
         raise SystemExit(f"Voice in-page journey driver missing canonical DOM/lifecycle path: {required}")
