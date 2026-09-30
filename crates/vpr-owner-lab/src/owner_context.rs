@@ -222,7 +222,10 @@ fn is_reviewed_profile(profile: &PersonaProfile) -> bool {
     profile.identity().mode() == PersonaMode::DigitalTwin
         && profile.capture_state() == PersonaCaptureState::Reviewed
         && !profile.claims().is_empty()
-        && profile.claims().iter().all(OwnerClaimRecord::is_owner_reviewed)
+        && profile
+            .claims()
+            .iter()
+            .all(OwnerClaimRecord::is_owner_reviewed)
 }
 pub(crate) fn durable_snapshot_from_profile(
     profile: &PersonaProfile,
@@ -403,10 +406,19 @@ mod tests {
         let durable = context.durable_snapshot();
         assert!(durable.claims[0].history_complete);
         assert_eq!(durable.claims[0].revisions.len(), 3);
-        assert_eq!(durable.claims[0].revisions[0].statement, "Люблю быстрые итерации");
+        assert_eq!(
+            durable.claims[0].revisions[0].statement,
+            "Люблю быстрые итерации"
+        );
         assert_eq!(durable.claims[0].revisions[0].verification, "unverified");
-        assert_eq!(durable.claims[0].revisions[1].statement, "Люблю быстрые итерации");
-        assert_eq!(durable.claims[0].revisions[1].verification, "owner_verified");
+        assert_eq!(
+            durable.claims[0].revisions[1].statement,
+            "Люблю быстрые итерации"
+        );
+        assert_eq!(
+            durable.claims[0].revisions[1].verification,
+            "owner_verified"
+        );
         assert_eq!(
             durable.claims[0].revisions[2].statement,
             "Предпочитаю короткие циклы проверки"
@@ -447,8 +459,14 @@ mod tests {
         assert_eq!(after.claims[0].revisions.len(), 2);
         assert_eq!(after.claims[0].revisions[0].revision, 7);
         assert_eq!(after.claims[0].revisions[1].revision, 8);
-        assert_eq!(after.claims[0].revisions[0].statement, "Известное legacy-значение");
-        assert_eq!(after.claims[0].revisions[1].statement, "Новое точное значение");
+        assert_eq!(
+            after.claims[0].revisions[0].statement,
+            "Известное legacy-значение"
+        );
+        assert_eq!(
+            after.claims[0].revisions[1].statement,
+            "Новое точное значение"
+        );
     }
     #[test]
     fn failed_persistence_restores_exact_reviewed_context() {
