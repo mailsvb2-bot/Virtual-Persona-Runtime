@@ -306,6 +306,18 @@ for required in (
         raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
 if 'page.route("**/__expressive_journey_report"' not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E missing same-origin terminal-report mailbox")
+
+if 'page.route("**/__expressive_provider_state"' not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E missing same-origin provider-state bridge")
+for required in (
+    'fetch("/__expressive_provider_state"',
+    '"second-llm-open"',
+    'entry.bodyText.includes("Что думает владелец?")',
+):
+    if required not in expressive_journey_driver:
+        raise SystemExit(f"Owner Lab Expressive interrupt must wait for the second LLM stream: {required}")
+if "http://127.0.0.1:18790" in expressive_journey_driver:
+    raise SystemExit("Owner Lab Expressive in-page driver must not call the provider cross-origin")
 if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
@@ -634,6 +646,14 @@ for required in (
 ):
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
+
+for required in (
+    'prompt.includes("Что думает владелец?")',
+    '"Этот ответ "',
+    "5_000",
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab Expressive cancellation fixture missing delayed open LLM stream: {required}")
 
 for required in (
     'error?.code === "EPIPE"',
