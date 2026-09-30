@@ -60,13 +60,16 @@
   };
 
   const recordTextTurn = async (input, expectedStatus) => {
+    const speak = byId("speak");
+    await waitFor(() => !speak.disabled, "text-send-enabled");
     setMessage(input);
-    byId("speak").click();
+    speak.click();
     await waitForStatus(expectedStatus);
   };
 
   const recordVoiceTurn = async (expectedReply) => {
     const voice = byId("voice");
+    await waitFor(() => !voice.disabled, "voice-enabled");
     voice.click();
     await waitFor(
       () => voice.textContent === "Остановить и отправить",
