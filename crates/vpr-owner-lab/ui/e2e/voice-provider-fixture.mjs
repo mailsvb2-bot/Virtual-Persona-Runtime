@@ -38,6 +38,7 @@ const record = (kind, request, url, body) => {
     kind,
     method: request.method,
     path: url.pathname,
+    query: url.search,
     authorization: request.headers.authorization ?? null,
     contentType: request.headers["content-type"] ?? null,
     bodyLength: body.length,
@@ -78,6 +79,25 @@ const server = http.createServer(async (request, response) => {
       : "Что думает владелец?";
     return sendJson(response, 200, { text, language: "ru-RU" });
   }
+
+  if (request.method === "POST" && url.pathname === "/v1/listen") {
+    sttSequence += 1;
+    record("stt", request, url, body);
+    const transcript = sttSequence === 1
+      ? "Привет из браузера"
+      : "Что думает владелец?";
+    return sendJson(response, 200, {
+      results: {
+        channels: [{
+          alternatives: [{
+            transcript,
+            languages: ["ru"],
+          }],
+        }],
+      },
+    });
+  }
+
 
   if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
     llmSequence += 1;
