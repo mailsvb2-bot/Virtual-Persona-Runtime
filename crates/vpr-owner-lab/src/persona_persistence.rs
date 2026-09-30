@@ -4,10 +4,12 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::owner_capture::Rt0OwnerCapture;
 use crate::owner_context::{
     DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot,
-    DurableReviewedOwnerContextSnapshot,
+    DurableReviewedOwnerContextSnapshot, durable_snapshot_from_reviewed_profile,
 };
+use crate::state::OwnerLabEngine;
 use crate::ReviewedOwnerContextSnapshot;
 
 const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
@@ -60,11 +62,37 @@ struct DecodedPersona {
     migrated_legacy: bool,
 }
 
+/// Restores a durable reviewed Persona directly into the canonical engine.
+///
+/// The persistence DTO never crosses the public API boundary.
+///
+/// # Errors
+/// Returns a redacted persistence or validation error and leaves the engine without restored
+/// owner context.
+pub fn restore_reviewed_persona(engine: &mut OwnerLabEngine) -> Result<bool, String> {
+    let Some(snapshot) = load_reviewed_persona()? else {
+        return Ok(false);
+    };
+    engine
+        .restore_reviewed_owner_context(&snapshot)
+        .map_err(|_| "persisted reviewed Persona is invalid".to_owned())?;
+    Ok(true)
+}
+
+/// Persists a completed reviewed capture using the exact retained domain history.
+///
+/// # Errors
+/// Returns a redacted validation or durable-store error.
+pub fn persist_reviewed_capture(capture: &Rt0OwnerCapture) -> Result<(), String> {
+    let snapshot = durable_snapshot_from_reviewed_profile(capture.profile())
+        .map_err(|_| "reviewed Persona capture is invalid".to_owned())?;
+    save_reviewed_persona(&snapshot)
+}
 /// Loads the reviewed Persona from durable storage when one exists.
 ///
 /// # Errors
 /// Returns a redacted error when the selected store cannot be read, decoded, or validated.
-pub fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
+pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
     if let Some(path) = explicit_store_path() {
         return load_file(&path);
     }
@@ -84,7 +112,7 @@ pub fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnaps
 ///
 /// # Errors
 /// Returns a redacted error when serialization or the selected store write fails.
-pub fn save_reviewed_persona(
+pub(crate) fn save_reviewed_persona(
     snapshot: &DurableReviewedOwnerContextSnapshot,
 ) -> Result<(), String> {
     if let Some(path) = explicit_store_path() {
