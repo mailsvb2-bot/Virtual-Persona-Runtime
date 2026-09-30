@@ -5,6 +5,8 @@ import {
   type Page,
 } from "@playwright/test";
 
+import { installProviderAutoConnect } from "./provider-bootstrap.js";
+
 const ownerLabUrl = "http://127.0.0.1:18791";
 const providerUrl = "http://127.0.0.1:18790";
 const ownerAnswers = [
@@ -134,6 +136,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await setupReviewedPersona(request, csrf);
 
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
   await page.route("**/api/evidence/media", async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
@@ -145,10 +148,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     await route.continue();
   });
   await page.goto("/");
-  await page.locator("#consent").check();
-  const connectAvatar = page.getByRole("button", { name: "Подключить аватар" });
-  await expect(connectAvatar).toBeEnabled();
-  await connectAvatar.click();
+  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#status")).toContainText("LiveKit согласован");
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
