@@ -477,7 +477,7 @@ if 'page.addInitScript({ path: "e2e/voice-journey-driver.js" });' not in voice_e
     raise SystemExit("Voice provider E2E must install its in-page driver before navigation")
 for required in (
     "VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000",
-    "VOICE_JOURNEY_TEST_TIMEOUT_MS = 120_000",
+    "VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000",
     "timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS",
 ):
     if required not in voice_e2e:
@@ -505,6 +505,9 @@ for required in (
     'microphone.value = "headset-mic"',
     '__vprSetPeerConnectionState',
     'const reportUrl = "/__voice_journey_report";',
+    'postPhase("driver-started")',
+    'postPhase("owner-connected")',
+    'postPhase("visitor-connected")',
 ):
     if required not in voice_driver:
         raise SystemExit(f"Voice in-page journey driver missing canonical DOM/lifecycle path: {required}")
