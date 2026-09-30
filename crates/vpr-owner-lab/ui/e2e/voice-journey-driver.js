@@ -1,5 +1,5 @@
 (() => {
-  const reportUrl = "http://127.0.0.1:18790/__voice_journey_report";
+  const reportUrl = "/__voice_journey_report";
   const sleep = (millis) => new Promise((resolve) => window.setTimeout(resolve, millis));
 
   const waitFor = async (predicate, label, timeoutMillis = 12_000) => {
@@ -79,12 +79,12 @@
 
   const postReport = async (payload) => {
     try {
-      await fetch(reportUrl, {
+      const response = await fetch(reportUrl, {
         method: "POST",
-        mode: "no-cors",
         headers: { "Content-Type": "text/plain;charset=UTF-8" },
         body: JSON.stringify(payload),
       });
+      if (!response.ok) throw new Error(`VOICE_JOURNEY_REPORT_HTTP_${response.status}`);
     } catch {
       // The controller polls the fixture. If reporting itself fails it will time out loudly.
     }
