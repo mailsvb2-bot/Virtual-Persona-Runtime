@@ -103,17 +103,26 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     } | null = null;
     (window as unknown as { __vprInterruptPayloads?: string[] }).__vprInterruptPayloads = [];
     const realFetch = window.fetch.bind(window);
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
-      if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
+    const beginRemotePlayback = (): void => {
+      if (remoteSpeech) return;
       remoteSpeech = true;
       playbackSequence += 1;
       providerDataChannel?.onmessage?.({
         data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
       });
+    };
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
       const response = await realFetch(input, init);
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
+      if (target.endsWith("/api/voice/events") && response.ok) {
+        try {
+          const batch = await response.clone().json() as { events?: Array<{ kind?: string }> };
+          if (batch.events?.some((event) => event.kind === "segment")) beginRemotePlayback();
+        } catch {
+          // The production response parser remains authoritative; the fake only mirrors playback timing.
+        }
+      }
       return response;
     };
 
@@ -366,17 +375,15 @@ test("owner and visitor voice turns cross the real backend with different contex
   await page.goto("/");
   console.log("[voice-journey-controller] navigation-complete");
 
-  await expect.poll(() => {
-    if (!report) return `pending:${lastJourneyPhase}`;
-    return report.status === "failed"
-      ? `failed:${report.error ?? "unknown"}@phase:${lastJourneyPhase}`
-      : report.status;
-  }, {
+  await expect.poll(() => report === null ? `pending:${lastJourneyPhase}` : "terminal", {
     timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
     message: "Voice journey must publish one terminal same-origin report within its bounded lifecycle",
-  }).toBe("ok");
+  }).toBe("terminal");
 
   expect(report).not.toBeNull();
+  if (report?.status === "failed") {
+    throw new Error(`Voice journey failed: ${report.error ?? "unknown"}@phase:${lastJourneyPhase}`);
+  }
   expect(report?.status).toBe("ok");
   expect(report?.requestedMicrophones).toContain("headset-mic");
 
