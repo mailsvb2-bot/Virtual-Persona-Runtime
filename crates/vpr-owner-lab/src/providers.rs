@@ -369,7 +369,15 @@ fn descriptor(
     ProviderDescriptor {
         provider: provider.into(),
         model_or_representation: model_or_representation.into(),
-        configuration_fingerprint_sha256: format!("{:x}", hasher.finalize()),
+        configuration_fingerprint_sha256: {
+            let digest = hasher.finalize();
+            let mut value = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                use std::fmt::Write as _;
+                let _ = write!(value, "{byte:02x}");
+            }
+            value
+        },
     }
 }
 
