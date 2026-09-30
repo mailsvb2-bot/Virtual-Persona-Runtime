@@ -1,7 +1,7 @@
 use serde::Serialize;
 use vpr_domain::{
-    ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
-    PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
+    CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile, PersonaVersion,
+    RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
