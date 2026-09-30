@@ -148,29 +148,52 @@ for required in ("VPR_DID_ENDPOINT", "VPR_DID_API_KEY", "cargo", "vpr-owner-lab"
         raise SystemExit(f"Owner Lab backend launcher missing: {required}")
 
 
+# Voice browser proof is intentionally split across three layers:
+# - the Playwright controller owns setup/navigation and external HTTP assertions only;
+# - the in-page driver owns real DOM interactions after navigation;
+# - the contract module owns evidence/provider assertions.
+for required in (
+    'page.addInitScript({ path: "e2e/voice-journey-driver.js" })',
+    "waitForBrowserJourney",
+    "assertBrowserJourneyEvidence",
+    "assertProviderRequests",
+    'await page.goto("/");',
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab Voice controller missing external-evidence contract: {required}")
+
+for required in (
+    "Текстовый вопрос владельца",
+    "Привет из браузера",
+    "Спровоцируй отказ провайдера",
+    "Восстановление после отказа",
+    "Текстовый вопрос visitor",
+    "Что думает владелец?",
+    "__vprSetPeerConnectionState",
+    "interruption_stopped",
+    "reconnect_restored",
+    "/api/evidence/session",
+    "/__browser-journey",
+):
+    if required not in voice_journey_driver:
+        raise SystemExit(f"Owner Lab Voice in-page driver missing canonical journey step: {required}")
+
 for required in (
     "voice_attempts",
-    "Привет из браузера",
-    "Что думает владелец?",
+    "canonical_playback_proven",
+    "av_sync_proven",
+    "web_rtc_estimated_playout_timestamp",
+    "absolute_offset_millis",
+    "PROVIDER_UNAVAILABLE",
     "Visitor permissions do not expose owner-reviewed personal context",
     "Bearer voice-stt-e2e-secret",
     "Bearer voice-llm-e2e-secret",
     "Basic voice-avatar-e2e-secret",
-    "av_sync_proven",
-    "web_rtc_estimated_playout_timestamp",
-    "absolute_offset_millis",
-    "stream/interrupt",
-    "videoId",
     "interruption_stopped",
     "reconnect_restored",
-    "PROVIDER_UNAVAILABLE",
-    "Спровоцируй отказ провайдера",
-    "Восстановление после отказа",
-    'failure_code: "PROVIDER_UNAVAILABLE"',
-    'getByRole("button", { name: "Прервать", exact: true })',
 ):
-    if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
+    if required not in voice_journey_contract:
+        raise SystemExit(f"Owner Lab Voice evidence contract missing proof: {required}")
 
 for required in (
     "LiveKit согласован",
