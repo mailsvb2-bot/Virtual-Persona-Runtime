@@ -4,8 +4,7 @@ use tiny_http::Request;
 use vpr_capture::CaptureError;
 use vpr_domain::{ClaimId, ClaimKind, PersonaId, ProfileError};
 use vpr_owner_lab::{
-    OwnerCaptureError, OwnerContextState, ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot,
-    Rt0OwnerCapture, save_reviewed_persona,
+    OwnerCaptureError, OwnerContextState, Rt0OwnerCapture, persist_reviewed_capture,
 };
 
 use crate::{
@@ -156,7 +155,7 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
     engine
-        .correct_owner_claim_with_persistence(&id, body.statement, kind, save_reviewed_persona)
+        .correct_owner_claim_persisted(&id, body.statement, kind)
         .map_err(|error| lab_error_response(&error))?;
     Ok(json_response(200, &engine.status()))
 }
@@ -200,8 +199,7 @@ fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpRespon
             .map_err(capture_error_response)?;
     }
 
-    let reviewed_snapshot = reviewed_snapshot_from_capture(capture)?;
-    save_reviewed_persona(&reviewed_snapshot)
+    persist_reviewed_capture(capture)
         .map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))?;
 
     let reviewed = slot
@@ -211,37 +209,6 @@ fn complete_review(request: &mut Request, state: &AppState) -> Result<HttpRespon
         .bind_reviewed_profile(reviewed.into_profile())
         .map_err(|error| lab_error_response(&error))?;
     Ok(json_response(200, &engine.status()))
-}
-
-fn reviewed_snapshot_from_capture(
-    capture: &Rt0OwnerCapture,
-) -> Result<ReviewedOwnerContextSnapshot, HttpResponse> {
-    let snapshot = capture.snapshot();
-    if snapshot.capture_state != "reviewed" || snapshot.claims.is_empty() {
-        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
-    }
-
-    let claims = snapshot
-        .claims
-        .into_iter()
-        .map(|claim| {
-            if !claim.owner_reviewed {
-                return Err(error_response(409, "INVALID_STATE_TRANSITION"));
-            }
-            Ok(ReviewedOwnerClaimSnapshot {
-                claim_id: claim.claim_id,
-                statement: claim.statement,
-                kind: claim.kind,
-                revision: claim.revision,
-            })
-        })
-        .collect::<Result<Vec<_>, HttpResponse>>()?;
-
-    Ok(ReviewedOwnerContextSnapshot {
-        persona_id: snapshot.persona_id,
-        persona_version: snapshot.persona_version,
-        claims,
-    })
 }
 
 fn with_capture<T>(
