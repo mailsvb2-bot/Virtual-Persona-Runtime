@@ -164,11 +164,9 @@ for required in (
 
 for required in (
     "Текстовый вопрос владельца",
-    "Привет из браузера",
     "Спровоцируй отказ провайдера",
     "Восстановление после отказа",
     "Текстовый вопрос visitor",
-    "Что думает владелец?",
     "__vprSetPeerConnectionState",
     "interruption_stopped",
     "reconnect_restored",
@@ -177,6 +175,9 @@ for required in (
 ):
     if required not in voice_journey_driver:
         raise SystemExit(f"Owner Lab Voice in-page driver missing canonical journey step: {required}")
+for required in ("Привет из браузера", "Что думает владелец?"):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab Voice STT fixture missing canonical transcript: {required}")
 
 for required in (
     "voice_attempts",
