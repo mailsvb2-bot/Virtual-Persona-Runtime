@@ -194,8 +194,8 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
 #[cfg(windows)]
 mod platform {
     use super::{
-        PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_LEGACY_ACCOUNT, WINDOWS_SERVICE,
-        WINDOWS_STORE_PREFIX,
+        DurableReviewedOwnerContextSnapshot, PersistedPersonaV2, WINDOWS_LEGACY_ACCOUNT,
+        WINDOWS_SERVICE, WINDOWS_STORE_PREFIX, decode_persisted,
     };
     use crate::windows_secure_store::ChunkedCredentialStore;
 
@@ -207,17 +207,20 @@ mod platform {
         )
     }
 
-    pub(super) fn load() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
+    pub(super) fn load() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
         let Some(raw) = store().load()? else {
             return Ok(None);
         };
-        let persisted: PersistedPersona = serde_json::from_str(&raw)
-            .map_err(|_| "Windows reviewed Persona store contains invalid data")?;
-        persisted.validate().map(Some)
+        let decoded = decode_persisted(&raw)
+            .map_err(|_| "Windows reviewed Persona store contains invalid data".to_owned())?;
+        if decoded.migrated_legacy {
+            save(&decoded.snapshot)?;
+        }
+        Ok(Some(decoded.snapshot))
     }
 
-    pub(super) fn save(snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
-        let raw = serde_json::to_string(&PersistedPersona::new(snapshot.clone()))
+    pub(super) fn save(snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
+        let raw = serde_json::to_string(&PersistedPersonaV2::new(snapshot.clone()))
             .map_err(|_| "reviewed Persona serialization failed")?;
         store()
             .save(&raw)
