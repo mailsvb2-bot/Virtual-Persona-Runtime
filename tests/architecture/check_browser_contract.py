@@ -147,6 +147,12 @@ for required in (
     "#metric-av-sync",
     "#metric-playback",
     "#metric-cost",
+    '"/v1/listen"',
+    '"model=nova-3"',
+    '"language=ru"',
+    '"reasoning_effort":"none"',
+    '"max_tokens":96',
+    '"model":"deepseek-flash"',
     "Сессия закрыта",
 ):
     if required not in expressive_e2e:
@@ -162,8 +168,10 @@ for required in (
 for required in (
     "VPR_DID_AGENT_ID",
     "voice-e2e-expressive-agent",
-    "VPR_OWNER_LAB_STT_PROVIDER",
-    "VPR_OWNER_LAB_LLM_PROVIDER",
+    '"VPR_OWNER_LAB_STT_PROVIDER": "deepgram"',
+    '"VPR_OWNER_LAB_STT_MODEL": "nova-3"',
+    '"VPR_OWNER_LAB_LLM_PROVIDER": "deepseek"',
+    '"VPR_OWNER_LAB_LLM_MODEL": "deepseek-flash"',
 ):
     if required not in expressive_launcher:
         raise SystemExit(f"Owner Lab Expressive launcher missing: {required}")
