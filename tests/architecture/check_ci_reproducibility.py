@@ -34,6 +34,15 @@ for required in ("runs-on: ubuntu-24.04", "runs-on: windows-2022"):
     if required not in ci:
         raise SystemExit(f"CI must use pinned runner image: {required}")
 
+rust_install = "rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy"
+if ci.count(rust_install) != 2:
+    raise SystemExit("CI must explicitly install the pinned Rust toolchain in both Linux and Windows Rust jobs")
+if "rustup component add rustfmt clippy" in ci:
+    raise SystemExit("CI must not rely on component-only rustup auto-install behavior")
+for toolchain_step in re.findall(r"- name: Toolchain\n\s+run: \|\n(?P<body>(?:\s{10}.*\n?)+)", ci):
+    if rust_install not in toolchain_step:
+        raise SystemExit("every Rust Toolchain step must begin from explicit pinned installation")
+
 action_refs = re.findall(r"uses:\s+(actions/(?:checkout|setup-node))@([^\s#]+)", ci)
 if not action_refs:
     raise SystemExit("expected pinned first-party GitHub Actions references")

@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Toolchain
         run: |
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup show active-toolchain
           rustc --version
           cargo --version
@@ -89,9 +90,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Toolchain
         run: |
-          rustup component add rustfmt clippy
-          rustc --version
+          rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
+          rustup show active-toolchain
+          $rustVersion = rustc --version
+          $rustVersion
           cargo --version
+          if ($rustVersion -notmatch '^rustc 1\.88\.0 ') {
+            throw "Unexpected Rust toolchain: $rustVersion"
+          }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows owner-lab library tests
