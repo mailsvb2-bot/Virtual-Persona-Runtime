@@ -14,6 +14,7 @@ VOICE_JOURNEY_DRIVER = UI / "e2e" / "voice-journey-driver.js"
 VOICE_JOURNEY_CONTRACT = UI / "e2e" / "voice-journey-contract.ts"
 PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
+EXPRESSIVE_JOURNEY_DRIVER = UI / "e2e" / "expressive-journey-driver.js"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
@@ -44,6 +45,7 @@ voice_journey_driver = VOICE_JOURNEY_DRIVER.read_text(encoding="utf-8")
 voice_journey_contract = VOICE_JOURNEY_CONTRACT.read_text(encoding="utf-8")
 provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
+expressive_journey_driver = EXPRESSIVE_JOURNEY_DRIVER.read_text(encoding="utf-8")
 fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
@@ -202,6 +204,7 @@ for required in (
     if required not in voice_journey_contract:
         raise SystemExit(f"Owner Lab Voice evidence contract missing proof: {required}")
 
+expressive_proof = expressive_e2e + "\n" + expressive_journey_driver
 for required in (
     "LiveKit согласован",
     "canonical_playback_proven",
@@ -210,11 +213,11 @@ for required in (
     "did.interrupt",
     "__vprExpressiveDisconnect",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
-    "#metric-stt",
-    "#metric-llm-first",
-    "#metric-av-sync",
-    "#metric-playback",
-    "#metric-cost",
+    "metric-stt",
+    "metric-llm-first",
+    "metric-av-sync",
+    "metric-playback",
+    "metric-cost",
     '"/v1/listen"',
     '"model=nova-3"',
     '"language=ru"',
@@ -222,7 +225,7 @@ for required in (
     '"max_tokens":96',
     '"model":"deepseek-flash"',
 ):
-    if required not in expressive_e2e:
+    if required not in expressive_proof:
         raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
 
 
@@ -263,6 +266,19 @@ for forbidden in (
         )
 if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must load the fake SDK before navigation without network routing")
+if 'await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });' not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E must install its in-page journey driver before navigation")
+for required in (
+    'const reportUrl = "/__expressive_journey_report";',
+    'postPhase("driver-started")',
+    'postPhase("connected")',
+    'postPhase("interrupt-complete")',
+    'postPhase("disconnect-complete")',
+):
+    if required not in expressive_journey_driver:
+        raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
+if 'page.route("**/__expressive_journey_report"' not in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive E2E missing same-origin terminal-report mailbox")
 if "cdn.jsdelivr.net/npm/livekit-client" in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must not route the LiveKit CDN through Playwright")
 for required in (
@@ -621,13 +637,21 @@ voice_after_goto = voice_e2e[voice_goto + len('await page.goto("/");'):]
 if "page." in voice_after_goto:
     raise SystemExit("Owner Lab Voice E2E controller must use no Playwright/CDP page RPC after navigation")
 expressive_goto = expressive_e2e.find('await page.goto("/");')
-expressive_layout = expressive_e2e.find("const layout = await page.evaluate")
-if expressive_goto >= 0 and expressive_layout >= 0:
-    # Layout inspection is allowed; runtime mutation is not.
-    mutable_markers = ("__vprMediaRuntime =", "installMediaRuntime(", "LivekitClient =")
-    window = expressive_e2e[expressive_goto:expressive_layout]
-    if any(marker in window for marker in mutable_markers):
-        raise SystemExit("Owner Lab Expressive E2E must not mutate media runtime after navigation")
+if expressive_goto < 0:
+    raise SystemExit("Owner Lab Expressive E2E must navigate the real browser page")
+expressive_after_goto = expressive_e2e[expressive_goto + len('await page.goto("/");'):]
+for forbidden in (
+    "page.locator(",
+    "page.getByRole(",
+    "page.getByLabel(",
+    "page.evaluate(",
+    "page.waitForTimeout(",
+    "expect(page.",
+):
+    if forbidden in expressive_after_goto:
+        raise SystemExit(
+            f"Owner Lab Expressive E2E must not issue post-navigation renderer RPC: {forbidden}"
+        )
 
 for required in ("/agents/", "authorization", "session_id", "ice_servers"):
     if required not in backend_provider:
