@@ -15,6 +15,36 @@
   window.__vprRequestedMicrophones = requestedMicrophones;
   window.__vprInterruptPayloads = interruptPayloads;
 
+  const publishFixtureState = () => {
+    const root = document.documentElement;
+    if (!root) return;
+    root.dataset.vprRequestedMicrophones = JSON.stringify(requestedMicrophones);
+    root.dataset.vprInterruptPayloads = JSON.stringify(interruptPayloads);
+  };
+
+  const installFixtureControls = () => {
+    publishFixtureState();
+    for (const state of ["connected", "disconnected", "failed"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.vprFixtureAction = `voice-${state}`;
+      button.textContent = `voice-${state}`;
+      button.style.position = "fixed";
+      button.style.left = "0";
+      button.style.bottom = "0";
+      button.style.width = "2px";
+      button.style.height = "2px";
+      button.style.opacity = "0.01";
+      button.addEventListener("click", () => window.__vprSetPeerConnectionState?.(state));
+      document.body.append(button);
+    }
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", installFixtureControls, { once: true });
+  } else {
+    installFixtureControls();
+  }
+
   class FakeTrack {
     constructor(kind = "audio", deviceId = "builtin-mic") {
       trackSequence += 1;
@@ -103,6 +133,7 @@
             throw new Error("UNEXPECTED_WEBRTC_CLIENT_COMMAND");
           }
           interruptPayloads.push(payload);
+          publishFixtureState();
           remoteSpeech = false;
           queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
         },
@@ -155,6 +186,7 @@
         ? String(audio.deviceId.exact)
         : "builtin-mic";
       requestedMicrophones.push(requested);
+      publishFixtureState();
       return new FakeMediaStream([new FakeTrack("audio", requested)]);
     },
     addEventListener(type, listener) {
