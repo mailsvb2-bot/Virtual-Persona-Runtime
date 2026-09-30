@@ -176,6 +176,8 @@ for required in (
     "reconnect_restored",
     "/api/evidence/session",
     'const reportUrl = "/__browser-journey";',
+    'waitFor(() => !speak.disabled, "text-send-enabled")',
+    'waitFor(() => !voice.disabled, "voice-enabled")',
 ):
     if required not in voice_journey_driver:
         raise SystemExit(f"Owner Lab Voice in-page driver missing canonical journey step: {required}")
@@ -429,6 +431,17 @@ for required in (
         raise SystemExit(f"Owner Lab authoritative connect lifecycle missing: {required}")
 if "connect closes a started backend session when authoritative start status mismatches" not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing authoritative start cleanup regression coverage")
+
+if 'await expect(page.locator("#voice")).toBeEnabled();' not in browser_e2e:
+    raise SystemExit("Owner Lab browser proof missing atomic turn-completion actionability coverage")
+for required in (
+    'let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;',
+    "textRequestInFlight = false;",
+    "voiceRequestInFlight = false;",
+    "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab turn completion must publish terminal status after unlocking controls: {required}")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
