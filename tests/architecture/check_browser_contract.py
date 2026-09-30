@@ -870,10 +870,12 @@ embedded_outputs = set(
 )
 if not embedded_outputs:
     raise SystemExit("Owner Lab server must embed generated JavaScript from ui/dist")
-if not embedded_outputs <= committed_outputs:
+if embedded_outputs != committed_outputs:
+    missing_embeds = sorted(committed_outputs - embedded_outputs)
+    unknown_embeds = sorted(embedded_outputs - committed_outputs)
     raise SystemExit(
-        "Owner Lab Rust server embeds generated bundles outside the checked dist output set: "
-        + repr(sorted(embedded_outputs - committed_outputs))
+        "Owner Lab generated bundles and Rust embeds must stay one-to-one: "
+        + f"missing_embeds={missing_embeds}, unknown_embeds={unknown_embeds}"
     )
 
 print("owner-lab-browser-contract: PASS")
