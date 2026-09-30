@@ -504,10 +504,21 @@ for required in (
     'element("revoke", HTMLButtonElement)',
     'microphone.value = "headset-mic"',
     '__vprSetPeerConnectionState',
-    "__voice_journey_report",
+    'const reportUrl = "/__voice_journey_report";',
 ):
     if required not in voice_driver:
         raise SystemExit(f"Voice in-page journey driver missing canonical DOM/lifecycle path: {required}")
-for required in ('"/__journey_state"', '"/__voice_journey_report"'):
-    if required not in voice_provider:
-        raise SystemExit(f"Voice provider fixture missing journey mailbox: {required}")
+for required in (
+    'page.route("**/__voice_journey_report"',
+    'request.postData()',
+    'status: "failed", error: "INVALID_JOURNEY_REPORT"',
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Voice provider E2E missing same-origin terminal-report mailbox: {required}")
+for forbidden in (
+    'http://127.0.0.1:18790/__voice_journey_report',
+    '"/__journey_state"',
+    '"/__voice_journey_report"',
+):
+    if forbidden in voice_provider:
+        raise SystemExit(f"Voice provider fixture must not own browser journey mailbox: {forbidden}")
