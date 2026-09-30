@@ -8,6 +8,7 @@ import { installProviderAutoConnect } from "./provider-bootstrap.js";
 
 const ownerLabUrl = "http://127.0.0.1:18791";
 const providerUrl = "http://127.0.0.1:18790";
+const mailboxUrl = "http://127.0.0.1:18792/report/expressive";
 const EXPRESSIVE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
 const EXPRESSIVE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
@@ -135,26 +136,25 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   let report: ExpressiveJourneyReport | null = null;
   let lastJourneyPhase = "not-started";
-  await page.route("**/__expressive_journey_report", async (route) => {
-    const incoming = route.request();
-    if (incoming.method() !== "POST") {
-      await route.fulfill({ status: 405 });
-      return;
-    }
-    try {
-      const payload = JSON.parse(incoming.postData() ?? "") as
-        | ExpressiveJourneyReport
-        | { kind: "phase"; phase: string };
-      if ("kind" in payload && payload.kind === "phase") {
-        lastJourneyPhase = payload.phase;
+  const resetMailbox = await request.delete(mailboxUrl);
+  expect(resetMailbox.ok()).toBeTruthy();
+
+  const readJourney = async (): Promise<void> => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return;
+    const payload = await response.json() as {
+      events?: Array<ExpressiveJourneyReport | { kind: "phase"; phase: string }>;
+    };
+    report = null;
+    lastJourneyPhase = "not-started";
+    for (const event of Array.isArray(payload.events) ? payload.events : []) {
+      if ("kind" in event && event.kind === "phase") {
+        lastJourneyPhase = event.phase;
       } else {
-        report = payload as ExpressiveJourneyReport;
+        report = event as ExpressiveJourneyReport;
       }
-    } catch {
-      report = { status: "failed", error: "INVALID_EXPRESSIVE_JOURNEY_REPORT" };
     }
-    await route.fulfill({ status: 204 });
-  });
+  };
 
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
@@ -171,7 +171,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   });
   await page.goto("/");
 
-  await expect.poll(() => {
+  await expect.poll(async () => {
+    await readJourney();
     if (!report) return `pending:${lastJourneyPhase}`;
     return report.status === "failed"
       ? `failed:${report.error ?? "unknown"}@phase:${lastJourneyPhase}`
@@ -179,9 +180,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   }, {
     timeout: EXPRESSIVE_JOURNEY_COMPLETION_TIMEOUT_MS,
     intervals: [100, 250, 500],
-    message: "Expressive journey must publish a terminal same-origin report",
+    message: "Expressive journey must publish a terminal controller-independent report",
   }).toBe("ok");
 
+  await readJourney();
   expect(report).not.toBeNull();
   expect(report?.status).toBe("ok");
 
