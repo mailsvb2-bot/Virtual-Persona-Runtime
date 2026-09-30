@@ -14,7 +14,7 @@ import {
 
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
-const mailboxUrl = "http://127.0.0.1:18792/report/voice";
+const mailboxUrl = "http://127.0.0.1:18792/__journey/report/voice";
 const VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
 const VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
