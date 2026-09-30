@@ -7,12 +7,13 @@ mod reason;
 mod session;
 
 pub use claim::{
-    AttributionError, ClaimKind, DerivationKind, OwnerClaim, SourceKind, VerificationState,
-    VerifiedOwnerOpinion,
+    AttributionError, ClaimKind, DerivationKind, MAX_OWNER_CLAIM_CHARS, OwnerClaim, SourceKind,
+    VerificationState, VerifiedOwnerOpinion,
 };
 pub use ids::{
-    AuthorizationEpoch, AuthorizationEpochExhausted, ClaimId, CorrelationId, IdError, PersonaId,
-    PolicyRevision, PolicyRevisionExhausted, PreparationJobId, SessionId, TurnId,
+    AuthorizationEpoch, AuthorizationEpochExhausted, ClaimId, CorrelationId, IdError,
+    MAX_CANONICAL_ID_CHARS, PersonaId, PolicyRevision, PolicyRevisionExhausted, PreparationJobId,
+    SessionId, TurnId,
 };
 pub use persona::{
     ConstitutionBoundary, PersonaIdentity, PersonaMode, PersonaVersion, PersonaVersionExhausted,
