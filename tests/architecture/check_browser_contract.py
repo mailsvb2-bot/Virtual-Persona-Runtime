@@ -386,6 +386,24 @@ for required in (
 ):
     if required not in session_runtime_state:
         raise SystemExit(f"Owner Lab session state owner missing canonical transition API: {required}")
+
+for forbidden in (
+    'sessionState.patchBackend({\n      session_state: "active"',
+    'sessionState.patchBackend({\n            session_state: "active"',
+):
+    if forbidden in app:
+        raise SystemExit("Owner Lab connect must not manufacture authoritative backend session state")
+for required in (
+    "let backendSessionStarted = false;",
+    "backendSessionStarted = true;",
+    "const startedStatus = await syncStatus();",
+    'throw new Error("SESSION_START_STATE_MISMATCH")',
+    "if (backendSessionStarted || backendSessionPresent())",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab authoritative connect lifecycle missing: {required}")
+if "connect closes a started backend session when authoritative start status mismatches" not in browser_e2e:
+    raise SystemExit("Owner Lab browser proof missing authoritative start cleanup regression coverage")
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
