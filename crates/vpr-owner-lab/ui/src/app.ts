@@ -1030,18 +1030,24 @@ const connectAvatar = async (): Promise<void> => {
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
   setStatus("Создаю защищённую сессию…");
+  let backendSessionStarted = false;
   try {
     const audience = audienceSelect.value as SessionAudience;
     const start = await api<StartResponse>("/api/avatar/start", { consent: true, audience });
+    backendSessionStarted = true;
     evidenceSessionSequence = start.evidence_session_sequence;
-    sessionState.patchBackend({
-      session_state: "active",
-      avatar_open: true,
-      egress_enabled: egressEnabled,
-      session_audience: audience,
-    });
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
+
+    const startedStatus = await syncStatus();
+    if (
+      startedStatus.session_state !== "active"
+      || startedStatus.avatar_open !== true
+      || startedStatus.session_audience !== audience
+    ) {
+      throw new Error("SESSION_START_STATE_MISMATCH");
+    }
+
     if (start.transport.kind === "web_rtc") {
       await connectWebRtcTransport(start.transport, start.client_control);
     } else {
@@ -1062,9 +1068,10 @@ const connectAvatar = async (): Promise<void> => {
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Ошибка подключения";
     closePeerTransport();
-    if (backendSessionPresent()) {
+    if (backendSessionStarted || backendSessionPresent()) {
       try {
         await api<{ ok: true }>("/api/session/close", {});
+        backendSessionStarted = false;
         await syncStatus();
       } catch (cleanupError) {
         await syncStatus().catch(() => undefined);
