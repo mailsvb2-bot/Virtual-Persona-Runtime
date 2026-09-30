@@ -516,7 +516,9 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(TransactionalCorrectionError::Commit("durable commit failed"))
+            Err(TransactionalCorrectionError::Commit(
+                "durable commit failed"
+            ))
         );
         assert_eq!(profile.claim(&id).unwrap(), &before_record);
         assert_eq!(profile.identity().version(), before_version);
