@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -10,6 +11,10 @@ use vpr_live_proof::{
     inspect_provider_configuration, preflight, prepare, run_live_conversation_attempt,
     run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
 };
+
+mod candidate_bundle;
+#[cfg(test)]
+mod main_tests;
 
 #[derive(Serialize)]
 struct CliError<'a> {
@@ -50,13 +55,14 @@ struct DoctorRunReceipt<'a> {
     execution: DoctorExecutionReceipt,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BoundaryError {
     InputPathInvalid,
     InputPathInsideWorktree,
     OutputPathInvalid,
     OutputPathInsideWorktree,
     OutputPathsConflict,
+    OutputAlreadyExists,
     ProviderStateChanged,
     InputReadFailed,
     ArtifactWriteFailed,
@@ -70,6 +76,7 @@ impl BoundaryError {
             Self::OutputPathInvalid => "OUTPUT_PATH_INVALID",
             Self::OutputPathInsideWorktree => "OUTPUT_PATH_INSIDE_WORKTREE",
             Self::OutputPathsConflict => "OUTPUT_PATHS_CONFLICT",
+            Self::OutputAlreadyExists => "OUTPUT_ALREADY_EXISTS",
             Self::ProviderStateChanged => "PROVIDER_STATE_CHANGED",
             Self::InputReadFailed => "INPUT_READ_FAILED",
             Self::ArtifactWriteFailed => "ARTIFACT_WRITE_FAILED",
@@ -125,6 +132,32 @@ fn run() -> Result<(), i32> {
             profile_input,
             owner_audio,
             visitor_audio,
+            bundle_output,
+        ] if mode == "candidate-bundle" => candidate_bundle::run(
+            Path::new(probe_audio),
+            Path::new(profile_input),
+            Path::new(owner_audio),
+            Path::new(visitor_audio),
+            Path::new(bundle_output),
+        ),
+        [
+            mode,
+            bundle_input,
+            provider_state_output,
+            probe_output,
+            receipt_output,
+        ] if mode == "candidate-bundle-extract" => candidate_bundle::extract(
+            Path::new(bundle_input),
+            Path::new(provider_state_output),
+            Path::new(probe_output),
+            Path::new(receipt_output),
+        ),
+        [
+            mode,
+            probe_audio,
+            profile_input,
+            owner_audio,
+            visitor_audio,
             provider_state_output,
             probe_output,
             receipt_output,
@@ -139,7 +172,7 @@ fn run() -> Result<(), i32> {
         ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
+                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>\n       vpr-live-proof candidate-bundle-extract <candidate-bundle.json> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }
@@ -472,6 +505,9 @@ fn validated_output_path(path: &Path, worktree_root: &Path) -> Result<PathBuf, B
     if resolved.starts_with(root) {
         return Err(BoundaryError::OutputPathInsideWorktree);
     }
+    if resolved.exists() {
+        return Err(BoundaryError::OutputAlreadyExists);
+    }
     Ok(resolved)
 }
 
@@ -499,11 +535,19 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), BoundaryError> {
         .and_then(|value| value.to_str())
         .ok_or(BoundaryError::ArtifactWriteFailed)?;
     let temp = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
-    fs::write(&temp, bytes).map_err(|_| BoundaryError::ArtifactWriteFailed)?;
-    fs::rename(&temp, path).map_err(|_| {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = options
+        .open(&temp)
+        .map_err(|_| BoundaryError::ArtifactWriteFailed)?;
+    if file.write_all(bytes).is_err() || file.sync_all().is_err() {
         let _ = fs::remove_file(&temp);
-        BoundaryError::ArtifactWriteFailed
-    })
+        return Err(BoundaryError::ArtifactWriteFailed);
+    }
+    drop(file);
+    let published = fs::hard_link(&temp, path).map_err(|_| BoundaryError::ArtifactWriteFailed);
+    let _ = fs::remove_file(&temp);
+    published
 }
 
 fn emit_preflight(error: LiveProofPreflightError) -> i32 {

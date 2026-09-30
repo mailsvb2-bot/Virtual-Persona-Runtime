@@ -112,10 +112,46 @@ The sanitized receipt schema is `rt0-live-conversation-attempt-0.1`. It binds th
 
 A successful attempt proves only that real credentialed provider calls traversed the canonical owner and visitor policy paths and that generated output was submitted to the realtime-avatar provider. It deliberately records `browser_media_playback="not_proven"`, `video_render="not_proven"`, and `human_review="not_proven"`. It therefore cannot by itself satisfy the RT0 real-conversation, media-plane, A/V-sync, privacy acceptance or human-evaluation exit conditions.
 
-## Atomic credentialed candidate run
+## Credentialed exact-candidate capture
 
-For the private RT0 credentialed headless proof, prefer the atomic `candidate` mode over running
-`probe` and `conversation` as unrelated processes:
+For a new RT0 exact-candidate headless capture, prefer the single-file `candidate-bundle` mode:
+
+```text
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate-bundle \
+  /secure/input/probe.raw \
+  /secure/input/reviewed-profile.json \
+  /secure/input/owner.raw \
+  /secure/input/visitor.raw \
+  /secure/evidence/candidate-bundle.json
+```
+
+The bundle schema is `rt0-live-proof-candidate-bundle-0.1`. It contains the sanitized provider
+state, live-provider probe and owner/visitor conversation-attempt receipt bound to one exact
+candidate and one provider-state digest. The command validates all private inputs and the immutable
+destination before any provider egress, requires the provider composition to remain unchanged
+between probe and conversation, re-verifies the clean Git candidate, serializes the whole capture,
+and publishes that one file with create-new semantics. An existing artifact is never overwritten.
+
+Downstream RT0 evidence tools still consume the three canonical component artifacts. Do not
+copy/paste or hand-edit nested JSON out of the bundle. Extract them through the fail-closed canonical
+projection while the checkout is still on the exact candidate:
+
+```text
+cargo run -p vpr-live-proof -- candidate-bundle-extract \
+  /secure/evidence/candidate-bundle.json \
+  /secure/evidence/provider-state.json \
+  /secure/evidence/provider-probe.json \
+  /secure/evidence/conversation-attempt.json
+```
+
+Extraction performs no provider egress. It requires a clean checkout of the exact candidate encoded
+by the bundle, validates the bundle schema, recomputes and verifies the provider-state digest,
+validates the provider probe and sanitized owner/visitor conversation receipt, rejects output paths
+inside the worktree, refuses overwrite, and only then publishes the three canonical downstream
+artifacts. If any write or final candidate check fails, already-created projection files are removed.
+
+The older `candidate` mode remains available when three separate files are required directly during
+credentialed capture:
 
 ```text
 VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
@@ -128,17 +164,14 @@ VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
   /secure/evidence/conversation-attempt.json
 ```
 
-The command validates all private inputs and path conflicts before any provider egress, freezes the
-exact Git candidate, runs the credentialed provider probe, then reconstructs the canonical provider
-composition and requires its sanitized provider-state digest to remain identical before the
-owner/visitor attempt begins. The three output artifacts are written only after both credentialed
-stages succeed and the exact candidate is re-verified clean; partial release-evidence files are
-removed on write or final snapshot failure.
+Both capture modes freeze the candidate and reject provider-state drift. The shared artifact writer now uses
+a same-directory temporary file plus an atomic create-new hard-link publication, so a destination
+that appears while provider work is running cannot be silently overwritten on platforms where
+rename would otherwise replace it.
 
-This only reduces operator/configuration drift during evidence capture. It does **not** prove browser
-media playback, rendered video, A/V sync, privacy acceptance, Golden completion, human quality, or
-RT0 exit readiness. Browser Owner Lab evidence and the remaining supporting artifacts are still
-mandatory.
+Neither mode proves browser media playback, rendered video, A/V sync, privacy acceptance, Golden
+completion, human quality, or RT0 exit readiness. Browser Owner Lab evidence and the remaining
+supporting artifacts are still mandatory.
 
 ## Owner Lab live-session evidence
 
