@@ -6,6 +6,11 @@ import {
 } from "@playwright/test";
 
 import { installProviderAutoConnect } from "./provider-bootstrap.js";
+import {
+  assertBrowserJourneyEvidence,
+  assertProviderRequests,
+  waitForBrowserJourney,
+} from "./voice-journey-contract.js";
 
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
@@ -30,6 +35,7 @@ const postJson = async (
   headers: csrfHeaders(csrf),
   data,
 });
+
 const setupReviewedPersona = async (
   request: APIRequestContext,
   csrf: string,
@@ -81,55 +87,10 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-const prepareBrowserRuntimeFakes = async (page: Page): Promise<void> => {
+const installVoiceJourney = async (page: Page): Promise<void> => {
   await page.addInitScript({ path: "e2e/fake-webrtc-media-runtime.js" });
-};
-
-const recordTextTurn = async (
-  page: Page,
-  input: string,
-  reply: string,
-): Promise<void> => {
-  await page.getByLabel("Текстовый разговор").fill(input);
-  await page.getByRole("button", { name: "Отправить", exact: true }).click();
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
-};
-
-const recordVoiceTurn = async (
-  page: Page,
-  transcript: string,
-  reply: string,
-): Promise<void> => {
-  const voice = page.locator("#voice");
-  await voice.click();
-  await expect(voice).toHaveText("Остановить и отправить");
-  await voice.click();
-  await expect(page.locator("#status")).toContainText(`Вы: ${transcript}`);
-  await expect(page.locator("#status")).toContainText(`Ответ: ${reply}`);
-};
-
-const waitForCanonicalPlaybackEvidence = async (
-  request: APIRequestContext,
-): Promise<void> => {
-  await expect.poll(async () => {
-    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    if (!evidence.ok()) {
-      return false;
-    }
-    const snapshot = await evidence.json() as {
-      canonical_playback_proven: boolean;
-      av_sync_proven: boolean;
-      voice_attempts: Array<{
-        status: string;
-        canonical_playback_confirmed: boolean;
-      }>;
-    };
-    return snapshot.canonical_playback_proven
-      && snapshot.av_sync_proven
-      && snapshot.voice_attempts.some((attempt) =>
-        attempt.status === "completed" && attempt.canonical_playback_confirmed
-      );
-  }).toBeTruthy();
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/voice-journey-driver.js" });
 };
 
 test("owner and visitor voice turns cross the real backend with different context scopes", async ({
@@ -141,312 +102,13 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  await prepareBrowserRuntimeFakes(page);
-  await installProviderAutoConnect(page);
+  await installVoiceJourney(page);
   await page.goto("/");
-  await expect(page.locator("html")).toHaveAttribute("data-vpr-provider-auto-connect", "clicked");
-  await expect(page.locator("#persona-progress")).toContainText("версия 2");
-  await expect(page.locator("#status")).toContainText("WebRTC согласован");
-  await expect(page.locator("#voice")).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
-  await recordTextTurn(
-    page,
-    "Текстовый вопрос владельца",
-    "Текстовый ответ владельцу",
-  );
-  await recordVoiceTurn(
-    page,
-    "Привет из браузера",
-    "Голосовой ответ владельцу",
-  );
-  await waitForCanonicalPlaybackEvidence(request);
-  await expect.poll(async () =>
-    JSON.parse(
-      await page.locator("html").getAttribute("data-vpr-requested-microphones") ?? "[]",
-    ) as string[]
-  ).toContain("headset-mic");
-  const interrupt = page.getByRole("button", { name: "Прервать", exact: true });
-  await expect(interrupt).toBeEnabled();
-  await interrupt.click();
-  await expect.poll(async () => {
-    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    const snapshot = await evidence.json() as {
-      media_events: Array<{ kind: string }>;
-    };
-    return snapshot.media_events.some((event) => event.kind === "interruption_stopped");
-  }).toBeTruthy();
-  const interruptPayloads = JSON.parse(
-    await page.locator("html").getAttribute("data-vpr-interrupt-payloads") ?? "[]",
-  ) as string[];
-  expect(interruptPayloads).toHaveLength(1);
-  expect(JSON.parse(interruptPayloads[0] ?? "{}")).toMatchObject({
-    type: "stream/interrupt",
-    videoId: "video-1",
-  });
-  expect(Number(JSON.parse(interruptPayloads[0] ?? "{}").timestamp)).toBeGreaterThan(0);
 
-  await page.locator('[data-vpr-fixture-action="voice-disconnected"]').click({ force: true });
-  await page.waitForTimeout(25);
-  await page.locator('[data-vpr-fixture-action="voice-connected"]').click({ force: true });
-  await expect.poll(async () => {
-    const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    const snapshot = await evidence.json() as {
-      media_events: Array<{ kind: string; elapsed_millis: number }>;
-    };
-    return snapshot.media_events.find((event) => event.kind === "reconnect_restored")
-      ?.elapsed_millis ?? 0;
-  }).toBeGreaterThan(0);
-
-  const ownerEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-  expect(ownerEvidence.ok()).toBeTruthy();
-  const ownerEvidenceJson = await ownerEvidence.json() as {
-    participant_role: "owner" | "visitor";
-    canonical_playback_proven: boolean;
-    av_sync_proven: boolean;
-    av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
-    text_attempts: Array<{
-      request_sequence: number;
-      canonical_turn_sequence: number;
-      canonical_output_sequence: number;
-      status: string;
-      first_meaningful_response_millis: number;
-      server_total_millis: number;
-    }>;
-    voice_attempts: Array<{
-      request_sequence: number;
-      canonical_turn_sequence: number;
-      canonical_output_sequence: number;
-      canonical_playback_confirmed: boolean;
-      status: string;
-      llm_millis: number;
-      llm_first_meaningful_millis: number;
-    }>;
-    media_events: Array<{ request_sequence: number | null; kind: string }>;
-  };
-  expect(ownerEvidenceJson.participant_role).toBe("owner");
-  expect(ownerEvidenceJson.canonical_playback_proven).toBeTruthy();
-  expect(ownerEvidenceJson.av_sync_proven).toBeTruthy();
-  expect(ownerEvidenceJson.av_sync_samples).toHaveLength(3);
-  expect(ownerEvidenceJson.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
-  expect(ownerEvidenceJson.text_attempts).toMatchObject([{
-    request_sequence: 1,
-    status: "completed",
-  }]);
-  expect(ownerEvidenceJson.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
-  expect(ownerEvidenceJson.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
-  expect(ownerEvidenceJson.text_attempts[0]?.first_meaningful_response_millis).toBeLessThanOrEqual(
-    ownerEvidenceJson.text_attempts[0]?.server_total_millis ?? -1,
-  );
-  expect(ownerEvidenceJson.av_sync_samples.every((sample) =>
-    sample.request_sequence === 1
-      && sample.reference === "web_rtc_estimated_playout_timestamp"
-      && sample.absolute_offset_millis === 60
-  )).toBeTruthy();
-  expect(ownerEvidenceJson.voice_attempts).toMatchObject([{
-    request_sequence: 1,
-    canonical_playback_confirmed: true,
-    status: "completed",
-  }]);
-  expect(ownerEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
-  expect(ownerEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
-  expect(ownerEvidenceJson.voice_attempts[0]?.llm_first_meaningful_millis).toBeLessThanOrEqual(
-    ownerEvidenceJson.voice_attempts[0]?.llm_millis ?? -1,
-  );
-  expect(ownerEvidenceJson.media_events).toContainEqual({
-    request_sequence: 1,
-    kind: "audio_started",
-    elapsed_millis: expect.any(Number),
-  });
-  expect(ownerEvidenceJson.media_events).toContainEqual({
-    request_sequence: 1,
-    kind: "interruption_stopped",
-    elapsed_millis: expect.any(Number),
-  });
-  expect(ownerEvidenceJson.media_events).toContainEqual({
-    request_sequence: null,
-    kind: "reconnect_restored",
-    elapsed_millis: expect.any(Number),
-  });
-
-  await page.getByLabel("Текстовый разговор").fill("Спровоцируй отказ провайдера");
-  await page.getByRole("button", { name: "Отправить", exact: true }).click();
-  await expect(page.locator("#status")).toContainText("PROVIDER_UNAVAILABLE");
-  await expect(page.locator("#persona-progress")).toContainText("версия 2");
-
-  await recordTextTurn(
-    page,
-    "Восстановление после отказа",
-    "Ответ после восстановления",
-  );
-  await expect(page.locator("#persona-progress")).toContainText("версия 2");
-
-  const recoveredEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-  expect(recoveredEvidence.ok()).toBeTruthy();
-  const recoveredEvidenceJson = await recoveredEvidence.json() as {
-    participant_role: "owner" | "visitor";
-    text_attempts: Array<{
-      request_sequence: number;
-      status: string;
-      failure_code: string | null;
-    }>;
-  };
-  expect(recoveredEvidenceJson.participant_role).toBe("owner");
-  expect(recoveredEvidenceJson.text_attempts).toMatchObject([
-    { request_sequence: 1, status: "completed", failure_code: null },
-    { request_sequence: 2, status: "failed", failure_code: "PROVIDER_UNAVAILABLE" },
-    { request_sequence: 3, status: "completed", failure_code: null },
-  ]);
-
-  await page.getByRole("button", { name: "Закрыть" }).click();
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
-  const ownerEvidenceDownloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
-  const ownerEvidenceDownload = await ownerEvidenceDownloadPromise;
-  expect(ownerEvidenceDownload.suggestedFilename()).toBe("session-1-owner.json");
-  await page.getByLabel("Режим тестовой сессии").selectOption("visitor");
-  await page.getByRole("button", { name: "Подключить аватар" }).click();
-  await expect(page.locator("#status")).toContainText("Visitor-сессия WebRTC согласована");
-
-  await recordTextTurn(
-    page,
-    "Текстовый вопрос visitor",
-    "Текстовый ответ visitor",
-  );
-  await recordVoiceTurn(
-    page,
-    "Что думает владелец?",
-    "В visitor scope нет подтверждённых данных владельца",
-  );
-  await waitForCanonicalPlaybackEvidence(request);
-
-  const visitorEvidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-  expect(visitorEvidence.ok()).toBeTruthy();
-  const visitorEvidenceJson = await visitorEvidence.json() as {
-    participant_role: "owner" | "visitor";
-    canonical_playback_proven: boolean;
-    av_sync_proven: boolean;
-    av_sync_samples: Array<{ request_sequence: number; sample_sequence: number; reference: string; absolute_offset_millis: number }>;
-    text_attempts: Array<{
-      request_sequence: number;
-      canonical_turn_sequence: number;
-      canonical_output_sequence: number;
-      status: string;
-      first_meaningful_response_millis: number;
-      server_total_millis: number;
-    }>;
-    voice_attempts: Array<{
-      request_sequence: number;
-      canonical_turn_sequence: number;
-      canonical_output_sequence: number;
-      canonical_playback_confirmed: boolean;
-      status: string;
-      llm_millis: number;
-      llm_first_meaningful_millis: number;
-    }>;
-    media_events: Array<{ request_sequence: number | null; kind: string; elapsed_millis: number }>;
-  };
-  expect(visitorEvidenceJson.participant_role).toBe("visitor");
-  expect(visitorEvidenceJson.canonical_playback_proven).toBeTruthy();
-  expect(visitorEvidenceJson.av_sync_proven).toBeTruthy();
-  expect(visitorEvidenceJson.av_sync_samples).toHaveLength(3);
-  expect(visitorEvidenceJson.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
-  expect(visitorEvidenceJson.text_attempts).toMatchObject([{
-    request_sequence: 1,
-    status: "completed",
-  }]);
-  expect(visitorEvidenceJson.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
-  expect(visitorEvidenceJson.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
-  expect(visitorEvidenceJson.av_sync_samples.every((sample) =>
-    sample.request_sequence === 1
-      && sample.reference === "web_rtc_estimated_playout_timestamp"
-      && sample.absolute_offset_millis === 60
-  )).toBeTruthy();
-  expect(visitorEvidenceJson.voice_attempts).toMatchObject([{
-    request_sequence: 1,
-    canonical_playback_confirmed: true,
-    status: "completed",
-  }]);
-  expect(visitorEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
-  expect(visitorEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
-  expect(visitorEvidenceJson.voice_attempts[0]?.llm_first_meaningful_millis).toBeLessThanOrEqual(
-    visitorEvidenceJson.voice_attempts[0]?.llm_millis ?? -1,
-  );
-  expect(visitorEvidenceJson.media_events.some((event) =>
-    event.request_sequence === 1 && event.kind === "audio_started"
-  )).toBeTruthy();
-
-  await page.getByRole("button", { name: "Отозвать доступ" }).click();
-  await expect(page.locator("#status")).toContainText("Доступ отозван");
-  await page.getByRole("button", { name: "Закрыть" }).click();
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
-  const visitorEvidenceDownloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Скачать evidence snapshot" }).click();
-  const visitorEvidenceDownload = await visitorEvidenceDownloadPromise;
-  expect(visitorEvidenceDownload.suggestedFilename()).toBe("session-2-visitor.json");
-
-  const providerState = await request.get(`${providerUrl}/__state`);
-  expect(providerState.ok()).toBeTruthy();
-  const { requests } = await providerState.json() as {
-    requests: Array<{
-      kind: "stt" | "llm" | "avatar";
-      method: string;
-      path: string;
-      authorization: string | null;
-      contentType: string | null;
-      bodyLength: number;
-      bodyText: string;
-    }>;
-  };
-
-  const stt = requests.filter((entry) => entry.kind === "stt");
-  const llm = requests.filter((entry) => entry.kind === "llm");
-  const avatar = requests.filter((entry) => entry.kind === "avatar");
-  expect(stt).toHaveLength(2);
-  expect(llm).toHaveLength(6);
-  expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(2);
-  expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
-  expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
-
-  expect(stt.every((entry) => entry.authorization === "Bearer voice-stt-e2e-secret")).toBeTruthy();
-  expect(stt.every((entry) => entry.contentType?.startsWith("multipart/form-data"))).toBeTruthy();
-  expect(stt.every((entry) => entry.bodyLength > 3_000)).toBeTruthy();
-  expect(llm.every((entry) => entry.authorization === "Bearer voice-llm-e2e-secret")).toBeTruthy();
-  const ownerTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос владельца"));
-  const ownerVoiceLlm = llm.find((entry) => entry.bodyText.includes("Привет из браузера"));
-  const failedOwnerLlm = llm.find((entry) => entry.bodyText.includes("Спровоцируй отказ провайдера"));
-  const recoveredOwnerLlm = llm.find((entry) => entry.bodyText.includes("Восстановление после отказа"));
-  const visitorTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос visitor"));
-  const visitorVoiceLlm = llm.find((entry) => entry.bodyText.includes("Что думает владелец?"));
-
-  expect(ownerTextLlm).toBeDefined();
-  expect(ownerVoiceLlm).toBeDefined();
-  expect(failedOwnerLlm).toBeDefined();
-  expect(recoveredOwnerLlm).toBeDefined();
-  expect(visitorTextLlm).toBeDefined();
-  expect(visitorVoiceLlm).toBeDefined();
-
-  for (const ownerAnswer of ownerAnswers) {
-    expect(ownerTextLlm?.bodyText).toContain(ownerAnswer);
-    expect(ownerVoiceLlm?.bodyText).toContain(ownerAnswer);
-    expect(failedOwnerLlm?.bodyText).toContain(ownerAnswer);
-    expect(recoveredOwnerLlm?.bodyText).toContain(ownerAnswer);
-    expect(visitorTextLlm?.bodyText).not.toContain(ownerAnswer);
-    expect(visitorVoiceLlm?.bodyText).not.toContain(ownerAnswer);
-  }
-  expect(visitorTextLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
-  expect(visitorVoiceLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
-
-  expect(avatar.every((entry) => entry.authorization === "Basic voice-avatar-e2e-secret")).toBeTruthy();
-  const spokenText = (streamPath: string): string =>
-    avatar
-      .filter((entry) => entry.method === "POST" && entry.path.endsWith(streamPath))
-      .map((entry) => {
-        const payload = JSON.parse(entry.bodyText) as { script?: { input?: string } };
-        return payload.script?.input ?? "";
-      })
-      .filter(Boolean)
-      .join(" ");
-
-  expect(spokenText("/stream-1")).toContain("Голосовой ответ владельцу");
-  expect(spokenText("/stream-2")).toBe("В visitor scope нет подтверждённых данных владельца");
+  // No Playwright/CDP page RPC is allowed after navigation in this media-provider journey.
+  // The in-page driver exercises the real DOM controls; assertions consume only external
+  // backend/provider evidence so Chromium media scheduling cannot deadlock the test controller.
+  const journey = await waitForBrowserJourney(request, providerUrl);
+  assertBrowserJourneyEvidence(journey);
+  await assertProviderRequests(request, providerUrl, ownerAnswers);
 });
