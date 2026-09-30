@@ -473,6 +473,22 @@ for required in (
 if "connect closes a started backend session when authoritative start status mismatches" not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing authoritative start cleanup regression coverage")
 
+for required in (
+    "avSyncCollectionStarted: boolean",
+    "const collectVoiceAvSyncWhenReady = async",
+    "voice.avSyncCollectionStarted = true;",
+    "void collectVoiceAvSyncWhenReady(voice).catch",
+    "await collectVoiceAvSyncWhenReady(voice);",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab Voice A/V evidence ordering guard missing: {required}")
+for forbidden in (
+    "if (voice.audioStartedEvidence) {\n        await voice.audioStartedEvidence;",
+    "if (voice.audioStartedElapsed !== null) {\n        await collectAvSyncEvidence(requestSequence);",
+):
+    if forbidden in app:
+        raise SystemExit("Owner Lab Voice A/V evidence must not depend on audio-before-response ordering")
+
 if 'page.addInitScript({ path: "e2e/voice-journey-driver.js" });' not in voice_e2e:
     raise SystemExit("Voice provider E2E must install its in-page driver before navigation")
 for required in (
