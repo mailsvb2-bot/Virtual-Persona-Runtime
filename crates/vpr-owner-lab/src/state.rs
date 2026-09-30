@@ -1,4 +1,6 @@
 use serde::Serialize;
+#[cfg(test)]
+use vpr_domain::{ClaimId, ClaimKind};
 use vpr_domain::{
     CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile, PersonaVersion,
     RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
