@@ -11,7 +11,9 @@ const STORE_PATH_ENV: &str = "VPR_OWNER_LAB_PERSONA_STORE_PATH";
 #[cfg(windows)]
 const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
 #[cfg(windows)]
-const WINDOWS_ACCOUNT: &str = "owner-lab-reviewed-persona-v1";
+const WINDOWS_LEGACY_ACCOUNT: &str = "owner-lab-reviewed-persona-v1";
+#[cfg(windows)]
+const WINDOWS_STORE_PREFIX: &str = "owner-lab-reviewed-persona-v2";
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -108,23 +110,23 @@ fn save_file(path: &Path, snapshot: &ReviewedOwnerContextSnapshot) -> Result<(),
 
 #[cfg(windows)]
 mod platform {
-    use super::{PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_ACCOUNT, WINDOWS_SERVICE};
-    use keyring::{Entry, Error as KeyringError};
+    use super::{
+        PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_LEGACY_ACCOUNT, WINDOWS_SERVICE,
+        WINDOWS_STORE_PREFIX,
+    };
+    use crate::windows_secure_store::ChunkedCredentialStore;
 
-    pub(super) fn entry_for(account: &str) -> Result<Entry, String> {
-        Entry::new(WINDOWS_SERVICE, account)
-            .map_err(|_| "Windows reviewed Persona store initialization failed".into())
-    }
-
-    fn entry() -> Result<Entry, String> {
-        entry_for(WINDOWS_ACCOUNT)
+    fn store() -> ChunkedCredentialStore {
+        ChunkedCredentialStore::new(
+            WINDOWS_SERVICE,
+            WINDOWS_STORE_PREFIX,
+            Some(WINDOWS_LEGACY_ACCOUNT),
+        )
     }
 
     pub(super) fn load() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
-        let raw = match entry()?.get_password() {
-            Ok(raw) => raw,
-            Err(KeyringError::NoEntry) => return Ok(None),
-            Err(_) => return Err("Windows reviewed Persona store read failed".into()),
+        let Some(raw) = store().load()? else {
+            return Ok(None);
         };
         let persisted: PersistedPersona = serde_json::from_str(&raw)
             .map_err(|_| "Windows reviewed Persona store contains invalid data")?;
@@ -134,9 +136,9 @@ mod platform {
     pub(super) fn save(snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
         let raw = serde_json::to_string(&PersistedPersona::new(snapshot.clone()))
             .map_err(|_| "reviewed Persona serialization failed")?;
-        entry()?
-            .set_password(&raw)
-            .map_err(|_| "Windows reviewed Persona store write failed".to_string())
+        store()
+            .save(&raw)
+            .map_err(|_| "Windows reviewed Persona store write failed".to_owned())
     }
 }
 
@@ -160,32 +162,40 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_credential_manager_round_trips_reviewed_persona() {
-        use keyring::Error as KeyringError;
+    fn windows_chunked_store_round_trips_reviewed_persona_beyond_single_blob_limit() {
+        use crate::windows_secure_store::ChunkedCredentialStore;
 
-        let account = format!("owner-lab-reviewed-persona-test-{}", std::process::id());
-        let entry = platform::entry_for(&account).expect("test credential entry must initialize");
-        match entry.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => {}
-            Err(error) => panic!("failed to clear test credential before round-trip: {error}"),
-        }
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let prefix = format!(
+            "owner-lab-reviewed-persona-test-{}-{unique}",
+            std::process::id()
+        );
+        let prefix: &'static str = Box::leak(prefix.into_boxed_str());
+        let store = ChunkedCredentialStore::new(
+            "Virtual-Persona-Runtime-Test",
+            prefix,
+            None,
+        );
+        let _ = store.delete();
 
+        let mut large = sample();
+        large.claims[0].statement = "Ж".repeat(8_000);
         let raw =
-            serde_json::to_string(&PersistedPersona::new(sample())).expect("sample must serialize");
-        entry
-            .set_password(&raw)
-            .expect("Windows Credential Manager must accept reviewed Persona");
-        let restored_raw = entry
-            .get_password()
-            .expect("Windows Credential Manager must return reviewed Persona");
+            serde_json::to_string(&PersistedPersona::new(large.clone())).expect("sample must serialize");
+        assert!(raw.len() > 2_560);
+
+        store.save(&raw).expect("chunked Credential Manager store must accept large Persona");
+        let restored_raw = store
+            .load()
+            .expect("chunked Credential Manager store must read Persona")
+            .expect("stored Persona must exist");
         let restored: PersistedPersona =
             serde_json::from_str(&restored_raw).expect("stored Persona must decode");
-        assert_eq!(restored.validate().unwrap(), sample());
-
-        match entry.delete_credential() {
-            Ok(()) | Err(KeyringError::NoEntry) => {}
-            Err(error) => panic!("failed to remove test credential after round-trip: {error}"),
-        }
+        assert_eq!(restored.validate().unwrap(), large);
+        store.delete().unwrap();
     }
 
     #[test]
