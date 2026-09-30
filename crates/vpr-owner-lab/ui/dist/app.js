@@ -1,3 +1,4 @@
+import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
@@ -1330,6 +1331,7 @@ void refreshMicrophoneDevices(storedMicrophoneDeviceId());
 void api("/api/bootstrap")
     .then(async (bootstrap) => {
     csrfToken = bootstrap.csrf_token;
+    publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
     await syncStatus();
     ownerCaptureReviewed = backendStatus.owner_context_state === "reviewed";

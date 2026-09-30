@@ -1,3 +1,5 @@
+import { whenBootstrap } from "/bootstrap-context.js";
+
 const byId = (id) => {
   const element = document.getElementById(id);
   if (!element) throw new Error(`missing element ${id}`);
@@ -232,20 +234,10 @@ const acceptBootstrap = (token) => {
   });
 };
 
-const loadBootstrap = async () => {
-  try {
-    const response = await fetch("/api/bootstrap", {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`HTTP_${response.status}`);
-    const payload = await response.json();
-    acceptBootstrap(payload.csrf_token ?? "");
-  } catch (error) {
+void whenBootstrap()
+  .then(({ csrfToken }) => acceptBootstrap(csrfToken))
+  .catch((error) => {
     const message = error instanceof Error ? error.message : "REFERENCE_BOOTSTRAP_FAILED";
     setReferenceStatus("voice", message, "error");
     setReferenceStatus("appearance", message, "error");
-  }
-};
-
-void loadBootstrap();
+  });
