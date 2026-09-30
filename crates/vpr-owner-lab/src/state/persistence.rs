@@ -24,13 +24,30 @@ impl OwnerLabEngine {
             .ok_or(LabError::InvalidState)
     }
 
+    /// Corrects one reviewed owner claim and atomically commits the exact durable history.
+    ///
+    /// # Errors
+    /// Returns the canonical correction error, or `PersistenceFailed` when the durable commit fails.
+    pub fn correct_owner_claim_persisted(
+        &mut self,
+        id: &ClaimId,
+        statement: impl Into<String>,
+        kind: ClaimKind,
+    ) -> Result<(), LabError> {
+        self.correct_owner_claim_with_persistence(
+            id,
+            statement,
+            kind,
+            crate::persona_persistence::save_reviewed_persona,
+        )
+    }
     /// Corrects one reviewed owner claim and commits the resulting snapshot atomically with
     /// durable persistence. The domain layer rolls back only the touched claim revision and
     /// `PersonaVersion` if persistence fails; readiness is reset only after a successful commit.
     ///
     /// # Errors
     /// Returns the canonical correction error, or `PersistenceFailed` after a failed durable commit.
-    pub fn correct_owner_claim_with_persistence(
+    pub(crate) fn correct_owner_claim_with_persistence(
         &mut self,
         id: &ClaimId,
         statement: impl Into<String>,
@@ -56,7 +73,7 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed while a realtime session is active or when the snapshot cannot reconstruct
     /// the same reviewed current state exactly.
-    pub fn restore_reviewed_owner_context(
+    pub(crate) fn restore_reviewed_owner_context(
         &mut self,
         snapshot: &DurableReviewedOwnerContextSnapshot,
     ) -> Result<(), LabError> {
