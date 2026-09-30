@@ -295,16 +295,13 @@ for required in (
     if required not in app:
         raise SystemExit(f"Owner Lab microphone device selection missing: {required}")
 
-for required in (
-    'selectOption("headset-mic")',
-    "data-vpr-requested-microphones",
-):
-    if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab microphone selection browser proof missing: {required}")
+if "data-vpr-requested-microphones" not in voice_e2e:
+    raise SystemExit("Owner Lab microphone selection browser proof must observe the requested-device evidence")
 for required in (
     "__vprRequestedMicrophones",
     "Микрофон гарнитуры",
     "vprRequestedMicrophones",
+    'localStorage.setItem("vpr.owner-lab.microphone-device-id", "headset-mic")',
 ):
     if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab microphone fixture contract missing: {required}")
@@ -424,30 +421,26 @@ for source, required in (
     if required not in source:
         raise SystemExit(f"Owner Lab A/V sync sample-count contract missing: {required}")
 
-# Expressive remains safe with ordinary Playwright actionability and must exercise the
-# visible controls directly. Voice uses a pre-navigation, test-only DOM harness because
-# Chromium media fixture startup can make a post-navigation CDP actionability RPC hang.
-# The harness still checks the real consent checkbox state and invokes the real Connect
-# button; production exposes no event/callback for it.
-for required in (
-    'page.getByRole("button", { name: "Подключить аватар" })',
-    "await expect(connectAvatar).toBeEnabled()",
-    "await connectAvatar.click()",
+# Provider-media journeys share one test-only pre-navigation DOM harness. It waits
+# for the application's visible ready state and then exercises the real consent and Connect controls.
+# Production exposes no bootstrap event or alternate transport path for the harness.
+for provider_e2e, label in (
+    (voice_e2e, "Owner Lab voice"),
+    (expressive_e2e, "Owner Lab Expressive"),
 ):
-    if required not in expressive_e2e:
-        raise SystemExit(f"Owner Lab Expressive E2E must use the canonical user-visible connect path: {required}")
-
-for required in (
-    'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
-    "await installProviderAutoConnect(page);",
-    'toHaveAttribute("data-vpr-provider-auto-connect", "clicked")',
-):
-    if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab voice E2E pre-navigation connect harness missing: {required}")
+    for required in (
+        'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
+        "await installProviderAutoConnect(page);",
+        'toHaveAttribute("data-vpr-provider-auto-connect", "clicked")',
+    ):
+        if required not in provider_e2e:
+            raise SystemExit(f"{label} provider E2E pre-navigation connect harness missing: {required}")
 
 for required in (
     'document.getElementById("connect")',
     'document.getElementById("consent")',
+    'document.getElementById("status")',
+    '"Готов к подключению"',
     "consent.checked = true",
     "connect.click()",
     "MutationObserver",
@@ -462,9 +455,9 @@ for provider_e2e, label in (
     (voice_e2e, "Owner Lab voice"),
     (expressive_e2e, "Owner Lab Expressive"),
 ):
-    for forbidden in ("vpr:bootstrap-ready", "__vprBootstrap"):
+    for forbidden in ("vpr:bootstrap-ready", "__vprBootstrap", 'page.locator("#consent").check()'):
         if forbidden in provider_e2e:
-            raise SystemExit(f"{label} provider E2E contains forbidden production bootstrap shortcut: {forbidden}")
+            raise SystemExit(f"{label} provider E2E contains forbidden post-navigation/bootstrap orchestration: {forbidden}")
 
 for required in (
     "export const publishBootstrap",
