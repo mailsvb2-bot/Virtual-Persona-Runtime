@@ -14,6 +14,7 @@ import {
 
 const ownerLabUrl = "http://127.0.0.1:18789";
 const providerUrl = "http://127.0.0.1:18790";
+const mailboxUrl = "http://127.0.0.1:18792/report/voice";
 const VOICE_JOURNEY_COMPLETION_TIMEOUT_MS = 90_000;
 const VOICE_JOURNEY_TEST_TIMEOUT_MS = 150_000;
 const ownerAnswers = [
@@ -105,7 +106,7 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  let journey: BrowserJourneyState = {
+  const initialJourney: BrowserJourneyState = {
     stage: "idle",
     phase: "not-started",
     error: null,
@@ -114,37 +115,44 @@ test("owner and visitor voice turns cross the real backend with different contex
     requestedMicrophones: [],
     interruptPayloads: [],
   };
-  await page.route("**/__browser-journey", async (route) => {
-    const incoming = route.request();
-    if (incoming.method() !== "POST") {
-      await route.fulfill({ status: 405 });
-      return;
-    }
-    try {
-      const update = JSON.parse(incoming.postData() ?? "{}") as Partial<BrowserJourneyState>;
-      journey = { ...journey, ...update };
-    } catch {
-      journey = { ...journey, stage: "failed", error: "INVALID_BROWSER_JOURNEY" };
-    }
-    await route.fulfill({ status: 204 });
-  });
+  let journey = { ...initialJourney };
+
+  const resetMailbox = await request.delete(mailboxUrl);
+  expect(resetMailbox.ok()).toBeTruthy();
+
+  const readJourney = async (): Promise<BrowserJourneyState> => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return journey;
+    const payload = await response.json() as {
+      events?: Array<Partial<BrowserJourneyState>>;
+    };
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    journey = events.reduce<BrowserJourneyState>(
+      (state, update) => ({ ...state, ...update }),
+      { ...initialJourney },
+    );
+    return journey;
+  };
 
   await installVoiceJourney(page);
   await page.goto("/");
 
   // No Playwright/CDP page RPC is allowed after navigation in this media-provider journey.
-  // The in-page driver exercises the real DOM controls; the controller only observes the
-  // same-origin mailbox and external backend/provider evidence.
-  await expect.poll(() => (
-    journey.stage === "failed"
-      ? `failed:${journey.error ?? "unknown"}@phase:${journey.phase ?? "unknown"}`
-      : journey.stage === "complete"
+  // The browser reports lifecycle events to an independent test-only HTTP mailbox; the
+  // controller observes that mailbox and external backend/provider evidence only.
+  await expect.poll(async () => {
+    const state = await readJourney();
+    return state.stage === "failed"
+      ? `failed:${state.error ?? "unknown"}@phase:${state.phase ?? "unknown"}`
+      : state.stage === "complete"
         ? "complete"
-        : `${journey.stage}@phase:${journey.phase ?? "unknown"}`
-  ), {
+        : `${state.stage}@phase:${state.phase ?? "unknown"}`;
+  }, {
     timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
     intervals: [100, 250, 500],
   }).toBe("complete");
+
+  journey = await readJourney();
 
   assertBrowserJourneyEvidence(journey);
   await assertProviderRequests(request, providerUrl, ownerAnswers);
