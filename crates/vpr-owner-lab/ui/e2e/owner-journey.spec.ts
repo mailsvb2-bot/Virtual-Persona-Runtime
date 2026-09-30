@@ -790,6 +790,7 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   await page.getByLabel("Текстовый разговор").fill("Проверка owner scope");
   await page.getByRole("button", { name: "Отправить", exact: true }).click();
   await expect(page.locator("#status")).toContainText("Owner scoped text reply");
+  await expect(page.locator("#voice")).toBeEnabled();
   await expect.poll(() => state.textMessages).toEqual(["owner:Проверка owner scope"]);
   await page.getByRole("button", { name: "Закрыть" }).click();
   await expect(page.locator("#status")).toContainText("Сессия закрыта");
