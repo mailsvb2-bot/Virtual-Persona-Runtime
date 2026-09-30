@@ -259,9 +259,9 @@ fn capture_error_response(error: OwnerCaptureError) -> HttpResponse {
     match error {
         OwnerCaptureError::Capture(
             CaptureError::BlankAnswer
-                | CaptureError::Profile(
-                    ProfileError::BlankClaimStatement | ProfileError::ClaimStatementTooLong,
-                ),
+            | CaptureError::Profile(
+                ProfileError::BlankClaimStatement | ProfileError::ClaimStatementTooLong,
+            ),
         ) => error_response(400, "INVALID_INPUT"),
         OwnerCaptureError::Capture(CaptureError::Profile(ProfileError::ClaimNotFound)) => {
             error_response(404, "CLAIM_NOT_FOUND")
