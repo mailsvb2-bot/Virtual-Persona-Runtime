@@ -438,3 +438,16 @@ for required in (
         raise SystemExit(f"Owner Lab bootstrap status serialization missing: {required}")
 if 'bootstrap applies one authoritative status snapshot before capture refreshes can resync' not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing bootstrap/status race regression coverage")
+
+if "void refreshMicrophoneDevices(storedMicrophoneDeviceId());" in app:
+    raise SystemExit("Owner Lab bootstrap must not enumerate microphone devices before realtime connect")
+for required in (
+    "let microphoneDeviceListenerInstalled = false;",
+    "ensureMicrophoneDeviceMonitoring();",
+    "await refreshMicrophoneDevices(storedMicrophoneDeviceId());",
+    "if (backendSessionPresent()) void refreshMicrophoneDevices();",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab lazy microphone discovery missing: {required}")
+if 'bootstrap does not touch microphone runtime before a realtime session' not in browser_e2e:
+    raise SystemExit("Owner Lab browser proof missing bootstrap media-boundary regression coverage")

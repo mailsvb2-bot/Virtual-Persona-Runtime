@@ -440,6 +440,49 @@ const initialState = (): FixtureState => ({
 });
 
 
+test("bootstrap does not touch microphone runtime before a realtime session", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "bootstrap-media-boundary";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.claims = [{
+    claim_id: "opinion-working-style",
+    statement: "Отвечай кратко и спокойно",
+    kind: "opinion",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await page.addInitScript(() => {
+    const testWindow = window as typeof window & { __vprBootstrapMediaAccesses?: number };
+    testWindow.__vprBootstrapMediaAccesses = 0;
+    const unexpectedMediaAccess = (): never => {
+      testWindow.__vprBootstrapMediaAccesses = (testWindow.__vprBootstrapMediaAccesses ?? 0) + 1;
+      throw new Error("MEDIA_RUNTIME_TOUCHED_DURING_BOOTSTRAP");
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        enumerateDevices: async () => unexpectedMediaAccess(),
+        getUserMedia: async () => unexpectedMediaAccess(),
+        addEventListener: () => unexpectedMediaAccess(),
+      },
+    });
+  });
+  await installBrowserFakes(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await expect(page.locator("#status")).toContainText("Persona подтверждена. Готов к подключению");
+  await expect(page.locator("#connect")).toBeEnabled();
+  await expect.poll(() => page.evaluate(
+    () => (window as typeof window & { __vprBootstrapMediaAccesses?: number })
+      .__vprBootstrapMediaAccesses ?? 0,
+  )).toBe(0);
+});
+
 test("bootstrap applies one authoritative status snapshot before capture refreshes can resync", async ({ page }) => {
   const state = initialState();
   state.personaId = "bootstrap-reviewed";
