@@ -5,8 +5,8 @@ use vpr_domain::{Rt0ReasonCode, TurnState};
 pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
 pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
-    AudioInput, GeneratedTextBuffer, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
-    UsageEvidence,
+    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, SttRequest,
+    TimedGeneratedTextBuffer, UsageEvidence,
 };
 use vpr_runtime::{
     ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarOutputError,
@@ -33,6 +33,7 @@ pub struct LabVoiceResult {
     pub evidence_output_sequence: u64,
     pub stt_millis: u64,
     pub llm_millis: u64,
+    pub llm_first_meaningful_millis: u64,
     pub avatar_millis: u64,
     pub total_millis: u64,
     pub stt_usage: LabVoiceUsage,
@@ -104,7 +105,7 @@ impl OwnerLabEngine {
 
         let llm_context = self.conversation_context(&transcript.text)?;
         let llm_started = Instant::now();
-        let mut generated = GeneratedTextBuffer::default();
+        let mut generated = TimedGeneratedTextBuffer::start();
         let llm_usage = turn
             .execute_llm(
                 llm.as_ref(),
@@ -116,7 +117,9 @@ impl OwnerLabEngine {
             )
             .map_err(|error| terminalize_provider_error(&turn, error))?;
         let llm_millis = elapsed_millis(llm_started);
-        let reply = generated.into_string();
+        let (reply, llm_first_meaningful_millis) = generated.into_parts();
+        let llm_first_meaningful_millis = llm_first_meaningful_millis
+            .ok_or_else(|| terminalize_failed_turn(&turn, LabError::InvalidInput))?;
         if reply.trim().is_empty() {
             return Err(terminalize_failed_turn(&turn, LabError::InvalidInput));
         }
@@ -153,6 +156,7 @@ impl OwnerLabEngine {
             evidence_output_sequence,
             stt_millis,
             llm_millis,
+            llm_first_meaningful_millis,
             avatar_millis,
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
