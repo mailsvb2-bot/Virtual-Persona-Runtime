@@ -1,5 +1,5 @@
 (() => {
-  const reportUrl = "http://127.0.0.1:18792/report/expressive";
+  const reportUrl = "/__journey/report/expressive";
   const sleep = (millis) => new Promise((resolve) => window.setTimeout(resolve, millis));
 
   const waitFor = async (predicate, label, timeoutMillis = 20_000) => {
@@ -50,7 +50,6 @@
       method: "POST",
       headers: { "content-type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(payload),
-      mode: "no-cors",
       cache: "no-store",
     });
   };
