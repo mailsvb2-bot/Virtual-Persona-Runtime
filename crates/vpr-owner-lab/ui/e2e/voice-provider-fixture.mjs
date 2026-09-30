@@ -290,12 +290,32 @@ server.on("upgrade", (request, socket) => {
     "",
   ].join("\r\n"));
 
+  sttSequence += 1;
+  const transcript = sttSequence === 1
+    ? "Привет из браузера"
+    : "Что думает владелец?";
+  const sttRequest = {
+    kind: "stt",
+    method: "WEBSOCKET",
+    path: url.pathname,
+    query: url.search,
+    authorization: request.headers.authorization ?? null,
+    contentType: null,
+    bodyLength: 0,
+    bodyText: "",
+    completed: false,
+  };
+  requests.push(sttRequest);
+
   let pending = Buffer.alloc(0);
   let audioBytes = 0;
   let socketClosed = false;
   const isExpectedSocketClose = (error) =>
     error?.code === "EPIPE" || error?.code === "ECONNRESET";
-  const markSocketClosed = () => { socketClosed = true; };
+  const markSocketClosed = () => {
+    socketClosed = true;
+    sttRequest.bodyLength = audioBytes;
+  };
   const writeFrame = (frame) => {
     if (socketClosed || socket.destroyed || socket.writableEnded) return false;
     try {
@@ -341,20 +361,8 @@ server.on("upgrade", (request, socket) => {
       if (frame.opcode !== 0x1 || frame.payload.toString("utf8") !== '{"type":"CloseStream"}') {
         continue;
       }
-      sttSequence += 1;
-      requests.push({
-        kind: "stt",
-        method: "WEBSOCKET",
-        path: url.pathname,
-        query: url.search,
-        authorization: request.headers.authorization ?? null,
-        contentType: null,
-        bodyLength: audioBytes,
-        bodyText: "",
-      });
-      const transcript = sttSequence === 1
-        ? "Привет из браузера"
-        : "Что думает владелец?";
+      sttRequest.bodyLength = audioBytes;
+      sttRequest.completed = true;
       const interimWritten = writeFrame(websocketFrame(
         0x1,
         JSON.stringify({
