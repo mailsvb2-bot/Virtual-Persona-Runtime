@@ -213,6 +213,69 @@ fn snapshot_from_profile(profile: &PersonaProfile) -> ReviewedOwnerContextSnapsh
     }
 }
 
+pub(crate) fn durable_snapshot_from_profile(
+    profile: &PersonaProfile,
+) -> DurableReviewedOwnerContextSnapshot {
+    DurableReviewedOwnerContextSnapshot {
+        persona_id: profile.identity().id().as_str().to_owned(),
+        persona_version: profile.identity().version().get(),
+        claims: profile
+            .claims()
+            .iter()
+            .map(|record| DurableReviewedOwnerClaimSnapshot {
+                claim_id: record.id().as_str().to_owned(),
+                revisions: record
+                    .retained_revisions()
+                    .map(|revision| {
+                        let claim = revision.claim();
+                        DurableOwnerClaimRevisionSnapshot {
+                            revision: revision.revision().get(),
+                            statement: claim.statement.clone(),
+                            kind: claim_kind_api_label(claim.kind).to_owned(),
+                            source: source_kind_api_label(claim.source).to_owned(),
+                            verification: verification_api_label(claim.verification).to_owned(),
+                            derivation: derivation_api_label(claim.derivation).to_owned(),
+                        }
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn source_kind_from_api_label(value: &str) -> Option<SourceKind> {
+    match value {
+        "owner" => Some(SourceKind::Owner),
+        "user" => Some(SourceKind::User),
+        "document" => Some(SourceKind::Document),
+        "web" => Some(SourceKind::Web),
+        "tool" => Some(SourceKind::Tool),
+        "model" => Some(SourceKind::Model),
+        _ => None,
+    }
+}
+
+fn verification_from_api_label(value: &str) -> Option<VerificationState> {
+    match value {
+        "unverified" => Some(VerificationState::Unverified),
+        "corroborated" => Some(VerificationState::Corroborated),
+        "owner_verified" => Some(VerificationState::OwnerVerified),
+        "source_verified" => Some(VerificationState::SourceVerified),
+        "disputed" => Some(VerificationState::Disputed),
+        _ => None,
+    }
+}
+
+fn derivation_from_api_label(value: &str) -> Option<DerivationKind> {
+    match value {
+        "direct" => Some(DerivationKind::Direct),
+        "remembered" => Some(DerivationKind::Remembered),
+        "inferred" => Some(DerivationKind::Inferred),
+        "summarized" => Some(DerivationKind::Summarized),
+        "simulated" => Some(DerivationKind::Simulated),
+        _ => None,
+    }
+}
 fn claim_kind_from_api_label(value: &str) -> Option<ClaimKind> {
     match value {
         "factual" => Some(ClaimKind::Factual),
@@ -234,6 +297,36 @@ const fn claim_kind_api_label(kind: ClaimKind) -> &'static str {
     }
 }
 
+const fn source_kind_api_label(source: SourceKind) -> &'static str {
+    match source {
+        SourceKind::Owner => "owner",
+        SourceKind::User => "user",
+        SourceKind::Document => "document",
+        SourceKind::Web => "web",
+        SourceKind::Tool => "tool",
+        SourceKind::Model => "model",
+    }
+}
+
+const fn verification_api_label(verification: VerificationState) -> &'static str {
+    match verification {
+        VerificationState::Unverified => "unverified",
+        VerificationState::Corroborated => "corroborated",
+        VerificationState::OwnerVerified => "owner_verified",
+        VerificationState::SourceVerified => "source_verified",
+        VerificationState::Disputed => "disputed",
+    }
+}
+
+const fn derivation_api_label(derivation: DerivationKind) -> &'static str {
+    match derivation {
+        DerivationKind::Direct => "direct",
+        DerivationKind::Remembered => "remembered",
+        DerivationKind::Inferred => "inferred",
+        DerivationKind::Summarized => "summarized",
+        DerivationKind::Simulated => "simulated",
+    }
+}
 const fn claim_kind_label(kind: ClaimKind) -> &'static str {
     match kind {
         ClaimKind::Factual => "verified_owner_fact",
