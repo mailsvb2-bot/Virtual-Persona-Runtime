@@ -1,6 +1,8 @@
 use vpr_domain::{ClaimId, ClaimKind, RealtimeSessionState, Rt0ReasonCode};
 
-use crate::owner_context::{ReviewedOwnerContext, ReviewedOwnerContextSnapshot};
+use crate::owner_context::{
+    DurableReviewedOwnerContextSnapshot, ReviewedOwnerContext, ReviewedOwnerContextSnapshot,
+};
 
 use super::{LabError, OwnerLabEngine, map_owner_context_error};
 
@@ -33,7 +35,7 @@ impl OwnerLabEngine {
         id: &ClaimId,
         statement: impl Into<String>,
         kind: ClaimKind,
-        persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
+        persist: impl FnOnce(&DurableReviewedOwnerContextSnapshot) -> Result<(), String>,
     ) -> Result<(), LabError> {
         if self.session_audience == Some(super::LabSessionAudience::Visitor) {
             return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
@@ -54,9 +56,9 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed while a realtime session is active or when the snapshot cannot reconstruct
     /// the same reviewed current state exactly.
-    pub fn restore_reviewed_owner_context_snapshot(
+    pub fn restore_reviewed_owner_context(
         &mut self,
-        snapshot: &ReviewedOwnerContextSnapshot,
+        snapshot: &DurableReviewedOwnerContextSnapshot,
     ) -> Result<(), LabError> {
         if self
             .session
@@ -65,8 +67,8 @@ impl OwnerLabEngine {
         {
             return Err(LabError::InvalidState);
         }
-        let context =
-            ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
+        let context = ReviewedOwnerContext::from_durable_snapshot(snapshot)
+            .map_err(map_owner_context_error)?;
         self.reviewed_owner_context = Some(context);
         Ok(())
     }
