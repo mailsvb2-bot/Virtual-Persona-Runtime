@@ -163,7 +163,7 @@ for required in ("VPR_DID_ENDPOINT", "VPR_DID_API_KEY", "cargo", "vpr-owner-lab"
 # - the contract module owns evidence/provider assertions.
 for required in (
     'page.addInitScript({ path: "e2e/voice-journey-driver.js" })',
-    'const mailboxUrl = "http://127.0.0.1:18792/report/voice";',
+    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/voice";',
     "request.delete(mailboxUrl)",
     "request.get(mailboxUrl)",
     "expect.poll",
@@ -185,7 +185,7 @@ for required in (
     "interruption_stopped",
     "reconnect_restored",
     "/api/evidence/session",
-    'const reportUrl = "http://127.0.0.1:18792/report/voice";',
+    'const reportUrl = "/__journey/report/voice";',
     'waitFor(() => !speak.disabled, "text-send-enabled")',
     'waitFor(() => !voice.disabled, "voice-enabled")',
 ):
@@ -306,7 +306,7 @@ if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in ex
 if 'await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });' not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must install its in-page journey driver before navigation")
 for required in (
-    'const reportUrl = "http://127.0.0.1:18792/report/expressive";',
+    'const reportUrl = "/__journey/report/expressive";',
     'postPhase("driver-started")',
     'postPhase("connected")',
     'postPhase("interrupt-complete")',
@@ -315,7 +315,7 @@ for required in (
     if required not in expressive_journey_driver:
         raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
 for required in (
-    'const mailboxUrl = "http://127.0.0.1:18792/report/expressive";',
+    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/expressive";',
     "request.delete(mailboxUrl)",
     "request.get(mailboxUrl)",
 ):
@@ -331,7 +331,7 @@ if 'fetch("http://127.0.0.1:18790' in expressive_journey_driver:
 
 for required in (
     'const port = 18_792;',
-    '/^\\/report\\/(voice|expressive)$/',
+    '/^\\/__journey\\/report\\/(voice|expressive)$/',
     'request.method === "POST"',
     'request.method === "GET"',
     'request.method === "DELETE"',
@@ -340,15 +340,32 @@ for required in (
         raise SystemExit(f"Owner Lab media journey mailbox missing deterministic channel behavior: {required}")
 for config in (voice_config, expressive_config):
     for required in (
-        'command: "node e2e/journey-mailbox-fixture.mjs"',
+        'const browserUrl = "http://127.0.0.1:18792";',
+        "baseURL: browserUrl",
         'url: "http://127.0.0.1:18792/health"',
         "reuseExistingServer: false",
     ):
         if required not in config:
-            raise SystemExit(f"Owner Lab media Playwright config missing independent journey mailbox: {required}")
+            raise SystemExit(f"Owner Lab media Playwright config missing same-origin journey proxy: {required}")
+for config, upstream in (
+    (voice_config, "http://127.0.0.1:18789"),
+    (expressive_config, "http://127.0.0.1:18791"),
+):
+    command = f'VPR_JOURNEY_UPSTREAM={upstream} node e2e/journey-mailbox-fixture.mjs'
+    if command not in config:
+        raise SystemExit(f"Owner Lab media Playwright config missing proxy upstream: {command}")
+for required in (
+    "VPR_JOURNEY_UPSTREAM",
+    "rewriteRequestHeaders",
+    "headers.origin = upstream.origin",
+    "headers.referer = upstream.origin",
+    "proxy(request, response)",
+):
+    if required not in journey_mailbox:
+        raise SystemExit(f"Owner Lab media journey mailbox missing same-origin proxy behavior: {required}")
 for driver in (voice_journey_driver, expressive_journey_driver):
-    if 'mode: "no-cors"' not in driver:
-        raise SystemExit("Owner Lab media journey browser report must use simple no-CORS POST to test-only mailbox")
+    if "http://127.0.0.1:18792" in driver or 'mode: "no-cors"' in driver:
+        raise SystemExit("Owner Lab media journey reports must remain same-origin and CSP-compatible")
 for required in (
     "expect(llmRequests.length).toBeGreaterThanOrEqual(1)",
     "expect(llmRequests.length).toBeLessThanOrEqual(2)",
