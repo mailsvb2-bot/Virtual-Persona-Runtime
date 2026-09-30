@@ -599,6 +599,17 @@ for required in (
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
+for required in (
+    'error?.code === "EPIPE"',
+    'error?.code === "ECONNRESET"',
+    'socket.on("error"',
+    'socket.on("close"',
+    "socket.destroyed",
+    "socket.writableEnded",
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab STT fixture missing cancellation-safe websocket lifecycle: {required}")
+
 voice_test_sources = (voice_e2e, voice_media_fixture, voice_journey_driver, voice_journey_contract)
 for forbidden in (
     "afterApiResponse",
