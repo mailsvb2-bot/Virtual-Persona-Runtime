@@ -86,26 +86,35 @@
       });
       if (!response.ok) throw new Error(`VOICE_JOURNEY_REPORT_HTTP_${response.status}`);
     } catch {
-      // The controller polls the fixture. If reporting itself fails it will time out loudly.
+      // The controller owns the terminal deadline and reports the last published phase.
     }
+  };
+
+  const postPhase = async (phase) => {
+    await postReport({ kind: "phase", phase });
   };
 
   const run = async () => {
     try {
+      await postPhase("driver-started");
       const root = document.documentElement;
       await waitFor(
         () => root.dataset.vprProviderAutoConnect === "clicked",
         "provider-auto-connect",
       );
       await waitStatus("WebRTC согласован");
+      await postPhase("owner-connected");
 
       const microphone = element("microphone-device", HTMLSelectElement);
       await waitFor(() => microphone.options.length >= 3, "microphone-options");
       microphone.value = "headset-mic";
       microphone.dispatchEvent(new Event("change", { bubbles: true }));
+      await postPhase("microphone-selected");
 
       await recordTextTurn("Текстовый вопрос владельца", "Текстовый ответ владельцу");
+      await postPhase("owner-text-complete");
       await recordVoiceTurn("Привет из браузера", "Голосовой ответ владельцу");
+      await postPhase("owner-voice-complete");
       await waitEvidence(
         (snapshot) => snapshot.canonical_playback_proven === true
           && snapshot.av_sync_proven === true
@@ -145,6 +154,7 @@
       );
 
       const ownerEvidence = await sessionEvidence();
+      await postPhase("owner-evidence-captured");
 
       const message = element("message", HTMLTextAreaElement);
       const send = element("speak", HTMLButtonElement);
@@ -154,12 +164,14 @@
       await waitStatus("PROVIDER_UNAVAILABLE");
 
       await recordTextTurn("Восстановление после отказа", "Ответ после восстановления");
+      await postPhase("owner-recovery-complete");
       const recoveredEvidence = await sessionEvidence();
 
       const close = element("close", HTMLButtonElement);
       close.click();
       await waitStatus("Сессия закрыта");
       const ownerExport = await exportSnapshot();
+      await postPhase("owner-closed-exported");
 
       const audience = element("session-audience", HTMLSelectElement);
       audience.value = "visitor";
@@ -169,9 +181,11 @@
       await waitFor(() => !connect.disabled, "visitor-connect-enabled");
       connect.click();
       await waitStatus("Visitor-сессия WebRTC согласована");
+      await postPhase("visitor-connected");
 
       await recordTextTurn("Текстовый вопрос visitor", "Текстовый ответ visitor");
       await recordVoiceTurn("Что думает владелец?", "В visitor scope нет подтверждённых данных владельца");
+      await postPhase("visitor-voice-complete");
       await waitEvidence(
         (snapshot) => snapshot.canonical_playback_proven === true
           && snapshot.av_sync_proven === true
@@ -189,6 +203,7 @@
       close.click();
       await waitStatus("Сессия закрыта");
       const visitorExport = await exportSnapshot();
+      await postPhase("visitor-closed-exported");
 
       await postReport({
         status: "ok",
