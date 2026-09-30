@@ -132,6 +132,14 @@ for required in (
     if required not in app:
         raise SystemExit(f"Owner Lab A/V sync browser evidence missing: {required}")
 
+for required in (
+    "handleUnexpectedLiveKitDisconnect",
+    '"/api/session/close"',
+    "clearRealtimeMedia",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
+
 for required in ('id="export-evidence"', "Скачать evidence snapshot"):
     if required not in index_html:
         raise SystemExit(f"Owner Lab evidence export DOM missing: {required}")
