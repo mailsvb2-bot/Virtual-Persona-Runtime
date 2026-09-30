@@ -153,10 +153,10 @@ const server = http.createServer(async (request, response) => {
     if (expressiveRealtime && prompt.includes("Что думает владелец?")) {
       return sendDelayedEventStream(
         response,
-        "Этот ответ должен начаться,",
-        " но хвост обязан отмениться.",
+        "Этот ответ ",
+        "должен начаться, но хвост обязан отмениться.",
         " Эта фраза не должна дойти до аватара.",
-        250,
+        5_000,
         250,
       );
     }
