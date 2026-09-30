@@ -178,7 +178,9 @@
       return channel;
     }
 
-    async setRemoteDescription() {}
+    async setRemoteDescription() {
+      queueMicrotask(() => publishRemoteAudioTrack?.());
+    }
     async createAnswer() {
       return { type: "answer", sdp: "v=0 voice-browser-answer" };
     }
