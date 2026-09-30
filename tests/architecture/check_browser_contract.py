@@ -186,6 +186,8 @@ if "/__browser-journey" in voice_provider or "browserJourney" in voice_provider:
     raise SystemExit("Owner Lab provider fixture must not own browser journey control state")
 if "http://127.0.0.1:18790" in voice_journey_driver:
     raise SystemExit("Owner Lab Voice driver must not depend on cross-origin provider control-plane calls")
+if "waitForBrowserJourney" in voice_journey_contract:
+    raise SystemExit("Owner Lab Voice contract must not retain the removed cross-origin polling path")
 
 for required in (
     "voice_attempts",
