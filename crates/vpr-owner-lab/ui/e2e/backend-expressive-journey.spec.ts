@@ -159,19 +159,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
-  await page.route("**/__expressive_provider_state", async (route) => {
-    const incoming = route.request();
-    if (incoming.method() !== "GET") {
-      await route.fulfill({ status: 405 });
-      return;
-    }
-    const providerState = await request.get(`${providerUrl}/__state`);
-    await route.fulfill({
-      status: providerState.status(),
-      contentType: "application/json",
-      body: await providerState.text(),
-    });
-  });
   await page.route("**/api/evidence/media", async (route) => {
     const incoming = route.request();
     if (incoming.method() === "POST") {
