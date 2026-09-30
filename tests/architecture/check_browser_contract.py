@@ -236,12 +236,15 @@ def require_pre_navigation_media_runtime(source: str, installer: str, fixture_pa
         raise SystemExit(f"{label} media runtime must be installed before page.goto")
 
 
-require_pre_navigation_media_runtime(
-    voice_e2e,
-    "prepareBrowserRuntimeFakes",
-    "e2e/fake-webrtc-media-runtime.js",
-    "Owner Lab voice",
-)
+voice_goto_index = voice_e2e.find('await page.goto("/");')
+for required in (
+    'await page.addInitScript({ path: "e2e/fake-webrtc-media-runtime.js" });',
+    "await installProviderAutoConnect(page);",
+    'await page.addInitScript({ path: "e2e/voice-journey-driver.js" });',
+):
+    required_index = voice_e2e.find(required)
+    if required_index < 0 or voice_goto_index < 0 or required_index > voice_goto_index:
+        raise SystemExit(f"Owner Lab Voice pre-navigation composition missing or late: {required}")
 
 for forbidden in (
     "prepareExpressiveRuntimeFakes",
