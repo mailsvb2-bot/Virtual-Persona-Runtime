@@ -15,6 +15,15 @@
   window.__vprRequestedMicrophones = requestedMicrophones;
   window.__vprInterruptPayloads = interruptPayloads;
 
+  // Select the same persisted preference path the production UI uses. This avoids
+  // late Playwright DOM mutation after the synthetic media runtime is active.
+  try {
+    window.localStorage.setItem("vpr.owner-lab.microphone-device-id", "headset-mic");
+  } catch {
+    // Storage can be unavailable in hardened browser contexts; the test will then
+    // fail on the requested-device evidence rather than silently switching devices.
+  }
+
   const publishFixtureState = () => {
     const root = document.documentElement;
     if (!root) return;
