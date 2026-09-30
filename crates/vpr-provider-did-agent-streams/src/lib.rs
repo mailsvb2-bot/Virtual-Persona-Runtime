@@ -107,8 +107,8 @@ impl DidAgentStreamsAvatar {
         if config.agent_id.trim().is_empty() || config.api_key.trim().is_empty() {
             return Err(invalid_response());
         }
-        let client =
-            build_provider_http_client(config.timeout).map_err(|error| map_transport_error(&error))?;
+        let client = build_provider_http_client(config.timeout)
+            .map_err(|error| map_transport_error(&error))?;
         Ok(Self {
             client,
             config,
