@@ -247,23 +247,28 @@ impl OwnerLabEngine {
         persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
     ) -> Result<(), LabError> {
         let previous = self.reviewed_owner_context_snapshot()?;
+        let previous_readiness = self.readiness.clone();
         self.correct_owner_claim(id, statement, kind)?;
         let current = self.reviewed_owner_context_snapshot()?;
         if persist(&current).is_ok() {
             return Ok(());
         }
 
-        self.restore_reviewed_owner_context_after_failed_persistence(&previous)?;
+        self.restore_reviewed_owner_context_after_failed_persistence(
+            &previous,
+            previous_readiness,
+        )?;
         Err(LabError::PersistenceFailed)
     }
 
     fn restore_reviewed_owner_context_after_failed_persistence(
         &mut self,
         snapshot: &ReviewedOwnerContextSnapshot,
+        readiness: LabReadinessState,
     ) -> Result<(), LabError> {
         let context = ReviewedOwnerContext::from_snapshot(snapshot).map_err(map_owner_context_error)?;
-        self.readiness.reset_for_profile(context.profile())?;
         self.reviewed_owner_context = Some(context);
+        self.readiness = readiness;
         Ok(())
     }
 
