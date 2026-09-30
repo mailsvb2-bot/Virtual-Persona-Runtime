@@ -337,7 +337,12 @@ fn reviewed_persona_readiness_tracks_media_and_resets_after_correction() {
     engine.close().unwrap();
     let claim = ClaimId::new("owner-fact").unwrap();
     engine
-        .correct_owner_claim(&claim, "Исправленный факт", ClaimKind::Factual)
+        .correct_owner_claim_with_persistence(
+            &claim,
+            "Исправленный факт",
+            ClaimKind::Factual,
+            |_| Ok(()),
+        )
         .unwrap();
     let corrected = engine.status().modality_readiness;
     assert_eq!(corrected.text, LabModalityState::Ready);
