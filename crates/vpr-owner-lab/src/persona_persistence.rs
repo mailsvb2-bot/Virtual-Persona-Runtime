@@ -199,14 +199,24 @@ mod tests {
     }
 
     #[test]
-    fn explicit_file_store_round_trips_snapshot() {
+    fn explicit_file_store_round_trips_and_replaces_existing_snapshot() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("vpr-persona-store-{unique}.json"));
-        save_file(&path, &sample()).unwrap();
-        assert_eq!(load_file(&path).unwrap(), Some(sample()));
+        let first = sample();
+        save_file(&path, &first).unwrap();
+        assert_eq!(load_file(&path).unwrap(), Some(first));
+
+        let mut second = sample();
+        second.persona_version = 4;
+        second.claims[0].revision = 4;
+        second.claims[0].statement = "Обновлённый снимок".into();
+        save_file(&path, &second).unwrap();
+        assert_eq!(load_file(&path).unwrap(), Some(second));
+
         let _ = fs::remove_file(path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
     }
 }
