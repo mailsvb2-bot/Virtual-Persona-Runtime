@@ -159,8 +159,6 @@ for required in (
     "videoId",
     "interruption_stopped",
     "reconnect_restored",
-    '"disconnected"',
-    '"connected"',
     "PROVIDER_UNAVAILABLE",
     "Спровоцируй отказ провайдера",
     "Восстановление после отказа",
