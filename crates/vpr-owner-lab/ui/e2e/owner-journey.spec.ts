@@ -26,6 +26,7 @@ type FixtureState = {
   sessionState: string;
   sessionAudience: null | "owner" | "visitor";
   avatarOpen: boolean;
+  transportKind: "web_rtc" | "live_kit";
   startAudiences: string[];
   directSpeech: string[];
   textMessages: string[];
@@ -35,7 +36,10 @@ type FixtureState = {
 const installBrowserFakes = async (page: Page): Promise<void> => {
   await page.addInitScript(() => {
     class FakeAudioContext {
-      sampleRate = 48_000;
+      sampleRate: number;
+      constructor(options?: AudioContextOptions) {
+        this.sampleRate = options?.sampleRate ?? 48_000;
+      }
       audioWorklet = { addModule: async () => undefined };
       async resume(): Promise<void> {}
       async close(): Promise<void> {}
@@ -50,12 +54,106 @@ const installBrowserFakes = async (page: Page): Promise<void> => {
       async createAnswer(): Promise<{ type: "answer"; sdp: string }> {
         return { type: "answer", sdp: "v=0" };
       }
-      async setLocalDescription(): Promise<void> {}
-      close(): void { this.connectionState = "closed"; }
+      async setLocalDescription(): Promise<void> {
+        this.connectionState = "connected";
+        queueMicrotask(() => this.onconnectionstatechange?.());
+      }
+      close(): void {
+        this.connectionState = "closed";
+        this.onconnectionstatechange?.();
+      }
     }
 
     Object.defineProperty(window, "AudioContext", { value: FakeAudioContext });
     Object.defineProperty(window, "RTCPeerConnection", { value: FakePeerConnection });
+  });
+};
+
+const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    type EventHandler = (...args: unknown[]) => void;
+    const roomEvents = {
+      TrackSubscribed: "track-subscribed",
+      TrackUnsubscribed: "track-unsubscribed",
+      DataReceived: "data-received",
+      Reconnecting: "reconnecting",
+      Reconnected: "reconnected",
+      Disconnected: "disconnected",
+    };
+
+    class FakeRemoteTrack {
+      readonly mediaStreamTrack = undefined;
+      constructor(readonly kind: "audio" | "video") {}
+      attach(element: HTMLMediaElement): HTMLMediaElement {
+        return element;
+      }
+      async getRTCStatsReport(): Promise<RTCStatsReport> {
+        const timestamp = this.kind === "audio" ? 1_000 : 1_035;
+        const report = new Map<string, unknown>([
+          [
+            `${this.kind}-inbound`,
+            {
+              type: "inbound-rtp",
+              kind: this.kind,
+              packetsReceived: 12,
+              estimatedPlayoutTimestamp: timestamp,
+            },
+          ],
+        ]);
+        return report as unknown as RTCStatsReport;
+      }
+    }
+
+    class FakeRoom {
+      readonly localParticipant = {
+        sendText: async (): Promise<void> => undefined,
+      };
+      private readonly handlers = new Map<string, EventHandler[]>();
+
+      on(event: string, handler: EventHandler): FakeRoom {
+        const handlers = this.handlers.get(event) ?? [];
+        handlers.push(handler);
+        this.handlers.set(event, handlers);
+        return this;
+      }
+
+      private emit(event: string, ...args: unknown[]): void {
+        for (const handler of this.handlers.get(event) ?? []) handler(...args);
+      }
+
+      async connect(): Promise<void> {
+        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("video"));
+        this.emit(roomEvents.TrackSubscribed, new FakeRemoteTrack("audio"));
+      }
+
+      async disconnect(): Promise<void> {}
+
+      triggerUnexpectedDisconnect(): void {
+        this.emit(roomEvents.Disconnected);
+      }
+    }
+
+    const fakeWindow = window as typeof window & {
+      LivekitClient?: unknown;
+      __vprFakeLiveKitDisconnect?: () => void;
+    };
+    fakeWindow.LivekitClient = {
+      Room: class extends FakeRoom {
+        constructor() {
+          super();
+          fakeWindow.__vprFakeLiveKitDisconnect = () => this.triggerUnexpectedDisconnect();
+        }
+      },
+      RoomEvent: roomEvents,
+    };
+
+    Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+      configurable: true,
+      value(callback: () => void): number {
+        queueMicrotask(callback);
+        return 1;
+      },
+    });
   });
 };
 
@@ -201,15 +299,25 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
       state.sessionAudience = audience as "owner" | "visitor";
       state.sessionState = "active";
       state.avatarOpen = true;
+      const transport = state.transportKind === "live_kit"
+        ? { kind: "live_kit", server_url: "wss://livekit.example.test", token: "fixture-token" }
+        : {
+            kind: "web_rtc",
+            offer: { kind: "offer", sdp: "v=0" },
+            ice_servers: [],
+          };
       return json(route, {
         evidence_session_sequence: state.startAudiences.length,
-        transport: {
-          kind: "web_rtc",
-          offer: { kind: "offer", sdp: "v=0" },
-          ice_servers: [],
-        },
+        transport,
         capabilities: ["text", "interrupt"],
-        client_control: null,
+        client_control: state.transportKind === "live_kit"
+          ? {
+              event_route: null,
+              interrupt: true,
+              interrupt_requires_playback_id: false,
+              text_input: true,
+            }
+          : null,
       });
     }
     if (path === "/api/avatar/answer" || path === "/api/avatar/ice") {
@@ -262,6 +370,7 @@ const initialState = (): FixtureState => ({
   sessionState: "none",
   sessionAudience: null,
   avatarOpen: false,
+  transportKind: "web_rtc",
   startAudiences: [],
   directSpeech: [],
   textMessages: [],
@@ -332,6 +441,41 @@ test("owner review, correction, visitor scope and revoke stay connected in one b
   expect(state.personaVersion).toBe(3);
   expect(state.claims[0]?.revision).toBe(2);
   expect(state.apiPaths).toContain("POST /api/session/revoke");
+});
+
+test("LiveKit avatar stays contained and unexpected disconnect closes the backend session", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "owner-livekit-e2e";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.transportKind = "live_kit";
+  state.claims = [{
+    claim_id: "preference-tone",
+    statement: "Предпочитаю спокойный тон",
+    kind: "preference",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await installBrowserFakes(page);
+  await installLiveKitBrowserFake(page);
+  await installApiFixture(page, state);
+  await page.goto("/");
+
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Подключить аватар" }).click();
+  await expect(page.locator("#status")).toContainText("LiveKit согласован");
+  await expect(page.locator(".stage")).toHaveClass(/has-video/);
+
+  await page.evaluate(() => {
+    const fakeWindow = window as typeof window & { __vprFakeLiveKitDisconnect?: () => void };
+    fakeWindow.__vprFakeLiveKitDisconnect?.();
+  });
+  await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  await expect.poll(() => state.sessionState).toBe("closed");
+  expect(state.apiPaths).toContain("POST /api/session/close");
 });
 
 test("active visitor recovery does not request owner-only persona endpoints", async ({ page }) => {
