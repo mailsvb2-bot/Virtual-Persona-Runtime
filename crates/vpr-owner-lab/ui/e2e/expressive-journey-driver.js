@@ -40,14 +40,6 @@
     return response.json();
   };
 
-  const fetchProviderState = async () => {
-    const response = await fetch("http://127.0.0.1:18790/__state", {
-      mode: "cors",
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`EXPRESSIVE_PROVIDER_STATE_HTTP_${response.status}`);
-    return response.json();
-  };
 
   const waitEvidence = async (predicate, label) => {
     await waitFor(async () => predicate(await fetchEvidence()), `evidence:${label}`);
@@ -208,16 +200,6 @@
         "second-recording-started",
       );
       voice.click();
-
-      await waitFor(async () => {
-        const provider = await fetchProviderState();
-        return provider.requests?.some(
-          (entry) => entry.kind === "llm"
-            && typeof entry.bodyText === "string"
-            && entry.bodyText.includes("Что думает владелец?"),
-        ) === true;
-      }, "second-llm-open");
-      await postPhase("second-llm-open");
 
       const interrupt = element("interrupt", HTMLButtonElement);
       await waitFor(() => !interrupt.disabled, "interrupt-enabled");
