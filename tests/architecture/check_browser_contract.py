@@ -158,7 +158,6 @@ for required in (
     "stream/interrupt",
     "videoId",
     "interruption_stopped",
-    "__vprSetPeerConnectionState",
     "reconnect_restored",
     '"disconnected"',
     '"connected"',
@@ -521,6 +520,15 @@ for forbidden in (
 ):
     if forbidden in voice_e2e:
         raise SystemExit(f"Owner Lab voice E2E contains forbidden post-response orchestration: {forbidden}")
+for required in (
+    "__vprSetPeerConnectionState",
+    "vprFixtureAction",
+    "voice-disconnected",
+    "voice-connected",
+):
+    if required not in voice_media_fixture:
+        raise SystemExit(f"Owner Lab voice reconnect fixture contract missing: {required}")
+
 for required in (
     "stream/started",
     "async setLocalDescription()",
