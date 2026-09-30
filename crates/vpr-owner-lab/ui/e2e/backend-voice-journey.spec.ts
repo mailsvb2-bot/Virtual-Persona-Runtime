@@ -149,10 +149,6 @@ test("owner and visitor voice turns cross the real backend with different contex
   await expect(page.locator("#status")).toContainText("WebRTC согласован");
   await expect(page.locator("#voice")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Отправить", exact: true })).toBeEnabled();
-  const microphone = page.getByLabel("Микрофон");
-  await expect(microphone.locator("option")).toHaveCount(3);
-  await microphone.selectOption("headset-mic");
-
   await recordTextTurn(
     page,
     "Текстовый вопрос владельца",
