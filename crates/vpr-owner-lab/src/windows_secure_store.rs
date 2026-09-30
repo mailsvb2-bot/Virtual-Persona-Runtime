@@ -304,7 +304,11 @@ mod tests {
         let raw = "🦀".repeat(CHUNK_CHAR_LIMIT * 2 + 1);
         let chunks = split_chunks(&raw).unwrap();
         assert_eq!(chunks.len(), 3);
-        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= CHUNK_CHAR_LIMIT));
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| chunk.chars().count() <= CHUNK_CHAR_LIMIT)
+        );
         assert_eq!(chunks.concat(), raw);
     }
 
@@ -314,7 +318,8 @@ mod tests {
         let legacy = format!("{prefix}-legacy");
         let prefix: &'static str = Box::leak(prefix.into_boxed_str());
         let legacy: &'static str = Box::leak(legacy.into_boxed_str());
-        let store = ChunkedCredentialStore::new("Virtual-Persona-Runtime-Test", prefix, Some(legacy));
+        let store =
+            ChunkedCredentialStore::new("Virtual-Persona-Runtime-Test", prefix, Some(legacy));
         let _ = store.delete();
 
         store.write_password(legacy, "legacy-value").unwrap();
