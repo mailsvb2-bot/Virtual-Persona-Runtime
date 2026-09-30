@@ -4,9 +4,14 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::owner_context::{
+    DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot,
+    DurableReviewedOwnerContextSnapshot,
+};
 use crate::ReviewedOwnerContextSnapshot;
 
-const STORE_SCHEMA: &str = "vpr-reviewed-owner-persona-1";
+const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
+const STORE_SCHEMA_V2: &str = "vpr-reviewed-owner-persona-2";
 const STORE_PATH_ENV: &str = "VPR_OWNER_LAB_PERSONA_STORE_PATH";
 #[cfg(windows)]
 const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
@@ -15,27 +20,44 @@ const WINDOWS_LEGACY_ACCOUNT: &str = "owner-lab-reviewed-persona-v1";
 #[cfg(windows)]
 const WINDOWS_STORE_PREFIX: &str = "owner-lab-reviewed-persona-v2";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
+struct SchemaProbe {
+    schema_version: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PersistedPersona {
+struct PersistedPersonaV1 {
     schema_version: String,
     snapshot: ReviewedOwnerContextSnapshot,
 }
 
-impl PersistedPersona {
-    fn new(snapshot: ReviewedOwnerContextSnapshot) -> Self {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPersonaV2 {
+    schema_version: String,
+    snapshot: DurableReviewedOwnerContextSnapshot,
+}
+
+impl PersistedPersonaV2 {
+    fn new(snapshot: DurableReviewedOwnerContextSnapshot) -> Self {
         Self {
-            schema_version: STORE_SCHEMA.into(),
+            schema_version: STORE_SCHEMA_V2.into(),
             snapshot,
         }
     }
 
-    fn validate(self) -> Result<ReviewedOwnerContextSnapshot, String> {
-        if self.schema_version != STORE_SCHEMA {
+    fn validate(self) -> Result<DurableReviewedOwnerContextSnapshot, String> {
+        if self.schema_version != STORE_SCHEMA_V2 {
             return Err("reviewed Persona store schema is unsupported".into());
         }
         Ok(self.snapshot)
     }
+}
+
+struct DecodedPersona {
+    snapshot: DurableReviewedOwnerContextSnapshot,
+    migrated_legacy: bool,
 }
 
 /// Loads the reviewed Persona from durable storage when one exists.
