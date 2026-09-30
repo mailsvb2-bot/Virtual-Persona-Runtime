@@ -327,13 +327,16 @@ for required in (
     if required not in app:
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
 
+if "sessionState.realtime.control" not in app:
+    raise SystemExit("Owner Lab transport readiness must read the session-state control projection")
 for required in (
-    "sessionState.realtime.control",
-    "sessionState.realtime.audio",
-    "sessionState.realtime.video",
+    "control: boolean;",
+    "audio: boolean;",
+    "video: boolean;",
+    "setRealtimeReadiness",
 ):
-    if required not in app:
-        raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
+    if required not in session_runtime_state:
+        raise SystemExit(f"Owner Lab modality readiness split missing from state owner: {required}")
 for forbidden in (
     "sessionState.realtime.control =",
     "sessionState.realtime.audio =",
