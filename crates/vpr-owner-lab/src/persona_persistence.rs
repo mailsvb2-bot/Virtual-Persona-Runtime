@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ReviewedOwnerContextSnapshot;
 use crate::owner_capture::Rt0OwnerCapture;
 use crate::owner_context::{
     DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot,
@@ -11,7 +12,6 @@ use crate::owner_context::{
     durable_snapshot_from_reviewed_profile,
 };
 use crate::state::OwnerLabEngine;
-use crate::ReviewedOwnerContextSnapshot;
 
 const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
 const STORE_SCHEMA_V2: &str = "vpr-reviewed-owner-persona-2";
@@ -93,7 +93,8 @@ pub fn persist_reviewed_capture(capture: &Rt0OwnerCapture) -> Result<(), String>
 ///
 /// # Errors
 /// Returns a redacted error when the selected store cannot be read, decoded, or validated.
-pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
+pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String>
+{
     if let Some(path) = explicit_store_path() {
         return load_file(&path);
     }
@@ -132,8 +133,8 @@ pub(crate) fn save_reviewed_persona(
 }
 
 fn decode_persisted(raw: &str) -> Result<DecodedPersona, String> {
-    let probe: SchemaProbe = serde_json::from_str(raw)
-        .map_err(|_| "reviewed Persona store contains invalid data")?;
+    let probe: SchemaProbe =
+        serde_json::from_str(raw).map_err(|_| "reviewed Persona store contains invalid data")?;
     match probe.schema_version.as_str() {
         STORE_SCHEMA_V2 => {
             let persisted: PersistedPersonaV2 = serde_json::from_str(raw)
@@ -291,12 +292,7 @@ mod tests {
                 revisions: vec![
                     revision(1, "Кратко", "preference", "unverified"),
                     revision(2, "Кратко", "preference", "owner_verified"),
-                    revision(
-                        3,
-                        "Кратко и по существу",
-                        "preference",
-                        "owner_verified",
-                    ),
+                    revision(3, "Кратко и по существу", "preference", "owner_verified"),
                 ],
             }],
         }
@@ -329,8 +325,8 @@ mod tests {
             "Единственное известное значение"
         );
 
-        let v2 = serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone()))
-            .unwrap();
+        let v2 =
+            serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone())).unwrap();
         let decoded_again = decode_persisted(&v2).unwrap();
         assert!(!decoded_again.migrated_legacy);
         assert_eq!(decoded_again.snapshot, migrated.snapshot);
@@ -459,7 +455,10 @@ mod tests {
         let restored = load_file(&path).unwrap().unwrap();
         assert_eq!(restored, second);
         assert_eq!(restored.claims[0].revisions.len(), 4);
-        assert_eq!(restored.claims[0].revisions[2].statement, "Кратко и по существу");
+        assert_eq!(
+            restored.claims[0].revisions[2].statement,
+            "Кратко и по существу"
+        );
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("tmp"));
