@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, recovery/rt0-stable-baseline-20260930]
   pull_request:
 
 permissions:
