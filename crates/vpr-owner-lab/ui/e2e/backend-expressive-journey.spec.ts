@@ -260,14 +260,21 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(sttRequests[0]?.authorization).toBe("Token expressive-stt-e2e-secret");
   expect(sttRequests[0]?.contentType).toBeNull();
 
-  expect(llmRequests).toHaveLength(2);
-  expect(llmRequests[0]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
+  // The browser contract ends at canonical interrupt: cancellation may beat LLM dispatch,
+  // or it may cancel an already-open LLM stream. Both are correct as long as no second did.speak
+  // escapes. Open-stream tail cancellation is proven deterministically in Rust state tests.
+  expect(llmRequests.length).toBeGreaterThanOrEqual(1);
+  expect(llmRequests.length).toBeLessThanOrEqual(2);
+  expect(llmRequests.every(
+    (entry) => entry.authorization === "Bearer expressive-llm-e2e-secret",
+  )).toBeTruthy();
   expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
   expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
   expect(llmRequests[0]?.bodyText).toContain('"thinking":{"type":"disabled"}');
   expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
-  expect(llmRequests[1]?.authorization).toBe("Bearer expressive-llm-e2e-secret");
-  expect(llmRequests[1]?.bodyText).toContain("Что думает владелец?");
+  if (llmRequests[1]) {
+    expect(llmRequests[1].bodyText).toContain("Что думает владелец?");
+  }
 
   expect(avatarRequests.some((entry) =>
     entry.method === "GET" && entry.path === "/agents/voice-e2e-expressive-agent"
