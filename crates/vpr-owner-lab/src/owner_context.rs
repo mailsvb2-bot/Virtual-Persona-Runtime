@@ -33,6 +33,7 @@ pub(crate) struct DurableOwnerClaimRevisionSnapshot {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct DurableReviewedOwnerClaimSnapshot {
     pub claim_id: String,
+    pub history_complete: bool,
     pub revisions: Vec<DurableOwnerClaimRevisionSnapshot>,
 }
 
@@ -103,10 +104,12 @@ impl ReviewedOwnerContext {
                     ))
                 })
                 .collect::<Result<Vec<_>, OwnerContextError>>()?;
-            records.push(
-                OwnerClaimRecord::restore_retained_history(claim_id, revisions)
-                    .map_err(|_| OwnerContextError::ProfileNotReviewed)?,
-            );
+            let record = OwnerClaimRecord::restore_retained_history(claim_id, revisions)
+                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            if record.has_complete_history() != claim.history_complete {
+                return Err(OwnerContextError::ProfileNotReviewed);
+            }
+            records.push(record);
         }
 
         let profile = PersonaProfile::restore_reviewed(
@@ -224,6 +227,7 @@ pub(crate) fn durable_snapshot_from_profile(
             .iter()
             .map(|record| DurableReviewedOwnerClaimSnapshot {
                 claim_id: record.id().as_str().to_owned(),
+                history_complete: record.has_complete_history(),
                 revisions: record
                     .retained_revisions()
                     .map(|revision| {
