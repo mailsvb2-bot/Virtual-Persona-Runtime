@@ -287,7 +287,7 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
         }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.5",
+        "schema_version":"rt0-owner-lab-session-evidence-0.6",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -312,6 +312,7 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
             "failure_code":null,
             "stt_millis":100,
             "llm_millis":120,
+            "llm_first_meaningful_millis":80,
             "avatar_millis":150,
             "server_total_millis":370,
             "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},

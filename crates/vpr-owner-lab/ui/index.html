@@ -94,10 +94,11 @@
 
     <section class="evidence">
       <h2>Метрики текущей сессии</h2>
-      <p class="hint">Здесь показаны измеренные значения из sanitized evidence. Если провайдер не сообщает стоимость, интерфейс прямо показывает, что она недоступна.</p>
+      <p class="hint">Здесь показаны измеренные значения из sanitized evidence, включая время до первого непустого фрагмента LLM. Если провайдер не сообщает стоимость, интерфейс прямо показывает, что она недоступна.</p>
       <div id="telemetry" class="telemetry-grid" aria-live="polite">
         <div class="metric-card"><span>STT</span><strong id="metric-stt">—</strong></div>
-        <div class="metric-card"><span>LLM</span><strong id="metric-llm">—</strong></div>
+        <div class="metric-card"><span>LLM total</span><strong id="metric-llm">—</strong></div>
+        <div class="metric-card"><span>LLM первый ответ</span><strong id="metric-llm-first">—</strong></div>
         <div class="metric-card"><span>Backend total</span><strong id="metric-server-total">—</strong></div>
         <div class="metric-card"><span>Первый текст</span><strong id="metric-text-first">—</strong></div>
         <div class="metric-card"><span>До начала аудио</span><strong id="metric-first-audio">—</strong></div>

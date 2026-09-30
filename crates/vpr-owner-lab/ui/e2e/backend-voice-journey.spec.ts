@@ -362,6 +362,8 @@ test("owner and visitor voice turns cross the real backend with different contex
       canonical_output_sequence: number;
       canonical_playback_confirmed: boolean;
       status: string;
+      llm_millis: number;
+      llm_first_meaningful_millis: number;
     }>;
     media_events: Array<{ request_sequence: number | null; kind: string }>;
   };
@@ -391,6 +393,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   }]);
   expect(ownerEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
   expect(ownerEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(ownerEvidenceJson.voice_attempts[0]?.llm_first_meaningful_millis).toBeLessThanOrEqual(
+    ownerEvidenceJson.voice_attempts[0]?.llm_millis ?? -1,
+  );
   expect(ownerEvidenceJson.media_events).toContainEqual({
     request_sequence: 1,
     kind: "audio_started",
@@ -478,6 +483,8 @@ test("owner and visitor voice turns cross the real backend with different contex
       canonical_output_sequence: number;
       canonical_playback_confirmed: boolean;
       status: string;
+      llm_millis: number;
+      llm_first_meaningful_millis: number;
     }>;
     media_events: Array<{ request_sequence: number | null; kind: string; elapsed_millis: number }>;
   };
@@ -504,6 +511,9 @@ test("owner and visitor voice turns cross the real backend with different contex
   }]);
   expect(visitorEvidenceJson.voice_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
   expect(visitorEvidenceJson.voice_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(visitorEvidenceJson.voice_attempts[0]?.llm_first_meaningful_millis).toBeLessThanOrEqual(
+    visitorEvidenceJson.voice_attempts[0]?.llm_millis ?? -1,
+  );
   expect(visitorEvidenceJson.media_events.some((event) =>
     event.request_sequence === 1 && event.kind === "audio_started"
   )).toBeTruthy();
