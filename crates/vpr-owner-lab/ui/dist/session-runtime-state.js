@@ -9,21 +9,45 @@ const INITIAL_LAB_STATUS = {
     persona_version: 1,
     reviewed_owner_claims: 0,
 };
+const INITIAL_REALTIME = {
+    control: false,
+    audio: false,
+    video: false,
+};
 export class SessionRuntimeState {
-    backend = INITIAL_LAB_STATUS;
-    realtime = { control: false, audio: false, video: false };
-    playbackId = null;
-    backendRevision = 0;
+    backendValue = INITIAL_LAB_STATUS;
+    realtimeValue = INITIAL_REALTIME;
+    playbackIdValue = null;
+    backendRevisionValue = 0;
+    get backend() {
+        return this.backendValue;
+    }
+    get realtime() {
+        return this.realtimeValue;
+    }
+    get playbackId() {
+        return this.playbackIdValue;
+    }
+    get backendRevision() {
+        return this.backendRevisionValue;
+    }
     applyBackend(status) {
-        this.backend = status;
-        this.backendRevision += 1;
+        this.backendValue = status;
+        this.backendRevisionValue += 1;
         return status;
     }
     patchBackend(patch) {
-        return this.applyBackend({ ...this.backend, ...patch });
+        return this.applyBackend({ ...this.backendValue, ...patch });
+    }
+    setRealtimeReadiness(patch) {
+        this.realtimeValue = { ...this.realtimeValue, ...patch };
+        return this.realtimeValue;
+    }
+    setPlaybackId(playbackId) {
+        this.playbackIdValue = playbackId;
     }
     resetRealtime() {
-        this.realtime = { control: false, audio: false, video: false };
-        this.playbackId = null;
+        this.realtimeValue = INITIAL_REALTIME;
+        this.playbackIdValue = null;
     }
 }
