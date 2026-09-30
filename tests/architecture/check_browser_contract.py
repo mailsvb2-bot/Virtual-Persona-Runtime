@@ -556,13 +556,14 @@ for required in (
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab voice provider fixture missing: {required}")
 
+voice_test_sources = (voice_e2e, voice_media_fixture, voice_journey_driver, voice_journey_contract)
 for forbidden in (
     "afterApiResponse",
     "prepareVoiceCaptureFakes",
     "__vprStartVoicePlayback",
 ):
-    if forbidden in voice_e2e:
-        raise SystemExit(f"Owner Lab voice E2E contains forbidden post-response orchestration: {forbidden}")
+    if any(forbidden in source for source in voice_test_sources):
+        raise SystemExit(f"Owner Lab Voice test stack contains forbidden response-driven orchestration: {forbidden}")
 for required in (
     "__vprSetPeerConnectionState",
     "vprFixtureAction",
@@ -589,8 +590,11 @@ if "navigator.mediaDevices" in voice_media_fixture:
 
 
 voice_goto = voice_e2e.find('await page.goto("/");')
-if voice_goto >= 0 and "await page.evaluate(() => {" in voice_e2e[voice_goto:voice_e2e.find("const recordTextTurn")]:
-    raise SystemExit("Owner Lab voice E2E must not mutate page runtime after navigation")
+if voice_goto < 0:
+    raise SystemExit("Owner Lab Voice E2E must navigate the real browser page")
+voice_after_goto = voice_e2e[voice_goto + len('await page.goto("/");'):]
+if "page." in voice_after_goto:
+    raise SystemExit("Owner Lab Voice E2E controller must use no Playwright/CDP page RPC after navigation")
 expressive_goto = expressive_e2e.find('await page.goto("/");')
 expressive_layout = expressive_e2e.find("const layout = await page.evaluate")
 if expressive_goto >= 0 and expressive_layout >= 0:
