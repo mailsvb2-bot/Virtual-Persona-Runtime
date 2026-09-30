@@ -653,6 +653,15 @@ for required in (
 ):
     if required not in voice_media_fixture:
         raise SystemExit(f"Owner Lab voice fake transport lifecycle missing: {required}")
+
+for required in (
+    "const realFetch = window.fetch.bind(window);",
+    'target.endsWith("/api/voice/events")',
+    'event.kind === "segment"',
+    "beginSyntheticPlayback?.();",
+):
+    if required not in voice_media_fixture:
+        raise SystemExit(f"Owner Lab WebRTC fixture must derive remote playback from canonical voice events: {required}")
 if "navigator.mediaDevices" in voice_media_fixture:
     raise SystemExit("Owner Lab WebRTC fixture must never fall through to native media devices")
 
