@@ -674,6 +674,119 @@ mod tests {
     }
 
     #[test]
+    fn exact_retained_history_restores_without_replay() {
+        let id = ClaimId::new("opinion-1").unwrap();
+        let record = OwnerClaimRecord::restore_retained_history(
+            id.clone(),
+            vec![
+                (
+                    1,
+                    OwnerClaim {
+                        statement: "Исходное мнение".into(),
+                        kind: ClaimKind::Opinion,
+                        source: SourceKind::Owner,
+                        verification: VerificationState::Unverified,
+                        derivation: DerivationKind::Direct,
+                    },
+                ),
+                (
+                    2,
+                    OwnerClaim {
+                        statement: "Исходное мнение".into(),
+                        kind: ClaimKind::Opinion,
+                        source: SourceKind::Owner,
+                        verification: VerificationState::OwnerVerified,
+                        derivation: DerivationKind::Direct,
+                    },
+                ),
+                (
+                    3,
+                    OwnerClaim {
+                        statement: "Исправленное мнение".into(),
+                        kind: ClaimKind::Preference,
+                        source: SourceKind::Owner,
+                        verification: VerificationState::OwnerVerified,
+                        derivation: DerivationKind::Direct,
+                    },
+                ),
+            ],
+        )
+        .unwrap();
+        assert!(record.has_complete_history());
+        let revisions: Vec<_> = record
+            .retained_revisions()
+            .map(|revision| {
+                (
+                    revision.revision().get(),
+                    revision.claim().statement.clone(),
+                    revision.claim().kind,
+                    revision.claim().verification,
+                )
+            })
+            .collect();
+        assert_eq!(revisions[0].1, "Исходное мнение");
+        assert_eq!(revisions[1].1, "Исходное мнение");
+        assert_eq!(revisions[2].1, "Исправленное мнение");
+        assert_eq!(revisions[2].2, ClaimKind::Preference);
+
+        let restored = PersonaProfile::restore_reviewed(
+            PersonaIdentity::new(
+                PersonaId::new("persona-restored").unwrap(),
+                PersonaVersion::new(3).unwrap(),
+                PersonaMode::DigitalTwin,
+            ),
+            ConstitutionBoundary::strict_digital_twin(),
+            vec![record],
+        )
+        .unwrap();
+        assert_eq!(restored.capture_state(), PersonaCaptureState::Reviewed);
+        assert_eq!(restored.claim(&id).unwrap().current().revision().get(), 3);
+    }
+
+    #[test]
+    fn legacy_partial_history_remains_explicitly_partial() {
+        let record = OwnerClaimRecord::restore_retained_history(
+            ClaimId::new("legacy-claim").unwrap(),
+            vec![(
+                7,
+                OwnerClaim {
+                    statement: "Единственное известное legacy-значение".into(),
+                    kind: ClaimKind::Factual,
+                    source: SourceKind::Owner,
+                    verification: VerificationState::OwnerVerified,
+                    derivation: DerivationKind::Direct,
+                },
+            )],
+        )
+        .unwrap();
+        assert!(!record.has_complete_history());
+        assert!(record.previous_revisions().is_empty());
+        assert_eq!(record.current().revision().get(), 7);
+    }
+
+    #[test]
+    fn retained_history_rejects_gaps_and_fabricated_initial_verification() {
+        let id = ClaimId::new("bad-history").unwrap();
+        let verified = |statement: &str| OwnerClaim {
+            statement: statement.into(),
+            kind: ClaimKind::Opinion,
+            source: SourceKind::Owner,
+            verification: VerificationState::OwnerVerified,
+            derivation: DerivationKind::Direct,
+        };
+        assert_eq!(
+            OwnerClaimRecord::restore_retained_history(
+                id.clone(),
+                vec![(2, verified("a")), (4, verified("b"))]
+            ),
+            Err(ProfileError::InvalidClaimHistory)
+        );
+        assert_eq!(
+            OwnerClaimRecord::restore_retained_history(id, vec![(1, verified("fabricated"))]),
+            Err(ProfileError::InvalidClaimHistory)
+        );
+    }
+    #[test]
     fn reviewed_correction_is_atomic_when_persona_version_is_exhausted() {
         let mut profile = profile_with_version(u64::MAX - 1);
         let id = ClaimId::new("opinion-1").unwrap();
