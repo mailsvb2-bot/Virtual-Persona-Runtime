@@ -118,7 +118,12 @@ jobs:
       - name: Build
         run: npm run build
       - name: Generated bundle is current
-        run: git diff --exit-code -- dist/app.js dist/owner-capture.js dist/bootstrap-context.js dist/media-runtime.js dist/session-runtime-state.js
+        run: |
+          generated_status="$(git status --porcelain --untracked-files=all -- dist/)"
+          if [ -n "$generated_status" ]; then
+            printf '%s\n' "$generated_status"
+            exit 1
+          fi
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser contract E2E
