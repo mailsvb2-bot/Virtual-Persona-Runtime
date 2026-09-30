@@ -221,9 +221,34 @@
         visitorExport,
       });
     } catch (error) {
+      let evidence = null;
+      try {
+        evidence = await sessionEvidence();
+      } catch {
+        // Failure reporting must not hide the original journey error.
+      }
+      const evidenceSummary = evidence ? {
+        participant_role: evidence.participant_role ?? null,
+        canonical_playback_proven: evidence.canonical_playback_proven ?? null,
+        av_sync_proven: evidence.av_sync_proven ?? null,
+        voice_attempts: (evidence.voice_attempts ?? []).map((attempt) => ({
+          request_sequence: attempt.request_sequence,
+          status: attempt.status,
+          canonical_playback_confirmed: attempt.canonical_playback_confirmed,
+          failure_code: attempt.failure_code ?? null,
+        })),
+        media_events: (evidence.media_events ?? []).map((event) => ({
+          request_sequence: event.request_sequence,
+          kind: event.kind,
+        })),
+        av_sync_samples: (evidence.av_sync_samples ?? []).map((sample) => ({
+          request_sequence: sample.request_sequence,
+          sample_sequence: sample.sample_sequence,
+        })),
+      } : null;
       await postReport({
         status: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: `${error instanceof Error ? error.message : String(error)};evidence=${JSON.stringify(evidenceSummary)}`,
       });
     }
   };
