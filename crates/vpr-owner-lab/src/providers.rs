@@ -130,8 +130,11 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
     let model = required_env("VPR_OWNER_LAB_LLM_MODEL")?;
     let (canonical, provider): (&str, Box<dyn LlmPort>) =
         if let Some(canonical) = openai_compatible_provider_name(name) {
-            let config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
+            let mut config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
                 .with_provider_name(canonical);
+            if canonical == "deepseek" {
+                config = config.with_reasoning_effort("none").with_max_tokens(96);
+            }
             (
                 canonical,
                 Box::new(
@@ -162,9 +165,19 @@ fn build_llm(name: &str) -> Result<(Box<dyn LlmPort>, ProviderDescriptor), Strin
                 _ => return Err(format!("unsupported LLM provider: {name}")),
             }
         };
+    let realtime_profile = if canonical == "deepseek" {
+        "reasoning=none;max_tokens=96"
+    } else {
+        "provider-default"
+    };
     Ok((
         provider,
-        descriptor("llm", canonical, &model, &[&endpoint, &model]),
+        descriptor(
+            "llm",
+            canonical,
+            &model,
+            &[&endpoint, &model, realtime_profile],
+        ),
     ))
 }
 
