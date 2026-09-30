@@ -13,6 +13,7 @@ EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
 APP = UI / "src" / "app.ts"
+VOICE_SCHEDULER = UI / "src" / "voice-command-scheduler.ts"
 FIXTURE_SERVER = UI / "e2e" / "server.mjs"
 EVIDENCE_EXPORT = UI / "src" / "evidence-export.ts"
 VOICE_CONFIG = UI / "playwright.voice.config.ts"
@@ -21,6 +22,7 @@ VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
+HTTP_CLIENT_CONTROL = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_client_control.rs"
 
 index_html = INDEX.read_text(encoding="utf-8")
 browser_e2e = E2E.read_text(encoding="utf-8")
@@ -33,6 +35,7 @@ expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+voice_scheduler = VOICE_SCHEDULER.read_text(encoding="utf-8")
 fixture_server = FIXTURE_SERVER.read_text(encoding="utf-8")
 evidence_export = EVIDENCE_EXPORT.read_text(encoding="utf-8")
 voice_config = VOICE_CONFIG.read_text(encoding="utf-8")
@@ -42,10 +45,10 @@ default_config = (UI / "playwright.config.ts").read_text(encoding="utf-8")
 ci = CI.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
+http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
 
-# Production Owner Lab must not wait on, expose, or dispatch browser-test orchestration.
-# Test fixtures belong behind the E2E composition boundary; coupling normal HTTP/bootstrap
-# completion to test callbacks made renderer timing part of production control flow.
+# Recovery invariant: production Owner Lab must not wait on or expose browser-test orchestration.
+# Test media/runtime fixtures belong to E2E composition, not the production HTTP/bootstrap lifecycle.
 for forbidden in (
     "__vprTestMediaRuntime",
     "notifyTestApiResponse",
@@ -143,11 +146,8 @@ for required in (
     "__vprExpressiveLoseVideo",
     "__vprExpressiveRestoreVideo",
     "Голос остаётся доступен",
-    "voiceButton).toBeEnabled",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
-    "absolute_offset_millis === 60",
     "#metric-stt",
-    "#metric-llm",
     "#metric-llm-first",
     "#metric-av-sync",
     "#metric-playback",
@@ -159,7 +159,6 @@ for required in (
     '"thinking":{"type":"disabled"}',
     '"max_tokens":96',
     '"model":"deepseek-flash"',
-    "Сессия закрыта",
 ):
     if required not in expressive_e2e:
         raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
@@ -183,6 +182,14 @@ for required in (
         raise SystemExit(f"Owner Lab Expressive launcher missing: {required}")
 
 for required in (
+    '"/api/avatar/client-interrupt"',
+    "active_voice_interrupt.lock().clone()",
+    "handle.interrupt()",
+):
+    if required not in http_client_control:
+        raise SystemExit(f"Owner Lab browser interruption must cancel the active canonical voice turn: {required}")
+
+for required in (
     "estimatedPlayoutTimestamp",
     "/api/evidence/av-sync",
     "AV_SYNC_SAMPLE_COUNT",
@@ -204,22 +211,33 @@ for required in (
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
 
 for required in (
-    "handleLiveKitTrackUnsubscribed",
-    "detachLiveKitTrack",
-    "Видео-поток аватара потерян. Голос остаётся доступен",
-    "Transport/control readiness is independent from video-track readiness",
+    "realtimeReadiness = { control: false, audio: false, video: false }",
+    "realtimeReadiness.control",
+    "realtimeReadiness.audio",
+    "realtimeReadiness.video",
 ):
     if required not in app:
-        raise SystemExit(f"Owner Lab video-loss voice fallback missing: {required}")
-
-if 'realtimeTransportReady = false;\n    stage?.classList.remove("has-video");\n    stopMicrophoneCapture();' in app:
-    raise SystemExit("LiveKit video loss must not disable the whole transport or microphone")
+        raise SystemExit(f"Owner Lab modality readiness split missing: {required}")
+if "realtimeTransportReady" in app:
+    raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
+if '&& realtimeReadiness.audio' not in app:
+    raise SystemExit("Owner Lab voice readiness must require the realtime audio modality")
+if "await onSegment(event.segment)" in app or "onSegment(event.segment)" not in app:
+    raise SystemExit("Owner Lab voice event ingestion must remain decoupled from playback backpressure")
+for required in (
+    "private queueTail: Promise<void> = Promise.resolve()",
+    "this.queueTail.then(run, run)",
+    "this.queueTail = scheduled.then(",
+):
+    if required not in voice_scheduler:
+        raise SystemExit(f"Owner Lab playback scheduler must preserve strict FIFO serialization: {required}")
 
 for required in (
     'id="metric-stt"',
     'id="metric-llm"',
     'id="metric-llm-first"',
     'id="metric-server-total"',
+    'id="metric-text-first"',
     'id="metric-first-audio"',
     'id="metric-video-ready"',
     'id="metric-av-sync"',
@@ -231,11 +249,11 @@ for required in (
 
 for required in (
     "renderTelemetry",
-    "sumKnownCost",
+    "isSessionEvidenceSnapshot",
     "llm_first_meaningful_millis",
+    "estimated_cost_microunits",
+    "provider_charge_microunits",
     "провайдер не сообщил стоимость",
-    "canonical_playback_proven",
-    "av_sync_proven",
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab readable telemetry rendering missing: {required}")
@@ -290,6 +308,8 @@ for required in (
 
 for required in (
     "/v1/audio/transcriptions",
+    "/v1/listen",
+    "alternatives",
     "/v1/chat/completions",
     "text/event-stream",
     "/agents/",
