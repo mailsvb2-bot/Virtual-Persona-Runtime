@@ -25,7 +25,7 @@ for forbidden in ("ubuntu-latest", "windows-latest", "actions/checkout@v", "acti
     if forbidden in ci:
         raise SystemExit(f"CI reproducibility regression: moving reference {forbidden!r} is forbidden")
 
-for required in ("runs-on: ubuntu-24.04", "runs-on: windows-2022"):
+if "node-version: 24.21.0" not in ci:\n    raise SystemExit("CI Node runtime must remain pinned to 24.21.0")\nif re.search(r"node-version:\\s+24(?:\\s|$)", ci):\n    raise SystemExit("CI Node runtime must not use a moving major-only version")\n\nfor required in ("runs-on: ubuntu-24.04", "runs-on: windows-2022"):
     if required not in ci:
         raise SystemExit(f"CI must use pinned runner image: {required}")
 
