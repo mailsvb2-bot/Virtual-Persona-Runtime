@@ -510,6 +510,7 @@ const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
         track.attach(video);
+        realtimeTransportReady = true;
         stage?.classList.add("has-video");
         const requestFrame = video.requestVideoFrameCallback;
         if (typeof requestFrame === "function") {
@@ -519,6 +520,7 @@ const attachLiveKitTrack = (track) => {
             video.addEventListener("playing", recordFirstVideoFrame, { once: true });
         }
         setStatus("Видео подключено", "ready");
+        updateControls();
     }
     else if (track.kind === "audio") {
         liveKitAudioTrack = track;
@@ -527,6 +529,27 @@ const attachLiveKitTrack = (track) => {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
         }
     }
+};
+const detachLiveKitTrack = (track, element) => {
+    try {
+        track.detach?.(element);
+    }
+    catch {
+    }
+    element.srcObject = null;
+};
+const handleLiveKitTrackUnsubscribed = (track) => {
+    if (track === liveKitAudioTrack) {
+        detachLiveKitTrack(track, avatarAudio);
+        liveKitAudioTrack = null;
+    }
+    if (track === liveKitVideoTrack) {
+        detachLiveKitTrack(track, video);
+        liveKitVideoTrack = null;
+        stage?.classList.remove("has-video");
+        setStatus("Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…", "error");
+    }
+    updateControls();
 };
 const clearRealtimeMedia = () => {
     realtimeTransportReady = false;
@@ -668,10 +691,8 @@ const connectLiveKitTransport = async (transport) => {
     });
     room.on(sdk.RoomEvent.TrackUnsubscribed, (...args) => {
         const track = args[0];
-        if (track === liveKitAudioTrack)
-            liveKitAudioTrack = null;
-        if (track === liveKitVideoTrack)
-            liveKitVideoTrack = null;
+        if (track)
+            handleLiveKitTrackUnsubscribed(track);
     });
     room.on(sdk.RoomEvent.DataReceived, (...args) => {
         const payload = args[0];
@@ -695,6 +716,7 @@ const connectLiveKitTransport = async (transport) => {
     });
     await room.connect(transport.server_url, transport.token);
     realtimeTransportReady = true;
+    updateControls();
 };
 const connectAvatar = async () => {
     if (!consent.checked) {
