@@ -570,10 +570,10 @@ const handleProviderClientEvent = (raw) => {
     void api("/api/avatar/client-event", { message: raw })
         .then((normalized) => {
         if (normalized?.kind === "playback_started") {
-            sessionState.playbackId = normalized.playback_id;
+            sessionState.setPlaybackId(normalized.playback_id);
         }
         else if (normalized?.kind === "playback_done") {
-            sessionState.playbackId = null;
+            sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
         }
         updateControls();
@@ -601,7 +601,7 @@ const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
         track.attach(video);
-        sessionState.realtime.video = true;
+        sessionState.setRealtimeReadiness({ video: true });
         stage?.classList.add("has-video");
         if (!requestVideoFrame(video, recordFirstVideoFrame)) {
             video.addEventListener("playing", recordFirstVideoFrame, { once: true });
@@ -611,7 +611,7 @@ const attachLiveKitTrack = (track) => {
     }
     else if (track.kind === "audio") {
         liveKitAudioTrack = track;
-        sessionState.realtime.audio = true;
+        sessionState.setRealtimeReadiness({ audio: true });
         track.attach(avatarAudio);
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
@@ -631,7 +631,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitAudioTrack) {
         detachLiveKitTrack(track, avatarAudio);
         liveKitAudioTrack = null;
-        sessionState.realtime.audio = false;
+        sessionState.setRealtimeReadiness({ audio: false });
         setStatus("Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…", "error");
         if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
             void interruptAvatar();
@@ -640,7 +640,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitVideoTrack) {
         detachLiveKitTrack(track, video);
         liveKitVideoTrack = null;
-        sessionState.realtime.video = false;
+        sessionState.setRealtimeReadiness({ video: false });
         stage?.classList.remove("has-video");
         setStatus("Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…", "error");
     }
@@ -718,7 +718,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         providerDataChannel = channel;
         channel.onopen = () => updateControls();
         channel.onclose = () => {
-            sessionState.playbackId = null;
+            sessionState.setPlaybackId(null);
             updateControls();
         };
         channel.onmessage = (event) => {
@@ -733,7 +733,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         }
         setMediaSrcObject(video, remoteMediaStream);
         if (event.track.kind === "video") {
-            sessionState.realtime.video = true;
+            sessionState.setRealtimeReadiness({ video: true });
             stage?.classList.add("has-video");
             if (!requestVideoFrame(video, recordFirstVideoFrame)) {
                 video.addEventListener("playing", recordFirstVideoFrame, { once: true });
@@ -741,7 +741,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
             setStatus("Видео подключено", "ready");
         }
         else if (event.track.kind === "audio") {
-            sessionState.realtime.audio = true;
+            sessionState.setRealtimeReadiness({ audio: true });
             void attachRemoteAudioEvidence(event.track).catch(() => undefined);
         }
         updateControls();
@@ -750,7 +750,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         if (!peer)
             return;
         const state = peer.connectionState;
-        sessionState.realtime.control = state === "connected";
+        sessionState.setRealtimeReadiness({ control: state === "connected" });
         updateControls();
         if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
             reconnectStartedAt = performance.now();
@@ -819,7 +819,7 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room, reason);
     });
     await room.connect(transport.server_url, transport.token);
-    sessionState.realtime.control = true;
+    sessionState.setRealtimeReadiness({ control: true });
     updateControls();
 };
 const connectAvatar = async () => {
@@ -1271,7 +1271,7 @@ const interruptAvatar = async () => {
                 playback_id: playbackId,
             });
             await dispatchClientCommand(command);
-            sessionState.playbackId = null;
+            sessionState.setPlaybackId(null);
             updateControls();
             await refreshSessionEvidence();
             return;
