@@ -1,5 +1,5 @@
 (() => {
-  const reportUrl = "/__browser-journey";
+  const reportUrl = "http://127.0.0.1:18792/report/voice";
 
   const delay = (millis) => new Promise((resolve) => window.setTimeout(resolve, millis));
 
@@ -24,14 +24,13 @@
     waitFor(() => statusText().includes(expected), `status:${expected}`);
 
   const postJourney = async (update) => {
-    const response = await fetch(reportUrl, {
+    await fetch(reportUrl, {
       method: "POST",
       headers: { "content-type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(update),
-      credentials: "same-origin",
+      mode: "no-cors",
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`VOICE_JOURNEY_CHECKPOINT_HTTP_${response.status}`);
   };
 
   const fetchEvidence = async () => {
