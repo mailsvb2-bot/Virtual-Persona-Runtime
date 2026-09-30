@@ -102,7 +102,7 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (target.endsWith("/api/avatar/start")) remoteSpeech = false;
-      if (!target.endsWith("/api/voice/turn")) return realFetch(input, init);
+      if (!target.endsWith("/api/voice/input/finish")) return realFetch(input, init);
       remoteSpeech = true;
       playbackSequence += 1;
       providerDataChannel?.onmessage?.({
@@ -159,7 +159,10 @@ const installBrowserAudioFakes = async (page: Page): Promise<void> => {
       disconnect(): void {}
     }
     class FakeAudioContext {
-      sampleRate = 48_000;
+      sampleRate: number;
+      constructor(options?: AudioContextOptions) {
+        this.sampleRate = options?.sampleRate ?? 48_000;
+      }
       destination = {};
       audioWorklet = { addModule: async () => undefined };
       async resume(): Promise<void> {}
@@ -580,12 +583,16 @@ test("owner and visitor voice turns cross the real backend with different contex
   expect(visitorVoiceLlm?.bodyText).toContain("Visitor permissions do not expose owner-reviewed personal context");
 
   expect(avatar.every((entry) => entry.authorization === "Basic voice-avatar-e2e-secret")).toBeTruthy();
-  const ownerSpeech = avatar.find((entry) =>
-    entry.method === "POST" && entry.path.endsWith("/stream-1")
-  );
-  const visitorSpeech = avatar.find((entry) =>
-    entry.method === "POST" && entry.path.endsWith("/stream-2")
-  );
-  expect(ownerSpeech?.bodyText).toContain("Голосовой ответ владельцу");
-  expect(visitorSpeech?.bodyText).toContain("В visitor scope нет подтверждённых данных владельца");
+  const spokenText = (streamPath: string): string =>
+    avatar
+      .filter((entry) => entry.method === "POST" && entry.path.endsWith(streamPath))
+      .map((entry) => {
+        const payload = JSON.parse(entry.bodyText) as { script?: { input?: string } };
+        return payload.script?.input ?? "";
+      })
+      .filter(Boolean)
+      .join(" ");
+
+  expect(spokenText("/stream-1")).toContain("Голосовой ответ владельцу");
+  expect(spokenText("/stream-2")).toBe("В visitor scope нет подтверждённых данных владельца");
 });

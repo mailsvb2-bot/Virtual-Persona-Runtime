@@ -4,18 +4,20 @@ use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, SttPort, SttRequest,
-    Transcript, UsageEvidence, UsageUnit,
+    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, SttAudioStream,
+    SttPort, SttRequest, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
 };
+
+mod live;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct DeepgramSttConfig {
-    endpoint: String,
-    api_key: String,
-    model: String,
-    smart_format: bool,
-    timeout: Duration,
+    pub(crate) endpoint: String,
+    pub(crate) api_key: String,
+    pub(crate) model: String,
+    pub(crate) smart_format: bool,
+    pub(crate) timeout: Duration,
 }
 
 impl DeepgramSttConfig {
@@ -79,6 +81,14 @@ impl DeepgramStt {
 impl SttPort for DeepgramStt {
     fn descriptor(&self) -> ProviderDescriptor {
         self.config.descriptor()
+    }
+
+    fn open_stream(
+        &self,
+        request: &SttStreamRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn SttAudioStream>, ProviderError> {
+        live::open(&self.config, request, cancellation)
     }
 
     fn transcribe(

@@ -143,7 +143,8 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
-            context: "test".into(),
+            instructions: None,
+            user_input: "test".into(),
         },
         &mut sink,
     )
@@ -160,7 +161,8 @@ fn session_revoke_during_stream_blocks_new_egress_and_preserves_spoken_prefix_on
         &TestLlm::default(),
         &LlmRequest {
             locale: "ru-RU".into(),
-            context: "blocked".into(),
+            instructions: None,
+            user_input: "blocked".into(),
         },
         &mut GeneratedTextBuffer::default(),
     );
@@ -225,7 +227,8 @@ fn unstructured_llm_context_is_biometric_fail_closed_without_consent() {
         &provider,
         &LlmRequest {
             locale: "ru-RU".into(),
-            context: "arbitrary unstructured context".into(),
+            instructions: None,
+            user_input: "arbitrary unstructured context".into(),
         },
         &mut GeneratedTextBuffer::default(),
     );

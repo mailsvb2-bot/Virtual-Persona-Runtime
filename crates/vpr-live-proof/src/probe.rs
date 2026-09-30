@@ -155,7 +155,11 @@ pub(crate) fn run_provider_probe_prepared(
             llm.as_ref(),
             &LlmRequest {
                 locale: "ru-RU".into(),
-                context: LLM_PROBE_PROMPT.into(),
+                instructions: Some(
+                    "RT0 provider reachability probe. Follow the separate user request briefly and do not infer private Persona material."
+                        .into(),
+                ),
+                user_input: LLM_PROBE_PROMPT.into(),
             },
             &mut generated,
         )

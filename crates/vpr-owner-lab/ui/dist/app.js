@@ -1,4 +1,5 @@
 import { mountOwnerCapture } from "./owner-capture.js";
+import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
@@ -62,7 +63,7 @@ let peer = null;
 let liveKitRoom = null;
 let liveKitAudioTrack = null;
 let liveKitVideoTrack = null;
-let realtimeTransportReady = false;
+let realtimeReadiness = { control: false, audio: false, video: false };
 let providerDataChannel = null;
 let activeClientControl = null;
 let providerPlaybackId = null;
@@ -73,7 +74,11 @@ let micStream = null;
 let audioContext = null;
 let micSource = null;
 let micWorklet = null;
-let micChunks = [];
+let micRequestSequence = null;
+let micSamplesSent = 0;
+let micPendingPcm = new Uint8Array(0);
+let micChunkTail = Promise.resolve();
+let micUploadFailure = null;
 let recording = false;
 let recordingTimer = null;
 let textRequestInFlight = false;
@@ -94,6 +99,7 @@ let baselineRms = 0.002;
 let activeVoiceEvidence = null;
 let interruptEvidenceWatch = null;
 const MAX_VOICE_SAMPLES = 480_000;
+const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
 const AV_SYNC_REFERENCE = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
@@ -225,7 +231,11 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
 const apiBinary = async (path, body, requestSequence) => {
     const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/octet-stream", "X-VPR-CSRF": csrfToken, "X-VPR-Evidence-Request": String(requestSequence) },
+        headers: {
+            "Content-Type": "application/octet-stream",
+            "X-VPR-CSRF": csrfToken,
+            "X-VPR-Evidence-Request": String(requestSequence),
+        },
         body,
         credentials: "same-origin",
         cache: "no-store",
@@ -236,6 +246,30 @@ const apiBinary = async (path, body, requestSequence) => {
         throw new Error(code);
     }
     return payload;
+};
+const waitForVoiceEvents = async (requestSequence, onSegment) => {
+    let finalResult = null;
+    while (true) {
+        const batch = await api("/api/voice/events", {
+            request_sequence: requestSequence,
+        });
+        for (const event of batch.events) {
+            if (event.kind === "segment") {
+                onSegment(event.segment);
+            }
+            else if (event.kind === "complete") {
+                finalResult = event.result;
+            }
+            else {
+                throw new Error(event.code);
+            }
+        }
+        if (batch.terminal) {
+            if (!finalResult)
+                throw new Error("VOICE_STREAM_INCOMPLETE");
+            return finalResult;
+        }
+    }
 };
 const refreshSessionEvidence = async () => {
     if (evidenceSessionSequence === 0)
@@ -369,11 +403,8 @@ const monitorRemoteAudio = () => {
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
-                if (voice.responseComplete) {
-                    void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
-                        .then(() => collectAvSyncEvidence(voice.requestSequence))
-                        .catch(() => undefined);
-                }
+                void postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence)
+                    .catch(() => undefined);
             }
         }
         else if (voice?.speaking) {
@@ -446,9 +477,10 @@ const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
 const updateControls = () => {
-    const transportReady = realtimeTransportReady && backendStatus.session_state === "active";
+    const transportReady = realtimeReadiness.control && backendStatus.session_state === "active";
     const textReady = backendStatus.conversation_readiness !== "none";
-    const voiceReady = backendStatus.conversation_readiness === "text_and_voice";
+    const voiceReady = backendStatus.conversation_readiness === "text_and_voice"
+        && realtimeReadiness.audio;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? providerPlaybackId !== null
         : true;
@@ -485,6 +517,7 @@ const handleProviderClientEvent = (raw) => {
         }
         else if (normalized?.kind === "playback_done") {
             providerPlaybackId = null;
+            voiceCommandScheduler.playbackDone();
         }
         updateControls();
     })
@@ -506,11 +539,12 @@ const dispatchClientCommand = async (command) => {
         throw new Error("CLIENT_TRANSPORT_UNAVAILABLE");
     await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
+const voiceCommandScheduler = new PlaybackAwareCommandScheduler(dispatchClientCommand);
 const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
         track.attach(video);
-        realtimeTransportReady = true;
+        realtimeReadiness.video = true;
         stage?.classList.add("has-video");
         const requestFrame = video.requestVideoFrameCallback;
         if (typeof requestFrame === "function") {
@@ -524,10 +558,12 @@ const attachLiveKitTrack = (track) => {
     }
     else if (track.kind === "audio") {
         liveKitAudioTrack = track;
+        realtimeReadiness.audio = true;
         track.attach(avatarAudio);
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
         }
+        updateControls();
     }
 };
 const detachLiveKitTrack = (track, element) => {
@@ -542,17 +578,24 @@ const handleLiveKitTrackUnsubscribed = (track) => {
     if (track === liveKitAudioTrack) {
         detachLiveKitTrack(track, avatarAudio);
         liveKitAudioTrack = null;
+        realtimeReadiness.audio = false;
+        stopMicrophoneCapture();
+        setStatus("Аудиопоток аватара потерян. Голос временно недоступен; текст остаётся доступен.", "error");
+        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
+            void interruptAvatar();
+        }
     }
     if (track === liveKitVideoTrack) {
         detachLiveKitTrack(track, video);
         liveKitVideoTrack = null;
+        realtimeReadiness.video = false;
         stage?.classList.remove("has-video");
         setStatus("Видео-поток аватара потерян. Голос остаётся доступен; ожидаю восстановление LiveKit…", "error");
     }
     updateControls();
 };
 const clearRealtimeMedia = () => {
-    realtimeTransportReady = false;
+    realtimeReadiness = { control: false, audio: false, video: false };
     liveKitAudioTrack = null;
     liveKitVideoTrack = null;
     video.srcObject = null;
@@ -561,6 +604,7 @@ const clearRealtimeMedia = () => {
     updateControls();
 };
 const closePeerTransport = () => {
+    voiceCommandScheduler.interrupt();
     stopMicrophoneCapture();
     stopRemoteEvidence();
     providerDataChannel?.close();
@@ -629,6 +673,7 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         }
         video.srcObject = remoteMediaStream;
         if (event.track.kind === "video") {
+            realtimeReadiness.video = true;
             stage?.classList.add("has-video");
             const requestFrame = video.requestVideoFrameCallback;
             if (typeof requestFrame === "function") {
@@ -640,13 +685,17 @@ const connectWebRtcTransport = async (transport, clientControl) => {
             setStatus("Видео подключено", "ready");
         }
         else if (event.track.kind === "audio") {
+            realtimeReadiness.audio = true;
             void attachRemoteAudioEvidence(event.track).catch(() => undefined);
         }
+        updateControls();
     };
     peer.onconnectionstatechange = () => {
         if (!peer)
             return;
         const state = peer.connectionState;
+        realtimeReadiness.control = state === "connected";
+        updateControls();
         if ((state === "disconnected" || state === "failed") && reconnectStartedAt === null) {
             reconnectStartedAt = performance.now();
         }
@@ -678,7 +727,6 @@ const connectWebRtcTransport = async (transport, clientControl) => {
     await api("/api/avatar/answer", { kind: answer.type, sdp: answer.sdp ?? "" });
     answerSubmitted = true;
     await flushIce();
-    realtimeTransportReady = true;
 };
 const connectLiveKitTransport = async (transport) => {
     const sdk = await loadLiveKitSdk();
@@ -715,7 +763,7 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room);
     });
     await room.connect(transport.server_url, transport.token);
-    realtimeTransportReady = true;
+    realtimeReadiness.control = true;
     updateControls();
 };
 const connectAvatar = async () => {
@@ -780,12 +828,28 @@ const connectAvatar = async () => {
         updateControls();
     }
 };
+const resetMicrophoneUpload = () => {
+    micRequestSequence = null;
+    micSamplesSent = 0;
+    micPendingPcm = new Uint8Array(0);
+    micChunkTail = Promise.resolve();
+    micUploadFailure = null;
+};
+const cancelMicrophoneInput = async () => {
+    const requestSequence = micRequestSequence;
+    if (requestSequence !== null) {
+        await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+    }
+    resetMicrophoneUpload();
+};
 const stopMicrophoneCapture = () => {
     if (recordingTimer !== null)
         window.clearTimeout(recordingTimer);
     recordingTimer = null;
     micSource?.disconnect();
     micWorklet?.disconnect();
+    if (micWorklet)
+        micWorklet.port.onmessage = null;
     micStream?.getTracks().forEach((track) => track.stop());
     void audioContext?.close();
     micSource = null;
@@ -794,32 +858,6 @@ const stopMicrophoneCapture = () => {
     audioContext = null;
     recording = false;
     updateControls();
-};
-const flattenChunks = (chunks) => {
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const output = new Float32Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-        output.set(chunk, offset);
-        offset += chunk.length;
-    }
-    return output;
-};
-const resampleMono = (input, inputRate, outputRate = 16000) => {
-    if (inputRate === outputRate)
-        return input;
-    const outputLength = Math.max(1, Math.floor(input.length * outputRate / inputRate));
-    const output = new Float32Array(outputLength);
-    const ratio = inputRate / outputRate;
-    for (let i = 0; i < outputLength; i += 1) {
-        const start = Math.floor(i * ratio);
-        const end = Math.min(input.length, Math.max(start + 1, Math.floor((i + 1) * ratio)));
-        let sum = 0;
-        for (let j = start; j < end; j += 1)
-            sum += input[j] ?? 0;
-        output[i] = sum / Math.max(1, end - start);
-    }
-    return output;
 };
 const encodeS16Le = (input) => {
     const buffer = new ArrayBuffer(input.length * 2);
@@ -831,71 +869,163 @@ const encodeS16Le = (input) => {
     });
     return buffer;
 };
-const startMicrophone = async () => {
-    micChunks = [];
-    micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+const queueMicrophoneChunk = (chunk) => {
+    const requestSequence = micRequestSequence;
+    if (requestSequence === null || chunk.length === 0 || micUploadFailure)
+        return;
+    const body = chunk.slice().buffer;
+    micChunkTail = micChunkTail.then(async () => {
+        if (micUploadFailure)
+            return;
+        try {
+            await apiBinary("/api/voice/input/chunk", body, requestSequence);
+        }
+        catch (error) {
+            micUploadFailure = error instanceof Error ? error : new Error("VOICE_UPLOAD_FAILED");
+        }
     });
-    audioContext = new AudioContext();
+};
+const appendMicrophonePcm = (bytes) => {
+    const combined = new Uint8Array(micPendingPcm.length + bytes.length);
+    combined.set(micPendingPcm, 0);
+    combined.set(bytes, micPendingPcm.length);
+    micPendingPcm = combined;
+    while (micPendingPcm.length >= VOICE_UPLOAD_CHUNK_BYTES) {
+        queueMicrophoneChunk(micPendingPcm.slice(0, VOICE_UPLOAD_CHUNK_BYTES));
+        micPendingPcm = micPendingPcm.slice(VOICE_UPLOAD_CHUNK_BYTES);
+    }
+};
+const flushMicrophonePcm = () => {
+    if (micPendingPcm.length === 0)
+        return;
+    queueMicrophoneChunk(micPendingPcm);
+    micPendingPcm = new Uint8Array(0);
+};
+const startMicrophone = async () => {
+    micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            channelCount: 1,
+            sampleRate: 16_000,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+        },
+    });
+    audioContext = new AudioContext({ sampleRate: 16_000, latencyHint: "interactive" });
+    if (audioContext.sampleRate !== 16_000) {
+        stopMicrophoneCapture();
+        throw new Error("MIC_SAMPLE_RATE_UNSUPPORTED");
+    }
     await audioContext.audioWorklet.addModule("/mic-worklet.js");
     micSource = audioContext.createMediaStreamSource(micStream);
     micWorklet = new AudioWorkletNode(audioContext, "vpr-mic-capture");
+    nextVoiceRequestSequence += 1;
+    const requestSequence = nextVoiceRequestSequence;
+    micRequestSequence = requestSequence;
+    micSamplesSent = 0;
+    micPendingPcm = new Uint8Array(0);
+    micChunkTail = Promise.resolve();
+    micUploadFailure = null;
+    const started = await apiEvidenceJson("/api/voice/input/start", {}, requestSequence);
+    if (started.request_sequence !== requestSequence) {
+        throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
+    }
     micWorklet.port.onmessage = (event) => {
-        micChunks.push(new Float32Array(event.data));
+        if (!recording)
+            return;
+        const samples = new Float32Array(event.data);
+        const remaining = MAX_VOICE_SAMPLES - micSamplesSent;
+        if (remaining <= 0) {
+            void finishMicrophoneTurn();
+            return;
+        }
+        const bounded = samples.length > remaining ? samples.subarray(0, remaining) : samples;
+        if (bounded.length === 0)
+            return;
+        appendMicrophonePcm(new Uint8Array(encodeS16Le(bounded)));
+        micSamplesSent += bounded.length;
+        if (micSamplesSent >= MAX_VOICE_SAMPLES)
+            void finishMicrophoneTurn();
     };
+    recording = true;
     micSource.connect(micWorklet);
     micWorklet.connect(audioContext.destination);
-    recording = true;
     recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
-    setStatus("Слушаю… нажмите ещё раз, чтобы отправить", "ready");
+    setStatus("Слушаю… PCM передаётся в распознавание во время речи; нажмите ещё раз, чтобы закончить", "ready");
     updateControls();
 };
 const finishMicrophoneTurn = async () => {
-    if (!recording || !audioContext)
+    if (!recording)
         return;
-    const inputRate = audioContext.sampleRate;
-    const samples = flattenChunks(micChunks);
+    const requestSequence = micRequestSequence;
+    const samplesSent = micSamplesSent;
     stopMicrophoneCapture();
-    micChunks = [];
-    if (samples.length === 0) {
+    if (requestSequence === null) {
+        resetMicrophoneUpload();
+        setStatus("Поток микрофона не был создан", "error");
+        return;
+    }
+    flushMicrophonePcm();
+    await micChunkTail;
+    if (micUploadFailure) {
+        const failure = micUploadFailure;
+        await cancelMicrophoneInput();
+        setStatus(failure.message, "error");
+        return;
+    }
+    if (samplesSent === 0) {
+        await cancelMicrophoneInput();
         setStatus("Микрофон не записал звук", "error");
         return;
     }
     voiceRequestInFlight = true;
-    let attemptedRequestSequence = null;
+    const attemptedRequestSequence = requestSequence;
+    let finishAccepted = false;
     updateControls();
-    setStatus("Распознаю и формирую ответ…");
+    setStatus("Завершаю распознавание и начинаю ответ…");
+    activeVoiceEvidence = {
+        requestSequence,
+        startedAt: performance.now(),
+        audioStarted: false,
+        audioStartedElapsed: null,
+        responseComplete: false,
+        speaking: false,
+        silentFrames: 0,
+    };
     try {
-        const resampled = resampleMono(samples, inputRate);
-        const bounded = resampled.length > MAX_VOICE_SAMPLES
-            ? resampled.subarray(0, MAX_VOICE_SAMPLES)
-            : resampled;
-        const pcm = encodeS16Le(bounded);
-        nextVoiceRequestSequence += 1;
-        const requestSequence = nextVoiceRequestSequence;
-        attemptedRequestSequence = requestSequence;
-        activeVoiceEvidence = {
-            requestSequence,
-            startedAt: performance.now(),
-            audioStarted: false,
-            audioStartedElapsed: null,
-            responseComplete: false,
-            speaking: false,
-            silentFrames: 0,
-        };
-        const result = await apiBinary("/api/voice/turn", pcm, requestSequence);
-        if (result.client_command) {
-            await dispatchClientCommand(result.client_command);
-            await api("/api/avatar/client-delivery-sent", {
-                evidence_turn_sequence: result.evidence_turn_sequence,
-                evidence_output_sequence: result.evidence_output_sequence,
+        const started = await apiEvidenceJson("/api/voice/input/finish", {}, requestSequence);
+        if (started.request_sequence !== requestSequence)
+            throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
+        finishAccepted = true;
+        let deliveryFailure = null;
+        const scheduleSegmentDelivery = (segment) => {
+            const command = segment.client_command;
+            if (!command)
+                return;
+            void (async () => {
+                const sent = await voiceCommandScheduler.dispatch(command);
+                if (!sent)
+                    return;
+                await api("/api/avatar/client-delivery-sent", {
+                    evidence_turn_sequence: segment.evidence_turn_sequence,
+                    evidence_output_sequence: segment.evidence_output_sequence,
+                });
+            })().catch((error) => {
+                deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
+                voiceCommandScheduler.interrupt();
+                void api("/api/avatar/interrupt", {}).catch(() => undefined);
+                if (activeVoiceEvidence?.requestSequence === requestSequence) {
+                    setStatus(deliveryFailure.message, "error");
+                }
             });
-        }
+        };
+        const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+        if (deliveryFailure)
+            throw deliveryFailure;
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
             if (voice.audioStartedElapsed !== null) {
-                await postMediaEvidence("audio_started", voice.audioStartedElapsed, requestSequence);
                 await collectAvSyncEvidence(requestSequence).catch(() => undefined);
             }
         }
@@ -903,25 +1033,35 @@ const finishMicrophoneTurn = async () => {
         setStatus(`Вы: ${result.transcript} · Ответ: ${result.reply}`, "ready");
     }
     catch (error) {
+        if (!finishAccepted) {
+            await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+        }
         if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence)
             activeVoiceEvidence = null;
         await refreshSessionEvidence();
         setStatus(error instanceof Error ? error.message : "Ошибка голосового запроса", "error");
     }
     finally {
+        resetMicrophoneUpload();
         voiceRequestInFlight = false;
         updateControls();
     }
 };
 const toggleVoice = async () => {
     try {
-        if (recording)
+        if (recording) {
             await finishMicrophoneTurn();
-        else
+        }
+        else {
+            if (voiceCommandScheduler.hasActivePlayback) {
+                await interruptAvatar();
+            }
             await startMicrophone();
+        }
     }
     catch (error) {
         stopMicrophoneCapture();
+        await cancelMicrophoneInput();
         setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
     }
 };
@@ -960,11 +1100,14 @@ const interruptAvatar = async () => {
         ? playbackId !== null
         : true;
     const clientReady = !textRequestInFlight
-        && !voiceRequestInFlight
-        && realtimeTransportReady
+        && realtimeReadiness.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    voiceCommandScheduler.interrupt();
     try {
+        if (voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,
@@ -975,7 +1118,9 @@ const interruptAvatar = async () => {
             await refreshSessionEvidence();
             return;
         }
-        await api("/api/avatar/interrupt", {});
+        if (!voiceRequestInFlight) {
+            await api("/api/avatar/interrupt", {});
+        }
         await refreshSessionEvidence();
     }
     catch (error) {

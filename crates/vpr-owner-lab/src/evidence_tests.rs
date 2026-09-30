@@ -1,5 +1,5 @@
 use super::*;
-use crate::{LabTextResult, LabVoiceUsage};
+use crate::{LabTextResult, LabVoiceSegment, LabVoiceUsage};
 
 fn text_result() -> LabTextResult {
     LabTextResult {
@@ -177,6 +177,58 @@ fn text_attempts_fail_closed_and_keep_payloads_out_of_evidence() {
     );
     let encoded = serde_json::to_string(&snapshot).unwrap();
     assert!(!encoded.contains("приватный текстовый ответ"));
+}
+
+#[test]
+fn first_stream_segment_can_prove_playback_before_llm_completion() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(7, ParticipantRole::Owner).unwrap();
+    recorder.begin_voice_request(1).unwrap();
+    let segment = LabVoiceSegment {
+        evidence_turn_sequence: 7,
+        evidence_output_sequence: 1,
+        client_command: None,
+    };
+    recorder.bind_voice_segment(1, &segment).unwrap();
+
+    let audio_started = LabMediaEvidenceInput {
+        session_sequence: 7,
+        request_sequence: Some(1),
+        kind: LabMediaEvidenceKind::AudioStarted,
+        elapsed_millis: 120,
+    };
+    assert_eq!(
+        recorder.prepare_canonical_playback(&audio_started),
+        Ok((7, 1))
+    );
+    recorder
+        .record_canonical_playback(&audio_started, 7, 1)
+        .unwrap();
+    let pending = recorder.snapshot().unwrap();
+    assert_eq!(
+        pending.voice_attempts[0].status,
+        LabVoiceAttemptStatus::Pending
+    );
+    assert!(pending.voice_attempts[0].canonical_playback_confirmed);
+
+    recorder.complete_voice_request(1, &voice_result()).unwrap();
+    let completed = recorder.snapshot().unwrap();
+    assert_eq!(
+        completed.voice_attempts[0].status,
+        LabVoiceAttemptStatus::Completed
+    );
+    assert!(completed.voice_attempts[0].canonical_playback_confirmed);
+
+    let mut mismatched = LabSessionEvidenceRecorder::default();
+    mismatched.begin_session(8, ParticipantRole::Owner).unwrap();
+    mismatched.begin_voice_request(1).unwrap();
+    mismatched.bind_voice_segment(1, &segment).unwrap();
+    let mut wrong = voice_result();
+    wrong.evidence_output_sequence = 2;
+    assert_eq!(
+        mismatched.complete_voice_request(1, &wrong),
+        Err(LabEvidenceError::InvalidInput)
+    );
 }
 
 #[test]

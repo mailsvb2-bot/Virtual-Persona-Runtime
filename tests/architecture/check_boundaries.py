@@ -596,18 +596,26 @@ for required_text_http in (
         raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
 
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_stt = (owner_lab_src / "state" / "voice_stt.rs").read_text(encoding="utf-8")
+owner_lab_http_voice = (owner_lab_src / "http_voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_http_boundary = owner_lab_main + "\n" + owner_lab_http_voice
 owner_lab_voice_providers = owner_lab_providers
 owner_lab_mic_worklet = owner_lab_ui_root / "mic-worklet.js"
 if not owner_lab_mic_worklet.is_file():
     raise SystemExit("Owner Lab push-to-talk must retain a versioned AudioWorklet processor")
 for required_voice_runtime in (
-    "execute_stt",
     "execute_llm",
     "deliver_realtime_avatar_text",
     "interrupt_handle",
 ):
     if required_voice_runtime not in owner_lab_voice:
         raise SystemExit(f"Owner Lab voice path must remain canonical: {required_voice_runtime}")
+for required_stt_runtime in ("open_stt_stream", "execute_stt"):
+    if required_stt_runtime not in owner_lab_voice_stt:
+        raise SystemExit(f"Owner Lab STT path must remain canonical: {required_stt_runtime}")
+for forbidden_direct_stt in (".open_stream(", ".transcribe("):
+    if forbidden_direct_stt in owner_lab_voice_stt:
+        raise SystemExit(f"Owner Lab STT must not bypass ActiveTurn: {forbidden_direct_stt}")
 for required_voice_http in (
     "/api/voice/turn",
     "application/octet-stream",
@@ -618,7 +626,7 @@ for required_voice_http in (
     "request_voice_cancel",
     "compare_exchange",
 ):
-    if required_voice_http not in owner_lab_main:
+    if required_voice_http not in owner_lab_voice_http_boundary:
         raise SystemExit(f"Owner Lab voice HTTP boundary missing {required_voice_http}")
 for provider_name in (
     "openai-transcription",
@@ -637,10 +645,37 @@ for forbidden_browser_secret in (
 ):
     if forbidden_browser_secret in owner_lab_ui:
         raise SystemExit(f"Owner Lab browser must not own provider configuration: {forbidden_browser_secret}")
-if "AudioWorkletNode" not in owner_lab_ui or "apiBinary" not in owner_lab_ui:
-    raise SystemExit("Owner Lab voice UI must use AudioWorklet plus binary same-origin upload")
-if "MAX_VOICE_SAMPLES" not in owner_lab_ui or ".subarray(0, MAX_VOICE_SAMPLES)" not in owner_lab_ui:
-    raise SystemExit("Owner Lab voice UI must cap actual PCM samples before upload")
+for required_live_mic in (
+    "AudioWorkletNode",
+    "apiBinary",
+    "VOICE_UPLOAD_CHUNK_BYTES",
+    "queueMicrophoneChunk",
+    '"/api/voice/input/start"',
+    '"/api/voice/input/chunk"',
+    '"/api/voice/input/finish"',
+    '"/api/voice/input/cancel"',
+    'new AudioContext({ sampleRate: 16_000',
+):
+    if required_live_mic not in owner_lab_app:
+        raise SystemExit(f"Owner Lab live microphone upload missing {required_live_mic}")
+if "ReadableStream<Uint8Array>" in owner_lab_app or 'duplex: "half"' in owner_lab_app:
+    raise SystemExit("Owner Lab microphone upload must not depend on HTTP/2 fetch request streaming")
+if (
+    "MAX_VOICE_SAMPLES" not in owner_lab_ui
+    or "MAX_VOICE_SAMPLES - micSamplesSent" not in owner_lab_ui
+    or ".subarray(0, remaining)" not in owner_lab_ui
+):
+    raise SystemExit("Owner Lab voice UI must cap streamed PCM samples before upload")
+for required_streaming_http in (
+    "VoiceInputRegistry",
+    "input_chunk_response",
+    "begin_voice_input",
+    "finish_voice_input_streaming",
+):
+    if required_streaming_http not in owner_lab_voice_http_boundary:
+        raise SystemExit(
+            f"Owner Lab HTTP microphone path must remain incrementally streamed: {required_streaming_http}"
+        )
 if "ScriptProcessor" in owner_lab_ui or "MediaRecorder" in owner_lab_ui:
     raise SystemExit("Owner Lab voice capture must not regress to deprecated/encoded browser capture")
 
@@ -688,11 +723,25 @@ if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
 if "acknowledge_voice_playback" not in owner_lab_http_evidence:
     raise SystemExit("Owner Lab HTTP evidence must reconcile browser audio to canonical runtime playback")
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
+owner_lab_voice_playback = (
+    owner_lab_src / "state" / "voice_playback.rs"
+).read_text(encoding="utf-8")
 runtime_avatar = (CRATES / "vpr-runtime" / "src" / "avatar_runtime.rs").read_text(encoding="utf-8")
 if "deliver_realtime_avatar_text" not in runtime_avatar or "OutputDeliveryHandle" not in runtime_avatar:
     raise SystemExit("realtime avatar output must allocate the canonical delivery handle")
-if "acknowledge_voice_playback" not in owner_lab_voice or "acknowledge_output_played" not in owner_lab_voice:
-    raise SystemExit("Owner Lab voice playback must reconcile through canonical runtime output evidence")
+for required_playback_boundary in (
+    "LabVoicePlaybackRegistry",
+    "acknowledge_voice_delivery_sent",
+    "acknowledge_voice_playback",
+    "acknowledge_output_sent",
+    "acknowledge_output_played",
+):
+    if required_playback_boundary not in owner_lab_voice_playback:
+        raise SystemExit(
+            f"Owner Lab shared voice playback boundary missing {required_playback_boundary}"
+        )
+if "voice_playback_registry" not in owner_lab_state:
+    raise SystemExit("Owner Lab must expose one shared playback registry outside the engine mutex")
 if "acknowledge_voice_playback" in owner_lab_ui or "acknowledge_output_played" in owner_lab_ui:
     raise SystemExit("browser UI must not self-promote media observations to canonical playback")
 for required_browser_media_evidence in (
@@ -756,9 +805,16 @@ if close_match is None:
 
 # Provider generation callbacks must remain sealed buffers, never caller-defined transport hooks.
 integration_source = (CRATES / "vpr-integration" / "src" / "lib.rs").read_text(encoding="utf-8")
-for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSink"):
+integration_llm_source = (CRATES / "vpr-integration" / "src" / "llm.rs").read_text(encoding="utf-8")
+integration_stt_source = (CRATES / "vpr-integration" / "src" / "stt.rs").read_text(encoding="utf-8")
+sealed_sources = {
+    "GeneratedTextSink": integration_llm_source,
+    "GeneratedAudioSink": integration_source,
+    "GeneratedVideoSink": integration_source,
+}
+for trait_name, source in sealed_sources.items():
     sealed_signature = f"pub trait {trait_name}: sealed::{trait_name}"
-    if sealed_signature not in integration_source:
+    if sealed_signature not in source:
         raise SystemExit(f"{trait_name} must remain sealed against external transport implementations")
     for src_dir in CRATES.glob("*/src"):
         if src_dir.parent.name == "vpr-integration":
@@ -768,6 +824,52 @@ for trait_name in ("GeneratedTextSink", "GeneratedAudioSink", "GeneratedVideoSin
                 raise SystemExit(
                     f"external {trait_name} implementation can bypass canonical delivery: {path.relative_to(ROOT)}"
                 )
+
+# Incremental LLM output may be exposed to runtime as a pull stream, but the provider-operation
+# permit and cancellation authority must stay inside the non-forgeable runtime handle.
+for required_llm_stream_boundary in (
+    "pub trait LlmTextStream",
+    "fn open_stream(",
+):
+    if required_llm_stream_boundary not in integration_llm_source:
+        raise SystemExit(
+            f"integration LLM streaming contract missing {required_llm_stream_boundary}"
+        )
+for required_runtime_stream_boundary in (
+    "pub struct AuthorizedLlmStream",
+    "ProviderExecutionPermit",
+    "pub fn open_llm_stream",
+    ".open_stream(request, &permit.cancellation)",
+):
+    if required_runtime_stream_boundary not in turn_source:
+        raise SystemExit(
+            f"runtime-owned LLM streaming boundary missing {required_runtime_stream_boundary}"
+        )
+
+# Incremental STT input/output may also be exposed as a provider-neutral stream, but the same
+# runtime-issued provider permit must cover audio upload, input finalization and transcript pulls.
+for required_stt_stream_boundary in (
+    "pub trait SttAudioStream: Send",
+    "pub struct SttStreamRequest",
+    "pub enum SttStreamEvent",
+    "fn open_stream(",
+):
+    if required_stt_stream_boundary not in integration_stt_source:
+        raise SystemExit(
+            f"integration STT streaming contract missing {required_stt_stream_boundary}"
+        )
+for required_runtime_stt_boundary in (
+    "pub struct AuthorizedSttStream",
+    "pub fn open_stt_stream",
+    ".open_stream(request, &permit.cancellation)",
+    ".push_audio(pcm, &self.permit.cancellation)",
+    ".finish_input(&self.permit.cancellation)",
+    ".next_event(&self.permit.cancellation)",
+):
+    if required_runtime_stt_boundary not in turn_source:
+        raise SystemExit(
+            f"runtime-owned STT streaming boundary missing {required_runtime_stt_boundary}"
+        )
 
 # Prevent production God Files from reappearing. Tests are allowed to be larger evidence bundles.
 MAX_PRODUCTION_RUST_LINES = 600

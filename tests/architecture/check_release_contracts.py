@@ -7,6 +7,7 @@ CATALOGUE = ROOT / "docs" / "capabilities" / "RT0.json"
 SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 RT1_SPEC = ROOT / "docs" / "releases" / "RT1_RELEASE_SPEC.md"
 REASON_SOURCE = ROOT / "crates" / "vpr-domain" / "src" / "reason.rs"
+EVALUATION_GUIDE = ROOT / "docs" / "evaluation" / "README.md"
 
 ALLOWED_MATURITY = {
     "NOT_IMPLEMENTED",
@@ -38,6 +39,7 @@ REQUIRED_REASON_CODES = {
 catalogue = json.loads(CATALOGUE.read_text(encoding="utf-8"))
 spec_text = SPEC.read_text(encoding="utf-8")
 rt1_spec_text = RT1_SPEC.read_text(encoding="utf-8")
+evaluation_guide_text = EVALUATION_GUIDE.read_text(encoding="utf-8")
 ceiling_match = re.search(r"Maturity ceiling during RT0:\*\* `([A-Z_]+)`", spec_text)
 if ceiling_match is None:
     raise SystemExit("RT0 ReleaseSpec is missing a parseable maturity ceiling")
@@ -194,12 +196,32 @@ for required_visitor_boundary in (
 ):
     if required_visitor_boundary not in owner_lab_state:
         raise SystemExit(f"Owner Lab visitor scope missing runtime boundary {required_visitor_boundary}")
-if "VISITOR_PROMPT_PREFIX" not in owner_lab_state or "conversation_context" not in owner_lab_state:
-    raise SystemExit("Owner Lab text/voice turns must share a visitor-specific LLM context boundary")
+if "VISITOR_INSTRUCTIONS" not in owner_lab_state or "conversation_instructions" not in owner_lab_state:
+    raise SystemExit("Owner Lab text/voice turns must share a visitor-specific LLM instruction boundary")
+if "VISITOR_PROMPT_PREFIX" in owner_lab_state or "conversation_context" in owner_lab_state:
+    raise SystemExit("Owner Lab must not collapse visitor policy and user input back into one LLM context")
 if 'option[value="visitor"]' not in owner_lab_app or 'audience' not in owner_lab_app:
     raise SystemExit("Owner Lab browser must expose the visitor test-session selector")
 if 'reviewed_owner_claims: if self.session_audience == Some(LabSessionAudience::Visitor)' not in owner_lab_state:
     raise SystemExit("visitor status must withhold reviewed owner claim-count metadata")
+
+for required_evidence_contract in (
+    "rt0-live-provider-probe-0.3",
+    "rt0-evidence-inventory-0.7",
+    "A standalone TTS provider is not required",
+):
+    if required_evidence_contract not in evaluation_guide_text:
+        raise SystemExit(
+            f"RT0 evaluation guide is missing current evidence contract marker: {required_evidence_contract}"
+        )
+for stale_evidence_contract in (
+    "rt0-live-provider-probe-0.2",
+    "inventory `0.4`",
+):
+    if stale_evidence_contract in evaluation_guide_text:
+        raise SystemExit(
+            f"RT0 evaluation guide still contains stale evidence contract marker: {stale_evidence_contract}"
+        )
 
 reason_source = REASON_SOURCE.read_text(encoding="utf-8")
 for code in sorted(REQUIRED_REASON_CODES):

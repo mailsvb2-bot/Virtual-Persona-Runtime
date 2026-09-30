@@ -7,6 +7,8 @@ rust-version.workspace = true
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tungstenite = { version = "0.26", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 vpr-integration = { path = "../vpr-integration" }
 
 [lints]

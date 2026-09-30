@@ -14,8 +14,192 @@ use vpr_domain::{
     CorrelationId, OutputCheckpoint, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode,
     PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId, TurnState,
 };
-use vpr_integration::{CancellationProbe, ProviderErrorKind};
+use vpr_integration::{
+    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, PcmSampleFormat,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, SttAudioStream, SttPort, SttRequest,
+    SttStreamEvent, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
+};
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, DataClass, EffectiveAuthority};
+
+struct PullLlm;
+
+struct PullStream {
+    emitted: bool,
+}
+
+impl LlmTextStream for PullStream {
+    fn next_chunk(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        if self.emitted {
+            Ok(None)
+        } else {
+            self.emitted = true;
+            Ok(Some("Первая фраза.".into()))
+        }
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence::default()
+    }
+}
+
+impl LlmPort for PullLlm {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "pull-test".into(),
+            model: "contract".into(),
+            representation: None,
+        }
+    }
+
+    fn open_stream(
+        &self,
+        _request: &LlmRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        Ok(Box::new(PullStream { emitted: false }))
+    }
+
+    fn stream(
+        &self,
+        _request: &LlmRequest,
+        _cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn GeneratedTextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        unreachable!("runtime pull-stream test must not use callback streaming")
+    }
+}
+
+struct PullStt;
+
+struct PullSttStream {
+    event_index: u8,
+    audio_bytes: u64,
+    input_finished: bool,
+}
+
+impl SttAudioStream for PullSttStream {
+    fn push_audio(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_provider_error());
+        }
+        if self.input_finished || pcm.is_empty() || pcm.len() % 2 != 0 {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            });
+        }
+        self.audio_bytes = self
+            .audio_bytes
+            .saturating_add(u64::try_from(pcm.len()).unwrap_or(u64::MAX));
+        Ok(())
+    }
+
+    fn finish_input(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_provider_error());
+        }
+        self.input_finished = true;
+        Ok(())
+    }
+
+    fn next_event(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<SttStreamEvent>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_provider_error());
+        }
+        let event = match self.event_index {
+            0 => Some(SttStreamEvent::Interim(Transcript {
+                text: "При".into(),
+                locale: "ru".into(),
+            })),
+            1 if self.input_finished => Some(SttStreamEvent::Final(Transcript {
+                text: "Привет".into(),
+                locale: "ru".into(),
+            })),
+            1 => return Ok(None),
+            _ => None,
+        };
+        if event.is_some() {
+            self.event_index = self.event_index.saturating_add(1);
+        }
+        Ok(event)
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence {
+            input_units: Some(self.audio_bytes / 32),
+            input_unit: Some(UsageUnit::AudioMillisecond),
+            ..UsageEvidence::default()
+        }
+    }
+}
+
+impl SttPort for PullStt {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "pull-stt-test".into(),
+            model: "contract".into(),
+            representation: Some("streaming".into()),
+        }
+    }
+
+    fn open_stream(
+        &self,
+        request: &SttStreamRequest,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn SttAudioStream>, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled_provider_error());
+        }
+        if !request.is_well_formed() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            });
+        }
+        Ok(Box::new(PullSttStream {
+            event_index: 0,
+            audio_bytes: 0,
+            input_finished: false,
+        }))
+    }
+
+    fn transcribe(
+        &self,
+        _request: &SttRequest,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(Transcript, UsageEvidence), ProviderError> {
+        unreachable!("runtime streaming STT test must not use batch transcription")
+    }
+}
+
+fn cancelled_provider_error() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Cancelled,
+        retryable: false,
+    }
+}
 
 #[derive(Debug)]
 struct ManualClock(AtomicU64);
@@ -70,6 +254,91 @@ fn turn(session: &ActiveSession, name: &str) -> ActiveTurn {
         session,
     )
     .unwrap()
+}
+
+#[test]
+fn authorized_stt_stream_keeps_one_permit_across_audio_and_transcript_events() {
+    let session = active_session();
+    let turn = turn(&session, "stt-stream");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_stt_stream(
+            &PullStt,
+            &SttStreamRequest {
+                sample_rate_hz: 16_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::S16Le,
+                locale_hint: Some("ru-RU".into()),
+            },
+        )
+        .unwrap();
+
+    stream.push_audio(&[0; 640]).unwrap();
+    let interim = stream.next_event().unwrap().unwrap();
+    assert!(!interim.is_final());
+    assert_eq!(interim.transcript().text, "При");
+
+    stream.finish_input().unwrap();
+    let final_event = stream.next_event().unwrap().unwrap();
+    assert!(final_event.is_final());
+    assert_eq!(final_event.transcript().text, "Привет");
+    assert_eq!(stream.usage().input_units, Some(20));
+
+    turn.interrupt_handle().interrupt().unwrap();
+    let error = stream.next_event().unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
+}
+
+#[test]
+fn authorized_stt_stream_is_cancelled_by_session_revoke() {
+    let mut session = active_session();
+    let turn = turn(&session, "stt-stream-revoke");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_stt_stream(
+            &PullStt,
+            &SttStreamRequest {
+                sample_rate_hz: 16_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::S16Le,
+                locale_hint: None,
+            },
+        )
+        .unwrap();
+    stream.push_audio(&[0; 320]).unwrap();
+
+    session.revoke().unwrap();
+
+    let error = stream.finish_input().unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
+}
+
+#[test]
+fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
+    let session = active_session();
+    let turn = turn(&session, "pull-stream-cancel");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_llm_stream(
+            &PullLlm,
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "Ответь кратко".into(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        stream.next_chunk().unwrap().as_deref(),
+        Some("Первая фраза.")
+    );
+    turn.interrupt_handle().interrupt().unwrap();
+    let error = stream.next_chunk().unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
 }
 
 #[test]

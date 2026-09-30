@@ -90,7 +90,7 @@ impl LlmPort for FakeLlm {
             .lock()
             .unwrap()
             .llm_contexts
-            .push(request.context.clone());
+            .push(request.instructions.clone().unwrap_or_default());
         sink.push_generated_text(SECRET_REPLY)?;
         Ok(UsageEvidence {
             input_units: Some(8),

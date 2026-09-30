@@ -56,114 +56,32 @@ pub trait CancellationProbe: Send + Sync {
     fn is_cancelled(&self) -> bool;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LlmRequest {
-    pub locale: String,
-    pub context: String,
-}
+mod llm;
+mod stt;
+
+pub use llm::{
+    GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
+    TimedGeneratedTextBuffer,
+};
+pub use stt::{SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript};
 
 mod sealed {
-    pub trait GeneratedTextSink {}
     pub trait GeneratedAudioSink {}
     pub trait GeneratedVideoSink {}
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct GeneratedTextBuffer(String);
-
-#[derive(Debug)]
-pub struct TimedGeneratedTextBuffer {
-    text: String,
-    started: std::time::Instant,
-    first_meaningful_elapsed_millis: Option<u64>,
-}
-
-impl TimedGeneratedTextBuffer {
-    #[must_use]
-    pub fn start() -> Self {
-        Self {
-            text: String::new(),
-            started: std::time::Instant::now(),
-            first_meaningful_elapsed_millis: None,
-        }
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.text
-    }
-
-    #[must_use]
-    pub fn first_meaningful_elapsed_millis(&self) -> Option<u64> {
-        self.first_meaningful_elapsed_millis
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> (String, Option<u64>) {
-        (self.text, self.first_meaningful_elapsed_millis)
-    }
-}
-
-impl sealed::GeneratedTextSink for TimedGeneratedTextBuffer {}
-
-impl GeneratedTextSink for TimedGeneratedTextBuffer {
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.text.push_str(chunk);
-        if self.first_meaningful_elapsed_millis.is_none() && !self.text.trim().is_empty() {
-            self.first_meaningful_elapsed_millis =
-                u64::try_from(self.started.elapsed().as_millis()).ok();
-        }
-        Ok(())
-    }
-}
-
-impl GeneratedTextBuffer {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    #[must_use]
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl sealed::GeneratedTextSink for GeneratedTextBuffer {}
-
-impl GeneratedTextSink for GeneratedTextBuffer {
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.0.push_str(chunk);
-        Ok(())
-    }
-}
-
-pub trait GeneratedTextSink: sealed::GeneratedTextSink {
-    /// Returns a generated text chunk to a sealed in-memory generation buffer.
-    /// External crates cannot implement this trait, so provider callbacks cannot become transport.
-    ///
-    /// # Errors
-    /// Returns `ProviderError` when generated-text handoff fails or is cancelled.
-    fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError>;
-}
-
-pub trait LlmPort: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor;
-    /// Streams provider output without transferring canonical Persona authority.
-    ///
-    /// # Errors
-    /// Returns a typed provider failure, including cancellation or policy denial.
-    fn stream(
-        &self,
-        request: &LlmRequest,
-        cancellation: &dyn CancellationProbe,
-        sink: &mut dyn GeneratedTextSink,
-    ) -> Result<UsageEvidence, ProviderError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcmSampleFormat {
     S16Le,
+}
+
+impl PcmSampleFormat {
+    #[must_use]
+    pub const fn bytes_per_sample(self) -> usize {
+        match self {
+            Self::S16Le => 2,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -189,9 +107,7 @@ impl std::fmt::Debug for AudioInput {
 impl AudioInput {
     #[must_use]
     pub const fn bytes_per_sample(&self) -> usize {
-        match self.sample_format {
-            PcmSampleFormat::S16Le => 2,
-        }
+        self.sample_format.bytes_per_sample()
     }
 
     #[must_use]
@@ -216,31 +132,6 @@ impl AudioInput {
             .checked_mul(1_000)?
             .checked_div(u64::from(self.sample_rate_hz))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SttRequest {
-    pub audio: AudioInput,
-    pub locale_hint: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Transcript {
-    pub text: String,
-    pub locale: String,
-}
-
-pub trait SttPort: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor;
-    /// Transcribes audio using the selected provider representation.
-    ///
-    /// # Errors
-    /// Returns a typed provider failure, including cancellation or invalid output.
-    fn transcribe(
-        &self,
-        request: &SttRequest,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(Transcript, UsageEvidence), ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -498,6 +389,36 @@ mod tests {
         };
         assert!(!audio.is_well_formed());
         assert_eq!(audio.duration_millis(), None);
+    }
+
+    #[test]
+    fn streaming_stt_request_validates_chunk_alignment_without_owning_audio() {
+        let request = SttStreamRequest {
+            sample_rate_hz: 16_000,
+            channels: 1,
+            sample_format: PcmSampleFormat::S16Le,
+            locale_hint: Some("ru-RU".to_owned()),
+        };
+        assert!(request.is_well_formed());
+        assert!(request.is_well_formed_chunk(&[0, 0, 1, 0]));
+        assert!(!request.is_well_formed_chunk(&[]));
+        assert!(!request.is_well_formed_chunk(&[0]));
+    }
+
+    #[test]
+    fn streaming_stt_event_preserves_interim_and_final_semantics() {
+        let interim = SttStreamEvent::Interim(Transcript {
+            text: "При".to_owned(),
+            locale: "ru".to_owned(),
+        });
+        let final_event = SttStreamEvent::Final(Transcript {
+            text: "Привет".to_owned(),
+            locale: "ru".to_owned(),
+        });
+        assert!(!interim.is_final());
+        assert!(final_event.is_final());
+        assert_eq!(interim.transcript().text, "При");
+        assert_eq!(final_event.transcript().text, "Привет");
     }
 
     #[test]
