@@ -48,6 +48,26 @@ fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiv
     (format!("http://{address}/v1/chat/completions"), rx)
 }
 
+fn serve_redirect(
+    status: &'static str,
+    location: String,
+) -> (String, mpsc::Receiver<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let read = stream.read(&mut request).unwrap();
+        let _ = tx.send(String::from_utf8_lossy(&request[..read]).into_owned());
+        let response = format!(
+            "HTTP/1.1 {status}\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    (format!("http://{address}/v1/chat/completions"), rx)
+}
+
 fn adapter(endpoint: String) -> OpenAiCompatibleLlm {
     OpenAiCompatibleLlm::new(OpenAiCompatibleConfig::new(
         endpoint,
@@ -166,6 +186,46 @@ fn maps_rate_limit_to_typed_retryable_error() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::RateLimited);
     assert!(error.retryable);
+}
+
+#[test]
+fn redirects_fail_closed_without_forwarding_credentials_or_retrying() {
+    for status in ["307 Temporary Redirect", "308 Permanent Redirect"] {
+        let target = TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let location = format!("http://{}/capture", target.local_addr().unwrap());
+        let (endpoint, captured) = serve_redirect(status, location);
+        let provider = adapter(endpoint);
+        let probe = Probe(AtomicBool::new(false));
+
+        let error = provider
+            .stream(
+                &LlmRequest {
+                    locale: "ru-RU".into(),
+                    instructions: None,
+                    user_input: "sensitive request".into(),
+                },
+                &probe,
+                &mut GeneratedTextBuffer::default(),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(!error.retryable);
+        let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer secret")
+        );
+
+        thread::sleep(Duration::from_millis(25));
+        match target.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("redirect target received credentials or request body"),
+            Err(error) => panic!("unexpected redirect-target accept error: {error}"),
+        }
+    }
 }
 
 #[test]
