@@ -39,6 +39,20 @@ jobs:
       - name: Tests
         run: cargo test --locked --workspace --all-targets
 
+  windows-owner-lab:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        run: |
+          rustup component add rustfmt clippy
+          rustc --version
+          cargo --version
+      - name: Compile Owner Lab on Windows
+        run: cargo check --locked -p vpr-owner-lab --all-targets
+      - name: Owner Lab Windows library tests
+        run: cargo test --locked -p vpr-owner-lab --lib
+
   owner-lab-ui:
     runs-on: ubuntu-latest
     defaults:
