@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use crate::owner_capture::Rt0OwnerCapture;
 use crate::owner_context::{
     DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot,
-    DurableReviewedOwnerContextSnapshot, durable_snapshot_from_reviewed_profile,
+    DurableReviewedOwnerContextSnapshot, ReviewedOwnerContext,
+    durable_snapshot_from_reviewed_profile,
 };
 use crate::state::OwnerLabEngine;
 use crate::ReviewedOwnerContextSnapshot;
@@ -181,11 +182,14 @@ fn migrate_v1_snapshot(
             }],
         });
     }
-    Ok(DurableReviewedOwnerContextSnapshot {
+    let durable = DurableReviewedOwnerContextSnapshot {
         persona_id: snapshot.persona_id,
         persona_version: snapshot.persona_version,
         claims,
-    })
+    };
+    let validated = ReviewedOwnerContext::from_durable_snapshot(&durable)
+        .map_err(|_| "legacy reviewed Persona snapshot is invalid".to_owned())?;
+    Ok(validated.durable_snapshot())
 }
 fn explicit_store_path() -> Option<PathBuf> {
     env::var_os(STORE_PATH_ENV)
