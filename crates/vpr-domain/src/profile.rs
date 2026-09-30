@@ -275,6 +275,43 @@ impl PersonaProfile {
         self.claims.iter().find(|record| record.id() == id)
     }
 
+    /// Restores a reviewed profile from validated retained claim histories.
+    ///
+    /// This constructor never replays or fabricates missing revisions. Partial legacy histories
+    /// remain explicitly partial inside their `OwnerClaimRecord`.
+    ///
+    /// # Errors
+    /// Returns `ProfileError` when the profile version cannot represent a reviewed profile, claims
+    /// are empty or duplicated, or any current claim is not direct owner-verified material.
+    pub fn restore_reviewed(
+        identity: PersonaIdentity,
+        constitution: ConstitutionBoundary,
+        claims: Vec<OwnerClaimRecord>,
+    ) -> Result<Self, ProfileError> {
+        if identity.version().get() < 2 {
+            return Err(ProfileError::InvalidReviewedProfileVersion);
+        }
+        if claims.is_empty() {
+            return Err(ProfileError::EmptyCapture);
+        }
+        if claims.iter().any(|record| !record.is_owner_reviewed()) {
+            return Err(ProfileError::ClaimsNotReviewed);
+        }
+        for (index, record) in claims.iter().enumerate() {
+            if claims[..index]
+                .iter()
+                .any(|existing| existing.id() == record.id())
+            {
+                return Err(ProfileError::DuplicateClaimId);
+            }
+        }
+        Ok(Self {
+            identity,
+            constitution,
+            capture_state: PersonaCaptureState::Reviewed,
+            claims,
+        })
+    }
     /// Appends one captured claim before capture is finalized.
     ///
     /// # Errors
@@ -425,6 +462,8 @@ pub enum ProfileError {
     ClaimNotFound,
     ClaimsNotReviewed,
     InvalidCaptureState,
+    InvalidClaimHistory,
+    InvalidReviewedProfileVersion,
     ClaimRevisionExhausted,
     PersonaVersionExhausted,
 }
@@ -440,6 +479,8 @@ impl Display for ProfileError {
             Self::ClaimNotFound => "claim was not found in this persona",
             Self::ClaimsNotReviewed => "all captured claims must be explicitly owner-reviewed",
             Self::InvalidCaptureState => "operation is not allowed in the current capture state",
+            Self::InvalidClaimHistory => "retained claim history is invalid",
+            Self::InvalidReviewedProfileVersion => "reviewed persona version is invalid",
             Self::ClaimRevisionExhausted => "claim revision exhausted",
             Self::PersonaVersionExhausted => "persona version exhausted",
         })
@@ -460,6 +501,28 @@ impl From<PersonaVersionExhausted> for ProfileError {
     }
 }
 
+fn validate_restored_claim(
+    claim: &OwnerClaim,
+    index: usize,
+    starts_at_initial: bool,
+) -> Result<(), ProfileError> {
+    if claim.statement.trim().is_empty()
+        || claim.statement.chars().count() > MAX_OWNER_CLAIM_CHARS
+        || claim.source != SourceKind::Owner
+        || claim.derivation != DerivationKind::Direct
+    {
+        return Err(ProfileError::InvalidClaimHistory);
+    }
+    let expected_verification = if starts_at_initial && index == 0 {
+        VerificationState::Unverified
+    } else {
+        VerificationState::OwnerVerified
+    };
+    if claim.verification != expected_verification {
+        return Err(ProfileError::InvalidClaimHistory);
+    }
+    Ok(())
+}
 fn validate_captured_claim(claim: &OwnerClaim) -> Result<(), ProfileError> {
     if claim.statement.trim().is_empty() {
         return Err(ProfileError::BlankClaimStatement);
