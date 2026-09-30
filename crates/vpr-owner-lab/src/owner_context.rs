@@ -64,68 +64,63 @@ impl ReviewedOwnerContext {
         Ok(Self { profile })
     }
 
-    pub(crate) fn from_snapshot(
-        snapshot: &ReviewedOwnerContextSnapshot,
+    pub(crate) fn from_durable_snapshot(
+        snapshot: &DurableReviewedOwnerContextSnapshot,
     ) -> Result<Self, OwnerContextError> {
         if snapshot.persona_version < 2 || snapshot.claims.is_empty() {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
-        let initial_version = PersonaVersion::new(snapshot.persona_version - 1)
-            .ok_or(OwnerContextError::ProfileNotReviewed)?;
         let persona_id = PersonaId::new(snapshot.persona_id.clone())
             .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-        let identity = PersonaIdentity::new(persona_id, initial_version, PersonaMode::DigitalTwin);
-        let mut profile =
-            PersonaProfile::new(identity, ConstitutionBoundary::strict_digital_twin());
+        let version = PersonaVersion::new(snapshot.persona_version)
+            .ok_or(OwnerContextError::ProfileNotReviewed)?;
+        let identity = PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin);
+        let mut records = Vec::with_capacity(snapshot.claims.len());
 
         for claim in &snapshot.claims {
-            if claim.revision < 2 || claim.revision > 10_000 {
+            if claim.revisions.is_empty() || claim.revisions.len() > 10_000 {
                 return Err(OwnerContextError::ProfileNotReviewed);
             }
             let claim_id = ClaimId::new(claim.claim_id.clone())
                 .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-            let kind = claim_kind_from_api_label(&claim.kind)
-                .ok_or(OwnerContextError::ProfileNotReviewed)?;
-            let record = vpr_domain::OwnerClaimRecord::capture(
-                claim_id,
-                vpr_domain::OwnerClaim {
-                    statement: claim.statement.clone(),
-                    kind,
-                    source: vpr_domain::SourceKind::Owner,
-                    verification: vpr_domain::VerificationState::Unverified,
-                    derivation: vpr_domain::DerivationKind::Direct,
-                },
-            )
-            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-            profile
-                .add_captured_claim(record)
-                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+            let revisions = claim
+                .revisions
+                .iter()
+                .map(|revision| {
+                    Ok((
+                        revision.revision,
+                        OwnerClaim {
+                            statement: revision.statement.clone(),
+                            kind: claim_kind_from_api_label(&revision.kind)
+                                .ok_or(OwnerContextError::ProfileNotReviewed)?,
+                            source: source_kind_from_api_label(&revision.source)
+                                .ok_or(OwnerContextError::ProfileNotReviewed)?,
+                            verification: verification_from_api_label(&revision.verification)
+                                .ok_or(OwnerContextError::ProfileNotReviewed)?,
+                            derivation: derivation_from_api_label(&revision.derivation)
+                                .ok_or(OwnerContextError::ProfileNotReviewed)?,
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>, OwnerContextError>>()?;
+            records.push(
+                OwnerClaimRecord::restore_retained_history(claim_id, revisions)
+                    .map_err(|_| OwnerContextError::ProfileNotReviewed)?,
+            );
         }
 
-        profile
-            .mark_capture_complete()
-            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-        for claim in &snapshot.claims {
-            let claim_id = ClaimId::new(claim.claim_id.clone())
-                .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-            let kind = claim_kind_from_api_label(&claim.kind)
-                .ok_or(OwnerContextError::ProfileNotReviewed)?;
-            for _ in 1..claim.revision {
-                profile
-                    .correct_claim(&claim_id, claim.statement.clone(), kind)
-                    .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
-            }
-        }
-        profile
-            .approve_initial_review()
-            .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
+        let profile = PersonaProfile::restore_reviewed(
+            identity,
+            ConstitutionBoundary::strict_digital_twin(),
+            records,
+        )
+        .map_err(|_| OwnerContextError::ProfileNotReviewed)?;
         let restored = Self::new(profile)?;
-        if restored.snapshot() != *snapshot {
+        if restored.durable_snapshot() != *snapshot {
             return Err(OwnerContextError::ProfileNotReviewed);
         }
         Ok(restored)
     }
-
     pub(crate) fn identity(&self) -> &PersonaIdentity {
         self.profile.identity()
     }
@@ -142,6 +137,9 @@ impl ReviewedOwnerContext {
         snapshot_from_profile(&self.profile)
     }
 
+    pub(crate) fn durable_snapshot(&self) -> DurableReviewedOwnerContextSnapshot {
+        durable_snapshot_from_profile(&self.profile)
+    }
     pub(crate) fn correct_claim(
         &mut self,
         id: &ClaimId,
@@ -158,11 +156,11 @@ impl ReviewedOwnerContext {
         id: &ClaimId,
         statement: impl Into<String>,
         kind: ClaimKind,
-        persist: impl FnOnce(&ReviewedOwnerContextSnapshot) -> Result<(), String>,
+        persist: impl FnOnce(&DurableReviewedOwnerContextSnapshot) -> Result<(), String>,
     ) -> Result<(), OwnerContextError> {
         self.profile
             .correct_claim_transactional(id, statement, kind, |profile| {
-                persist(&snapshot_from_profile(profile))
+                persist(&durable_snapshot_from_profile(profile))
             })
             .map_err(|error| match error {
                 TransactionalCorrectionError::Correction(_) => {
