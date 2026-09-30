@@ -436,5 +436,5 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab bootstrap status serialization missing: {required}")
-if 'bootstrap applies one authoritative status snapshot before capture refreshes can resync' not in owner_e2e:
+if 'bootstrap applies one authoritative status snapshot before capture refreshes can resync' not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing bootstrap/status race regression coverage")
