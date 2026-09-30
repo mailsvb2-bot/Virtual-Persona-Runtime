@@ -171,7 +171,7 @@ pub enum PersonaCaptureState {
     Reviewed,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonaProfile {
     identity: PersonaIdentity,
     constitution: ConstitutionBoundary,
