@@ -142,6 +142,11 @@ for required in (
     "__vprExpressiveDisconnect",
     "/v2/agents/voice-e2e-expressive-agent/sessions",
     "absolute_offset_millis === 60",
+    "#metric-stt",
+    "#metric-llm",
+    "#metric-av-sync",
+    "#metric-playback",
+    "#metric-cost",
     "Сессия закрыта",
 ):
     if required not in expressive_e2e:
@@ -183,6 +188,29 @@ for required in (
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab LiveKit disconnect recovery missing: {required}")
+
+for required in (
+    'id="metric-stt"',
+    'id="metric-llm"',
+    'id="metric-server-total"',
+    'id="metric-first-audio"',
+    'id="metric-video-ready"',
+    'id="metric-av-sync"',
+    'id="metric-playback"',
+    'id="metric-cost"',
+):
+    if required not in index_html:
+        raise SystemExit(f"Owner Lab readable telemetry DOM missing: {required}")
+
+for required in (
+    "renderTelemetry",
+    "sumKnownCost",
+    "провайдер не сообщил стоимость",
+    "canonical_playback_proven",
+    "av_sync_proven",
+):
+    if required not in app:
+        raise SystemExit(f"Owner Lab readable telemetry rendering missing: {required}")
 
 for required in ('id="export-evidence"', "Скачать evidence snapshot"):
     if required not in index_html:
