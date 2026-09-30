@@ -36,9 +36,6 @@ export class SessionRuntimeState {
         this.backendRevisionValue += 1;
         return status;
     }
-    patchBackend(patch) {
-        return this.applyBackend({ ...this.backendValue, ...patch });
-    }
     setRealtimeReadiness(patch) {
         this.realtimeValue = { ...this.realtimeValue, ...patch };
         return this.realtimeValue;
