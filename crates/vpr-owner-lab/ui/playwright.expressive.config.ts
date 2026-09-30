@@ -21,6 +21,11 @@ export default defineConfig({
   ],
   webServer: [
     {
+      command: "node e2e/journey-mailbox-fixture.mjs",
+      url: "http://127.0.0.1:18792/health",
+      reuseExistingServer: false,
+    },
+    {
       command: "node e2e/voice-provider-fixture.mjs",
       url: `http://127.0.0.1:${providerPort}/health`,
       reuseExistingServer: false,
