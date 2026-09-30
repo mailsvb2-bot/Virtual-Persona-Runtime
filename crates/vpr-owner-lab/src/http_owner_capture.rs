@@ -244,13 +244,6 @@ fn reviewed_snapshot_from_capture(
     })
 }
 
-fn persist_reviewed_persona(engine: &vpr_owner_lab::OwnerLabEngine) -> Result<(), HttpResponse> {
-    let snapshot = engine
-        .reviewed_owner_context_snapshot()
-        .map_err(|error| lab_error_response(&error))?;
-    save_reviewed_persona(&snapshot).map_err(|_| error_response(500, "PERSONA_PERSISTENCE_FAILED"))
-}
-
 fn with_capture<T>(
     state: &AppState,
     operation: impl FnOnce(&mut Rt0OwnerCapture) -> Result<T, OwnerCaptureError>,
