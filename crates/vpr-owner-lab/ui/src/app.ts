@@ -33,6 +33,51 @@ type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; es
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
+type UsageEvidence = {
+  input_units: number | null;
+  output_units: number | null;
+  estimated_cost_microunits: number | null;
+  provider_charge_microunits: number | null;
+};
+type TextAttemptEvidence = {
+  request_sequence: number;
+  status: string;
+  first_meaningful_response_millis: number | null;
+  server_total_millis: number | null;
+  llm_usage: UsageEvidence | null;
+};
+type VoiceAttemptEvidence = {
+  request_sequence: number;
+  canonical_playback_confirmed: boolean;
+  status: string;
+  stt_millis: number | null;
+  llm_millis: number | null;
+  avatar_millis: number | null;
+  server_total_millis: number | null;
+  stt_usage: UsageEvidence | null;
+  llm_usage: UsageEvidence | null;
+};
+type MediaEventEvidence = {
+  request_sequence: number | null;
+  kind: MediaEvidenceKind;
+  elapsed_millis: number;
+};
+type AvSyncEvidence = {
+  request_sequence: number;
+  sample_sequence: number;
+  absolute_offset_millis: number;
+};
+type SessionEvidenceSnapshot = {
+  schema_version: string;
+  canonical_playback_proven: boolean;
+  av_sync_proven: boolean;
+  text_attempts: TextAttemptEvidence[];
+  voice_attempts: VoiceAttemptEvidence[];
+  media_events: MediaEventEvidence[];
+  av_sync_samples: AvSyncEvidence[];
+};
+
+
 type LiveKitTrack = {
   kind: string;
   mediaStreamTrack?: MediaStreamTrack;
@@ -105,6 +150,15 @@ const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
 const statusNode = byId<HTMLElement>("status");
 const evidenceNode = byId<HTMLElement>("evidence");
+const metricStt = byId<HTMLElement>("metric-stt");
+const metricLlm = byId<HTMLElement>("metric-llm");
+const metricServerTotal = byId<HTMLElement>("metric-server-total");
+const metricTextFirst = byId<HTMLElement>("metric-text-first");
+const metricFirstAudio = byId<HTMLElement>("metric-first-audio");
+const metricVideoReady = byId<HTMLElement>("metric-video-ready");
+const metricAvSync = byId<HTMLElement>("metric-av-sync");
+const metricPlayback = byId<HTMLElement>("metric-playback");
+const metricCost = byId<HTMLElement>("metric-cost");
 
 let csrfToken = "";
 let egressEnabled = false;
@@ -157,8 +211,101 @@ const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): vo
   statusNode.dataset.state = state;
 };
 
+const formatMillis = (value: number | null | undefined): string =>
+  value === null || value === undefined ? "—" : `${Math.round(value)} мс`;
+
+const isSessionEvidenceSnapshot = (value: unknown): value is SessionEvidenceSnapshot => {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<SessionEvidenceSnapshot>;
+  return typeof candidate.schema_version === "string"
+    && candidate.schema_version.startsWith("rt0-owner-lab-session-evidence-")
+    && Array.isArray(candidate.text_attempts)
+    && Array.isArray(candidate.voice_attempts)
+    && Array.isArray(candidate.media_events)
+    && Array.isArray(candidate.av_sync_samples);
+};
+
+const lastCompleted = <T extends { status: string }>(items: T[]): T | undefined =>
+  [...items].reverse().find((item) => item.status === "completed");
+
+const lastMediaEvent = (
+  events: MediaEventEvidence[],
+  kind: MediaEvidenceKind,
+  requestSequence?: number,
+): MediaEventEvidence | undefined =>
+  [...events].reverse().find((event) =>
+    event.kind === kind
+      && (requestSequence === undefined || event.request_sequence === requestSequence)
+  );
+
+const sumKnownCost = (
+  usages: Array<UsageEvidence | null>,
+  key: "estimated_cost_microunits" | "provider_charge_microunits",
+): number | null => {
+  const values = usages
+    .map((usage) => usage?.[key] ?? null)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0);
+};
+
+const resetTelemetry = (): void => {
+  metricStt.textContent = "—";
+  metricLlm.textContent = "—";
+  metricServerTotal.textContent = "—";
+  metricTextFirst.textContent = "—";
+  metricFirstAudio.textContent = "—";
+  metricVideoReady.textContent = "—";
+  metricAvSync.textContent = "—";
+  metricPlayback.textContent = "—";
+  metricCost.textContent = "нет измеренных данных";
+};
+
+const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
+  const voice = lastCompleted(snapshot.voice_attempts);
+  const text = lastCompleted(snapshot.text_attempts);
+  metricStt.textContent = formatMillis(voice?.stt_millis);
+  metricLlm.textContent = formatMillis(voice?.llm_millis);
+  metricServerTotal.textContent = formatMillis(voice?.server_total_millis ?? text?.server_total_millis);
+  metricTextFirst.textContent = formatMillis(text?.first_meaningful_response_millis);
+
+  const firstAudio = voice
+    ? lastMediaEvent(snapshot.media_events, "audio_started", voice.request_sequence)
+    : lastMediaEvent(snapshot.media_events, "audio_started");
+  metricFirstAudio.textContent = formatMillis(firstAudio?.elapsed_millis);
+  metricVideoReady.textContent = formatMillis(
+    lastMediaEvent(snapshot.media_events, "video_ready")?.elapsed_millis,
+  );
+
+  const avSamples = voice
+    ? snapshot.av_sync_samples.filter((sample) => sample.request_sequence === voice.request_sequence)
+    : snapshot.av_sync_samples;
+  if (snapshot.av_sync_proven && avSamples.length > 0) {
+    const maxOffset = Math.max(...avSamples.map((sample) => sample.absolute_offset_millis));
+    metricAvSync.textContent = `${maxOffset} мс · ${avSamples.length} изм.`;
+  } else {
+    metricAvSync.textContent = voice ? "ещё не доказан" : "—";
+  }
+  metricPlayback.textContent = snapshot.canonical_playback_proven
+    ? "подтверждён"
+    : voice ? "ожидание" : "—";
+
+  const usages: Array<UsageEvidence | null> = [
+    ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
+    ...snapshot.voice_attempts.flatMap((attempt) => [attempt.stt_usage, attempt.llm_usage]),
+  ];
+  const estimated = sumKnownCost(usages, "estimated_cost_microunits");
+  const charged = sumKnownCost(usages, "provider_charge_microunits");
+  const parts: string[] = [];
+  if (estimated !== null) parts.push(`оценка: ${estimated} μunits`);
+  if (charged !== null) parts.push(`провайдер: ${charged} μunits`);
+  metricCost.textContent = parts.length > 0
+    ? parts.join(" · ")
+    : "провайдер не сообщил стоимость";
+};
+
 const showEvidence = (value: unknown): void => {
   evidenceNode.textContent = JSON.stringify(value, null, 2);
+  if (isSessionEvidenceSnapshot(value)) renderTelemetry(value);
 };
 
 const api = async <T>(path: string, body?: unknown): Promise<T> => {
@@ -699,6 +846,7 @@ const connectAvatar = async (): Promise<void> => {
   }
   connectButton.disabled = true;
   connectEvidenceStartedAt = performance.now();
+  resetTelemetry();
   videoEvidencePosted = false;
   reconnectStartedAt = null;
   evidenceSessionSequence = 0;
