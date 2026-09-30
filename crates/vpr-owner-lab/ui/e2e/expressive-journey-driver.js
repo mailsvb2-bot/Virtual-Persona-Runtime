@@ -41,8 +41,8 @@
   };
 
   const fetchProviderState = async () => {
-    const response = await fetch("/__expressive_provider_state", {
-      credentials: "same-origin",
+    const response = await fetch("http://127.0.0.1:18790/__state", {
+      mode: "cors",
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`EXPRESSIVE_PROVIDER_STATE_HTTP_${response.status}`);
