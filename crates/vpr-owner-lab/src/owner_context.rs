@@ -352,10 +352,6 @@ const fn claim_kind_label(kind: ClaimKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vpr_domain::{
-        ConstitutionBoundary, DerivationKind, OwnerClaim, OwnerClaimRecord, PersonaId,
-        PersonaVersion, SourceKind, VerificationState,
-    };
 
     fn persona_identity() -> PersonaIdentity {
         PersonaIdentity::new(
@@ -422,6 +418,38 @@ mod tests {
         assert_eq!(restored.snapshot(), context.snapshot());
     }
 
+    #[test]
+    fn legacy_partial_history_stays_partial_after_new_correction() {
+        let durable = DurableReviewedOwnerContextSnapshot {
+            persona_id: "legacy-owner".into(),
+            persona_version: 7,
+            claims: vec![DurableReviewedOwnerClaimSnapshot {
+                claim_id: "legacy-opinion".into(),
+                history_complete: false,
+                revisions: vec![DurableOwnerClaimRevisionSnapshot {
+                    revision: 7,
+                    statement: "Известное legacy-значение".into(),
+                    kind: "opinion".into(),
+                    source: "owner".into(),
+                    verification: "owner_verified".into(),
+                    derivation: "direct".into(),
+                }],
+            }],
+        };
+        let mut context = ReviewedOwnerContext::from_durable_snapshot(&durable).unwrap();
+        let id = ClaimId::new("legacy-opinion").unwrap();
+        context
+            .correct_claim(&id, "Новое точное значение", ClaimKind::Preference)
+            .unwrap();
+
+        let after = context.durable_snapshot();
+        assert!(!after.claims[0].history_complete);
+        assert_eq!(after.claims[0].revisions.len(), 2);
+        assert_eq!(after.claims[0].revisions[0].revision, 7);
+        assert_eq!(after.claims[0].revisions[1].revision, 8);
+        assert_eq!(after.claims[0].revisions[0].statement, "Известное legacy-значение");
+        assert_eq!(after.claims[0].revisions[1].statement, "Новое точное значение");
+    }
     #[test]
     fn failed_persistence_restores_exact_reviewed_context() {
         let mut context = ReviewedOwnerContext::new(reviewed_profile()).unwrap();
