@@ -10,6 +10,7 @@ BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 VOICE_MEDIA_FIXTURE = UI / "e2e" / "fake-webrtc-media-runtime.js"
+PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
@@ -37,6 +38,7 @@ backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 voice_media_fixture = VOICE_MEDIA_FIXTURE.read_text(encoding="utf-8")
+provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
@@ -297,12 +299,18 @@ for required in (
         raise SystemExit(f"Owner Lab microphone device selection missing: {required}")
 
 for required in (
-    "__vprRequestedMicrophones",
     'selectOption("headset-mic")',
-    "Микрофон гарнитуры",
+    "data-vpr-requested-microphones",
 ):
     if required not in voice_e2e:
         raise SystemExit(f"Owner Lab microphone selection browser proof missing: {required}")
+for required in (
+    "__vprRequestedMicrophones",
+    "Микрофон гарнитуры",
+    "vprRequestedMicrophones",
+):
+    if required not in voice_media_fixture:
+        raise SystemExit(f"Owner Lab microphone fixture contract missing: {required}")
 
 for required in (
     "estimatedPlayoutTimestamp",
@@ -419,25 +427,47 @@ for source, required in (
     if required not in source:
         raise SystemExit(f"Owner Lab A/V sync sample-count contract missing: {required}")
 
+# Expressive remains safe with ordinary Playwright actionability and must exercise the
+# visible controls directly. Voice uses a pre-navigation, test-only DOM harness because
+# Chromium media fixture startup can make a post-navigation CDP actionability RPC hang.
+# The harness still checks the real consent checkbox state and invokes the real Connect
+# button; production exposes no event/callback for it.
+for required in (
+    'page.getByRole("button", { name: "Подключить аватар" })',
+    "await expect(connectAvatar).toBeEnabled()",
+    "await connectAvatar.click()",
+):
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab Expressive E2E must use the canonical user-visible connect path: {required}")
+
+for required in (
+    'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
+    "await installProviderAutoConnect(page);",
+    'toHaveAttribute("data-vpr-provider-auto-connect", "clicked")',
+):
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice E2E pre-navigation connect harness missing: {required}")
+
+for required in (
+    'document.getElementById("connect")',
+    'document.getElementById("consent")',
+    "consent.checked = true",
+    "connect.click()",
+    "MutationObserver",
+):
+    if required not in provider_bootstrap:
+        raise SystemExit(f"Owner Lab provider bootstrap harness missing canonical DOM path: {required}")
+for forbidden in ("vpr:bootstrap-ready", "__vprBootstrap", "afterApiResponse"):
+    if forbidden in provider_bootstrap:
+        raise SystemExit(f"Owner Lab provider bootstrap harness depends on forbidden production orchestration: {forbidden}")
+
 for provider_e2e, label in (
     (voice_e2e, "Owner Lab voice"),
     (expressive_e2e, "Owner Lab Expressive"),
 ):
-    for required in (
-        'page.getByRole("button", { name: "Подключить аватар" })',
-        "await expect(connectAvatar).toBeEnabled()",
-        "await connectAvatar.click()",
-    ):
-        if required not in provider_e2e:
-            raise SystemExit(f"{label} provider E2E must use the canonical user-visible connect path: {required}")
-    for forbidden in (
-        "installProviderAutoConnect",
-        "vpr:bootstrap-ready",
-        "vprProviderAutoConnect",
-        'document.getElementById("connect")',
-    ):
+    for forbidden in ("vpr:bootstrap-ready", "__vprBootstrap"):
         if forbidden in provider_e2e:
-            raise SystemExit(f"{label} provider E2E contains forbidden bootstrap shortcut: {forbidden}")
+            raise SystemExit(f"{label} provider E2E contains forbidden production bootstrap shortcut: {forbidden}")
 
 for required in (
     "export const publishBootstrap",
