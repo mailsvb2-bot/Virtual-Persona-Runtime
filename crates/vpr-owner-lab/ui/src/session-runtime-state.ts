@@ -17,6 +17,11 @@ export type LabStatus = {
   persona_version: number;
   reviewed_owner_claims: number;
 };
+export type RealtimeReadiness = {
+  control: boolean;
+  audio: boolean;
+  video: boolean;
+};
 
 const INITIAL_LAB_STATUS: LabStatus = {
   session_state: "none",
@@ -30,24 +35,55 @@ const INITIAL_LAB_STATUS: LabStatus = {
   reviewed_owner_claims: 0,
 };
 
+const INITIAL_REALTIME: RealtimeReadiness = {
+  control: false,
+  audio: false,
+  video: false,
+};
+
 export class SessionRuntimeState {
-  backend: LabStatus = INITIAL_LAB_STATUS;
-  realtime = { control: false, audio: false, video: false };
-  playbackId: string | null = null;
-  backendRevision = 0;
+  private backendValue: LabStatus = INITIAL_LAB_STATUS;
+  private realtimeValue: RealtimeReadiness = INITIAL_REALTIME;
+  private playbackIdValue: string | null = null;
+  private backendRevisionValue = 0;
+
+  get backend(): Readonly<LabStatus> {
+    return this.backendValue;
+  }
+
+  get realtime(): Readonly<RealtimeReadiness> {
+    return this.realtimeValue;
+  }
+
+  get playbackId(): string | null {
+    return this.playbackIdValue;
+  }
+
+  get backendRevision(): number {
+    return this.backendRevisionValue;
+  }
 
   applyBackend(status: LabStatus): LabStatus {
-    this.backend = status;
-    this.backendRevision += 1;
+    this.backendValue = status;
+    this.backendRevisionValue += 1;
     return status;
   }
 
   patchBackend(patch: Partial<LabStatus>): LabStatus {
-    return this.applyBackend({ ...this.backend, ...patch });
+    return this.applyBackend({ ...this.backendValue, ...patch });
+  }
+
+  setRealtimeReadiness(patch: Partial<RealtimeReadiness>): RealtimeReadiness {
+    this.realtimeValue = { ...this.realtimeValue, ...patch };
+    return this.realtimeValue;
+  }
+
+  setPlaybackId(playbackId: string | null): void {
+    this.playbackIdValue = playbackId;
   }
 
   resetRealtime(): void {
-    this.realtime = { control: false, audio: false, video: false };
-    this.playbackId = null;
+    this.realtimeValue = INITIAL_REALTIME;
+    this.playbackIdValue = null;
   }
 }
