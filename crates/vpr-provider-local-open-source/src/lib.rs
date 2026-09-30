@@ -4,6 +4,7 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
+    build_provider_http_client,
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
     RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer,
@@ -54,10 +55,8 @@ impl LocalOpenSourceAvatar {
         if config.api_token.trim().is_empty() {
             return Err(invalid_response());
         }
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|error| map_transport_error(&error))?;
+        let client =
+            build_provider_http_client(config.timeout).map_err(|error| map_transport_error(&error))?;
         Ok(Self {
             client,
             base_url,
