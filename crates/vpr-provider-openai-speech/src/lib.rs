@@ -5,6 +5,7 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use vpr_integration::{
+    build_provider_http_client,
     AudioInput, CancellationProbe, GeneratedAudioSink, PcmSampleFormat, ProviderDescriptor,
     ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
 };
@@ -67,10 +68,8 @@ impl OpenAiSpeechTts {
         if config.model.trim().is_empty() || config.voice.trim().is_empty() {
             return Err(invalid_response());
         }
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
-            .map_err(|error| map_transport_error(&error))?;
+        let client =
+            build_provider_http_client(config.timeout).map_err(|error| map_transport_error(&error))?;
         Ok(Self { client, config })
     }
 }
