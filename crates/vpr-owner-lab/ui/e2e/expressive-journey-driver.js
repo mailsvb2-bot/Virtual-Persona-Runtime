@@ -1,5 +1,5 @@
 (() => {
-  const reportUrl = "/__expressive_journey_report";
+  const reportUrl = "/__journey/report/expressive";
   const sleep = (millis) => new Promise((resolve) => window.setTimeout(resolve, millis));
 
   const waitFor = async (predicate, label, timeoutMillis = 20_000) => {
@@ -46,14 +46,12 @@
   };
 
   const postReport = async (payload) => {
-    const response = await fetch(reportUrl, {
+    await fetch(reportUrl, {
       method: "POST",
       headers: { "content-type": "text/plain;charset=UTF-8" },
       body: JSON.stringify(payload),
-      credentials: "same-origin",
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`EXPRESSIVE_REPORT_HTTP_${response.status}`);
   };
 
   const postPhase = async (phase) => {

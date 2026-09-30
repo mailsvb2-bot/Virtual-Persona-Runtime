@@ -12,6 +12,7 @@ VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
 VOICE_MEDIA_FIXTURE = UI / "e2e" / "fake-webrtc-media-runtime.js"
 VOICE_JOURNEY_DRIVER = UI / "e2e" / "voice-journey-driver.js"
 VOICE_JOURNEY_CONTRACT = UI / "e2e" / "voice-journey-contract.ts"
+JOURNEY_MAILBOX = UI / "e2e" / "journey-mailbox-fixture.mjs"
 PROVIDER_BOOTSTRAP = UI / "e2e" / "provider-bootstrap.ts"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_JOURNEY_DRIVER = UI / "e2e" / "expressive-journey-driver.js"
@@ -45,6 +46,7 @@ voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
 voice_media_fixture = VOICE_MEDIA_FIXTURE.read_text(encoding="utf-8")
 voice_journey_driver = VOICE_JOURNEY_DRIVER.read_text(encoding="utf-8")
 voice_journey_contract = VOICE_JOURNEY_CONTRACT.read_text(encoding="utf-8")
+journey_mailbox = JOURNEY_MAILBOX.read_text(encoding="utf-8")
 provider_bootstrap = PROVIDER_BOOTSTRAP.read_text(encoding="utf-8")
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 expressive_journey_driver = EXPRESSIVE_JOURNEY_DRIVER.read_text(encoding="utf-8")
@@ -161,14 +163,18 @@ for required in ("VPR_DID_ENDPOINT", "VPR_DID_API_KEY", "cargo", "vpr-owner-lab"
 # - the contract module owns evidence/provider assertions.
 for required in (
     'page.addInitScript({ path: "e2e/voice-journey-driver.js" })',
-    'page.route("**/__browser-journey"',
+    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/voice";',
+    "request.delete(mailboxUrl)",
+    "request.get(mailboxUrl)",
     "expect.poll",
     "assertBrowserJourneyEvidence",
     "assertProviderRequests",
     'await page.goto("/");',
 ):
     if required not in voice_e2e:
-        raise SystemExit(f"Owner Lab Voice controller missing same-origin evidence contract: {required}")
+        raise SystemExit(f"Owner Lab Voice controller missing independent mailbox evidence contract: {required}")
+if 'page.route("**/__browser-journey"' in voice_e2e:
+    raise SystemExit("Owner Lab Voice terminal reporting must not depend on Playwright page routing")
 
 for required in (
     "Текстовый вопрос владельца",
@@ -179,7 +185,7 @@ for required in (
     "interruption_stopped",
     "reconnect_restored",
     "/api/evidence/session",
-    'const reportUrl = "/__browser-journey";',
+    'const reportUrl = "/__journey/report/voice";',
     'waitFor(() => !speak.disabled, "text-send-enabled")',
     'waitFor(() => !voice.disabled, "voice-enabled")',
 ):
@@ -188,6 +194,18 @@ for required in (
 for required in ("Привет из браузера", "Что думает владелец?"):
     if required not in voice_provider:
         raise SystemExit(f"Owner Lab Voice STT fixture missing canonical transcript: {required}")
+
+stt_request_index = voice_provider.find("const sttRequest = {")
+stt_push_index = voice_provider.find("requests.push(sttRequest);")
+stt_data_index = voice_provider.find('socket.on("data"')
+if not (0 <= stt_request_index < stt_push_index < stt_data_index):
+    raise SystemExit("Owner Lab streaming STT fixture must record provider calls at WebSocket open, before CloseStream")
+for required in (
+    "sttRequest.bodyLength = audioBytes;",
+    "sttRequest.completed = true;",
+):
+    if required not in voice_provider:
+        raise SystemExit(f"Owner Lab streaming STT fixture missing terminal enrichment: {required}")
 
 if "/__browser-journey" in voice_provider or "browserJourney" in voice_provider:
     raise SystemExit("Owner Lab provider fixture must not own browser journey control state")
@@ -300,7 +318,7 @@ if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in ex
 if 'await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });' not in expressive_e2e:
     raise SystemExit("Owner Lab Expressive E2E must install its in-page journey driver before navigation")
 for required in (
-    'const reportUrl = "/__expressive_journey_report";',
+    'const reportUrl = "/__journey/report/expressive";',
     'postPhase("driver-started")',
     'postPhase("connected")',
     'postPhase("interrupt-complete")',
@@ -308,13 +326,58 @@ for required in (
 ):
     if required not in expressive_journey_driver:
         raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
-if 'page.route("**/__expressive_journey_report"' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E missing same-origin terminal-report mailbox")
+for required in (
+    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/expressive";',
+    "request.delete(mailboxUrl)",
+    "request.get(mailboxUrl)",
+):
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab Expressive controller missing independent mailbox contract: {required}")
+if 'page.route("**/__expressive_journey_report"' in expressive_e2e:
+    raise SystemExit("Owner Lab Expressive terminal reporting must not depend on Playwright page routing")
 
 if 'page.route("**/__expressive_provider_state"' in expressive_e2e:
     raise SystemExit("Owner Lab Expressive journey must not depend on a Playwright provider-state callback")
 if 'fetch("http://127.0.0.1:18790' in expressive_journey_driver:
     raise SystemExit("Owner Lab Expressive in-page journey must not bypass same-origin CSP")
+
+for required in (
+    'const port = 18_792;',
+    '/^\\/__journey\\/report\\/(voice|expressive)$/',
+    'request.method === "POST"',
+    'request.method === "GET"',
+    'request.method === "DELETE"',
+):
+    if required not in journey_mailbox:
+        raise SystemExit(f"Owner Lab media journey mailbox missing deterministic channel behavior: {required}")
+for config in (voice_config, expressive_config):
+    for required in (
+        'const browserUrl = "http://127.0.0.1:18792";',
+        "baseURL: browserUrl",
+        'url: "http://127.0.0.1:18792/health"',
+        "reuseExistingServer: false",
+    ):
+        if required not in config:
+            raise SystemExit(f"Owner Lab media Playwright config missing same-origin journey proxy: {required}")
+for config, upstream in (
+    (voice_config, "http://127.0.0.1:18789"),
+    (expressive_config, "http://127.0.0.1:18791"),
+):
+    command = f'VPR_JOURNEY_UPSTREAM={upstream} node e2e/journey-mailbox-fixture.mjs'
+    if command not in config:
+        raise SystemExit(f"Owner Lab media Playwright config missing proxy upstream: {command}")
+for required in (
+    "VPR_JOURNEY_UPSTREAM",
+    "rewriteRequestHeaders",
+    "headers.origin = upstream.origin",
+    "headers.referer = upstream.origin",
+    "proxy(request, response)",
+):
+    if required not in journey_mailbox:
+        raise SystemExit(f"Owner Lab media journey mailbox missing same-origin proxy behavior: {required}")
+for driver in (voice_journey_driver, expressive_journey_driver):
+    if "http://127.0.0.1:18792" in driver or 'mode: "no-cors"' in driver:
+        raise SystemExit("Owner Lab media journey reports must remain same-origin and CSP-compatible")
 for required in (
     "expect(llmRequests.length).toBeGreaterThanOrEqual(1)",
     "expect(llmRequests.length).toBeLessThanOrEqual(2)",
