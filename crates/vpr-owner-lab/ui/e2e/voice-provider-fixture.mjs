@@ -9,6 +9,7 @@ let streamSequence = 0;
 let expressiveSessionSequence = 0;
 let sttSequence = 0;
 let llmSequence = 0;
+let voiceJourneyReport = null;
 
 const readBody = async (request) => {
   const chunks = [];
@@ -98,6 +99,18 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === "GET" && url.pathname === "/__state") {
     return sendJson(response, 200, { requests });
+  }
+  if (request.method === "GET" && url.pathname === "/__journey_state") {
+    return sendJson(response, 200, { report: voiceJourneyReport });
+  }
+  if (request.method === "POST" && url.pathname === "/__voice_journey_report") {
+    const body = await readBody(request);
+    try {
+      voiceJourneyReport = JSON.parse(body.toString("utf8"));
+    } catch {
+      voiceJourneyReport = { status: "failed", error: "INVALID_JOURNEY_REPORT" };
+    }
+    return sendJson(response, 200, { ok: true });
   }
 
   if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {

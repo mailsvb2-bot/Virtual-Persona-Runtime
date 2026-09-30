@@ -9,6 +9,7 @@ BACKEND_CONFIG = UI / "playwright.backend.config.ts"
 BACKEND_PROVIDER = UI / "e2e" / "backend-provider.mjs"
 BACKEND_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_backend.py"
 VOICE_E2E = UI / "e2e" / "backend-voice-journey.spec.ts"
+VOICE_DRIVER = UI / "e2e" / "voice-journey-driver.js"
 EXPRESSIVE_E2E = UI / "e2e" / "backend-expressive-journey.spec.ts"
 EXPRESSIVE_CONFIG = UI / "playwright.expressive.config.ts"
 EXPRESSIVE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py"
@@ -34,6 +35,8 @@ backend_config = BACKEND_CONFIG.read_text(encoding="utf-8")
 backend_provider = BACKEND_PROVIDER.read_text(encoding="utf-8")
 backend_launcher = BACKEND_LAUNCHER.read_text(encoding="utf-8")
 voice_e2e = VOICE_E2E.read_text(encoding="utf-8")
+voice_driver = VOICE_DRIVER.read_text(encoding="utf-8")
+voice_proof = voice_e2e + "\n" + voice_driver
 expressive_e2e = EXPRESSIVE_E2E.read_text(encoding="utf-8")
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
@@ -160,9 +163,9 @@ for required in (
     "Спровоцируй отказ провайдера",
     "Восстановление после отказа",
     'failure_code: "PROVIDER_UNAVAILABLE"',
-    'getByRole("button", { name: "Прервать", exact: true })',
+    'document.getElementById("interrupt")',
 ):
-    if required not in voice_e2e:
+    if required not in voice_proof:
         raise SystemExit(f"Owner Lab voice browser proof missing: {required}")
 
 for required in (
@@ -244,10 +247,10 @@ for required in (
 
 for required in (
     "__vprRequestedMicrophones",
-    'selectOption("headset-mic")',
-    "Микрофон гарнитуры",
+    'microphone.value = "headset-mic"',
+    '"headset-mic"',
 ):
-    if required not in voice_e2e:
+    if required not in voice_proof:
         raise SystemExit(f"Owner Lab microphone selection browser proof missing: {required}")
 
 for required in (
@@ -451,3 +454,35 @@ for required in (
         raise SystemExit(f"Owner Lab lazy microphone discovery missing: {required}")
 if 'bootstrap does not touch microphone runtime before a realtime session' not in browser_e2e:
     raise SystemExit("Owner Lab browser proof missing bootstrap media-boundary regression coverage")
+
+if 'page.addInitScript({ path: "e2e/voice-journey-driver.js" });' not in voice_e2e:
+    raise SystemExit("Voice provider E2E must install its in-page driver before navigation")
+voice_after_navigation = voice_e2e.split('await page.goto("/");', 1)[1]
+for forbidden in (
+    "page.locator(",
+    "page.getByRole(",
+    "page.getByLabel(",
+    "page.evaluate(",
+    "page.waitForTimeout(",
+    "expect(page.",
+):
+    if forbidden in voice_after_navigation:
+        raise SystemExit(
+            f"Voice provider E2E must not issue post-navigation Playwright renderer RPC: {forbidden}"
+        )
+for required in (
+    'document.getElementById("message")',
+    'document.getElementById("voice")',
+    'document.getElementById("interrupt")',
+    'document.getElementById("session-audience")',
+    'document.getElementById("close")',
+    'document.getElementById("revoke")',
+    'microphone.value = "headset-mic"',
+    '__vprSetPeerConnectionState',
+    '"/__voice_journey_report"',
+):
+    if required not in voice_driver:
+        raise SystemExit(f"Voice in-page journey driver missing canonical DOM/lifecycle path: {required}")
+for required in ('"/__journey_state"', '"/__voice_journey_report"'):
+    if required not in voice_provider:
+        raise SystemExit(f"Voice provider fixture missing journey mailbox: {required}")
