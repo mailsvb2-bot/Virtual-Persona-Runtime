@@ -332,27 +332,36 @@ test("owner and visitor voice turns cross the real backend with different contex
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
+  let report: VoiceJourneyReport | null = null;
+  await page.route("**/__voice_journey_report", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") {
+      await route.fulfill({ status: 405 });
+      return;
+    }
+    try {
+      report = JSON.parse(request.postData() ?? "") as VoiceJourneyReport;
+    } catch {
+      report = { status: "failed", error: "INVALID_JOURNEY_REPORT" };
+    }
+    await route.fulfill({ status: 204 });
+  });
+
   await installBrowserAudioFakes(page);
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/voice-journey-driver.js" });
   await page.goto("/");
 
-  await expect.poll(async () => {
-    const response = await request.get(`${providerUrl}/__journey_state`);
-    if (!response.ok()) return "pending";
-    const state = await response.json() as { report: VoiceJourneyReport | null };
-    if (!state.report) return "pending";
-    return state.report.status === "failed"
-      ? `failed:${state.report.error ?? "unknown"}`
-      : state.report.status;
+  await expect.poll(() => {
+    if (!report) return "pending";
+    return report.status === "failed"
+      ? `failed:${report.error ?? "unknown"}`
+      : report.status;
   }, {
     timeout: VOICE_JOURNEY_COMPLETION_TIMEOUT_MS,
-    message: "Voice journey must publish one terminal mailbox report within its bounded lifecycle",
+    message: "Voice journey must publish one terminal same-origin report within its bounded lifecycle",
   }).toBe("ok");
 
-  const journeyState = await request.get(`${providerUrl}/__journey_state`);
-  expect(journeyState.ok()).toBeTruthy();
-  const { report } = await journeyState.json() as { report: VoiceJourneyReport | null };
   expect(report).not.toBeNull();
   expect(report?.status).toBe("ok");
   expect(report?.requestedMicrophones).toContain("headset-mic");
