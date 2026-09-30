@@ -213,7 +213,7 @@ impl OwnerLabEngine {
     ///
     /// # Errors
     /// Fails closed when no reviewed owner context is bound or the correction is rejected.
-    pub fn correct_owner_claim(
+    pub(crate) fn correct_owner_claim(
         &mut self,
         id: &ClaimId,
         statement: impl Into<String>,
