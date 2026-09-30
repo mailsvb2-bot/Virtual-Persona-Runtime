@@ -528,8 +528,8 @@ for provider_e2e, label in (
     ):
         if required not in provider_e2e:
             raise SystemExit(f"{label} provider E2E pre-navigation connect harness missing: {required}")
-if 'toHaveAttribute("data-vpr-provider-auto-connect", "clicked")' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must expose the provider autoconnect checkpoint")
+if 'root.dataset.vprProviderAutoConnect === "clicked"' not in expressive_journey_driver:
+    raise SystemExit("Owner Lab Expressive in-page journey must wait for the provider autoconnect checkpoint")
 
 for required in (
     'document.getElementById("connect")',
