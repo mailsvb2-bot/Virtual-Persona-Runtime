@@ -182,7 +182,7 @@ mod tests {
         let _ = store.delete();
 
         let mut large = sample();
-        large.claims[0].statement = "Ж".repeat(8_000);
+        large.claims[0].statement = "Ж".repeat(4_000);
         let raw =
             serde_json::to_string(&PersistedPersona::new(large.clone())).expect("sample must serialize");
         assert!(raw.len() > 2_560);
