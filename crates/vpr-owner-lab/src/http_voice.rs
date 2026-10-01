@@ -16,6 +16,8 @@ use super::{
 
 const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_RETAINED_VOICE_STREAMS: usize = 1;
+const MAX_PENDING_VOICE_STREAM_EVENTS: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -117,7 +119,10 @@ impl VoiceStreamRegistry {
 
     fn begin(&self, request_sequence: u64) -> bool {
         let mut streams = self.streams.lock();
-        if streams.contains_key(&request_sequence) {
+        streams.retain(|_, stream| !stream.terminal);
+        if streams.len() >= MAX_RETAINED_VOICE_STREAMS
+            || streams.contains_key(&request_sequence)
+        {
             return false;
         }
         streams.insert(request_sequence, VoiceStreamState::default());
@@ -129,7 +134,9 @@ impl VoiceStreamRegistry {
         let stream = streams
             .get_mut(&request_sequence)
             .ok_or(LabError::InvalidState)?;
-        if stream.terminal {
+        if stream.terminal
+            || stream.events.len() >= MAX_PENDING_VOICE_STREAM_EVENTS.saturating_sub(1)
+        {
             return Err(LabError::InvalidState);
         }
         stream.events.push_back(event);
@@ -141,6 +148,7 @@ impl VoiceStreamRegistry {
     fn finish(&self, request_sequence: u64, event: VoiceStreamEvent) {
         let mut streams = self.streams.lock();
         if let Some(stream) = streams.get_mut(&request_sequence) {
+            debug_assert!(stream.events.len() < MAX_PENDING_VOICE_STREAM_EVENTS);
             stream.events.push_back(event);
             stream.terminal = true;
         }
@@ -473,9 +481,9 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
     match error {
         LabEvidenceError::InvalidInput => LabError::InvalidInput,
-        LabEvidenceError::InvalidState | LabEvidenceError::DuplicateEvidence => {
-            LabError::InvalidState
-        }
+        LabEvidenceError::InvalidState
+        | LabEvidenceError::DuplicateEvidence
+        | LabEvidenceError::CapacityExceeded => LabError::InvalidState
     }
 }
 
