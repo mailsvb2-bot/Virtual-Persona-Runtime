@@ -14,6 +14,8 @@ LOCK = json.loads((UI / "package-lock.json").read_text(encoding="utf-8"))
 VERSION = "2.22.3"
 ASSET = UI / "dist" / "vendor" / "livekit-client.umd.js"
 DIGEST = UI / "dist" / "vendor" / "livekit-client.umd.js.sha256"
+LICENSE = UI / "vendor" / "livekit-client.LICENSE"
+NOTICE = UI / "vendor" / "livekit-client.NOTICE"
 
 if "cdn.jsdelivr.net" in APP or "unpkg.com" in APP:
     raise SystemExit("Owner Lab runtime must not load executable LiveKit code from a CDN")
@@ -72,5 +74,7 @@ if not ASSET.is_file() or ASSET.stat().st_size == 0:
     raise SystemExit("committed self-hosted LiveKit artifact is missing")
 if not DIGEST.is_file():
     raise SystemExit("committed self-hosted LiveKit digest is missing")
+if not LICENSE.is_file() or not NOTICE.is_file():
+    raise SystemExit("LiveKit license/notice provenance is missing")
 
 print("livekit-supply-chain: PASS")
