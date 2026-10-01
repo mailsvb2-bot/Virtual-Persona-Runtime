@@ -46,9 +46,9 @@ const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js
 const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
 const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
-const LIVEKIT_CLIENT_JS: &str = include_str!("../ui/dist/vendor/livekit-client.umd.min.js");
+const LIVEKIT_CLIENT_JS: &str = include_str!("../ui/dist/vendor/livekit-client.umd.js");
 const LIVEKIT_CLIENT_SHA256: &str =
-    include_str!("../ui/dist/vendor/livekit-client.umd.min.js.sha256");
+    include_str!("../ui/dist/vendor/livekit-client.umd.js.sha256");
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
@@ -207,10 +207,10 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/vendor/livekit-client.umd.min.js") => {
+        (&Method::Get, "/vendor/livekit-client.umd.js") => {
             static_response(LIVEKIT_CLIENT_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/vendor/livekit-client.umd.min.js.sha256") => {
+        (&Method::Get, "/vendor/livekit-client.umd.js.sha256") => {
             static_response(LIVEKIT_CLIENT_SHA256, "text/plain; charset=utf-8")
         }
         (&Method::Get, "/reference-capture.js") => {
