@@ -569,4 +569,96 @@ mod tests {
         );
         assert_eq!(buffer.frames().len(), 1);
     }
+    #[test]
+    fn generated_text_buffer_accepts_exact_limit_and_rejects_overflow_without_growth() {
+        let mut buffer = GeneratedTextBuffer::default();
+        let exact = "x".repeat(MAX_GENERATED_TEXT_BYTES);
+        buffer.push_generated_text(&exact).unwrap();
+        assert_eq!(buffer.as_str().len(), MAX_GENERATED_TEXT_BYTES);
+
+        let error = buffer.push_generated_text("y").unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(buffer.as_str().len(), MAX_GENERATED_TEXT_BYTES);
+    }
+
+    #[test]
+    fn timed_generated_text_rejects_repeated_small_chunks_at_total_limit() {
+        let mut buffer = TimedGeneratedTextBuffer::start();
+        let chunk = "z".repeat(1024);
+        for _ in 0..(MAX_GENERATED_TEXT_BYTES / chunk.len()) {
+            buffer.push_generated_text(&chunk).unwrap();
+        }
+        assert_eq!(buffer.as_str().len(), MAX_GENERATED_TEXT_BYTES);
+        let error = buffer.push_generated_text("z").unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(buffer.as_str().len(), MAX_GENERATED_TEXT_BYTES);
+    }
+
+    #[test]
+    fn generated_audio_buffer_accepts_exact_byte_limit_and_rejects_overflow_without_growth() {
+        let mut buffer = GeneratedAudioBuffer::default();
+        let exact = vec![0_u8; MAX_GENERATED_AUDIO_BYTES];
+        buffer
+            .push_generated_audio(&exact, 44_100, 2, PcmSampleFormat::S16Le)
+            .unwrap();
+        assert_eq!(buffer.pcm().len(), MAX_GENERATED_AUDIO_BYTES);
+
+        let error = buffer
+            .push_generated_audio(&[0, 0, 0, 0], 44_100, 2, PcmSampleFormat::S16Le)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(buffer.pcm().len(), MAX_GENERATED_AUDIO_BYTES);
+    }
+
+    #[test]
+    fn generated_audio_buffer_enforces_duration_limit_before_append() {
+        let mut buffer = GeneratedAudioBuffer::default();
+        let exact = vec![0_u8; 600];
+        buffer
+            .push_generated_audio(&exact, 1, 1, PcmSampleFormat::S16Le)
+            .unwrap();
+        assert_eq!(buffer.duration_millis(), Some(MAX_GENERATED_AUDIO_DURATION_MILLIS));
+
+        let error = buffer
+            .push_generated_audio(&[0, 0], 1, 1, PcmSampleFormat::S16Le)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(buffer.pcm().len(), 600);
+    }
+
+    #[test]
+    fn generated_video_buffer_enforces_byte_frame_and_duration_limits_without_tail_retention() {
+        let mut byte_buffer = GeneratedVideoBuffer::default();
+        let exact = vec![7_u8; MAX_GENERATED_VIDEO_BYTES];
+        byte_buffer.push_generated_frame(&exact, 0).unwrap();
+        let error = byte_buffer.push_generated_frame(&[8], 1).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(byte_buffer.frames().len(), 1);
+        assert_eq!(byte_buffer.frames()[0].encoded_frame.len(), MAX_GENERATED_VIDEO_BYTES);
+
+        let mut frame_buffer = GeneratedVideoBuffer::default();
+        for timestamp in 0..u64::try_from(MAX_GENERATED_VIDEO_FRAMES).unwrap() {
+            frame_buffer.push_generated_frame(&[1], timestamp).unwrap();
+        }
+        let error = frame_buffer
+            .push_generated_frame(
+                &[1],
+                u64::try_from(MAX_GENERATED_VIDEO_FRAMES).unwrap(),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(frame_buffer.frames().len(), MAX_GENERATED_VIDEO_FRAMES);
+
+        let mut duration_buffer = GeneratedVideoBuffer::default();
+        duration_buffer.push_generated_frame(&[1], 0).unwrap();
+        duration_buffer
+            .push_generated_frame(&[1], MAX_GENERATED_VIDEO_DURATION_MICROS)
+            .unwrap();
+        let error = duration_buffer
+            .push_generated_frame(&[1], MAX_GENERATED_VIDEO_DURATION_MICROS + 1)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert_eq!(duration_buffer.frames().len(), 2);
+    }
+
 }
