@@ -36,7 +36,7 @@ const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
 const DEFAULT_PORT: u16 = 8787;
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
@@ -46,6 +46,9 @@ const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js
 const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
 const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
+const LIVEKIT_CLIENT_JS: &str = include_str!("../ui/dist/vendor/livekit-client.umd.min.js");
+const LIVEKIT_CLIENT_SHA256: &str =
+    include_str!("../ui/dist/vendor/livekit-client.umd.min.js.sha256");
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
@@ -203,6 +206,12 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         }
         (&Method::Get, "/evidence-export.js") => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/vendor/livekit-client.umd.min.js") => {
+            static_response(LIVEKIT_CLIENT_JS, "text/javascript; charset=utf-8")
+        }
+        (&Method::Get, "/vendor/livekit-client.umd.min.js.sha256") => {
+            static_response(LIVEKIT_CLIENT_SHA256, "text/plain; charset=utf-8")
         }
         (&Method::Get, "/reference-capture.js") => {
             static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
