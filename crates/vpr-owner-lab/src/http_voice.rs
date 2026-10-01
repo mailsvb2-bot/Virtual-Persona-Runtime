@@ -120,9 +120,7 @@ impl VoiceStreamRegistry {
     fn begin(&self, request_sequence: u64) -> bool {
         let mut streams = self.streams.lock();
         streams.retain(|_, stream| !stream.terminal);
-        if streams.len() >= MAX_RETAINED_VOICE_STREAMS
-            || streams.contains_key(&request_sequence)
-        {
+        if streams.len() >= MAX_RETAINED_VOICE_STREAMS || streams.contains_key(&request_sequence) {
             return false;
         }
         streams.insert(request_sequence, VoiceStreamState::default());
@@ -588,8 +586,6 @@ fn finish_voice_stream(
     release_voice_busy(state);
     state.voice_streams.finish(request_sequence, event);
 }
-
-
 
 #[cfg(test)]
 #[path = "http_voice_tests.rs"]
