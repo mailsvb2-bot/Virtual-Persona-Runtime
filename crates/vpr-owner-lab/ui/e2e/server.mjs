@@ -14,6 +14,7 @@ const files = new Map([
   ["/media-runtime.js", "dist/media-runtime.js"],
   ["/session-runtime-state.js", "dist/session-runtime-state.js"],
   ["/evidence-export.js", "dist/evidence-export.js"],
+  ["/vendor/livekit-client.umd.min.js", "dist/vendor/livekit-client.umd.min.js"],
   ["/reference-capture.js", "reference-capture.js"],
   ["/mic-worklet.js", "mic-worklet.js"],
 ]);
