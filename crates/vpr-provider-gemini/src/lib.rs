@@ -6,7 +6,7 @@ use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
-    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
+    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -61,9 +61,7 @@ impl GeminiLlm {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: GeminiConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
+        let client = build_provider_http_client(config.timeout)
             .map_err(|error| map_transport_error(&error))?;
         Ok(Self { client, config })
     }

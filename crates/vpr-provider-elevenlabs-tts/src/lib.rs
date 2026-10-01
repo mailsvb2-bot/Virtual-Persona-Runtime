@@ -7,6 +7,7 @@ use serde::Serialize;
 use vpr_integration::{
     AudioInput, CancellationProbe, GeneratedAudioSink, PcmSampleFormat, ProviderDescriptor,
     ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
+    build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -80,9 +81,7 @@ impl ElevenLabsTts {
         {
             return Err(invalid_response());
         }
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
+        let client = build_provider_http_client(config.timeout)
             .map_err(|error| map_transport_error(&error))?;
         Ok(Self { client, config })
     }

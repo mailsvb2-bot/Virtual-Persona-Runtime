@@ -6,6 +6,7 @@ use serde::Deserialize;
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, SttAudioStream,
     SttPort, SttRequest, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
+    build_provider_http_client,
 };
 
 mod live;
@@ -70,9 +71,7 @@ impl DeepgramStt {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: DeepgramSttConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        let client = Client::builder()
-            .timeout(config.timeout)
-            .build()
+        let client = build_provider_http_client(config.timeout)
             .map_err(|error| map_transport_error(&error))?;
         Ok(Self { client, config })
     }

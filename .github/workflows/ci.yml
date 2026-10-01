@@ -30,6 +30,8 @@ jobs:
         run: python3 tests/architecture/check_release_contracts.py
       - name: CI reproducibility guard
         run: python3 tests/architecture/check_ci_reproducibility.py
+      - name: Provider HTTP policy
+        run: python3 tests/architecture/check_provider_http_policy.py
       - name: RT1 publication pre-entry spike
         run: python3 tests/architecture/check_rt1_publication_spike.py
       - name: RT1 public session lease pre-entry spike
