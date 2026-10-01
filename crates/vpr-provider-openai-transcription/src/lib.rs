@@ -4,8 +4,9 @@ use reqwest::blocking::{Client, multipart};
 use reqwest::header::AUTHORIZATION;
 use serde::Deserialize;
 use vpr_integration::{
-    CancellationProbe, PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit, build_provider_http_client,
+    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, PcmSampleFormat, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
+    build_provider_http_client, read_bounded_provider_body,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -110,7 +111,13 @@ impl SttPort for OpenAiTranscriptionStt {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
-        let payload: TranscriptionResponse = response.json().map_err(|_| invalid_response())?;
+        let body = read_bounded_provider_body(
+            response,
+            MAX_PROVIDER_JSON_BODY_BYTES,
+            Some(cancellation),
+        )?;
+        let payload: TranscriptionResponse =
+            serde_json::from_slice(&body).map_err(|_| invalid_response())?;
         if payload.text.trim().is_empty() {
             return Err(invalid_response());
         }
