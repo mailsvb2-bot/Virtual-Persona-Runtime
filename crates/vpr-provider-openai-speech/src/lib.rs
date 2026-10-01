@@ -5,9 +5,9 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use vpr_integration::{
-    build_provider_http_client,
     AudioInput, CancellationProbe, GeneratedAudioSink, PcmSampleFormat, ProviderDescriptor,
     ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
+    build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
