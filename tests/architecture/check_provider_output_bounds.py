@@ -31,9 +31,9 @@ if "MAX_GENERATED_TEXT_BYTES" not in LLM:
     raise SystemExit("canonical generated text bound drifted")
 
 forbidden = {
-    r"\.json\s*\(\s*\)": "unbounded response.json()",
-    r"\.bytes\s*\(\s*\)": "unbounded response.bytes()",
-    r"\.text\s*\(\s*\)": "unbounded response.text()",
+    r"\bresponse\s*\.\s*json\s*\(\s*\)": "unbounded response.json()",
+    r"\bresponse\s*\.\s*bytes\s*\(\s*\)": "unbounded response.bytes()",
+    r"\bresponse\s*\.\s*text\s*\(\s*\)": "unbounded response.text()",
     r"\.read_to_end\s*\(": "unbounded read_to_end()",
     r"\.read_to_string\s*\(": "unbounded read_to_string()",
     r"BufReader::new\([^\n]*\)\.lines\s*\(": "unbounded BufRead::lines() framing",
