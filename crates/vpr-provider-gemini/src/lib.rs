@@ -5,9 +5,8 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    build_provider_http_client,
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
-    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
+    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
