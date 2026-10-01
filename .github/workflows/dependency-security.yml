@@ -1,0 +1,60 @@
+name: Dependency Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  locked-dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Policy contract
+        run: |
+          python3 tests/architecture/check_dependency_security.py
+          python3 tests/security/check_dependency_audit_gate.py
+      - name: Install pinned RustSec scanner
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked Rust dependencies
+        run: cargo audit --file Cargo.lock
+      - name: Prove known RustSec advisory is denied
+        run: |
+          set +e
+          cargo audit --no-fetch --file tests/security/fixtures/rustsec-vulnerable.Cargo.lock > /tmp/rustsec-fixture.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/rustsec-fixture.log
+          if [ "$status" -eq 0 ]; then
+            echo "known vulnerable RustSec fixture unexpectedly passed"
+            exit 1
+          fi
+          grep -q "RUSTSEC-2023-0071" /tmp/rustsec-fixture.log
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: crates/vpr-owner-lab/ui/package-lock.json
+      - name: Audit locked npm dependencies without install scripts
+        run: |
+          set +e
+          npm audit --package-lock-only --ignore-scripts --json             --prefix crates/vpr-owner-lab/ui > /tmp/npm-audit.json
+          npm_status=$?
+          set -e
+          echo "npm audit process status: $npm_status"
+          python3 scripts/dependency_audit_gate.py --npm-json /tmp/npm-audit.json
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
