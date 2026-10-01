@@ -142,11 +142,8 @@ fn read_body(
     response: Response,
     cancellation: &dyn CancellationProbe,
 ) -> Result<Vec<u8>, ProviderError> {
-    let output = read_bounded_provider_body(
-        response,
-        MAX_PROVIDER_BINARY_BODY_BYTES,
-        Some(cancellation),
-    )?;
+    let output =
+        read_bounded_provider_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, Some(cancellation))?;
     if output.is_empty() {
         return Err(invalid_response());
     }
