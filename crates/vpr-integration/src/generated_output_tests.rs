@@ -237,4 +237,3 @@ fn generated_video_buffer_enforces_byte_frame_and_duration_limits_without_tail_r
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     assert_eq!(duration_buffer.frames().len(), 2);
 }
-
