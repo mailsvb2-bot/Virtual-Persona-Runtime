@@ -138,8 +138,7 @@ fn decode_json_response<T: DeserializeOwned>(
     response: Response,
     cancellation: Option<&dyn CancellationProbe>,
 ) -> Result<T, ProviderError> {
-    let body =
-        read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
+    let body = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
     serde_json::from_slice(&body).map_err(|_| invalid_response())
 }
 
