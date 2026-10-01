@@ -101,7 +101,7 @@ pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerConte
 
     #[cfg(windows)]
     {
-        return platform::load();
+        platform::load()
     }
 
     #[cfg(not(windows))]
@@ -123,7 +123,7 @@ pub(crate) fn save_reviewed_persona(
 
     #[cfg(windows)]
     {
-        return platform::save(snapshot);
+        platform::save(snapshot)
     }
 
     #[cfg(not(windows))]
