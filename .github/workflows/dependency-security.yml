@@ -55,6 +55,39 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+      - name: Detect GitHub dependency-review support
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          endpoint="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          status="$(curl --silent --show-error             --output /tmp/dependency-review-support.json             --write-out '%{http_code}'             --header 'Accept: application/vnd.github+json'             --header "Authorization: Bearer ${GH_TOKEN}"             --header 'X-GitHub-Api-Version: 2022-11-28'             "$endpoint")"
+          case "$status" in
+            200)
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403|404)
+              if grep -Eqi 'dependency (review|graph).*(not supported|disabled)|not supported.*dependency'                 /tmp/dependency-review-support.json; then
+                cat /tmp/dependency-review-support.json
+                echo "supported=false" >> "$GITHUB_OUTPUT"
+              else
+                cat /tmp/dependency-review-support.json
+                exit 1
+              fi
+              ;;
+            *)
+              cat /tmp/dependency-review-support.json
+              echo "unexpected dependency-graph API status: $status"
+              exit 1
+              ;;
+          esac
+      - name: Review dependency changes
+        if: steps.dependency-graph.outputs.supported == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
+      - name: Record unsupported repository feature
+        if: steps.dependency-graph.outputs.supported == 'false'
+        run: echo "GitHub Dependency Review is unavailable because the repository dependency graph is disabled; lockfile audits remain mandatory."
