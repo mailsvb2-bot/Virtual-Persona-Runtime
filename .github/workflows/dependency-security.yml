@@ -68,14 +68,12 @@ jobs:
             200)
               echo "supported=true" >> "$GITHUB_OUTPUT"
               ;;
-            403|404)
-              if grep -Eqi 'dependency (review|graph).*(not supported|disabled)|not supported.*dependency'                 /tmp/dependency-review-support.json; then
-                cat /tmp/dependency-review-support.json
-                echo "supported=false" >> "$GITHUB_OUTPUT"
-              else
-                cat /tmp/dependency-review-support.json
-                exit 1
-              fi
+            403)
+              # GitHub returns a generic 403 here when Dependency Graph is disabled.
+              # This job already has the documented contents:read permission, so only 403 is
+              # classified as an unsupported repository feature; 404/bad refs remain failures.
+              cat /tmp/dependency-review-support.json
+              echo "supported=false" >> "$GITHUB_OUTPUT"
               ;;
             *)
               cat /tmp/dependency-review-support.json
