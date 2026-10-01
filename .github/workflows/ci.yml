@@ -108,6 +108,8 @@ jobs:
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows clippy parity gate
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Windows live-proof credential isolation tests
+        run: cargo test --locked -p vpr-live-proof --test preflight_cli
       - name: Windows owner-lab library tests
         run: cargo test --locked -p vpr-owner-lab --lib
 

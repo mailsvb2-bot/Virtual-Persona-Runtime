@@ -93,7 +93,7 @@ Remove the stored profile:
 cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
 ```
 
-Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority, so CI and deliberate per-process overrides keep their existing behavior. API-key values are never printed or included in provider descriptors or evidence.
+Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority. For hermetic CI or a deliberate environment-only run, set `VPR_PROVIDER_CREDENTIAL_SOURCE=environment`; that disables Windows Credential Manager fallback for the process and fails closed if the environment is incomplete. API-key values are never printed or included in provider descriptors or evidence.
 
 For the Windows RT0 operator path, use the safe launcher:
 
