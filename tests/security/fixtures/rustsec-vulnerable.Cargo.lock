@@ -1,0 +1,8 @@
+# This file is intentionally vulnerable test evidence for the dependency-security gate.
+# It is never used by the workspace build.
+version = 3
+
+[[package]]
+name = "rsa"
+version = "0.9.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
