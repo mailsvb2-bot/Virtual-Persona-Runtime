@@ -332,6 +332,7 @@ impl std::fmt::Debug for GeneratedVideoBuffer {
             .debug_struct("GeneratedVideoBuffer")
             .field("frame_count", &self.frames.len())
             .field("encoded_bytes", &self.encoded_bytes)
+            .field("first_timestamp_micros", &self.first_timestamp_micros)
             .finish()
     }
 }
