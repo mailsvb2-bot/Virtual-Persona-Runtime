@@ -26,6 +26,11 @@ required = (
     "python3 scripts/dependency_audit_gate.py --npm-json /tmp/npm-audit.json",
     "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
     "fail-on-severity: high",
+    "/dependency-graph/compare/",
+    "supported=true",
+    "supported=false",
+    "if: steps.dependency-graph.outputs.supported == 'true'",
+    "if: steps.dependency-graph.outputs.supported == 'false'",
 )
 for value in required:
     if value not in workflow:
