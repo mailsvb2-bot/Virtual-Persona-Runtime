@@ -47,8 +47,7 @@ const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
 const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
 const LIVEKIT_CLIENT_JS: &str = include_str!("../ui/dist/vendor/livekit-client.umd.js");
-const LIVEKIT_CLIENT_SHA256: &str =
-    include_str!("../ui/dist/vendor/livekit-client.umd.js.sha256");
+const LIVEKIT_CLIENT_SHA256: &str = include_str!("../ui/dist/vendor/livekit-client.umd.js.sha256");
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
