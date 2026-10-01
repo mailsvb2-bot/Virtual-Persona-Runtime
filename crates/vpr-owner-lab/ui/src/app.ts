@@ -132,8 +132,7 @@ type LiveKitSdk = {
   };
 };
 
-const LIVEKIT_CLIENT_URL =
-  "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
+const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.js";
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
@@ -145,7 +144,6 @@ const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
     const script = document.createElement("script");
     script.src = LIVEKIT_CLIENT_URL;
     script.async = true;
-    script.crossOrigin = "anonymous";
     script.onload = () => {
       const sdk = (window as typeof window & { LivekitClient?: LiveKitSdk }).LivekitClient;
       if (sdk) resolve(sdk);

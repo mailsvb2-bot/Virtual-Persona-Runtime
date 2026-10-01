@@ -4,7 +4,7 @@ import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject, } from "./media-runtime.js";
 import { SessionRuntimeState, } from "./session-runtime-state.js";
-const LIVEKIT_CLIENT_URL = "https://cdn.jsdelivr.net/npm/livekit-client@2.22.3/dist/livekit-client.umd.min.js";
+const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.js";
 let liveKitLoader = null;
 const loadLiveKitSdk = async () => {
     const injectedSdk = mediaRuntime()?.liveKitSdk;
@@ -17,7 +17,6 @@ const loadLiveKitSdk = async () => {
         const script = document.createElement("script");
         script.src = LIVEKIT_CLIENT_URL;
         script.async = true;
-        script.crossOrigin = "anonymous";
         script.onload = () => {
             const sdk = window.LivekitClient;
             if (sdk)

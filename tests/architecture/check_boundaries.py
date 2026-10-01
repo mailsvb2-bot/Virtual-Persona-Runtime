@@ -727,7 +727,11 @@ media_recorder_paths = [
     for path in owner_lab_ui_files
     if "MediaRecorder" in path.read_text(encoding="utf-8")
     and "e2e" not in path.relative_to(owner_lab_ui_root).parts
-    and path.relative_to(owner_lab_ui_root).as_posix() != "reference-capture.js"
+    and path.relative_to(owner_lab_ui_root).as_posix()
+    not in {
+        "reference-capture.js",
+        "dist/vendor/livekit-client.umd.js",
+    }
 ]
 if media_recorder_paths:
     raise SystemExit(

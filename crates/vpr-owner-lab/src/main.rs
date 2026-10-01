@@ -36,7 +36,7 @@ const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
 const DEFAULT_PORT: u16 = 8787;
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self' https://cdn.jsdelivr.net; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
@@ -46,6 +46,8 @@ const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js
 const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
 const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
 const EVIDENCE_EXPORT_JS: &str = include_str!("../ui/dist/evidence-export.js");
+const LIVEKIT_CLIENT_JS: &str = include_str!("../ui/dist/vendor/livekit-client.umd.js");
+const LIVEKIT_CLIENT_SHA256: &str = include_str!("../ui/dist/vendor/livekit-client.umd.js.sha256");
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
@@ -181,36 +183,59 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
         return;
     }
+
     let method = request.method().clone();
     let path = request.url().to_owned();
-    let response = match (&method, path.as_str()) {
-        (&Method::Get, "/") => static_response(INDEX_HTML, "text/html; charset=utf-8"),
-        (&Method::Get, "/app.js") => static_response(APP_JS, "text/javascript; charset=utf-8"),
-        (&Method::Get, "/owner-capture.js") => {
-            static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8")
-        }
-        (&Method::Get, "/voice-command-scheduler.js") => {
+    let response = if method == Method::Get {
+        static_get_response(&path)
+            .unwrap_or_else(|| route_request(&method, &path, &mut request, state))
+    } else {
+        route_request(&method, &path, &mut request, state)
+    };
+    let _ = request.respond(response);
+}
+
+fn static_get_response(path: &str) -> Option<HttpResponse> {
+    let response = match path {
+        "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
+        "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
+        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8"),
+        "/voice-command-scheduler.js" => {
             static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/bootstrap-context.js") => {
+        "/bootstrap-context.js" => {
             static_response(BOOTSTRAP_CONTEXT_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/media-runtime.js") => {
-            static_response(MEDIA_RUNTIME_JS, "text/javascript; charset=utf-8")
-        }
-        (&Method::Get, "/session-runtime-state.js") => {
+        "/media-runtime.js" => static_response(MEDIA_RUNTIME_JS, "text/javascript; charset=utf-8"),
+        "/session-runtime-state.js" => {
             static_response(SESSION_RUNTIME_STATE_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/evidence-export.js") => {
+        "/evidence-export.js" => {
             static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/reference-capture.js") => {
+        "/vendor/livekit-client.umd.js" => {
+            static_response(LIVEKIT_CLIENT_JS, "text/javascript; charset=utf-8")
+        }
+        "/vendor/livekit-client.umd.js.sha256" => {
+            static_response(LIVEKIT_CLIENT_SHA256, "text/plain; charset=utf-8")
+        }
+        "/reference-capture.js" => {
             static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
         }
-        (&Method::Get, "/styles.css") => static_response(STYLES_CSS, "text/css; charset=utf-8"),
-        (&Method::Get, "/mic-worklet.js") => {
-            static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8")
-        }
+        "/styles.css" => static_response(STYLES_CSS, "text/css; charset=utf-8"),
+        "/mic-worklet.js" => static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8"),
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn route_request(
+    method: &Method,
+    path: &str,
+    request: &mut Request,
+    state: &Arc<AppState>,
+) -> HttpResponse {
+    match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
@@ -224,58 +249,57 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
             Err(error) => error_response(http_evidence::error_status(error), error.code()),
         },
         (&Method::Post, "/api/voice/turn") => {
-            if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
-                http_voice::voice_turn_response(&mut request, state)
+            if valid_voice_post_headers(request, &state.csrf_token, state.port) {
+                http_voice::voice_turn_response(request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         (&Method::Post, "/api/voice/input/chunk") => {
-            if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
-                http_voice::input_chunk_response(&mut request, state)
+            if valid_voice_post_headers(request, &state.csrf_token, state.port) {
+                http_voice::input_chunk_response(request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         (&Method::Post, "/api/voice/input/start") => {
-            if valid_post_headers(&request, &state.csrf_token, state.port) {
-                http_voice::start_input_response(&mut request, state)
+            if valid_post_headers(request, &state.csrf_token, state.port) {
+                http_voice::start_input_response(request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         (&Method::Post, "/api/voice/input/finish") => {
-            if valid_post_headers(&request, &state.csrf_token, state.port) {
-                http_voice::finish_input_response(&mut request, state)
+            if valid_post_headers(request, &state.csrf_token, state.port) {
+                http_voice::finish_input_response(request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         (&Method::Post, "/api/voice/input/cancel") => {
-            if valid_post_headers(&request, &state.csrf_token, state.port) {
-                http_voice::cancel_input_response(&mut request, state)
+            if valid_post_headers(request, &state.csrf_token, state.port) {
+                http_voice::cancel_input_response(request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         (&Method::Post, "/api/references/intake") => {
-            if valid_voice_post_headers(&request, &state.csrf_token, state.port) {
-                http_references::intake_response(&mut request, &state.reference_intake)
+            if valid_voice_post_headers(request, &state.csrf_token, state.port) {
+                http_references::intake_response(request, &state.reference_intake)
                     .unwrap_or_else(|response| response)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
-        (&Method::Post, path) if path.starts_with("/api/") => {
-            if valid_post_headers(&request, &state.csrf_token, state.port) {
-                route_post(path, &mut request, state)
+        (&Method::Post, api_path) if api_path.starts_with("/api/") => {
+            if valid_post_headers(request, &state.csrf_token, state.port) {
+                route_post(api_path, request, state)
             } else {
                 error_response(403, "CSRF_DENIED")
             }
         }
         _ => error_response(404, "NOT_FOUND"),
-    };
-    let _ = request.respond(response);
+    }
 }
 
 fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpResponse {

@@ -59,3 +59,15 @@ fn csp_allows_provider_neutral_secure_realtime_signal_fallbacks() {
     assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self' https: wss:"));
     assert!(!CONTENT_SECURITY_POLICY.contains("connect-src 'self' http:"));
 }
+
+#[test]
+fn csp_executes_scripts_from_same_origin_only() {
+    assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
+    let script_src = CONTENT_SECURITY_POLICY
+        .split(';')
+        .map(str::trim)
+        .find(|directive| directive.starts_with("script-src "))
+        .expect("script-src directive must exist");
+    assert_eq!(script_src, "script-src 'self'");
+    assert!(!CONTENT_SECURITY_POLICY.contains("cdn.jsdelivr.net"));
+}

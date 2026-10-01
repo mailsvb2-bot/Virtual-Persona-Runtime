@@ -4,16 +4,18 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run vendor:livekit",
     "check": "tsc -p tsconfig.json --noEmit",
     "test:e2e": "playwright test",
     "test:e2e:backend": "playwright test --config playwright.backend.config.ts",
     "test:e2e:voice": "playwright test --config playwright.voice.config.ts",
     "test:e2e:expressive": "playwright test --config playwright.expressive.config.ts",
-    "check:e2e-specs": "playwright test --list && playwright test --config playwright.backend.config.ts --list && playwright test --config playwright.voice.config.ts --list && playwright test --config playwright.expressive.config.ts --list"
+    "check:e2e-specs": "playwright test --list && playwright test --config playwright.backend.config.ts --list && playwright test --config playwright.voice.config.ts --list && playwright test --config playwright.expressive.config.ts --list",
+    "vendor:livekit": "node scripts/vendor-livekit.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "livekit-client": "2.22.3"
   }
 }
