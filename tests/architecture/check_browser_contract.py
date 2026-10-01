@@ -1,3 +1,5 @@
+import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +32,8 @@ VOICE_CONFIG = UI / "playwright.voice.config.ts"
 VOICE_PROVIDER = UI / "e2e" / "voice-provider-fixture.mjs"
 VOICE_LAUNCHER = ROOT / "tests" / "e2e" / "run_owner_lab_voice_backend.py"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
+TS_CONFIG = UI / "tsconfig.json"
+OWNER_LAB_MAIN = ROOT / "crates" / "vpr-owner-lab" / "src" / "main.rs"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 HTTP_CLIENT_CONTROL = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_client_control.rs"
@@ -66,6 +70,8 @@ voice_provider = VOICE_PROVIDER.read_text(encoding="utf-8")
 voice_launcher = VOICE_LAUNCHER.read_text(encoding="utf-8")
 default_config = (UI / "playwright.config.ts").read_text(encoding="utf-8")
 ci = CI.read_text(encoding="utf-8")
+ts_config = json.loads(TS_CONFIG.read_text(encoding="utf-8"))
+owner_lab_main = OWNER_LAB_MAIN.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
@@ -828,12 +834,48 @@ for required in (
     "npm run test:e2e:backend",
     "npm run test:e2e:voice",
     "npm run test:e2e:expressive",
-    "dist/owner-capture.js",
-    "dist/bootstrap-context.js",
-    "dist/media-runtime.js",
-    "dist/session-runtime-state.js",
 ):
     if required not in ci:
         raise SystemExit(f"Owner Lab CI missing browser-contract enforcement: {required}")
+
+generated_guard = "git status --porcelain --untracked-files=all -- dist/"
+if generated_guard not in ci:
+    raise SystemExit("Owner Lab CI must check the complete generated dist tree, including untracked outputs")
+if "git diff --exit-code -- dist/app.js" in ci:
+    raise SystemExit("Owner Lab generated freshness gate must not regress to a handwritten file allowlist")
+
+compiler = ts_config.get("compilerOptions", {})
+if compiler.get("rootDir") != "src" or compiler.get("outDir") != "dist":
+    raise SystemExit("Owner Lab TypeScript source/output roots drifted")
+if ts_config.get("include") != ["src/**/*.ts"]:
+    raise SystemExit("Owner Lab TypeScript build must keep exhaustive src/**/*.ts inclusion")
+
+source_outputs = {
+    source.relative_to(UI / "src").with_suffix(".js").as_posix()
+    for source in (UI / "src").rglob("*.ts")
+}
+committed_outputs = {
+    output.relative_to(UI / "dist").as_posix()
+    for output in (UI / "dist").rglob("*.js")
+}
+if source_outputs != committed_outputs:
+    missing = sorted(source_outputs - committed_outputs)
+    orphaned = sorted(committed_outputs - source_outputs)
+    raise SystemExit(
+        f"Owner Lab generated source/output set drifted: missing={missing}, orphaned={orphaned}"
+    )
+
+embedded_outputs = set(
+    re.findall(r'include_str!\("\.\./ui/dist/([^"]+\.js)"\)', owner_lab_main)
+)
+if not embedded_outputs:
+    raise SystemExit("Owner Lab server must embed generated JavaScript from ui/dist")
+if embedded_outputs != committed_outputs:
+    missing_embeds = sorted(committed_outputs - embedded_outputs)
+    unknown_embeds = sorted(embedded_outputs - committed_outputs)
+    raise SystemExit(
+        "Owner Lab generated bundles and Rust embeds must stay one-to-one: "
+        + f"missing_embeds={missing_embeds}, unknown_embeds={unknown_embeds}"
+    )
 
 print("owner-lab-browser-contract: PASS")
