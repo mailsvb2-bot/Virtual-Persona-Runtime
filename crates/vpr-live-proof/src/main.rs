@@ -249,11 +249,7 @@ fn run_preflight(output_path: &Path, credential_mode: CredentialMode) -> Result<
     let snapshot = repo_snapshot()?;
     let output_path = validated_output_path(output_path, &snapshot.root).map_err(emit_boundary)?;
     let receipt = credential_mode
-        .preflight(
-            &snapshot.candidate,
-            worktree_clean()?,
-            egress_authorized(),
-        )
+        .preflight(&snapshot.candidate, worktree_clean()?, egress_authorized())
         .map_err(emit_preflight)?;
     let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
     atomic_write(&output_path, &provider_state).map_err(emit_boundary)?;
