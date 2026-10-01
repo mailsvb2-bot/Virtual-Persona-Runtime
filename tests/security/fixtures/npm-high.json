@@ -1,0 +1,19 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "fixture-vulnerable-package": {
+      "name": "fixture-vulnerable-package",
+      "severity": "high",
+      "isDirect": true,
+      "via": [{"source": 999999, "name": "fixture-vulnerable-package", "severity": "high"}],
+      "effects": [],
+      "range": "*",
+      "nodes": ["node_modules/fixture-vulnerable-package"],
+      "fixAvailable": false
+    }
+  },
+  "metadata": {
+    "vulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 1, "critical": 0, "total": 1},
+    "dependencies": {"prod": 1, "dev": 0, "optional": 0, "peer": 0, "peerOptional": 0, "total": 1}
+  }
+}
