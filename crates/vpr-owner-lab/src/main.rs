@@ -28,7 +28,7 @@ use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
     LabVoicePlaybackRegistry, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
-    ParticipantRole, ProviderBundle, load_reviewed_persona,
+    ParticipantRole, ProviderBundle, restore_reviewed_persona,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -132,10 +132,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(stt) = providers.stt.take() {
         engine = engine.with_stt(stt);
     }
-    if let Some(snapshot) = load_reviewed_persona()? {
-        engine
-            .restore_reviewed_owner_context_snapshot(&snapshot)
-            .map_err(|_| "persisted reviewed Persona is invalid")?;
+    if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
     let voice_playback = engine.voice_playback_registry();

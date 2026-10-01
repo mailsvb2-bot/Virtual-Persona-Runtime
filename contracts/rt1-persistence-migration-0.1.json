@@ -8,9 +8,11 @@
   "current_rt0_reality": {
     "production_durable_database_present": false,
     "experimental_reviewed_persona_store_present": true,
-    "durable_store_scope": "REVIEWED_PERSONA_SNAPSHOT_ONLY",
+    "durable_store_scope": "REVIEWED_PERSONA_EXACT_RETAINED_HISTORY_ONLY",
     "runtime_session_turn_provider_state": "IN_PROCESS_ONLY",
-    "automatic_rt0_to_rt1_migration_possible": false
+    "automatic_rt0_to_rt1_migration_possible": false,
+    "reviewed_persona_store_schema": "vpr-reviewed-owner-persona-2",
+    "reviewed_persona_history_fidelity": "V2_EXACT_V1_MIGRATES_AS_EXPLICIT_PARTIAL"
   },
   "migration_policy": {
     "automatic_forward_migration": false,
@@ -54,7 +56,8 @@
     "provider_identity_is_representation_only": true,
     "provider_replacement_is_not_persona_migration": true,
     "claim_history_must_not_be_squashed": true,
-    "publication_points_to_exact_persona_version": true
+    "publication_points_to_exact_persona_version": true,
+    "legacy_unknown_claim_history_must_not_be_fabricated": true
   },
   "mutation_invariants": {
     "single_canonical_durable_commit_path": true,
@@ -62,7 +65,8 @@
     "idempotent_when_retried": true,
     "persona_correction_advances_version_atomically_with_claim_revision": true,
     "stale_preparation_or_publication_projection_must_fail_closed": true,
-    "pause_or_unpublish_does_not_delete_private_persona": true
+    "pause_or_unpublish_does_not_delete_private_persona": true,
+    "browser_snapshot_separate_from_durable_history": true
   },
   "rollback_invariants": {
     "no_identity_duplication": true,

@@ -43,6 +43,17 @@ def wait_ready(process: subprocess.Popen, timeout: float = 15.0):
     raise RuntimeError("Owner Lab did not become ready")
 
 
+def durable_claim_history(store_path: Path, claim_id: str):
+    persisted = json.loads(store_path.read_text(encoding="utf-8"))
+    if persisted["schema_version"] != "vpr-reviewed-owner-persona-2":
+        raise AssertionError(persisted["schema_version"])
+    claims = persisted["snapshot"]["claims"]
+    claim = next((item for item in claims if item["claim_id"] == claim_id), None)
+    if claim is None:
+        raise AssertionError(f"missing durable claim {claim_id!r}")
+    return claim
+
+
 def start_owner_lab(store_path: Path) -> subprocess.Popen:
     binary = ROOT / "target" / "debug" / ("vpr-owner-lab.exe" if os.name == "nt" else "vpr-owner-lab")
     if not binary.exists():
@@ -119,6 +130,29 @@ def main() -> None:
                 )
 
             request_json("POST", "/api/persona/review/complete", {}, csrf)
+
+            tracked_claim = claim_ids[0]
+            request_json(
+                "POST",
+                "/api/persona/claims/correct",
+                {
+                    "claim_id": tracked_claim,
+                    "statement": "First exact correction",
+                    "kind": "factual",
+                },
+                csrf,
+            )
+            request_json(
+                "POST",
+                "/api/persona/claims/correct",
+                {
+                    "claim_id": tracked_claim,
+                    "statement": "Second exact correction",
+                    "kind": "factual",
+                },
+                csrf,
+            )
+
             before = request_json("POST", "/api/persona/reviewed", {}, csrf)
             status_before = request_json("GET", "/api/status")
             if status_before["owner_context_state"] != "reviewed":
@@ -127,6 +161,20 @@ def main() -> None:
                 raise AssertionError(status_before)
             if not store_path.exists():
                 raise AssertionError("reviewed Persona store was not created")
+
+            history_before = durable_claim_history(store_path, tracked_claim)
+            if history_before["history_complete"] is not True:
+                raise AssertionError(history_before)
+            revisions_before = history_before["revisions"]
+            if [item["revision"] for item in revisions_before] != [1, 2, 3, 4]:
+                raise AssertionError(revisions_before)
+            if [item["statement"] for item in revisions_before] != [
+                "Owner restart E2E identity",
+                "Owner restart E2E identity",
+                "First exact correction",
+                "Second exact correction",
+            ]:
+                raise AssertionError(revisions_before)
         finally:
             stop_owner_lab(first)
 
@@ -150,10 +198,41 @@ def main() -> None:
                 raise AssertionError(status_after)
             if status_after["persona_version"] != status_before["persona_version"]:
                 raise AssertionError((status_before, status_after))
+
+            request_json(
+                "POST",
+                "/api/persona/claims/correct",
+                {
+                    "claim_id": tracked_claim,
+                    "statement": "Third correction after restart",
+                    "kind": "preference",
+                },
+                csrf,
+            )
+            status_corrected = request_json("GET", "/api/status")
+            if status_corrected["persona_version"] != status_before["persona_version"] + 1:
+                raise AssertionError((status_before, status_corrected))
         finally:
             stop_owner_lab(second)
 
-    print("Owner Lab Persona full process restart E2E passed.")
+        history_after = durable_claim_history(store_path, tracked_claim)
+        if history_after["history_complete"] is not True:
+            raise AssertionError(history_after)
+        revisions_after = history_after["revisions"]
+        if [item["revision"] for item in revisions_after] != [1, 2, 3, 4, 5]:
+            raise AssertionError(revisions_after)
+        if [item["statement"] for item in revisions_after] != [
+            "Owner restart E2E identity",
+            "Owner restart E2E identity",
+            "First exact correction",
+            "Second exact correction",
+            "Third correction after restart",
+        ]:
+            raise AssertionError(revisions_after)
+        if revisions_after[-1]["kind"] != "preference":
+            raise AssertionError(revisions_after[-1])
+
+    print("Owner Lab Persona exact-history full process restart E2E passed.")
 
 
 if __name__ == "__main__":

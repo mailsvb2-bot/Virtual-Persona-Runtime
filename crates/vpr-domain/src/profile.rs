@@ -16,6 +16,11 @@ impl ClaimRevision {
     }
 
     #[must_use]
+    pub fn new(value: u64) -> Option<Self> {
+        (value > 0).then_some(Self(value))
+    }
+
+    #[must_use]
     pub const fn get(self) -> u64 {
         self.0
     }
@@ -108,6 +113,60 @@ impl OwnerClaimRecord {
             && claim.derivation == DerivationKind::Direct
     }
 
+    pub fn retained_revisions(&self) -> impl Iterator<Item = &OwnerClaimRevision> {
+        self.previous_revisions
+            .iter()
+            .chain(std::iter::once(&self.current))
+    }
+
+    #[must_use]
+    pub fn has_complete_history(&self) -> bool {
+        self.retained_revisions()
+            .next()
+            .is_some_and(|revision| revision.revision() == ClaimRevision::initial())
+    }
+
+    /// Restores retained claim history without fabricating revisions that are not present.
+    ///
+    /// A complete history starts at revision 1 with direct unverified owner material. A partial
+    /// legacy history may start later, but every retained revision must be contiguous direct owner
+    /// material and the current revision must be owner-verified.
+    ///
+    /// # Errors
+    /// Returns `ProfileError` when history is empty, non-contiguous, malformed, or not reviewed.
+    pub fn restore_retained_history(
+        id: ClaimId,
+        revisions: Vec<(u64, OwnerClaim)>,
+    ) -> Result<Self, ProfileError> {
+        let mut restored = Vec::with_capacity(revisions.len());
+        let mut previous_revision: Option<ClaimRevision> = None;
+        let starts_at_initial = revisions
+            .first()
+            .is_some_and(|(revision, _)| *revision == ClaimRevision::initial().get());
+
+        for (index, (revision_number, claim)) in revisions.into_iter().enumerate() {
+            let revision =
+                ClaimRevision::new(revision_number).ok_or(ProfileError::InvalidClaimHistory)?;
+            if let Some(previous) = previous_revision
+                && previous.next()? != revision
+            {
+                return Err(ProfileError::InvalidClaimHistory);
+            }
+            validate_restored_claim(&claim, index, starts_at_initial)?;
+            previous_revision = Some(revision);
+            restored.push(OwnerClaimRevision { revision, claim });
+        }
+
+        let current = restored.pop().ok_or(ProfileError::InvalidClaimHistory)?;
+        if current.claim.verification != VerificationState::OwnerVerified {
+            return Err(ProfileError::InvalidClaimHistory);
+        }
+        Ok(Self {
+            id,
+            previous_revisions: restored,
+            current,
+        })
+    }
     /// Records explicit owner approval as a new claim revision.
     ///
     /// # Errors
@@ -215,6 +274,43 @@ impl PersonaProfile {
         self.claims.iter().find(|record| record.id() == id)
     }
 
+    /// Restores a reviewed profile from validated retained claim histories.
+    ///
+    /// This constructor never replays or fabricates missing revisions. Partial legacy histories
+    /// remain explicitly partial inside their `OwnerClaimRecord`.
+    ///
+    /// # Errors
+    /// Returns `ProfileError` when the profile version cannot represent a reviewed profile, claims
+    /// are empty or duplicated, or any current claim is not direct owner-verified material.
+    pub fn restore_reviewed(
+        identity: PersonaIdentity,
+        constitution: ConstitutionBoundary,
+        claims: Vec<OwnerClaimRecord>,
+    ) -> Result<Self, ProfileError> {
+        if identity.version().get() < 2 {
+            return Err(ProfileError::InvalidReviewedProfileVersion);
+        }
+        if claims.is_empty() {
+            return Err(ProfileError::EmptyCapture);
+        }
+        if claims.iter().any(|record| !record.is_owner_reviewed()) {
+            return Err(ProfileError::ClaimsNotReviewed);
+        }
+        for (index, record) in claims.iter().enumerate() {
+            if claims[..index]
+                .iter()
+                .any(|existing| existing.id() == record.id())
+            {
+                return Err(ProfileError::DuplicateClaimId);
+            }
+        }
+        Ok(Self {
+            identity,
+            constitution,
+            capture_state: PersonaCaptureState::Reviewed,
+            claims,
+        })
+    }
     /// Appends one captured claim before capture is finalized.
     ///
     /// # Errors
@@ -365,6 +461,8 @@ pub enum ProfileError {
     ClaimNotFound,
     ClaimsNotReviewed,
     InvalidCaptureState,
+    InvalidClaimHistory,
+    InvalidReviewedProfileVersion,
     ClaimRevisionExhausted,
     PersonaVersionExhausted,
 }
@@ -380,6 +478,8 @@ impl Display for ProfileError {
             Self::ClaimNotFound => "claim was not found in this persona",
             Self::ClaimsNotReviewed => "all captured claims must be explicitly owner-reviewed",
             Self::InvalidCaptureState => "operation is not allowed in the current capture state",
+            Self::InvalidClaimHistory => "retained claim history is invalid",
+            Self::InvalidReviewedProfileVersion => "reviewed persona version is invalid",
             Self::ClaimRevisionExhausted => "claim revision exhausted",
             Self::PersonaVersionExhausted => "persona version exhausted",
         })
@@ -400,6 +500,28 @@ impl From<PersonaVersionExhausted> for ProfileError {
     }
 }
 
+fn validate_restored_claim(
+    claim: &OwnerClaim,
+    index: usize,
+    starts_at_initial: bool,
+) -> Result<(), ProfileError> {
+    if claim.statement.trim().is_empty()
+        || claim.statement.chars().count() > MAX_OWNER_CLAIM_CHARS
+        || claim.source != SourceKind::Owner
+        || claim.derivation != DerivationKind::Direct
+    {
+        return Err(ProfileError::InvalidClaimHistory);
+    }
+    let expected_verification = if starts_at_initial && index == 0 {
+        VerificationState::Unverified
+    } else {
+        VerificationState::OwnerVerified
+    };
+    if claim.verification != expected_verification {
+        return Err(ProfileError::InvalidClaimHistory);
+    }
+    Ok(())
+}
 fn validate_captured_claim(claim: &OwnerClaim) -> Result<(), ProfileError> {
     if claim.statement.trim().is_empty() {
         return Err(ProfileError::BlankClaimStatement);
@@ -417,154 +539,4 @@ fn validate_captured_claim(claim: &OwnerClaim) -> Result<(), ProfileError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{PersonaId, PersonaMode, PersonaVersion, VerifiedOwnerOpinion};
-
-    fn profile_with_version(version: u64) -> PersonaProfile {
-        PersonaProfile::new(
-            PersonaIdentity::new(
-                PersonaId::new("persona-1").unwrap(),
-                PersonaVersion::new(version).unwrap(),
-                PersonaMode::DigitalTwin,
-            ),
-            ConstitutionBoundary::strict_digital_twin(),
-        )
-    }
-
-    fn profile() -> PersonaProfile {
-        profile_with_version(1)
-    }
-
-    fn captured_opinion() -> OwnerClaimRecord {
-        OwnerClaimRecord::capture(
-            ClaimId::new("opinion-1").unwrap(),
-            OwnerClaim {
-                statement: "Мне нравится этот подход".into(),
-                kind: ClaimKind::Opinion,
-                source: SourceKind::Owner,
-                verification: VerificationState::Unverified,
-                derivation: DerivationKind::Direct,
-            },
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn captured_and_corrected_claims_enforce_canonical_size_limit() {
-        let oversized = "Ж".repeat(MAX_OWNER_CLAIM_CHARS + 1);
-        let capture = OwnerClaimRecord::capture(
-            ClaimId::new("oversized").unwrap(),
-            OwnerClaim {
-                statement: oversized.clone(),
-                kind: ClaimKind::Factual,
-                source: SourceKind::Owner,
-                verification: VerificationState::Unverified,
-                derivation: DerivationKind::Direct,
-            },
-        );
-        assert_eq!(capture, Err(ProfileError::ClaimStatementTooLong));
-
-        let mut profile = profile();
-        let id = ClaimId::new("opinion-1").unwrap();
-        profile.add_captured_claim(captured_opinion()).unwrap();
-        profile.mark_capture_complete().unwrap();
-        assert_eq!(
-            profile.correct_claim(&id, oversized, ClaimKind::Opinion),
-            Err(ProfileError::ClaimStatementTooLong)
-        );
-    }
-
-    #[test]
-    fn captured_claim_requires_explicit_review_before_attribution() {
-        let record = captured_opinion();
-        assert!(VerifiedOwnerOpinion::try_from(record.current().claim().clone()).is_err());
-    }
-
-    #[test]
-    fn initial_review_advances_persona_version_once() {
-        let mut profile = profile();
-        let id = ClaimId::new("opinion-1").unwrap();
-        profile.add_captured_claim(captured_opinion()).unwrap();
-        profile.mark_capture_complete().unwrap();
-        profile.approve_claim(&id).unwrap();
-        profile.approve_initial_review().unwrap();
-        assert_eq!(profile.capture_state(), PersonaCaptureState::Reviewed);
-        assert_eq!(profile.identity().version().get(), 2);
-        let claim = profile.claim(&id).unwrap().current().claim().clone();
-        assert!(VerifiedOwnerOpinion::try_from(claim).is_ok());
-    }
-
-    #[test]
-    fn failed_transactional_correction_restores_exact_claim_history_and_version() {
-        let mut profile = profile();
-        let id = ClaimId::new("opinion-1").unwrap();
-        profile.add_captured_claim(captured_opinion()).unwrap();
-        profile.mark_capture_complete().unwrap();
-        profile.approve_claim(&id).unwrap();
-        profile.approve_initial_review().unwrap();
-
-        let before_record = profile.claim(&id).unwrap().clone();
-        let before_version = profile.identity().version();
-
-        let result = profile.correct_claim_transactional(
-            &id,
-            "Не должен сохраниться",
-            ClaimKind::Opinion,
-            |_| Err::<(), _>("durable commit failed"),
-        );
-
-        assert_eq!(
-            result,
-            Err(TransactionalCorrectionError::Commit(
-                "durable commit failed"
-            ))
-        );
-        assert_eq!(profile.claim(&id).unwrap(), &before_record);
-        assert_eq!(profile.identity().version(), before_version);
-    }
-
-    #[test]
-    fn reviewed_correction_preserves_history_and_advances_persona_version() {
-        let mut profile = profile();
-        let id = ClaimId::new("opinion-1").unwrap();
-        profile.add_captured_claim(captured_opinion()).unwrap();
-        profile.mark_capture_complete().unwrap();
-        profile.approve_claim(&id).unwrap();
-        profile.approve_initial_review().unwrap();
-        profile
-            .correct_claim(
-                &id,
-                "Теперь я предпочитаю другой подход",
-                ClaimKind::Opinion,
-            )
-            .unwrap();
-
-        let record = profile.claim(&id).unwrap();
-        assert_eq!(record.current().revision().get(), 3);
-        assert_eq!(record.previous_revisions().len(), 2);
-        assert_eq!(profile.identity().version().get(), 3);
-        assert_eq!(
-            record.current().claim().statement,
-            "Теперь я предпочитаю другой подход"
-        );
-    }
-
-    #[test]
-    fn reviewed_correction_is_atomic_when_persona_version_is_exhausted() {
-        let mut profile = profile_with_version(u64::MAX - 1);
-        let id = ClaimId::new("opinion-1").unwrap();
-        profile.add_captured_claim(captured_opinion()).unwrap();
-        profile.mark_capture_complete().unwrap();
-        profile.approve_claim(&id).unwrap();
-        profile.approve_initial_review().unwrap();
-        let before = profile.claim(&id).unwrap().current().clone();
-
-        assert_eq!(
-            profile.correct_claim(&id, "Новая позиция", ClaimKind::Opinion),
-            Err(ProfileError::PersonaVersionExhausted)
-        );
-        assert_eq!(profile.identity().version().get(), u64::MAX);
-        assert_eq!(profile.claim(&id).unwrap().current(), &before);
-    }
-}
+mod tests;

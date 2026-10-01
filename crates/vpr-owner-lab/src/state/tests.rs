@@ -337,7 +337,12 @@ fn reviewed_persona_readiness_tracks_media_and_resets_after_correction() {
     engine.close().unwrap();
     let claim = ClaimId::new("owner-fact").unwrap();
     engine
-        .correct_owner_claim(&claim, "Исправленный факт", ClaimKind::Factual)
+        .correct_owner_claim_with_persistence(
+            &claim,
+            "Исправленный факт",
+            ClaimKind::Factual,
+            |_| Ok(()),
+        )
         .unwrap();
     let corrected = engine.status().modality_readiness;
     assert_eq!(corrected.text, LabModalityState::Ready);
@@ -418,7 +423,13 @@ fn successful_reviewed_persona_persistence_commits_exact_new_snapshot() {
 
     assert_eq!(
         persisted,
-        Some(engine.reviewed_owner_context_snapshot().unwrap())
+        Some(
+            engine
+                .reviewed_owner_context
+                .as_ref()
+                .unwrap()
+                .durable_snapshot()
+        )
     );
     assert_eq!(engine.status().persona_version, 3);
 }

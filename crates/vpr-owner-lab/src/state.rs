@@ -1,7 +1,9 @@
 use serde::Serialize;
+#[cfg(test)]
+use vpr_domain::{ClaimId, ClaimKind};
 use vpr_domain::{
-    ClaimId, ClaimKind, CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile,
-    PersonaVersion, RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
+    CorrelationId, PersonaId, PersonaIdentity, PersonaMode, PersonaProfile, PersonaVersion,
+    RealtimeSessionState, Rt0ReasonCode, SessionId, TurnId,
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
@@ -205,31 +207,6 @@ impl OwnerLabEngine {
         let context = ReviewedOwnerContext::new(profile).map_err(map_owner_context_error)?;
         self.readiness.reset_for_profile(context.profile())?;
         self.reviewed_owner_context = Some(context);
-        Ok(())
-    }
-
-    /// Corrects one owner-reviewed claim. The domain profile preserves the previous revision and
-    /// advances `PersonaVersion`; the next turn snapshots the corrected version.
-    ///
-    /// # Errors
-    /// Fails closed when no reviewed owner context is bound or the correction is rejected.
-    pub fn correct_owner_claim(
-        &mut self,
-        id: &ClaimId,
-        statement: impl Into<String>,
-        kind: ClaimKind,
-    ) -> Result<(), LabError> {
-        if self.session_audience == Some(LabSessionAudience::Visitor) {
-            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
-        }
-        let context = self
-            .reviewed_owner_context
-            .as_mut()
-            .ok_or(LabError::InvalidState)?;
-        context
-            .correct_claim(id, statement, kind)
-            .map_err(map_owner_context_error)?;
-        self.readiness.reset_for_profile(context.profile())?;
         Ok(())
     }
 

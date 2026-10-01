@@ -5,8 +5,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ReviewedOwnerContextSnapshot;
+use crate::owner_capture::Rt0OwnerCapture;
+use crate::owner_context::{
+    DurableOwnerClaimRevisionSnapshot, DurableReviewedOwnerClaimSnapshot,
+    DurableReviewedOwnerContextSnapshot, ReviewedOwnerContext,
+    durable_snapshot_from_reviewed_profile,
+};
+use crate::state::OwnerLabEngine;
 
-const STORE_SCHEMA: &str = "vpr-reviewed-owner-persona-1";
+const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
+const STORE_SCHEMA_V2: &str = "vpr-reviewed-owner-persona-2";
 const STORE_PATH_ENV: &str = "VPR_OWNER_LAB_PERSONA_STORE_PATH";
 #[cfg(windows)]
 const WINDOWS_SERVICE: &str = "Virtual-Persona-Runtime";
@@ -15,34 +23,78 @@ const WINDOWS_LEGACY_ACCOUNT: &str = "owner-lab-reviewed-persona-v1";
 #[cfg(windows)]
 const WINDOWS_STORE_PREFIX: &str = "owner-lab-reviewed-persona-v2";
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
+struct SchemaProbe {
+    schema_version: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PersistedPersona {
+struct PersistedPersonaV1 {
     schema_version: String,
     snapshot: ReviewedOwnerContextSnapshot,
 }
 
-impl PersistedPersona {
-    fn new(snapshot: ReviewedOwnerContextSnapshot) -> Self {
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedPersonaV2 {
+    schema_version: String,
+    snapshot: DurableReviewedOwnerContextSnapshot,
+}
+
+impl PersistedPersonaV2 {
+    fn new(snapshot: DurableReviewedOwnerContextSnapshot) -> Self {
         Self {
-            schema_version: STORE_SCHEMA.into(),
+            schema_version: STORE_SCHEMA_V2.into(),
             snapshot,
         }
     }
 
-    fn validate(self) -> Result<ReviewedOwnerContextSnapshot, String> {
-        if self.schema_version != STORE_SCHEMA {
+    fn validate(self) -> Result<DurableReviewedOwnerContextSnapshot, String> {
+        if self.schema_version != STORE_SCHEMA_V2 {
             return Err("reviewed Persona store schema is unsupported".into());
         }
         Ok(self.snapshot)
     }
 }
 
+struct DecodedPersona {
+    snapshot: DurableReviewedOwnerContextSnapshot,
+    migrated_legacy: bool,
+}
+
+/// Restores a durable reviewed Persona directly into the canonical engine.
+///
+/// The persistence DTO never crosses the public API boundary.
+///
+/// # Errors
+/// Returns a redacted persistence or validation error and leaves the engine without restored
+/// owner context.
+pub fn restore_reviewed_persona(engine: &mut OwnerLabEngine) -> Result<bool, String> {
+    let Some(snapshot) = load_reviewed_persona()? else {
+        return Ok(false);
+    };
+    engine
+        .restore_reviewed_owner_context(&snapshot)
+        .map_err(|_| "persisted reviewed Persona is invalid".to_owned())?;
+    Ok(true)
+}
+
+/// Persists a completed reviewed capture using the exact retained domain history.
+///
+/// # Errors
+/// Returns a redacted validation or durable-store error.
+pub fn persist_reviewed_capture(capture: &Rt0OwnerCapture) -> Result<(), String> {
+    let snapshot = durable_snapshot_from_reviewed_profile(capture.profile())
+        .map_err(|_| "reviewed Persona capture is invalid".to_owned())?;
+    save_reviewed_persona(&snapshot)
+}
 /// Loads the reviewed Persona from durable storage when one exists.
 ///
 /// # Errors
 /// Returns a redacted error when the selected store cannot be read, decoded, or validated.
-pub fn load_reviewed_persona() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
+pub(crate) fn load_reviewed_persona() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String>
+{
     if let Some(path) = explicit_store_path() {
         return load_file(&path);
     }
@@ -62,7 +114,9 @@ pub fn load_reviewed_persona() -> Result<Option<ReviewedOwnerContextSnapshot>, S
 ///
 /// # Errors
 /// Returns a redacted error when serialization or the selected store write fails.
-pub fn save_reviewed_persona(snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
+pub(crate) fn save_reviewed_persona(
+    snapshot: &DurableReviewedOwnerContextSnapshot,
+) -> Result<(), String> {
     if let Some(path) = explicit_store_path() {
         return save_file(&path, snapshot);
     }
@@ -78,29 +132,91 @@ pub fn save_reviewed_persona(snapshot: &ReviewedOwnerContextSnapshot) -> Result<
     }
 }
 
+fn decode_persisted(raw: &str) -> Result<DecodedPersona, String> {
+    let probe: SchemaProbe =
+        serde_json::from_str(raw).map_err(|_| "reviewed Persona store contains invalid data")?;
+    match probe.schema_version.as_str() {
+        STORE_SCHEMA_V2 => {
+            let persisted: PersistedPersonaV2 = serde_json::from_str(raw)
+                .map_err(|_| "reviewed Persona store contains invalid v2 data")?;
+            Ok(DecodedPersona {
+                snapshot: persisted.validate()?,
+                migrated_legacy: false,
+            })
+        }
+        STORE_SCHEMA_V1 => {
+            let persisted: PersistedPersonaV1 = serde_json::from_str(raw)
+                .map_err(|_| "reviewed Persona store contains invalid v1 data")?;
+            if persisted.schema_version != STORE_SCHEMA_V1 {
+                return Err("reviewed Persona store schema is unsupported".into());
+            }
+            Ok(DecodedPersona {
+                snapshot: migrate_v1_snapshot(persisted.snapshot)?,
+                migrated_legacy: true,
+            })
+        }
+        _ => Err("reviewed Persona store schema is unsupported".into()),
+    }
+}
+
+fn migrate_v1_snapshot(
+    snapshot: ReviewedOwnerContextSnapshot,
+) -> Result<DurableReviewedOwnerContextSnapshot, String> {
+    if snapshot.persona_version < 2 || snapshot.claims.is_empty() {
+        return Err("legacy reviewed Persona snapshot is invalid".into());
+    }
+    let mut claims = Vec::with_capacity(snapshot.claims.len());
+    for claim in snapshot.claims {
+        if claim.revision < 2 || claim.revision > 10_000 {
+            return Err("legacy reviewed Persona claim revision is invalid".into());
+        }
+        claims.push(DurableReviewedOwnerClaimSnapshot {
+            claim_id: claim.claim_id,
+            history_complete: false,
+            revisions: vec![DurableOwnerClaimRevisionSnapshot {
+                revision: claim.revision,
+                statement: claim.statement,
+                kind: claim.kind,
+                source: "owner".into(),
+                verification: "owner_verified".into(),
+                derivation: "direct".into(),
+            }],
+        });
+    }
+    let durable = DurableReviewedOwnerContextSnapshot {
+        persona_id: snapshot.persona_id,
+        persona_version: snapshot.persona_version,
+        claims,
+    };
+    let validated = ReviewedOwnerContext::from_durable_snapshot(&durable)
+        .map_err(|_| "legacy reviewed Persona snapshot is invalid".to_owned())?;
+    Ok(validated.durable_snapshot())
+}
 fn explicit_store_path() -> Option<PathBuf> {
     env::var_os(STORE_PATH_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
 }
 
-fn load_file(path: &Path) -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
+fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("reviewed Persona file store read failed".into()),
     };
-    let persisted: PersistedPersona = serde_json::from_str(&raw)
-        .map_err(|_| "reviewed Persona file store contains invalid data")?;
-    persisted.validate().map(Some)
+    let decoded = decode_persisted(&raw)?;
+    if decoded.migrated_legacy {
+        save_file(path, &decoded.snapshot)?;
+    }
+    Ok(Some(decoded.snapshot))
 }
 
-fn save_file(path: &Path, snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
+fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|_| "reviewed Persona file store directory creation failed")?;
     }
-    let raw = serde_json::to_vec_pretty(&PersistedPersona::new(snapshot.clone()))
+    let raw = serde_json::to_vec_pretty(&PersistedPersonaV2::new(snapshot.clone()))
         .map_err(|_| "reviewed Persona serialization failed")?;
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, raw).map_err(|_| "reviewed Persona file store write failed")?;
@@ -111,8 +227,8 @@ fn save_file(path: &Path, snapshot: &ReviewedOwnerContextSnapshot) -> Result<(),
 #[cfg(windows)]
 mod platform {
     use super::{
-        PersistedPersona, ReviewedOwnerContextSnapshot, WINDOWS_LEGACY_ACCOUNT, WINDOWS_SERVICE,
-        WINDOWS_STORE_PREFIX,
+        DurableReviewedOwnerContextSnapshot, PersistedPersonaV2, WINDOWS_LEGACY_ACCOUNT,
+        WINDOWS_SERVICE, WINDOWS_STORE_PREFIX, decode_persisted,
     };
     use crate::windows_secure_store::ChunkedCredentialStore;
 
@@ -124,17 +240,20 @@ mod platform {
         )
     }
 
-    pub(super) fn load() -> Result<Option<ReviewedOwnerContextSnapshot>, String> {
+    pub(super) fn load() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
         let Some(raw) = store().load()? else {
             return Ok(None);
         };
-        let persisted: PersistedPersona = serde_json::from_str(&raw)
-            .map_err(|_| "Windows reviewed Persona store contains invalid data")?;
-        persisted.validate().map(Some)
+        let decoded = decode_persisted(&raw)
+            .map_err(|_| "Windows reviewed Persona store contains invalid data".to_owned())?;
+        if decoded.migrated_legacy {
+            save(&decoded.snapshot)?;
+        }
+        Ok(Some(decoded.snapshot))
     }
 
-    pub(super) fn save(snapshot: &ReviewedOwnerContextSnapshot) -> Result<(), String> {
-        let raw = serde_json::to_string(&PersistedPersona::new(snapshot.clone()))
+    pub(super) fn save(snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
+        let raw = serde_json::to_string(&PersistedPersonaV2::new(snapshot.clone()))
             .map_err(|_| "reviewed Persona serialization failed")?;
         store()
             .save(&raw)
@@ -147,19 +266,136 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn sample() -> ReviewedOwnerContextSnapshot {
-        ReviewedOwnerContextSnapshot {
+    fn revision(
+        revision: u64,
+        statement: &str,
+        kind: &str,
+        verification: &str,
+    ) -> DurableOwnerClaimRevisionSnapshot {
+        DurableOwnerClaimRevisionSnapshot {
+            revision,
+            statement: statement.into(),
+            kind: kind.into(),
+            source: "owner".into(),
+            verification: verification.into(),
+            derivation: "direct".into(),
+        }
+    }
+
+    fn sample() -> DurableReviewedOwnerContextSnapshot {
+        DurableReviewedOwnerContextSnapshot {
             persona_id: "persisted-owner".into(),
             persona_version: 3,
-            claims: vec![crate::ReviewedOwnerClaimSnapshot {
+            claims: vec![DurableReviewedOwnerClaimSnapshot {
                 claim_id: "preference-communication-style".into(),
-                statement: "Кратко и по существу".into(),
-                kind: "preference".into(),
-                revision: 3,
+                history_complete: true,
+                revisions: vec![
+                    revision(1, "Кратко", "preference", "unverified"),
+                    revision(2, "Кратко", "preference", "owner_verified"),
+                    revision(3, "Кратко и по существу", "preference", "owner_verified"),
+                ],
             }],
         }
     }
 
+    #[test]
+    fn v1_migration_preserves_only_known_revision_and_becomes_idempotent_v2() {
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 7,
+                "claims": [{
+                    "claim_id": "legacy-opinion",
+                    "statement": "Единственное известное значение",
+                    "kind": "opinion",
+                    "revision": 7
+                }]
+            }
+        })
+        .to_string();
+
+        let migrated = decode_persisted(&raw).unwrap();
+        assert!(migrated.migrated_legacy);
+        assert!(!migrated.snapshot.claims[0].history_complete);
+        assert_eq!(migrated.snapshot.claims[0].revisions.len(), 1);
+        assert_eq!(migrated.snapshot.claims[0].revisions[0].revision, 7);
+        assert_eq!(
+            migrated.snapshot.claims[0].revisions[0].statement,
+            "Единственное известное значение"
+        );
+
+        let v2 =
+            serde_json::to_string(&PersistedPersonaV2::new(migrated.snapshot.clone())).unwrap();
+        let decoded_again = decode_persisted(&v2).unwrap();
+        assert!(!decoded_again.migrated_legacy);
+        assert_eq!(decoded_again.snapshot, migrated.snapshot);
+    }
+
+    #[test]
+    fn explicit_file_load_migrates_v1_store_once() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("vpr-persona-v1-migrate-{unique}.json"));
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 4,
+                "claims": [{
+                    "claim_id": "legacy-claim",
+                    "statement": "Legacy current",
+                    "kind": "factual",
+                    "revision": 4
+                }]
+            }
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+
+        let first = load_file(&path).unwrap().unwrap();
+        assert!(!first.claims[0].history_complete);
+        let persisted_after = fs::read_to_string(&path).unwrap();
+        let probe: SchemaProbe = serde_json::from_str(&persisted_after).unwrap();
+        assert_eq!(probe.schema_version, STORE_SCHEMA_V2);
+        let second = load_file(&path).unwrap().unwrap();
+        assert_eq!(second, first);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
+    }
+
+    #[test]
+    fn invalid_v1_is_not_rewritten_as_v2() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("vpr-persona-v1-invalid-{unique}.json"));
+        let raw = serde_json::json!({
+            "schema_version": STORE_SCHEMA_V1,
+            "snapshot": {
+                "persona_id": "legacy-owner",
+                "persona_version": 4,
+                "claims": [{
+                    "claim_id": "legacy-claim",
+                    "statement": "Legacy current",
+                    "kind": "not-a-real-kind",
+                    "revision": 4
+                }]
+            }
+        });
+        fs::write(&path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+
+        assert!(load_file(&path).is_err());
+        let unchanged = fs::read_to_string(&path).unwrap();
+        let probe: SchemaProbe = serde_json::from_str(&unchanged).unwrap();
+        assert_eq!(probe.schema_version, STORE_SCHEMA_V1);
+
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("tmp"));
+    }
     #[cfg(windows)]
     #[test]
     fn windows_chunked_store_round_trips_reviewed_persona_beyond_single_blob_limit() {
@@ -178,8 +414,8 @@ mod tests {
         let _ = store.delete();
 
         let mut large = sample();
-        large.claims[0].statement = "Ж".repeat(4_000);
-        let raw = serde_json::to_string(&PersistedPersona::new(large.clone()))
+        large.claims[0].revisions[2].statement = "Ж".repeat(4_000);
+        let raw = serde_json::to_string(&PersistedPersonaV2::new(large.clone()))
             .expect("sample must serialize");
         assert!(raw.len() > 2_560);
 
@@ -190,14 +426,14 @@ mod tests {
             .load()
             .expect("chunked Credential Manager store must read Persona")
             .expect("stored Persona must exist");
-        let restored: PersistedPersona =
+        let restored: PersistedPersonaV2 =
             serde_json::from_str(&restored_raw).expect("stored Persona must decode");
         assert_eq!(restored.validate().unwrap(), large);
         store.delete().unwrap();
     }
 
     #[test]
-    fn explicit_file_store_round_trips_and_replaces_existing_snapshot() {
+    fn explicit_file_store_round_trips_and_replaces_exact_history() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -205,14 +441,24 @@ mod tests {
         let path = std::env::temp_dir().join(format!("vpr-persona-store-{unique}.json"));
         let first = sample();
         save_file(&path, &first).unwrap();
-        assert_eq!(load_file(&path).unwrap(), Some(first));
+        assert_eq!(load_file(&path).unwrap(), Some(first.clone()));
 
-        let mut second = sample();
+        let mut second = first;
         second.persona_version = 4;
-        second.claims[0].revision = 4;
-        second.claims[0].statement = "Обновлённый снимок".into();
+        second.claims[0].revisions.push(revision(
+            4,
+            "Обновлённый снимок",
+            "opinion",
+            "owner_verified",
+        ));
         save_file(&path, &second).unwrap();
-        assert_eq!(load_file(&path).unwrap(), Some(second));
+        let restored = load_file(&path).unwrap().unwrap();
+        assert_eq!(restored, second);
+        assert_eq!(restored.claims[0].revisions.len(), 4);
+        assert_eq!(
+            restored.claims[0].revisions[2].statement,
+            "Кратко и по существу"
+        );
 
         let _ = fs::remove_file(&path);
         let _ = fs::remove_file(path.with_extension("tmp"));
