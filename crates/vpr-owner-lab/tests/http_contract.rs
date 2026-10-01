@@ -1,6 +1,7 @@
 use std::fmt::Write as FmtWrite;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, mpsc};
 use std::thread;
@@ -16,13 +17,28 @@ fn serialize_owner_lab_http_contract() -> MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-struct ChildGuard(Child);
+struct ChildGuard {
+    child: Child,
+    persona_store: PathBuf,
+}
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.persona_store);
+        let _ = std::fs::remove_file(self.persona_store.with_extension("tmp"));
     }
+}
+
+fn isolated_persona_store(port: u16) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "vpr-owner-lab-http-contract-{}-{port}.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("tmp"));
+    path
 }
 
 struct HttpResult {
@@ -320,7 +336,9 @@ fn assert_completed_voice_contract(events: &[Value]) {
 }
 
 fn launch_owner_lab(port: u16, did_endpoint: &str) -> ChildGuard {
+    let persona_store = isolated_persona_store(port);
     let child = Command::new(env!("CARGO_BIN_EXE_vpr-owner-lab"))
+        .env("VPR_OWNER_LAB_PERSONA_STORE_PATH", &persona_store)
         .env("VPR_DID_ENDPOINT", did_endpoint)
         .env("VPR_DID_API_KEY", "integration-secret")
         .env("VPR_DID_AGENT_ID", "agent-1")
@@ -331,7 +349,10 @@ fn launch_owner_lab(port: u16, did_endpoint: &str) -> ChildGuard {
         .spawn()
         .unwrap();
     wait_for_server(port);
-    ChildGuard(child)
+    ChildGuard {
+        child,
+        persona_store,
+    }
 }
 
 fn bootstrap(port: u16, host: &str) -> String {
@@ -538,7 +559,9 @@ fn launch_owner_lab_voice(
     stt_endpoint: &str,
     llm_endpoint: &str,
 ) -> ChildGuard {
+    let persona_store = isolated_persona_store(port);
     let child = Command::new(env!("CARGO_BIN_EXE_vpr-owner-lab"))
+        .env("VPR_OWNER_LAB_PERSONA_STORE_PATH", &persona_store)
         .env("VPR_DID_ENDPOINT", did_endpoint)
         .env("VPR_DID_API_KEY", "did-integration-secret")
         .env("VPR_DID_AGENT_ID", "agent-voice")
@@ -557,7 +580,10 @@ fn launch_owner_lab_voice(
         .spawn()
         .unwrap();
     wait_for_server(port);
-    ChildGuard(child)
+    ChildGuard {
+        child,
+        persona_store,
+    }
 }
 
 #[test]
