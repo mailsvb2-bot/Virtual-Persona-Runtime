@@ -350,3 +350,102 @@ fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
         Err(LabEvidenceError::InvalidState)
     );
 }
+
+
+#[test]
+fn session_attempt_and_media_retention_limits_fail_closed_at_exact_boundary() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(20, ParticipantRole::Owner).unwrap();
+
+    for request_sequence in 1..=u64::try_from(RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS).unwrap() {
+        recorder.begin_text_request(request_sequence).unwrap();
+    }
+    assert_eq!(
+        recorder.begin_voice_request(10_000),
+        Err(LabEvidenceError::CapacityExceeded)
+    );
+    assert_eq!(
+        recorder.snapshot().unwrap().text_attempts.len(),
+        RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS
+    );
+
+    recorder.seal_session();
+    assert!(recorder.snapshot().is_ok());
+
+    recorder.begin_session(21, ParticipantRole::Visitor).unwrap();
+    let reconnect = LabMediaEvidenceInput {
+        session_sequence: 21,
+        request_sequence: None,
+        kind: LabMediaEvidenceKind::ReconnectRestored,
+        elapsed_millis: 1,
+    };
+    for _ in 0..RT0_OWNER_LAB_MAX_MEDIA_EVENTS {
+        recorder.record_media(&reconnect).unwrap();
+    }
+    assert_eq!(
+        recorder.record_media(&reconnect),
+        Err(LabEvidenceError::CapacityExceeded)
+    );
+    assert_eq!(
+        recorder.snapshot().unwrap().media_events.len(),
+        RT0_OWNER_LAB_MAX_MEDIA_EVENTS
+    );
+    assert_eq!(
+        LabEvidenceError::CapacityExceeded.code(),
+        "EVIDENCE_SESSION_CAPACITY_EXCEEDED"
+    );
+}
+
+#[test]
+fn av_sync_retention_is_mathematically_bounded_by_session_attempt_budget() {
+    assert_eq!(
+        RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES,
+        RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS * RT0_AV_SYNC_SAMPLES_PER_REQUEST as usize
+    );
+
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(22, ParticipantRole::Owner).unwrap();
+
+    for request_sequence in 1..=u64::try_from(RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS).unwrap() {
+        recorder.begin_voice_request(request_sequence).unwrap();
+        let mut result = voice_result();
+        result.evidence_turn_sequence = request_sequence;
+        result.evidence_output_sequence = request_sequence;
+        recorder
+            .complete_voice_request(request_sequence, &result)
+            .unwrap();
+        recorder
+            .record_canonical_playback(
+                &LabMediaEvidenceInput {
+                    session_sequence: 22,
+                    request_sequence: Some(request_sequence),
+                    kind: LabMediaEvidenceKind::AudioStarted,
+                    elapsed_millis: 1,
+                },
+                request_sequence,
+                request_sequence,
+            )
+            .unwrap();
+        for sample_sequence in 1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
+            recorder
+                .record_av_sync(&LabAvSyncEvidenceInput {
+                    session_sequence: 22,
+                    request_sequence,
+                    sample_sequence,
+                    reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+                    absolute_offset_millis: 1,
+                })
+                .unwrap();
+        }
+    }
+
+    let snapshot = recorder.snapshot().unwrap();
+    assert_eq!(
+        snapshot.av_sync_samples.len(),
+        RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES
+    );
+    assert_eq!(
+        recorder.begin_voice_request(99_999),
+        Err(LabEvidenceError::CapacityExceeded)
+    );
+}
