@@ -104,6 +104,11 @@ impl<R: BufRead> BoundedProviderLineReader<R> {
         }
     }
 
+    /// Reads the next bounded provider line.
+    ///
+    /// # Errors
+    /// Returns a typed provider error when the frame exceeds its bound, contains invalid UTF-8,
+    /// the underlying reader fails, or cancellation wins.
     pub fn next_line(
         &mut self,
         cancellation: &dyn CancellationProbe,
