@@ -72,6 +72,8 @@ jobs:
         run: python3 tests/architecture/check_rt1_persona_deletion_spike.py
       - name: Owner Lab browser contract guard
         run: python3 tests/architecture/check_browser_contract.py
+      - name: LiveKit executable supply chain
+        run: python3 tests/architecture/check_livekit_supply_chain.py
       - name: Lockfile consistency
         run: cargo check --workspace --all-targets --locked
       - name: Format
