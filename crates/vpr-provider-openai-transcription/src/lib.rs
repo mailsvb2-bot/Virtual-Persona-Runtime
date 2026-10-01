@@ -4,9 +4,8 @@ use reqwest::blocking::{Client, multipart};
 use reqwest::header::AUTHORIZATION;
 use serde::Deserialize;
 use vpr_integration::{
-    build_provider_http_client,
     CancellationProbe, PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit,
+    SttPort, SttRequest, Transcript, UsageEvidence, UsageUnit, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
