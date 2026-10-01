@@ -8,11 +8,11 @@ const EXPECTED_VERSION = "2.22.3";
 const packageJsonPath = resolve(UI_ROOT, "node_modules/livekit-client/package.json");
 const sourcePath = resolve(
   UI_ROOT,
-  "node_modules/livekit-client/dist/livekit-client.umd.min.js",
+  "node_modules/livekit-client/dist/livekit-client.umd.js",
 );
 const outputDir = resolve(UI_ROOT, "dist/vendor");
-const outputPath = resolve(outputDir, "livekit-client.umd.min.js");
-const digestPath = resolve(outputDir, "livekit-client.umd.min.js.sha256");
+const outputPath = resolve(outputDir, "livekit-client.umd.js");
+const digestPath = resolve(outputDir, "livekit-client.umd.js.sha256");
 
 const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
 if (packageJson.version !== EXPECTED_VERSION) {
@@ -26,4 +26,4 @@ await copyFile(sourcePath, outputPath);
 
 const bytes = await readFile(outputPath);
 const digest = createHash("sha256").update(bytes).digest("hex");
-await writeFile(digestPath, `${digest}  livekit-client.umd.min.js\n`, "utf8");
+await writeFile(digestPath, `${digest}  livekit-client.umd.js\n`, "utf8");
