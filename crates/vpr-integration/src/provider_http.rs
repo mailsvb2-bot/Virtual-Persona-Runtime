@@ -70,7 +70,10 @@ mod tests {
                 .send()
                 .unwrap();
 
-            assert_eq!(response.status().as_u16(), if status.starts_with("307") { 307 } else { 308 });
+            assert_eq!(
+                response.status().as_u16(),
+                if status.starts_with("307") { 307 } else { 308 }
+            );
             thread::sleep(Duration::from_millis(25));
             match target.accept() {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
