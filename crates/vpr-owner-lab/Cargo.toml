@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-getrandom = "0.3"
+getrandom = "0.4"
 parking_lot = "0.12"
 rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
