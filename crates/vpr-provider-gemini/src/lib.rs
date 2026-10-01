@@ -279,10 +279,8 @@ fn consume_response(
     let mut usage = UsageEvidence::default();
     let mut saw_completed = false;
     let mut saw_done = false;
-    let mut lines = BoundedProviderLineReader::new(
-        BufReader::new(response),
-        MAX_PROVIDER_STREAM_LINE_BYTES,
-    );
+    let mut lines =
+        BoundedProviderLineReader::new(BufReader::new(response), MAX_PROVIDER_STREAM_LINE_BYTES);
     while let Some(line) = lines.next_line(cancellation)? {
         let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
             continue;
