@@ -48,10 +48,7 @@ fn serve_once_capture(status: &str, body: &'static str) -> (String, mpsc::Receiv
     (format!("http://{address}/v1/chat/completions"), rx)
 }
 
-fn serve_redirect(
-    status: &'static str,
-    location: String,
-) -> (String, mpsc::Receiver<String>) {
+fn serve_redirect(status: &'static str, location: String) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::channel();
