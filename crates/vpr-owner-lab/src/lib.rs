@@ -12,7 +12,8 @@ pub use evidence::{
     LabAvSyncEvidenceInput, LabAvSyncReference, LabEvidenceError, LabMediaEvidenceInput,
     LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
     LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    ParticipantRole, RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES, RT0_OWNER_LAB_MAX_MEDIA_EVENTS,
+    RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 pub use owner_capture::{
@@ -22,7 +23,7 @@ pub use owner_capture::{
 
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
 
-pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
+pub use persona_persistence::{load_reviewed_persona, save_reviewed_persona};
 
 pub use provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
