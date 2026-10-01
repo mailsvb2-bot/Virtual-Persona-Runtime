@@ -351,7 +351,6 @@ fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
     );
 }
 
-
 #[test]
 fn session_attempt_and_media_retention_limits_fail_closed_at_exact_boundary() {
     let mut recorder = LabSessionEvidenceRecorder::default();
@@ -372,7 +371,9 @@ fn session_attempt_and_media_retention_limits_fail_closed_at_exact_boundary() {
     recorder.seal_session();
     assert!(recorder.snapshot().is_ok());
 
-    recorder.begin_session(21, ParticipantRole::Visitor).unwrap();
+    recorder
+        .begin_session(21, ParticipantRole::Visitor)
+        .unwrap();
     let reconnect = LabMediaEvidenceInput {
         session_sequence: 21,
         request_sequence: None,
