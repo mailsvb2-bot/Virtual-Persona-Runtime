@@ -2,7 +2,10 @@ mod avatar;
 mod provider_http;
 mod transport;
 
-pub use provider_http::build_provider_http_client;
+pub use provider_http::{
+    BoundedProviderLineReader, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_JSON_BODY_BYTES,
+    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body,
+};
 
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
@@ -65,7 +68,7 @@ mod stt;
 
 pub use llm::{
     GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
-    TimedGeneratedTextBuffer,
+    MAX_GENERATED_TEXT_BYTES, TimedGeneratedTextBuffer,
 };
 pub use stt::{SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript};
 
@@ -78,6 +81,17 @@ mod sealed {
 pub enum PcmSampleFormat {
     S16Le,
 }
+
+/// Maximum retained PCM bytes for one provider-generated audio result.
+pub const MAX_GENERATED_AUDIO_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum retained duration for one provider-generated audio result.
+pub const MAX_GENERATED_AUDIO_DURATION_MILLIS: u64 = 300_000;
+/// Maximum retained encoded bytes for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_BYTES: usize = 32 * 1024 * 1024;
+/// Maximum retained frames for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_FRAMES: usize = 9_000;
+/// Maximum timestamp span retained for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_DURATION_MICROS: u64 = 300_000_000;
 
 impl PcmSampleFormat {
     #[must_use]
@@ -235,6 +249,23 @@ impl GeneratedAudioSink for GeneratedAudioBuffer {
         {
             return Err(invalid_generated_output());
         }
+        let frame_bytes = frame_bytes.ok_or_else(invalid_generated_output)?;
+        let prospective_len = self
+            .pcm
+            .len()
+            .checked_add(pcm.len())
+            .ok_or_else(invalid_generated_output)?;
+        let prospective_duration_millis = u64::try_from(prospective_len)
+            .ok()
+            .and_then(|bytes| bytes.checked_div(u64::try_from(frame_bytes).ok()?))
+            .and_then(|frames| frames.checked_mul(1_000))
+            .and_then(|millis| millis.checked_div(u64::from(sample_rate_hz)))
+            .ok_or_else(invalid_generated_output)?;
+        if prospective_len > MAX_GENERATED_AUDIO_BYTES
+            || prospective_duration_millis > MAX_GENERATED_AUDIO_DURATION_MILLIS
+        {
+            return Err(invalid_generated_output());
+        }
         self.sample_rate_hz = Some(sample_rate_hz);
         self.channels = Some(channels);
         self.sample_format = Some(sample_format);
@@ -291,6 +322,8 @@ impl std::fmt::Debug for GeneratedVideoFrame {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct GeneratedVideoBuffer {
     frames: Vec<GeneratedVideoFrame>,
+    encoded_bytes: usize,
+    first_timestamp_micros: Option<u64>,
 }
 
 impl std::fmt::Debug for GeneratedVideoBuffer {
@@ -298,6 +331,7 @@ impl std::fmt::Debug for GeneratedVideoBuffer {
         formatter
             .debug_struct("GeneratedVideoBuffer")
             .field("frame_count", &self.frames.len())
+            .field("encoded_bytes", &self.encoded_bytes)
             .finish()
     }
 }
@@ -325,6 +359,27 @@ impl GeneratedVideoSink for GeneratedVideoBuffer {
         {
             return Err(invalid_generated_output());
         }
+        let prospective_frames = self
+            .frames
+            .len()
+            .checked_add(1)
+            .ok_or_else(invalid_generated_output)?;
+        let prospective_bytes = self
+            .encoded_bytes
+            .checked_add(encoded_frame.len())
+            .ok_or_else(invalid_generated_output)?;
+        let first_timestamp_micros = self.first_timestamp_micros.unwrap_or(timestamp_micros);
+        let duration_micros = timestamp_micros
+            .checked_sub(first_timestamp_micros)
+            .ok_or_else(invalid_generated_output)?;
+        if prospective_frames > MAX_GENERATED_VIDEO_FRAMES
+            || prospective_bytes > MAX_GENERATED_VIDEO_BYTES
+            || duration_micros > MAX_GENERATED_VIDEO_DURATION_MICROS
+        {
+            return Err(invalid_generated_output());
+        }
+        self.encoded_bytes = prospective_bytes;
+        self.first_timestamp_micros = Some(first_timestamp_micros);
         self.frames.push(GeneratedVideoFrame {
             encoded_frame: encoded_frame.to_vec(),
             timestamp_micros,
