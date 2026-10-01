@@ -45,6 +45,24 @@ impl ProviderBundle {
     /// Returns a redacted configuration error when required settings are missing or rejected.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
+        Self::from_env_with_secure_store(require_voice, allow_secure_store)
+    }
+
+    /// Builds providers from process environment only, never consulting Windows Credential Manager.
+    ///
+    /// This is intended for hermetic proof/test boundaries where an ambient per-user credential
+    /// store must not be able to satisfy missing environment configuration.
+    ///
+    /// # Errors
+    /// Returns a redacted configuration error when required environment settings are missing or rejected.
+    pub fn from_environment(require_voice: bool) -> Result<Self, String> {
+        Self::from_env_with_secure_store(require_voice, false)
+    }
+
+    fn from_env_with_secure_store(
+        require_voice: bool,
+        allow_secure_store: bool,
+    ) -> Result<Self, String> {
         #[cfg(windows)]
         let profile = if environment_provider_config_complete(require_voice) || !allow_secure_store
         {
