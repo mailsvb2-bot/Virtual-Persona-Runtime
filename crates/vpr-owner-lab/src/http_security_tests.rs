@@ -60,7 +60,6 @@ fn csp_allows_provider_neutral_secure_realtime_signal_fallbacks() {
     assert!(!CONTENT_SECURITY_POLICY.contains("connect-src 'self' http:"));
 }
 
-
 #[test]
 fn csp_executes_scripts_from_same_origin_only() {
     assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
