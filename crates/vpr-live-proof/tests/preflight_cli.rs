@@ -61,13 +61,16 @@ fn external_output(repo: &TempRepo, suffix: &str) -> PathBuf {
 
 fn command(repo: &TempRepo, output: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
-    command.current_dir(repo.path()).arg(output).env_clear();
+    command
+        .current_dir(repo.path())
+        .arg("--credentials=environment")
+        .arg(output)
+        .env_clear();
     for key in ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
         }
     }
-    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -261,6 +264,7 @@ fn doctor_command(
     let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-live-proof"));
     command
         .current_dir(repo.path())
+        .arg("--credentials=environment")
         .arg("doctor")
         .arg(probe_audio)
         .arg(profile)
@@ -272,7 +276,6 @@ fn doctor_command(
             command.env(key, value);
         }
     }
-    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
