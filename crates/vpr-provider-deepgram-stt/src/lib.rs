@@ -143,11 +143,8 @@ impl SttPort for DeepgramStt {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
-        let body = read_bounded_provider_body(
-            response,
-            MAX_PROVIDER_JSON_BODY_BYTES,
-            Some(cancellation),
-        )?;
+        let body =
+            read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, Some(cancellation))?;
         let payload: DeepgramResponse =
             serde_json::from_slice(&body).map_err(|_| invalid_response())?;
         let alternative = payload
