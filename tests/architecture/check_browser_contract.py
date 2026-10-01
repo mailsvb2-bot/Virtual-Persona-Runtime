@@ -854,13 +854,15 @@ source_outputs = {
     source.relative_to(UI / "src").with_suffix(".js").as_posix()
     for source in (UI / "src").rglob("*.ts")
 }
+vendor_outputs = {"vendor/livekit-client.umd.js"}
+expected_outputs = source_outputs | vendor_outputs
 committed_outputs = {
     output.relative_to(UI / "dist").as_posix()
     for output in (UI / "dist").rglob("*.js")
 }
-if source_outputs != committed_outputs:
-    missing = sorted(source_outputs - committed_outputs)
-    orphaned = sorted(committed_outputs - source_outputs)
+if expected_outputs != committed_outputs:
+    missing = sorted(expected_outputs - committed_outputs)
+    orphaned = sorted(committed_outputs - expected_outputs)
     raise SystemExit(
         f"Owner Lab generated source/output set drifted: missing={missing}, orphaned={orphaned}"
     )
