@@ -353,20 +353,16 @@ mod tests {
 
     #[test]
     fn bounded_line_reader_accepts_exact_boundary_and_rejects_one_byte_over() {
-        let mut exact = BoundedProviderLineReader::new(
-            BufReader::with_capacity(3, &b"12345678\n"[..]),
-            8,
-        );
+        let mut exact =
+            BoundedProviderLineReader::new(BufReader::with_capacity(3, &b"12345678\n"[..]), 8);
         assert_eq!(
             exact.next_line(&NeverCancelled).unwrap().as_deref(),
             Some("12345678")
         );
         assert_eq!(exact.next_line(&NeverCancelled).unwrap(), None);
 
-        let mut over = BoundedProviderLineReader::new(
-            BufReader::with_capacity(2, &b"123456789\n"[..]),
-            8,
-        );
+        let mut over =
+            BoundedProviderLineReader::new(BufReader::with_capacity(2, &b"123456789\n"[..]), 8);
         assert_eq!(
             over.next_line(&NeverCancelled).unwrap_err().kind,
             ProviderErrorKind::InvalidResponse
