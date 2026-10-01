@@ -80,12 +80,31 @@ pub fn prepare(
     if !egress_authorized {
         return Err(LiveProofPreflightError::EgressNotAuthorized);
     }
-    prepare_provider_configuration(candidate_sha, worktree_clean)
+    prepare_provider_configuration(candidate_sha, worktree_clean, false)
+}
+
+/// Builds the live-proof provider bundle from environment variables only.
+///
+/// This bypasses any ambient Windows Credential Manager profile so hermetic callers can prove that
+/// incomplete explicit configuration fails closed.
+///
+/// # Errors
+/// Returns the same fail-closed preflight errors as [`prepare`].
+pub fn prepare_environment_only(
+    candidate_sha: &str,
+    worktree_clean: bool,
+    egress_authorized: bool,
+) -> Result<PreparedLiveProof, LiveProofPreflightError> {
+    if !egress_authorized {
+        return Err(LiveProofPreflightError::EgressNotAuthorized);
+    }
+    prepare_provider_configuration(candidate_sha, worktree_clean, true)
 }
 
 fn prepare_provider_configuration(
     candidate_sha: &str,
     worktree_clean: bool,
+    environment_only: bool,
 ) -> Result<PreparedLiveProof, LiveProofPreflightError> {
     if !valid_git_sha(candidate_sha) {
         return Err(LiveProofPreflightError::CandidateInvalid);
@@ -93,8 +112,12 @@ fn prepare_provider_configuration(
     if !worktree_clean {
         return Err(LiveProofPreflightError::WorktreeDirty);
     }
-    let providers = ProviderBundle::from_env(true)
-        .map_err(|_| LiveProofPreflightError::ProviderConfigurationInvalid)?;
+    let providers = if environment_only {
+        ProviderBundle::from_environment(true)
+    } else {
+        ProviderBundle::from_env(true)
+    }
+    .map_err(|_| LiveProofPreflightError::ProviderConfigurationInvalid)?;
     let provider_state = provider_state(&providers)?;
     let provider_state_bytes = serde_json::to_vec_pretty(&provider_state)
         .map_err(|_| LiveProofPreflightError::ProviderStateSerializationFailed)?;
@@ -120,7 +143,7 @@ pub fn inspect_provider_configuration(
     candidate_sha: &str,
     worktree_clean: bool,
 ) -> Result<ProviderConfigurationInspection, LiveProofPreflightError> {
-    let prepared = prepare_provider_configuration(candidate_sha, worktree_clean)?;
+    let prepared = prepare_provider_configuration(candidate_sha, worktree_clean, false)?;
     let receipt = prepared.receipt();
     Ok(ProviderConfigurationInspection {
         candidate_sha: receipt.candidate_sha.clone(),
@@ -140,6 +163,36 @@ pub fn preflight(
     egress_authorized: bool,
 ) -> Result<LiveProofPreflightReceipt, LiveProofPreflightError> {
     prepare(candidate_sha, worktree_clean, egress_authorized).map(|prepared| prepared.receipt)
+}
+
+/// Environment-only variant of [`preflight`] for hermetic callers.
+///
+/// # Errors
+/// Returns the same fail-closed errors as [`preflight`].
+pub fn preflight_environment_only(
+    candidate_sha: &str,
+    worktree_clean: bool,
+    egress_authorized: bool,
+) -> Result<LiveProofPreflightReceipt, LiveProofPreflightError> {
+    prepare_environment_only(candidate_sha, worktree_clean, egress_authorized)
+        .map(|prepared| prepared.receipt)
+}
+
+/// Environment-only variant of [`inspect_provider_configuration`].
+///
+/// # Errors
+/// Fails closed for an invalid/dirty candidate or incomplete environment-only provider configuration.
+pub fn inspect_provider_configuration_environment_only(
+    candidate_sha: &str,
+    worktree_clean: bool,
+) -> Result<ProviderConfigurationInspection, LiveProofPreflightError> {
+    let prepared = prepare_provider_configuration(candidate_sha, worktree_clean, true)?;
+    let receipt = prepared.receipt();
+    Ok(ProviderConfigurationInspection {
+        candidate_sha: receipt.candidate_sha.clone(),
+        provider_state_sha256: receipt.provider_state_sha256.clone(),
+        provider_state: receipt.provider_state.clone(),
+    })
 }
 
 fn provider_state(
