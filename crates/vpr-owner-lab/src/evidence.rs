@@ -11,12 +11,17 @@ pub use vpr_evaluation::{
 use crate::{LabTextResult, LabVoiceResult, LabVoiceSegment};
 
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
+pub const RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS: usize = 256;
+pub const RT0_OWNER_LAB_MAX_MEDIA_EVENTS: usize = 1_024;
+pub const RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES: usize =
+    RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS * RT0_AV_SYNC_SAMPLES_PER_REQUEST as usize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabEvidenceError {
     InvalidInput,
     InvalidState,
     DuplicateEvidence,
+    CapacityExceeded,
 }
 
 impl LabEvidenceError {
@@ -26,6 +31,7 @@ impl LabEvidenceError {
             Self::InvalidInput => "INVALID_INPUT",
             Self::InvalidState => "INVALID_STATE_TRANSITION",
             Self::DuplicateEvidence => "DUPLICATE_EVIDENCE",
+            Self::CapacityExceeded => "EVIDENCE_SESSION_CAPACITY_EXCEEDED",
         }
     }
 }
@@ -85,6 +91,9 @@ impl LabSessionEvidenceRecorder {
         }
         if self.text_attempts.contains_key(&request_sequence) {
             return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        if self.session_attempt_count() >= RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS {
+            return Err(LabEvidenceError::CapacityExceeded);
         }
         self.text_attempts.insert(
             request_sequence,
@@ -169,6 +178,9 @@ impl LabSessionEvidenceRecorder {
         }
         if self.voice_attempts.contains_key(&request_sequence) {
             return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        if self.session_attempt_count() >= RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS {
+            return Err(LabEvidenceError::CapacityExceeded);
         }
         self.voice_attempts.insert(
             request_sequence,
@@ -406,6 +418,9 @@ impl LabSessionEvidenceRecorder {
         }) {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
+        if self.av_sync_samples.len() >= RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES {
+            return Err(LabEvidenceError::CapacityExceeded);
+        }
         self.av_sync_samples.push(LabAvSyncEvidence {
             request_sequence: input.request_sequence,
             sample_sequence: input.sample_sequence,
@@ -457,7 +472,16 @@ impl LabSessionEvidenceRecorder {
         if duplicate {
             return Err(LabEvidenceError::DuplicateEvidence);
         }
+        if self.media_events.len() >= RT0_OWNER_LAB_MAX_MEDIA_EVENTS {
+            return Err(LabEvidenceError::CapacityExceeded);
+        }
         Ok(())
+    }
+
+    fn session_attempt_count(&self) -> usize {
+        self.text_attempts
+            .len()
+            .saturating_add(self.voice_attempts.len())
     }
 
     fn push_media(&mut self, input: &LabMediaEvidenceInput) {
