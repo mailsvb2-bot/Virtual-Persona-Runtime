@@ -2,12 +2,13 @@ use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
+    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
     RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer,
-    WebRtcSessionDescription, build_provider_http_client,
+    WebRtcSessionDescription, build_provider_http_client, read_bounded_provider_body,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -133,6 +134,15 @@ impl LocalOpenSourceAvatar {
     }
 }
 
+fn decode_json_response<T: DeserializeOwned>(
+    response: Response,
+    cancellation: Option<&dyn CancellationProbe>,
+) -> Result<T, ProviderError> {
+    let body =
+        read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
+    serde_json::from_slice(&body).map_err(|_| invalid_response())
+}
+
 impl RealtimeAvatarPort for LocalOpenSourceAvatar {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
@@ -160,7 +170,7 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
-        let body: CreateSessionResponse = response.json().map_err(|_| invalid_response())?;
+        let body: CreateSessionResponse = decode_json_response(response, Some(cancellation))?;
         body.try_into()
     }
 
