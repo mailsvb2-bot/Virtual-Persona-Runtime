@@ -7,13 +7,15 @@ use std::process::Command;
 use serde::Serialize;
 use vpr_evaluation::ProviderStateManifest;
 use vpr_live_proof::{
-    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError,
-    inspect_provider_configuration, inspect_provider_configuration_environment_only, preflight,
-    preflight_environment_only, prepare, run_live_conversation_attempt,
-    run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
+    LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError, prepare,
+    run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
+    validate_provider_probe_audio,
 };
 
 mod candidate_bundle;
+mod credential_mode;
+
+use credential_mode::CredentialMode;
 #[cfg(test)]
 mod main_tests;
 
@@ -98,21 +100,16 @@ fn main() {
 
 fn run() -> Result<(), i32> {
     let mut args: Vec<String> = env::args().skip(1).collect();
-    let environment_only = args
-        .first()
-        .is_some_and(|argument| argument == "--credentials=environment");
-    if environment_only {
-        args.remove(0);
-    }
+    let credential_mode = CredentialMode::take_from_args(&mut args);
     match args.as_slice() {
-        [provider_state_output] => run_preflight(Path::new(provider_state_output), environment_only),
+        [provider_state_output] => run_preflight(Path::new(provider_state_output), credential_mode),
         [mode, probe_audio, profile_input, owner_audio, visitor_audio] if mode == "doctor" => {
             run_doctor(
                 Path::new(probe_audio),
                 Path::new(profile_input),
                 Path::new(owner_audio),
                 Path::new(visitor_audio),
-                environment_only,
+                credential_mode,
             )
         }
         [mode, audio_input, provider_state_output, probe_output] if mode == "probe" => run_probe(
@@ -192,7 +189,7 @@ fn run_doctor(
     profile_path: &Path,
     owner_audio_path: &Path,
     visitor_audio_path: &Path,
-    environment_only: bool,
+    credential_mode: CredentialMode,
 ) -> Result<(), i32> {
     let snapshot = repo_snapshot()?;
     let probe_audio_path =
@@ -223,13 +220,9 @@ fn run_doctor(
     validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
         .map_err(emit_conversation)?;
 
-    let clean = worktree_clean()?;
-    let inspection = if environment_only {
-        inspect_provider_configuration_environment_only(&snapshot.candidate, clean)
-    } else {
-        inspect_provider_configuration(&snapshot.candidate, clean)
-    }
-    .map_err(emit_preflight)?;
+    let inspection = credential_mode
+        .inspect(&snapshot.candidate, worktree_clean()?)
+        .map_err(emit_preflight)?;
     verify_snapshot(&snapshot).map_err(emit_preflight)?;
     println!(
         "{}",
@@ -252,16 +245,16 @@ fn run_doctor(
     Ok(())
 }
 
-fn run_preflight(output_path: &Path, environment_only: bool) -> Result<(), i32> {
+fn run_preflight(output_path: &Path, credential_mode: CredentialMode) -> Result<(), i32> {
     let snapshot = repo_snapshot()?;
     let output_path = validated_output_path(output_path, &snapshot.root).map_err(emit_boundary)?;
-    let clean = worktree_clean()?;
-    let receipt = if environment_only {
-        preflight_environment_only(&snapshot.candidate, clean, egress_authorized())
-    } else {
-        preflight(&snapshot.candidate, clean, egress_authorized())
-    }
-    .map_err(emit_preflight)?;
+    let receipt = credential_mode
+        .preflight(
+            &snapshot.candidate,
+            worktree_clean()?,
+            egress_authorized(),
+        )
+        .map_err(emit_preflight)?;
     let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
     atomic_write(&output_path, &provider_state).map_err(emit_boundary)?;
     if let Err(error) = verify_snapshot(&snapshot) {
