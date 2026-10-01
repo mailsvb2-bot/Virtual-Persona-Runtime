@@ -1,4 +1,7 @@
-use vpr_integration::{ProviderError, RealtimeAvatarPort, RealtimeAvatarSession};
+use vpr_integration::{
+    MAX_PROVIDER_JSON_BODY_BYTES, ProviderError, RealtimeAvatarPort, RealtimeAvatarSession,
+    read_bounded_provider_body,
+};
 
 use super::protocol::{CreateStreamRequest, CreateStreamResponse};
 use super::provider_error::{
@@ -91,8 +94,9 @@ impl DidAgentStreamsAvatar {
             _ => {}
         }
         let response = expect_success(response).map_err(DidRuntimeAccessFailure::Provider)?;
-        let body: CreateStreamResponse = response
-            .json()
+        let bytes = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, None)
+            .map_err(DidRuntimeAccessFailure::Provider)?;
+        let body: CreateStreamResponse = serde_json::from_slice(&bytes)
             .map_err(|_| DidRuntimeAccessFailure::Provider(invalid_response()))?;
         let session: RealtimeAvatarSession =
             body.try_into().map_err(DidRuntimeAccessFailure::Provider)?;

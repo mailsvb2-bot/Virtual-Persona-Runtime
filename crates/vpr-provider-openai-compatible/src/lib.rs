@@ -1,12 +1,13 @@
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
-    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
+    BoundedProviderLineReader, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
+    LlmTextStream, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -193,7 +194,7 @@ impl LlmPort for OpenAiCompatibleLlm {
 }
 
 struct OpenAiTextStream {
-    lines: std::io::Lines<BufReader<Response>>,
+    lines: BoundedProviderLineReader<BufReader<Response>>,
     usage: UsageEvidence,
     completed: bool,
 }
@@ -204,7 +205,10 @@ impl OpenAiTextStream {
             return Err(map_status(response.status().as_u16()));
         }
         Ok(Self {
-            lines: BufReader::new(response).lines(),
+            lines: BoundedProviderLineReader::new(
+                BufReader::new(response),
+                MAX_PROVIDER_STREAM_LINE_BYTES,
+            ),
             usage: UsageEvidence::default(),
             completed: false,
         })
@@ -223,10 +227,9 @@ impl LlmTextStream for OpenAiTextStream {
             if cancellation.is_cancelled() {
                 return Err(cancelled());
             }
-            let Some(line) = self.lines.next() else {
+            let Some(line) = self.lines.next_line(cancellation)? else {
                 return Err(invalid_response());
             };
-            let line = line.map_err(|_| invalid_response())?;
             let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
                 continue;
             };

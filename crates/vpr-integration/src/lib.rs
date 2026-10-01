@@ -2,7 +2,10 @@ mod avatar;
 mod provider_http;
 mod transport;
 
-pub use provider_http::build_provider_http_client;
+pub use provider_http::{
+    BoundedProviderLineReader, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_JSON_BODY_BYTES,
+    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body,
+};
 
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
@@ -65,7 +68,7 @@ mod stt;
 
 pub use llm::{
     GeneratedTextBuffer, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
-    TimedGeneratedTextBuffer,
+    MAX_GENERATED_TEXT_BYTES, TimedGeneratedTextBuffer,
 };
 pub use stt::{SttAudioStream, SttPort, SttRequest, SttStreamEvent, SttStreamRequest, Transcript};
 
@@ -78,6 +81,17 @@ mod sealed {
 pub enum PcmSampleFormat {
     S16Le,
 }
+
+/// Maximum retained PCM bytes for one provider-generated audio result.
+pub const MAX_GENERATED_AUDIO_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum retained duration for one provider-generated audio result.
+pub const MAX_GENERATED_AUDIO_DURATION_MILLIS: u64 = 300_000;
+/// Maximum retained encoded bytes for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_BYTES: usize = 32 * 1024 * 1024;
+/// Maximum retained frames for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_FRAMES: usize = 9_000;
+/// Maximum timestamp span retained for one provider-generated video result.
+pub const MAX_GENERATED_VIDEO_DURATION_MICROS: u64 = 300_000_000;
 
 impl PcmSampleFormat {
     #[must_use]
@@ -235,6 +249,23 @@ impl GeneratedAudioSink for GeneratedAudioBuffer {
         {
             return Err(invalid_generated_output());
         }
+        let frame_bytes = frame_bytes.ok_or_else(invalid_generated_output)?;
+        let prospective_len = self
+            .pcm
+            .len()
+            .checked_add(pcm.len())
+            .ok_or_else(invalid_generated_output)?;
+        let prospective_duration_millis = u64::try_from(prospective_len)
+            .ok()
+            .and_then(|bytes| bytes.checked_div(u64::try_from(frame_bytes).ok()?))
+            .and_then(|frames| frames.checked_mul(1_000))
+            .and_then(|millis| millis.checked_div(u64::from(sample_rate_hz)))
+            .ok_or_else(invalid_generated_output)?;
+        if prospective_len > MAX_GENERATED_AUDIO_BYTES
+            || prospective_duration_millis > MAX_GENERATED_AUDIO_DURATION_MILLIS
+        {
+            return Err(invalid_generated_output());
+        }
         self.sample_rate_hz = Some(sample_rate_hz);
         self.channels = Some(channels);
         self.sample_format = Some(sample_format);
@@ -291,6 +322,8 @@ impl std::fmt::Debug for GeneratedVideoFrame {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct GeneratedVideoBuffer {
     frames: Vec<GeneratedVideoFrame>,
+    encoded_bytes: usize,
+    first_timestamp_micros: Option<u64>,
 }
 
 impl std::fmt::Debug for GeneratedVideoBuffer {
@@ -298,6 +331,8 @@ impl std::fmt::Debug for GeneratedVideoBuffer {
         formatter
             .debug_struct("GeneratedVideoBuffer")
             .field("frame_count", &self.frames.len())
+            .field("encoded_bytes", &self.encoded_bytes)
+            .field("first_timestamp_micros", &self.first_timestamp_micros)
             .finish()
     }
 }
@@ -325,6 +360,27 @@ impl GeneratedVideoSink for GeneratedVideoBuffer {
         {
             return Err(invalid_generated_output());
         }
+        let prospective_frames = self
+            .frames
+            .len()
+            .checked_add(1)
+            .ok_or_else(invalid_generated_output)?;
+        let prospective_bytes = self
+            .encoded_bytes
+            .checked_add(encoded_frame.len())
+            .ok_or_else(invalid_generated_output)?;
+        let first_timestamp_micros = self.first_timestamp_micros.unwrap_or(timestamp_micros);
+        let duration_micros = timestamp_micros
+            .checked_sub(first_timestamp_micros)
+            .ok_or_else(invalid_generated_output)?;
+        if prospective_frames > MAX_GENERATED_VIDEO_FRAMES
+            || prospective_bytes > MAX_GENERATED_VIDEO_BYTES
+            || duration_micros > MAX_GENERATED_VIDEO_DURATION_MICROS
+        {
+            return Err(invalid_generated_output());
+        }
+        self.encoded_bytes = prospective_bytes;
+        self.first_timestamp_micros = Some(first_timestamp_micros);
         self.frames.push(GeneratedVideoFrame {
             encoded_frame: encoded_frame.to_vec(),
             timestamp_micros,
@@ -368,150 +424,5 @@ fn invalid_generated_output() -> ProviderError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pcm_audio_reports_provider_neutral_duration() {
-        let audio = AudioInput {
-            pcm: vec![0; 640],
-            sample_rate_hz: 16_000,
-            channels: 1,
-            sample_format: PcmSampleFormat::S16Le,
-        };
-        assert!(audio.is_well_formed());
-        assert_eq!(audio.duration_millis(), Some(20));
-    }
-
-    #[test]
-    fn pcm_audio_rejects_partial_frames() {
-        let audio = AudioInput {
-            pcm: vec![0; 3],
-            sample_rate_hz: 16_000,
-            channels: 1,
-            sample_format: PcmSampleFormat::S16Le,
-        };
-        assert!(!audio.is_well_formed());
-        assert_eq!(audio.duration_millis(), None);
-    }
-
-    #[test]
-    fn streaming_stt_request_validates_chunk_alignment_without_owning_audio() {
-        let request = SttStreamRequest {
-            sample_rate_hz: 16_000,
-            channels: 1,
-            sample_format: PcmSampleFormat::S16Le,
-            locale_hint: Some("ru-RU".to_owned()),
-        };
-        assert!(request.is_well_formed());
-        assert!(request.is_well_formed_chunk(&[0, 0, 1, 0]));
-        assert!(!request.is_well_formed_chunk(&[]));
-        assert!(!request.is_well_formed_chunk(&[0]));
-    }
-
-    #[test]
-    fn streaming_stt_event_preserves_interim_and_final_semantics() {
-        let interim = SttStreamEvent::Interim(Transcript {
-            text: "При".to_owned(),
-            locale: "ru".to_owned(),
-        });
-        let final_event = SttStreamEvent::Final(Transcript {
-            text: "Привет".to_owned(),
-            locale: "ru".to_owned(),
-        });
-        assert!(!interim.is_final());
-        assert!(final_event.is_final());
-        assert_eq!(interim.transcript().text, "При");
-        assert_eq!(final_event.transcript().text, "Привет");
-    }
-
-    #[test]
-    fn generated_text_buffer_accumulates_without_transport_contract() {
-        let mut buffer = GeneratedTextBuffer::default();
-        buffer.push_generated_text("При").unwrap();
-        buffer.push_generated_text("вет").unwrap();
-        assert_eq!(buffer.as_str(), "Привет");
-    }
-
-    #[test]
-    fn timed_generated_text_marks_only_first_meaningful_chunk() {
-        let mut buffer = TimedGeneratedTextBuffer::start();
-        buffer.push_generated_text("   ").unwrap();
-        assert_eq!(buffer.first_meaningful_elapsed_millis(), None);
-        buffer.push_generated_text("Привет").unwrap();
-        let first = buffer.first_meaningful_elapsed_millis().unwrap();
-        buffer.push_generated_text("!").unwrap();
-        assert_eq!(buffer.as_str(), "   Привет!");
-        assert_eq!(buffer.first_meaningful_elapsed_millis(), Some(first));
-    }
-
-    #[test]
-    fn generated_audio_buffer_rejects_sample_rate_changes() {
-        let mut buffer = GeneratedAudioBuffer::default();
-        buffer
-            .push_generated_audio(&[1, 2], 16_000, 1, PcmSampleFormat::S16Le)
-            .unwrap();
-        let error = buffer
-            .push_generated_audio(&[3, 4], 24_000, 1, PcmSampleFormat::S16Le)
-            .unwrap_err();
-        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-        assert_eq!(buffer.pcm(), &[1, 2]);
-        assert_eq!(buffer.sample_rate_hz(), Some(16_000));
-        assert_eq!(buffer.channels(), Some(1));
-        assert_eq!(buffer.sample_format(), Some(PcmSampleFormat::S16Le));
-    }
-
-    #[test]
-    fn generated_video_buffer_retains_generation_evidence_only() {
-        let mut buffer = GeneratedVideoBuffer::default();
-        buffer.push_generated_frame(&[7, 8], 42).unwrap();
-        assert_eq!(buffer.frames().len(), 1);
-        assert_eq!(buffer.frames()[0].encoded_frame, vec![7, 8]);
-        assert_eq!(buffer.frames()[0].timestamp_micros, 42);
-    }
-
-    #[test]
-    fn media_debug_output_redacts_raw_payload_bytes() {
-        let audio = AudioInput {
-            pcm: vec![222, 173, 190, 239],
-            sample_rate_hz: 16_000,
-            channels: 1,
-            sample_format: PcmSampleFormat::S16Le,
-        };
-        let mut generated_audio = GeneratedAudioBuffer::default();
-        generated_audio
-            .push_generated_audio(&[222, 173, 190, 239], 16_000, 1, PcmSampleFormat::S16Le)
-            .unwrap();
-        let mut generated_video = GeneratedVideoBuffer::default();
-        generated_video
-            .push_generated_frame(&[222, 173, 190, 239], 42)
-            .unwrap();
-
-        for debug in [
-            format!("{audio:?}"),
-            format!("{generated_audio:?}"),
-            format!("{:?}", generated_video.frames()[0]),
-            format!("{generated_video:?}"),
-        ] {
-            assert!(!debug.contains("222"));
-            assert!(!debug.contains("173"));
-            assert!(!debug.contains("190"));
-            assert!(!debug.contains("239"));
-        }
-    }
-
-    #[test]
-    fn generated_video_buffer_rejects_empty_or_decreasing_frames() {
-        let mut buffer = GeneratedVideoBuffer::default();
-        assert_eq!(
-            buffer.push_generated_frame(&[], 1).unwrap_err().kind,
-            ProviderErrorKind::InvalidResponse
-        );
-        buffer.push_generated_frame(&[1], 20).unwrap();
-        assert_eq!(
-            buffer.push_generated_frame(&[2], 19).unwrap_err().kind,
-            ProviderErrorKind::InvalidResponse
-        );
-        assert_eq!(buffer.frames().len(), 1);
-    }
-}
+#[path = "generated_output_tests.rs"]
+mod tests;

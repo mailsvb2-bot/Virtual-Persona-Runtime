@@ -1,12 +1,13 @@
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
-    ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
+    BoundedProviderLineReader, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
+    LlmTextStream, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -124,7 +125,7 @@ impl LlmPort for GeminiLlm {
 }
 
 struct GeminiTextStream {
-    lines: std::io::Lines<BufReader<Response>>,
+    lines: BoundedProviderLineReader<BufReader<Response>>,
     usage: UsageEvidence,
     saw_completed: bool,
     saw_done: bool,
@@ -137,7 +138,10 @@ impl GeminiTextStream {
             return Err(map_status(response.status().as_u16()));
         }
         Ok(Self {
-            lines: BufReader::new(response).lines(),
+            lines: BoundedProviderLineReader::new(
+                BufReader::new(response),
+                MAX_PROVIDER_STREAM_LINE_BYTES,
+            ),
             usage: UsageEvidence::default(),
             saw_completed: false,
             saw_done: false,
@@ -158,14 +162,13 @@ impl LlmTextStream for GeminiTextStream {
             if cancellation.is_cancelled() {
                 return Err(cancelled());
             }
-            let Some(line) = self.lines.next() else {
+            let Some(line) = self.lines.next_line(cancellation)? else {
                 if self.saw_completed && self.saw_done {
                     self.completed = true;
                     return Ok(None);
                 }
                 return Err(invalid_response());
             };
-            let line = line.map_err(|_| invalid_response())?;
             let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
                 continue;
             };
@@ -276,11 +279,9 @@ fn consume_response(
     let mut usage = UsageEvidence::default();
     let mut saw_completed = false;
     let mut saw_done = false;
-    for line in BufReader::new(response).lines() {
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        let line = line.map_err(|_| invalid_response())?;
+    let mut lines =
+        BoundedProviderLineReader::new(BufReader::new(response), MAX_PROVIDER_STREAM_LINE_BYTES);
+    while let Some(line) = lines.next_line(cancellation)? {
         let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
             continue;
         };

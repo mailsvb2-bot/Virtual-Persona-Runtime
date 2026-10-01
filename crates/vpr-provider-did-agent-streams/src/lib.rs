@@ -1,13 +1,14 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use serde::de::DeserializeOwned;
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
-    build_provider_http_client,
+    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
+    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    WebRtcSessionDescription, build_provider_http_client, read_bounded_provider_body,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -189,9 +190,8 @@ impl DidAgentStreamsAvatar {
             _ => {}
         }
         let response = expect_success(response).map_err(PresenterLookupError::Provider)?;
-        let body: AgentResponse = response
-            .json()
-            .map_err(|_| PresenterLookupError::Provider(invalid_response()))?;
+        let body: AgentResponse =
+            decode_json_response(response, None).map_err(PresenterLookupError::Provider)?;
         let presenter_type = body.presenter.kind.trim().to_ascii_lowercase();
         if presenter_type.is_empty() {
             Err(PresenterLookupError::Provider(invalid_response()))
@@ -227,7 +227,7 @@ impl DidAgentStreamsAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
-        let body: CreateStreamResponse = response.json().map_err(|_| invalid_response())?;
+        let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
         let client_interrupt = body.fluent && body.interrupt_enabled;
         let session: RealtimeAvatarSession = body.try_into()?;
         if client_interrupt {
@@ -246,7 +246,7 @@ impl DidAgentStreamsAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
-        let body: CreateV2SessionResponse = response.json().map_err(|_| invalid_response())?;
+        let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
         body.try_into()
     }
 
@@ -263,6 +263,14 @@ impl DidAgentStreamsAvatar {
             Ok(())
         }
     }
+}
+
+fn decode_json_response<T: DeserializeOwned>(
+    response: Response,
+    cancellation: Option<&dyn CancellationProbe>,
+) -> Result<T, ProviderError> {
+    let body = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
+    serde_json::from_slice(&body).map_err(|_| invalid_response())
 }
 
 impl RealtimeAvatarPort for DidAgentStreamsAvatar {

@@ -1,6 +1,10 @@
 use crate::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, UsageEvidence,
+    invalid_generated_output,
 };
+
+/// Provider-neutral hard cap for one retained generated text result.
+pub const MAX_GENERATED_TEXT_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmRequest {
@@ -55,7 +59,7 @@ impl sealed::GeneratedTextSink for TimedGeneratedTextBuffer {}
 
 impl GeneratedTextSink for TimedGeneratedTextBuffer {
     fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.text.push_str(chunk);
+        append_bounded_text(&mut self.text, chunk)?;
         if self.first_meaningful_elapsed_millis.is_none() && !self.text.trim().is_empty() {
             self.first_meaningful_elapsed_millis =
                 u64::try_from(self.started.elapsed().as_millis()).ok();
@@ -80,9 +84,20 @@ impl sealed::GeneratedTextSink for GeneratedTextBuffer {}
 
 impl GeneratedTextSink for GeneratedTextBuffer {
     fn push_generated_text(&mut self, chunk: &str) -> Result<(), ProviderError> {
-        self.0.push_str(chunk);
-        Ok(())
+        append_bounded_text(&mut self.0, chunk)
     }
+}
+
+fn append_bounded_text(target: &mut String, chunk: &str) -> Result<(), ProviderError> {
+    if target
+        .len()
+        .checked_add(chunk.len())
+        .is_none_or(|length| length > MAX_GENERATED_TEXT_BYTES)
+    {
+        return Err(invalid_generated_output());
+    }
+    target.push_str(chunk);
+    Ok(())
 }
 
 pub trait GeneratedTextSink: sealed::GeneratedTextSink {
