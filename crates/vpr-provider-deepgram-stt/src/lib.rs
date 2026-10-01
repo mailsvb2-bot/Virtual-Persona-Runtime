@@ -4,9 +4,9 @@ use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, SttAudioStream,
-    SttPort, SttRequest, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
-    build_provider_http_client,
+    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, SttAudioStream, SttPort, SttRequest, SttStreamRequest, Transcript,
+    UsageEvidence, UsageUnit, build_provider_http_client, read_bounded_provider_body,
 };
 
 mod live;
@@ -143,7 +143,13 @@ impl SttPort for DeepgramStt {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
-        let payload: DeepgramResponse = response.json().map_err(|_| invalid_response())?;
+        let body = read_bounded_provider_body(
+            response,
+            MAX_PROVIDER_JSON_BODY_BYTES,
+            Some(cancellation),
+        )?;
+        let payload: DeepgramResponse =
+            serde_json::from_slice(&body).map_err(|_| invalid_response())?;
         let alternative = payload
             .results
             .channels
