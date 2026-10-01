@@ -57,10 +57,7 @@ mod tests {
 
     #[test]
     fn environment_flag_is_consumed_only_when_leading() {
-        let mut environment = vec![
-            "--credentials=environment".to_owned(),
-            "doctor".to_owned(),
-        ];
+        let mut environment = vec!["--credentials=environment".to_owned(), "doctor".to_owned()];
         assert_eq!(
             CredentialMode::take_from_args(&mut environment),
             CredentialMode::Environment
