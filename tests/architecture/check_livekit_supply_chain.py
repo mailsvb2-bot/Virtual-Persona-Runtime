@@ -12,12 +12,12 @@ PACKAGE = json.loads((UI / "package.json").read_text(encoding="utf-8"))
 LOCK = json.loads((UI / "package-lock.json").read_text(encoding="utf-8"))
 
 VERSION = "2.22.3"
-ASSET = UI / "dist" / "vendor" / "livekit-client.umd.min.js"
-DIGEST = UI / "dist" / "vendor" / "livekit-client.umd.min.js.sha256"
+ASSET = UI / "dist" / "vendor" / "livekit-client.umd.js"
+DIGEST = UI / "dist" / "vendor" / "livekit-client.umd.js.sha256"
 
 if "cdn.jsdelivr.net" in APP or "unpkg.com" in APP:
     raise SystemExit("Owner Lab runtime must not load executable LiveKit code from a CDN")
-if 'const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.min.js";' not in APP:
+if 'const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.js";' not in APP:
     raise SystemExit("Owner Lab LiveKit loader must target the same-origin vendor route")
 if "script.crossOrigin" in APP:
     raise SystemExit("same-origin LiveKit loader must not retain a CDN crossOrigin boundary")
@@ -44,7 +44,7 @@ if not str(locked.get("integrity", "")).startswith("sha512-"):
 
 for required in (
     'const EXPECTED_VERSION = "2.22.3";',
-    "node_modules/livekit-client/dist/livekit-client.umd.min.js",
+    "node_modules/livekit-client/dist/livekit-client.umd.js",
     "createHash",
     "sha256",
 ):
@@ -52,17 +52,17 @@ for required in (
         raise SystemExit(f"LiveKit vendor generator drifted: {required}")
 
 for required in (
-    'include_str!("../ui/dist/vendor/livekit-client.umd.min.js")',
-    '"/vendor/livekit-client.umd.min.js"',
+    'include_str!("../ui/dist/vendor/livekit-client.umd.js")',
+    '"/vendor/livekit-client.umd.js"',
 ):
     if required not in SERVER:
         raise SystemExit(f"Owner Lab server does not embed/serve self-hosted LiveKit: {required}")
 
-if '["/vendor/livekit-client.umd.min.js", "dist/vendor/livekit-client.umd.min.js"]' not in FIXTURE_SERVER:
+if '["/vendor/livekit-client.umd.js", "dist/vendor/livekit-client.umd.js"]' not in FIXTURE_SERVER:
     raise SystemExit("browser fixture must serve the same self-hosted LiveKit artifact")
 for required in (
-    'request.get("/vendor/livekit-client.umd.min.js")',
-    'page.addScriptTag({ url: "/vendor/livekit-client.umd.min.js" })',
+    'request.get("/vendor/livekit-client.umd.js")',
+    'page.addScriptTag({ url: "/vendor/livekit-client.umd.js" })',
     'expect(roomType).toBe("function")',
 ):
     if required not in VENDOR_TEST:
