@@ -8,7 +8,8 @@ use serde::Serialize;
 use vpr_evaluation::ProviderStateManifest;
 use vpr_live_proof::{
     LiveConversationAttemptError, LiveProofPreflightError, LiveProviderProbeError,
-    inspect_provider_configuration, preflight, prepare, run_live_conversation_attempt,
+    inspect_provider_configuration, inspect_provider_configuration_environment_only, preflight,
+    preflight_environment_only, prepare, run_live_conversation_attempt,
     run_provider_probe, validate_live_conversation_inputs, validate_provider_probe_audio,
 };
 
@@ -96,15 +97,22 @@ fn main() {
 }
 
 fn run() -> Result<(), i32> {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    let environment_only = args
+        .first()
+        .is_some_and(|argument| argument == "--credentials=environment");
+    if environment_only {
+        args.remove(0);
+    }
     match args.as_slice() {
-        [provider_state_output] => run_preflight(Path::new(provider_state_output)),
+        [provider_state_output] => run_preflight(Path::new(provider_state_output), environment_only),
         [mode, probe_audio, profile_input, owner_audio, visitor_audio] if mode == "doctor" => {
             run_doctor(
                 Path::new(probe_audio),
                 Path::new(profile_input),
                 Path::new(owner_audio),
                 Path::new(visitor_audio),
+                environment_only,
             )
         }
         [mode, audio_input, provider_state_output, probe_output] if mode == "probe" => run_probe(
@@ -172,7 +180,7 @@ fn run() -> Result<(), i32> {
         ),
         _ => {
             eprintln!(
-                "usage: vpr-live-proof <provider-state-output.json>\n       vpr-live-proof doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>\n       vpr-live-proof candidate-bundle-extract <candidate-bundle.json> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
+                "usage: vpr-live-proof [--credentials=environment] <provider-state-output.json>\n       vpr-live-proof [--credentials=environment] doctor <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw>\n       vpr-live-proof probe <pcm-s16le-mono-16khz.raw> <provider-state-output.json> <probe-output.json>\n       vpr-live-proof conversation <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>\n       vpr-live-proof candidate-bundle <probe.raw> <reviewed-profile.json> <owner.raw> <visitor.raw> <candidate-bundle.json>\n       vpr-live-proof candidate-bundle-extract <candidate-bundle.json> <provider-state-output.json> <probe-output.json> <conversation-receipt.json>"
             );
             Err(2)
         }
@@ -184,6 +192,7 @@ fn run_doctor(
     profile_path: &Path,
     owner_audio_path: &Path,
     visitor_audio_path: &Path,
+    environment_only: bool,
 ) -> Result<(), i32> {
     let snapshot = repo_snapshot()?;
     let probe_audio_path =
@@ -214,8 +223,13 @@ fn run_doctor(
     validate_live_conversation_inputs(&profile, &owner_audio, &visitor_audio)
         .map_err(emit_conversation)?;
 
-    let inspection = inspect_provider_configuration(&snapshot.candidate, worktree_clean()?)
-        .map_err(emit_preflight)?;
+    let clean = worktree_clean()?;
+    let inspection = if environment_only {
+        inspect_provider_configuration_environment_only(&snapshot.candidate, clean)
+    } else {
+        inspect_provider_configuration(&snapshot.candidate, clean)
+    }
+    .map_err(emit_preflight)?;
     verify_snapshot(&snapshot).map_err(emit_preflight)?;
     println!(
         "{}",
@@ -238,12 +252,16 @@ fn run_doctor(
     Ok(())
 }
 
-fn run_preflight(output_path: &Path) -> Result<(), i32> {
+fn run_preflight(output_path: &Path, environment_only: bool) -> Result<(), i32> {
     let snapshot = repo_snapshot()?;
     let output_path = validated_output_path(output_path, &snapshot.root).map_err(emit_boundary)?;
     let clean = worktree_clean()?;
-    let receipt =
-        preflight(&snapshot.candidate, clean, egress_authorized()).map_err(emit_preflight)?;
+    let receipt = if environment_only {
+        preflight_environment_only(&snapshot.candidate, clean, egress_authorized())
+    } else {
+        preflight(&snapshot.candidate, clean, egress_authorized())
+    }
+    .map_err(emit_preflight)?;
     let provider_state = serde_json::to_vec_pretty(&receipt.provider_state).map_err(|_| 2)?;
     atomic_write(&output_path, &provider_state).map_err(emit_boundary)?;
     if let Err(error) = verify_snapshot(&snapshot) {
