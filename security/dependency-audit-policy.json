@@ -7,7 +7,7 @@
     "exception_budget": 0
   },
   "npm_audit": {
-    "minimum_denied_severity": "high",
+    "minimum_denied_severity": "moderate",
     "exceptions": [],
     "exception_budget": 0
   },
