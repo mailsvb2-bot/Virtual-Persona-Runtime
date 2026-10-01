@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
-use serde::de::DeserializeOwned;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use serde::de::DeserializeOwned;
 use vpr_integration::{
     CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
@@ -269,8 +269,7 @@ fn decode_json_response<T: DeserializeOwned>(
     response: Response,
     cancellation: Option<&dyn CancellationProbe>,
 ) -> Result<T, ProviderError> {
-    let body =
-        read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
+    let body = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
     serde_json::from_slice(&body).map_err(|_| invalid_response())
 }
 
