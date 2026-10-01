@@ -209,7 +209,9 @@ pub fn record_av_sync(
 pub const fn error_status(error: LabEvidenceError) -> u16 {
     match error {
         LabEvidenceError::InvalidInput => 400,
-        LabEvidenceError::InvalidState | LabEvidenceError::DuplicateEvidence => 409,
+        LabEvidenceError::InvalidState
+        | LabEvidenceError::DuplicateEvidence
+        | LabEvidenceError::CapacityExceeded => 409,
     }
 }
 
