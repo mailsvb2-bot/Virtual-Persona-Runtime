@@ -235,7 +235,7 @@ fn route_request(
     method: &Method,
     path: &str,
     request: &mut Request,
-    state: &AppState,
+    state: &Arc<AppState>,
 ) -> HttpResponse {
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
