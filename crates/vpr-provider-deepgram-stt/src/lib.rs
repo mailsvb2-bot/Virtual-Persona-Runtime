@@ -4,9 +4,9 @@ use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use vpr_integration::{
-    build_provider_http_client,
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind, SttAudioStream,
     SttPort, SttRequest, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
+    build_provider_http_client,
 };
 
 mod live;
