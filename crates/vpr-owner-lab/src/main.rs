@@ -199,9 +199,7 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
-        "/owner-capture.js" => {
-            static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8")
-        }
+        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8"),
         "/voice-command-scheduler.js" => {
             static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
         }
