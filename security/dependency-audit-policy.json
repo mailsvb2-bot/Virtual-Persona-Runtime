@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "cargo_audit": {
+    "tool": "cargo-audit",
+    "version": "0.22.2",
+    "exceptions": [],
+    "exception_budget": 0
+  },
+  "npm_audit": {
+    "minimum_denied_severity": "high",
+    "exceptions": [],
+    "exception_budget": 0
+  },
+  "dependency_review": {
+    "minimum_denied_severity": "high",
+    "action": "actions/dependency-review-action",
+    "commit": "a1d282b36b6f3519aa1f3fc636f609c47dddb294"
+  }
+}

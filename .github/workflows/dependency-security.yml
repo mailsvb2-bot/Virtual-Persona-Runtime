@@ -1,0 +1,91 @@
+name: Dependency Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  locked-dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Policy contract
+        run: |
+          python3 tests/architecture/check_dependency_security.py
+          python3 tests/security/check_dependency_audit_gate.py
+      - name: Install pinned RustSec scanner
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Audit locked Rust dependencies
+        run: cargo audit --file Cargo.lock
+      - name: Prove known RustSec advisory is denied
+        run: |
+          set +e
+          cargo audit --no-fetch --file tests/security/fixtures/rustsec-vulnerable.Cargo.lock > /tmp/rustsec-fixture.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/rustsec-fixture.log
+          if [ "$status" -eq 0 ]; then
+            echo "known vulnerable RustSec fixture unexpectedly passed"
+            exit 1
+          fi
+          grep -q "RUSTSEC-2023-0071" /tmp/rustsec-fixture.log
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: crates/vpr-owner-lab/ui/package-lock.json
+      - name: Audit locked npm dependencies without install scripts
+        run: |
+          set +e
+          npm audit --package-lock-only --ignore-scripts --json             --prefix crates/vpr-owner-lab/ui > /tmp/npm-audit.json
+          npm_status=$?
+          set -e
+          echo "npm audit process status: $npm_status"
+          python3 scripts/dependency_audit_gate.py --npm-json /tmp/npm-audit.json
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Detect GitHub dependency-review support
+        id: dependency-graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          endpoint="https://api.github.com/repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          status="$(curl --silent --show-error             --output /tmp/dependency-review-support.json             --write-out '%{http_code}'             --header 'Accept: application/vnd.github+json'             --header "Authorization: Bearer ${GH_TOKEN}"             --header 'X-GitHub-Api-Version: 2022-11-28'             "$endpoint")"
+          case "$status" in
+            200)
+              echo "supported=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403)
+              # GitHub returns a generic 403 here when Dependency Graph is disabled.
+              # This job already has the documented contents:read permission, so only 403 is
+              # classified as an unsupported repository feature; 404/bad refs remain failures.
+              cat /tmp/dependency-review-support.json
+              echo "supported=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              cat /tmp/dependency-review-support.json
+              echo "unexpected dependency-graph API status: $status"
+              exit 1
+              ;;
+          esac
+      - name: Review dependency changes
+        if: steps.dependency-graph.outputs.supported == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+      - name: Record unsupported repository feature
+        if: steps.dependency-graph.outputs.supported == 'false'
+        run: echo "GitHub Dependency Review is unavailable because the repository dependency graph is disabled; lockfile audits remain mandatory."
