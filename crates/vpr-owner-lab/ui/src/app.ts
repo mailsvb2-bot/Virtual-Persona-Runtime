@@ -132,7 +132,7 @@ type LiveKitSdk = {
   };
 };
 
-const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.min.js";
+const LIVEKIT_CLIENT_URL = "/vendor/livekit-client.umd.js";
 let liveKitLoader: Promise<LiveKitSdk> | null = null;
 
 const loadLiveKitSdk = async (): Promise<LiveKitSdk> => {
