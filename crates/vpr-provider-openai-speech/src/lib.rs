@@ -1,13 +1,12 @@
-use std::io::Read;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use vpr_integration::{
-    AudioInput, CancellationProbe, GeneratedAudioSink, PcmSampleFormat, ProviderDescriptor,
-    ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
-    build_provider_http_client,
+    AudioInput, CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
+    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest,
+    UsageEvidence, UsageUnit, build_provider_http_client, read_bounded_provider_body,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -140,24 +139,14 @@ struct SpeechRequest<'a> {
 }
 
 fn read_body(
-    mut response: Response,
+    response: Response,
     cancellation: &dyn CancellationProbe,
 ) -> Result<Vec<u8>, ProviderError> {
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 8_192];
-    loop {
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        let read = response.read(&mut buffer).map_err(|_| ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        })?;
-        if read == 0 {
-            break;
-        }
-        output.extend_from_slice(&buffer[..read]);
-    }
+    let output = read_bounded_provider_body(
+        response,
+        MAX_PROVIDER_BINARY_BODY_BYTES,
+        Some(cancellation),
+    )?;
     if output.is_empty() {
         return Err(invalid_response());
     }
