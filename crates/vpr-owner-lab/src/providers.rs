@@ -14,6 +14,8 @@ use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvata
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
+const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderDescriptor {
     pub provider: String,
@@ -34,20 +36,27 @@ impl ProviderBundle {
     /// Builds the exact provider composition used by Owner Lab.
     ///
     /// Explicit environment variables have highest priority. On Windows, missing values fall back
-    /// to the current user's VPR provider profile in Windows Credential Manager. API keys are
-    /// consumed by concrete adapters but are never retained in descriptors.
+    /// to the current user's VPR provider profile in Windows Credential Manager. Set
+    /// `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` to disable that fallback and require a
+    /// hermetic environment-only configuration. API keys are consumed by concrete adapters but are
+    /// never retained in descriptors.
     ///
     /// # Errors
     /// Returns a redacted configuration error when required settings are missing or rejected.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
+        let allow_secure_store = credential_source_allows_secure_store()?;
         #[cfg(windows)]
-        let profile = if environment_provider_config_complete(require_voice) {
+        let profile = if environment_provider_config_complete(require_voice) || !allow_secure_store
+        {
             None
         } else {
             load_provider_profile()?
         };
         #[cfg(not(windows))]
-        let profile: Option<ProviderCredentialProfile> = None;
+        let profile: Option<ProviderCredentialProfile> = {
+            let _ = allow_secure_store;
+            None
+        };
         let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
@@ -373,6 +382,22 @@ fn descriptor(
     }
 }
 
+fn credential_source_allows_secure_store() -> Result<bool, String> {
+    credential_source_allows_secure_store_with(
+        optional_env(PROVIDER_CREDENTIAL_SOURCE_ENV).as_deref(),
+    )
+}
+
+fn credential_source_allows_secure_store_with(value: Option<&str>) -> Result<bool, String> {
+    match value.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        None | Some("auto") => Ok(true),
+        Some("environment") => Ok(false),
+        Some(_) => Err(format!(
+            "environment variable {PROVIDER_CREDENTIAL_SOURCE_ENV} must be auto or environment"
+        )),
+    }
+}
+
 fn optional_env(name: &'static str) -> Option<String> {
     env::var(name)
         .ok()
@@ -415,8 +440,8 @@ fn resolved_bool(name: &'static str, stored: Option<bool>, default: bool) -> Res
 #[cfg(test)]
 mod tests {
     use super::{
-        matching_llm_profile, matching_stt_profile, openai_compatible_provider_name,
-        provider_config_complete_with,
+        credential_source_allows_secure_store_with, matching_llm_profile, matching_stt_profile,
+        openai_compatible_provider_name, provider_config_complete_with,
     };
     use crate::ProviderCredentialProfile;
 
@@ -427,6 +452,20 @@ mod tests {
             "deepgram-secret".into(),
             "deepseek-secret".into(),
         )
+    }
+
+    #[test]
+    fn credential_source_policy_is_explicit_and_fail_closed() {
+        assert_eq!(credential_source_allows_secure_store_with(None), Ok(true));
+        assert_eq!(
+            credential_source_allows_secure_store_with(Some("auto")),
+            Ok(true)
+        );
+        assert_eq!(
+            credential_source_allows_secure_store_with(Some("environment")),
+            Ok(false)
+        );
+        assert!(credential_source_allows_secure_store_with(Some("mixed")).is_err());
     }
 
     #[test]

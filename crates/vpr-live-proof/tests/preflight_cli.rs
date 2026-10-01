@@ -67,6 +67,7 @@ fn command(repo: &TempRepo, output: &Path) -> Command {
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -271,6 +272,7 @@ fn doctor_command(
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -373,6 +375,7 @@ fn probe_command(repo: &TempRepo, audio: &Path, provider: &Path, probe: &Path) -
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -440,6 +443,7 @@ fn conversation_command(
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -577,6 +581,7 @@ fn candidate_command(repo: &TempRepo, paths: &CandidateCommandPaths<'_>) -> Comm
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
@@ -744,6 +749,7 @@ fn candidate_bundle_command(
             command.env(key, value);
         }
     }
+    command.env("VPR_PROVIDER_CREDENTIAL_SOURCE", "environment");
     command
 }
 
