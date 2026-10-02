@@ -1186,6 +1186,7 @@ const finishMicrophoneTurn = async () => {
         finishAccepted = true;
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
+        let providerCommandDelivered = false;
         const deliveryTasks = [];
         const scheduleSegmentDelivery = (segment) => {
             const command = segment.client_command;
@@ -1195,6 +1196,7 @@ const finishMicrophoneTurn = async () => {
                 const sent = await voiceCommandScheduler.dispatch(command);
                 if (!sent)
                     return;
+                providerCommandDelivered = true;
                 const voice = activeVoiceEvidence;
                 if (rt0EvidenceMode
                     && voice?.requestSequence === requestSequence
@@ -1210,7 +1212,9 @@ const finishMicrophoneTurn = async () => {
             })().catch((error) => {
                 deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
                 voiceCommandScheduler.interrupt();
-                rt0PlaybackPending = false;
+                if (!rt0EvidenceMode || !providerCommandDelivered) {
+                    rt0PlaybackPending = false;
+                }
                 updateControls();
                 void api("/api/avatar/interrupt", {}).catch(() => undefined);
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
@@ -1344,8 +1348,6 @@ const interruptAvatar = async () => {
         && activeClientControl?.interrupt === true
         && playbackReady;
     voiceCommandScheduler.interrupt();
-    rt0PlaybackPending = false;
-    updateControls();
     try {
         if (voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
@@ -1355,6 +1357,7 @@ const interruptAvatar = async () => {
                 playback_id: playbackId,
             });
             await dispatchClientCommand(command);
+            rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
             updateControls();
             await refreshSessionEvidence();
@@ -1362,6 +1365,8 @@ const interruptAvatar = async () => {
         }
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
+            rt0PlaybackPending = false;
+            updateControls();
         }
         await refreshSessionEvidence();
     }
