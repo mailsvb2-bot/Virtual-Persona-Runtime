@@ -319,10 +319,6 @@ const primaryPlayoutTimestamp = (stats, expectedKind) => {
         const kind = stat.kind ?? stat.mediaType;
         if (kind !== undefined && kind !== expectedKind)
             return;
-        // A receiver report may contain an RTX retransmission SSRC alongside the actual video media
-        // SSRC. RTX is not a second avatar track, so it may be excluded using the report's codec
-        // metadata. After that exclusion the Canon still requires one unambiguous active media stream:
-        // multiple remaining audio/video candidates are deliberately not guessed or ranked.
         if (stat.codecId) {
             const codec = stats.get(stat.codecId);
             if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
@@ -847,9 +843,6 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         backendSessionStarted = true;
-        // QualityContract measures first useful video for an already prepared avatar after the
-        // provider media path is available. Exclude provider session creation/preparation itself:
-        // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
         connectEvidenceStartedAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
         capabilities = new Set(start.capabilities);
