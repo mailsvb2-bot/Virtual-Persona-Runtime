@@ -101,6 +101,14 @@ For the Windows RT0 operator path, use the safe launcher:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1
 ```
 
+For **exact-candidate RT0 browser evidence**, use the stricter evidence mode:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
+```
+
+The evidence mode fails before provider launch unless Firefox 142+ is installed, then opens Owner Lab in that Firefox instance. This is required because the RT0 A/V-sync contract accepts only WebRTC `RTCInboundRtpStreamStats.estimatedPlayoutTimestamp`; Chromium/Edge do not currently expose that measurement reliably enough for this gate. Normal development launches keep using the default browser.
+
 The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a safe D-ID credential/agent preflight (metadata lookup first; if metadata access is forbidden, it may create and immediately close one legacy stream to verify the historical runtime path), pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
 
 For deliberate manual runs, the lower-level process-scoped opt-in is still available:
