@@ -111,15 +111,38 @@
     }
     async getRTCStatsReport() {
       const timestamp = this.kind === "audio" ? 1000 : 1060;
-      return new Map([[
-        `${this.kind}-inbound`,
-        {
-          type: "inbound-rtp",
-          kind: this.kind,
-          packetsReceived: 20,
-          estimatedPlayoutTimestamp: timestamp,
-        },
-      ]]);
+      const entries = [
+        [
+          `${this.kind}-codec`,
+          { mimeType: this.kind === "audio" ? "audio/opus" : "video/VP8" },
+        ],
+        [
+          `${this.kind}-inbound`,
+          {
+            type: "inbound-rtp",
+            kind: this.kind,
+            codecId: `${this.kind}-codec`,
+            packetsReceived: 20,
+            estimatedPlayoutTimestamp: timestamp,
+          },
+        ],
+      ];
+      if (this.kind === "video") {
+        entries.push(
+          ["video-rtx-codec", { mimeType: "video/rtx" }],
+          [
+            "video-rtx-inbound",
+            {
+              type: "inbound-rtp",
+              kind: "video",
+              codecId: "video-rtx-codec",
+              packetsReceived: 100,
+              estimatedPlayoutTimestamp: 9999,
+            },
+          ],
+        );
+      }
+      return new Map(entries);
     }
   }
 
