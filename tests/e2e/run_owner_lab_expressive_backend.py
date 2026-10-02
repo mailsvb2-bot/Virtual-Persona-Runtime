@@ -7,6 +7,7 @@ ENV = {
     "VPR_DID_API_KEY": "expressive-avatar-e2e-secret",
     "VPR_DID_AGENT_ID": "voice-e2e-expressive-agent",
     "VPR_OWNER_LAB_ALLOW_EGRESS": "true",
+    "VPR_OWNER_LAB_RT0_EVIDENCE": "true",
     "VPR_OWNER_LAB_PORT": "18791",
     "VPR_OWNER_LAB_STT_PROVIDER": "deepgram",
     "VPR_OWNER_LAB_STT_ENDPOINT": "http://127.0.0.1:18790/v1/listen",
