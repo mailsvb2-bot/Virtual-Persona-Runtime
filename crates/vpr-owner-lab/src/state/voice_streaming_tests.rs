@@ -102,12 +102,14 @@ impl RealtimeAvatarPort for StreamingAvatar {
 
 struct StreamingStt {
     stats: Arc<StreamingStats>,
+    emit_final: bool,
 }
 
 struct StreamingSttSession {
     phase: u8,
     finished: bool,
     bytes: usize,
+    emit_final: bool,
 }
 
 impl SttAudioStream for StreamingSttSession {
@@ -143,7 +145,7 @@ impl SttAudioStream for StreamingSttSession {
                 text: "Как".into(),
                 locale: "ru-RU".into(),
             })),
-            1 => Some(SttStreamEvent::Final(Transcript {
+            1 if self.emit_final => Some(SttStreamEvent::Final(Transcript {
                 text: "Как дела?".into(),
                 locale: "ru-RU".into(),
             })),
@@ -176,6 +178,7 @@ impl SttPort for StreamingStt {
             phase: 0,
             finished: false,
             bytes: 0,
+            emit_final: self.emit_final,
         }))
     }
 
@@ -287,6 +290,7 @@ fn streaming_voice_engine() -> (OwnerLabEngine, Arc<StreamingStats>, Arc<AtomicB
     };
     let stt = StreamingStt {
         stats: Arc::clone(&stats),
+        emit_final: true,
     };
     let llm = StreamingVoiceLlm {
         stats: Arc::clone(&stats),
@@ -351,6 +355,37 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
     assert_eq!(stats.stt_stream.load(Ordering::SeqCst), 1);
     assert_eq!(stats.stt_batch.load(Ordering::SeqCst), 0);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn streaming_voice_without_final_stt_transcript_is_invalid_input_not_internal_error() {
+    let stats = Arc::new(StreamingStats::default());
+    let avatar = StreamingAvatar {
+        stats: Arc::clone(&stats),
+    };
+    let stt = StreamingStt {
+        stats: Arc::clone(&stats),
+        emit_final: false,
+    };
+    let release_tail = Arc::new(AtomicBool::new(true));
+    let llm = StreamingVoiceLlm {
+        stats: Arc::clone(&stats),
+        release_tail,
+    };
+    let mut engine = OwnerLabEngine::new(Box::new(avatar), true)
+        .unwrap()
+        .with_voice(Box::new(stt), Box::new(llm));
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+
+    assert_eq!(
+        engine.voice_turn_streaming(sample_pcm(), |_| {}, |_| Ok(())),
+        Err(LabError::InvalidInput)
+    );
+    assert_eq!(stats.stt_stream.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.llm.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
 }
 
 #[test]
