@@ -96,18 +96,38 @@ const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
       }
       async getRTCStatsReport(): Promise<RTCStatsReport> {
         const timestamp = this.kind === "audio" ? 1_000 : 1_035;
-        const report = new Map<string, unknown>([
+        const entries: Array<[string, unknown]> = [
+          [
+            `${this.kind}-codec`,
+            { mimeType: this.kind === "audio" ? "audio/opus" : "video/VP8" },
+          ],
           [
             `${this.kind}-inbound`,
             {
               type: "inbound-rtp",
               kind: this.kind,
+              codecId: `${this.kind}-codec`,
               packetsReceived: 12,
               estimatedPlayoutTimestamp: timestamp,
             },
           ],
-        ]);
-        return report as unknown as RTCStatsReport;
+        ];
+        if (this.kind === "video") {
+          entries.push(
+            ["video-rtx-codec", { mimeType: "video/rtx" }],
+            [
+              "video-rtx-inbound",
+              {
+                type: "inbound-rtp",
+                kind: "video",
+                codecId: "video-rtx-codec",
+                packetsReceived: 100,
+                estimatedPlayoutTimestamp: 9_999,
+              },
+            ],
+          );
+        }
+        return new Map<string, unknown>(entries) as unknown as RTCStatsReport;
       }
     }
 
