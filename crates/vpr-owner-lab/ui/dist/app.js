@@ -305,9 +305,11 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
     });
     await refreshSessionEvidence();
 };
-const collectPlayoutTimestamps = (stats, expectedKind) => {
-    const timestamps = [];
-    stats?.forEach((raw) => {
+const primaryPlayoutTimestamp = (stats, expectedKind) => {
+    if (!stats)
+        return null;
+    let best = null;
+    stats.forEach((raw) => {
         const stat = raw;
         if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp))
             return;
@@ -315,20 +317,35 @@ const collectPlayoutTimestamps = (stats, expectedKind) => {
         if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0)
             return;
         const kind = stat.kind ?? stat.mediaType;
-        if (expectedKind && kind !== undefined && kind !== expectedKind)
+        if (kind !== undefined && kind !== expectedKind)
             return;
-        timestamps.push(stat.estimatedPlayoutTimestamp);
+        // Receiver reports can contain RTX/FEC or multiple inbound RTP records for one remote track.
+        // Those extra records must not make a valid browser playout timestamp ambiguous. Exclude
+        // retransmission codecs when the report exposes codec metadata, then select the active media
+        // SSRC deterministically by packet count. The evidence source remains the browser-provided
+        // estimatedPlayoutTimestamp; no timing fallback or synthetic estimate is introduced.
+        if (stat.codecId) {
+            const codec = stats.get(stat.codecId);
+            if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
+                return;
+        }
+        const timestamp = stat.estimatedPlayoutTimestamp;
+        if (best === null
+            || packetsReceived > best.packetsReceived
+            || (packetsReceived === best.packetsReceived && timestamp > best.timestamp)) {
+            best = { timestamp, packetsReceived };
+        }
     });
-    return timestamps;
+    return best?.timestamp ?? null;
 };
 const readAvSyncOffsetMillis = async () => {
     const currentPeer = peer;
-    let audio = [];
-    let videoOffsets = [];
+    let audioTimestamp;
+    let videoTimestamp;
     if (currentPeer) {
         const stats = await currentPeer.getStats();
-        audio = collectPlayoutTimestamps(stats, "audio");
-        videoOffsets = collectPlayoutTimestamps(stats, "video");
+        audioTimestamp = primaryPlayoutTimestamp(stats, "audio");
+        videoTimestamp = primaryPlayoutTimestamp(stats, "video");
     }
     else {
         const audioStats = liveKitAudioTrack?.getRTCStatsReport;
@@ -339,14 +356,10 @@ const readAvSyncOffsetMillis = async () => {
             audioStats.call(liveKitAudioTrack),
             videoStats.call(liveKitVideoTrack),
         ]);
-        audio = collectPlayoutTimestamps(audioReport, "audio");
-        videoOffsets = collectPlayoutTimestamps(videoReport, "video");
+        audioTimestamp = primaryPlayoutTimestamp(audioReport, "audio");
+        videoTimestamp = primaryPlayoutTimestamp(videoReport, "video");
     }
-    if (audio.length !== 1 || videoOffsets.length !== 1)
-        return null;
-    const audioTimestamp = audio[0];
-    const videoTimestamp = videoOffsets[0];
-    if (audioTimestamp === undefined || videoTimestamp === undefined)
+    if (audioTimestamp === null || videoTimestamp === null)
         return null;
     return Math.round(Math.abs(audioTimestamp - videoTimestamp));
 };
