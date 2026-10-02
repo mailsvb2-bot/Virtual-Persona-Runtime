@@ -471,7 +471,7 @@ const primaryPlayoutTimestamp = (
   expectedKind: "audio" | "video",
 ): number | null => {
   if (!stats) return null;
-  let best: { timestamp: number; packetsReceived: number } | null = null;
+  const candidates: Array<{ timestamp: number; packetsReceived: number }> = [];
   stats.forEach((raw) => {
     const stat = raw as unknown as InboundRtpSyncStat & { codecId?: string };
     if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp)) return;
@@ -490,16 +490,16 @@ const primaryPlayoutTimestamp = (
       if (codec?.mimeType?.toLowerCase().endsWith("/rtx")) return;
     }
 
-    const timestamp = stat.estimatedPlayoutTimestamp as number;
-    if (
-      best === null
-      || packetsReceived > best.packetsReceived
-      || (packetsReceived === best.packetsReceived && timestamp > best.timestamp)
-    ) {
-      best = { timestamp, packetsReceived };
-    }
+    candidates.push({
+      timestamp: stat.estimatedPlayoutTimestamp as number,
+      packetsReceived,
+    });
   });
-  return best?.timestamp ?? null;
+  candidates.sort(
+    (left, right) =>
+      right.packetsReceived - left.packetsReceived || right.timestamp - left.timestamp,
+  );
+  return candidates[0]?.timestamp ?? null;
 };
 
 const readAvSyncOffsetMillis = async (): Promise<number | null> => {
