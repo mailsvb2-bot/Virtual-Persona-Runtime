@@ -531,3 +531,63 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
         | LabError::ConsentRequired
         | LabError::Runtime(
             Rt0ReasonCode::AuthRevoked
+            | Rt0ReasonCode::AuthExpired
+            | Rt0ReasonCode::AuthScopeDenied,
+        ) => 403,
+        LabError::InvalidInput => 400,
+        LabError::InvalidState | LabError::Runtime(_) => 409,
+        LabError::Provider(Rt0ReasonCode::BudgetExhausted) => 402,
+        LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
+        LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
+        LabError::Provider(_) => 502,
+        LabError::PersistenceFailed | LabError::Internal => 500,
+    };
+    error_response(status, error.code())
+}
+
+fn json_response(status: u16, value: &impl Serialize) -> HttpResponse {
+    match serde_json::to_vec(value) {
+        Ok(body) => response(status, body, "application/json; charset=utf-8"),
+        Err(_) => error_response(500, "INTERNAL_ERROR"),
+    }
+}
+
+fn error_response(status: u16, code: &str) -> HttpResponse {
+    let body = serde_json::to_vec(&ErrorResponse { ok: false, code })
+        .unwrap_or_else(|_| b"{\"ok\":false,\"code\":\"INTERNAL_ERROR\"}".to_vec());
+    response(status, body, "application/json; charset=utf-8")
+}
+
+fn static_response(body: &str, content_type: &str) -> HttpResponse {
+    response(200, body.as_bytes().to_vec(), content_type)
+}
+
+fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
+    let mut response = Response::from_data(body).with_status_code(StatusCode(status));
+    for (name, value) in [
+        ("Content-Type", content_type),
+        ("Cache-Control", "no-store"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Cross-Origin-Opener-Policy", "same-origin"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("X-Frame-Options", "DENY"),
+        ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
+    ] {
+        if let Ok(header) = Header::from_bytes(name, value) {
+            response.add_header(header);
+        }
+    }
+    response
+}
+
+fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| "secure random source unavailable")?;
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        token.push(char::from(HEX[usize::from(byte >> 4)]));
+        token.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(token)
+}
