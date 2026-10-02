@@ -104,6 +104,20 @@ jobs:
           if ($rustVersion -notmatch '^rustc 1\.88\.0 ') {
             throw "Unexpected Rust toolchain: $rustVersion"
           }
+      - name: Parse Windows RT0 launcher
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts\windows-owner-lab-restart.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows clippy parity gate
