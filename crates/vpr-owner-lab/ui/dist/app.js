@@ -319,23 +319,18 @@ const primaryPlayoutTimestamp = (stats, expectedKind) => {
         const kind = stat.kind ?? stat.mediaType;
         if (kind !== undefined && kind !== expectedKind)
             return;
-        // Receiver reports can contain RTX/FEC or multiple inbound RTP records for one remote track.
-        // Those extra records must not make a valid browser playout timestamp ambiguous. Exclude
-        // retransmission codecs when the report exposes codec metadata, then select the active media
-        // SSRC deterministically by packet count. The evidence source remains the browser-provided
-        // estimatedPlayoutTimestamp; no timing fallback or synthetic estimate is introduced.
+        // A receiver report may contain an RTX retransmission SSRC alongside the actual video media
+        // SSRC. RTX is not a second avatar track, so it may be excluded using the report's codec
+        // metadata. After that exclusion the Canon still requires one unambiguous active media stream:
+        // multiple remaining audio/video candidates are deliberately not guessed or ranked.
         if (stat.codecId) {
             const codec = stats.get(stat.codecId);
             if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
                 return;
         }
-        candidates.push({
-            timestamp: stat.estimatedPlayoutTimestamp,
-            packetsReceived,
-        });
+        candidates.push(stat.estimatedPlayoutTimestamp);
     });
-    candidates.sort((left, right) => right.packetsReceived - left.packetsReceived || right.timestamp - left.timestamp);
-    return candidates[0]?.timestamp ?? null;
+    return candidates.length === 1 ? candidates[0] ?? null : null;
 };
 const readAvSyncOffsetMillis = async () => {
     const currentPeer = peer;
