@@ -122,10 +122,14 @@ function Clear-ProviderEnvironmentOverrides {
 }
 function Resolve-Rt0EvidenceBrowser {
     $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
-    $candidates = @(
-        (Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'),
-        (Join-Path $programFilesX86 'Mozilla Firefox\firefox.exe')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'
+    }
+    if ($programFilesX86) {
+        $candidates += Join-Path $programFilesX86 'Mozilla Firefox\firefox.exe'
+    }
+    $candidates = @($candidates | Where-Object { Test-Path -LiteralPath $_ })
 
     $firefox = $candidates | Select-Object -First 1
     if (-not $firefox) {
