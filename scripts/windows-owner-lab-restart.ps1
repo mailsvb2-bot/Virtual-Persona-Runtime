@@ -148,6 +148,11 @@ The Owner Lab backend was not opened in a non-evidence browser.
     return $firefox
 }
 
+$evidenceBrowser = $null
+if ($Rt0Evidence -and -not $NoBrowser) {
+    $evidenceBrowser = Resolve-Rt0EvidenceBrowser
+}
+
 Assert-SafeToRestart
 Stop-PortListener
 
@@ -198,7 +203,6 @@ try {
     Write-Host "Owner Lab ready: pid=$listenerPid port=$Port egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
     if (-not $NoBrowser) {
         if ($Rt0Evidence) {
-            $evidenceBrowser = Resolve-Rt0EvidenceBrowser
             Start-Process -FilePath $evidenceBrowser -ArgumentList '-new-window', $baseUrl | Out-Null
         } else {
             Start-Process $baseUrl
