@@ -308,7 +308,7 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
 const primaryPlayoutTimestamp = (stats, expectedKind) => {
     if (!stats)
         return null;
-    let best = null;
+    const candidates = [];
     stats.forEach((raw) => {
         const stat = raw;
         if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp))
@@ -329,14 +329,13 @@ const primaryPlayoutTimestamp = (stats, expectedKind) => {
             if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
                 return;
         }
-        const timestamp = stat.estimatedPlayoutTimestamp;
-        if (best === null
-            || packetsReceived > best.packetsReceived
-            || (packetsReceived === best.packetsReceived && timestamp > best.timestamp)) {
-            best = { timestamp, packetsReceived };
-        }
+        candidates.push({
+            timestamp: stat.estimatedPlayoutTimestamp,
+            packetsReceived,
+        });
     });
-    return best?.timestamp ?? null;
+    candidates.sort((left, right) => right.packetsReceived - left.packetsReceived || right.timestamp - left.timestamp);
+    return candidates[0]?.timestamp ?? null;
 };
 const readAvSyncOffsetMillis = async () => {
     const currentPeer = peer;
