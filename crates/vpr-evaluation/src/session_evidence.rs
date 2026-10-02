@@ -18,6 +18,8 @@ const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 #[serde(rename_all = "snake_case")]
 pub enum LabMediaEvidenceKind {
     VideoReady,
+    BackendCompleteReceived,
+    ClientDeliverySent,
     AudioStarted,
     InterruptionStopped,
     ReconnectRestored,
@@ -513,7 +515,10 @@ fn validate_and_collect_media(
         }
         let requires_request = matches!(
             event.kind,
-            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
+            LabMediaEvidenceKind::BackendCompleteReceived
+                | LabMediaEvidenceKind::ClientDeliverySent
+                | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::InterruptionStopped
         );
         if requires_request != event.request_sequence.is_some() {
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
@@ -537,6 +542,8 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
+            LabMediaEvidenceKind::BackendCompleteReceived
+            | LabMediaEvidenceKind::ClientDeliverySent => {}
         }
     }
     Ok(())
