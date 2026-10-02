@@ -305,9 +305,11 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
     });
     await refreshSessionEvidence();
 };
-const collectPlayoutTimestamps = (stats, expectedKind) => {
-    const timestamps = [];
-    stats?.forEach((raw) => {
+const primaryPlayoutTimestamp = (stats, expectedKind) => {
+    if (!stats)
+        return null;
+    const candidates = [];
+    stats.forEach((raw) => {
         const stat = raw;
         if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp))
             return;
@@ -315,20 +317,25 @@ const collectPlayoutTimestamps = (stats, expectedKind) => {
         if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0)
             return;
         const kind = stat.kind ?? stat.mediaType;
-        if (expectedKind && kind !== undefined && kind !== expectedKind)
+        if (kind !== undefined && kind !== expectedKind)
             return;
-        timestamps.push(stat.estimatedPlayoutTimestamp);
+        if (stat.codecId) {
+            const codec = stats.get(stat.codecId);
+            if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
+                return;
+        }
+        candidates.push(stat.estimatedPlayoutTimestamp);
     });
-    return timestamps;
+    return candidates.length === 1 ? candidates[0] ?? null : null;
 };
 const readAvSyncOffsetMillis = async () => {
     const currentPeer = peer;
-    let audio = [];
-    let videoOffsets = [];
+    let audioTimestamp;
+    let videoTimestamp;
     if (currentPeer) {
         const stats = await currentPeer.getStats();
-        audio = collectPlayoutTimestamps(stats, "audio");
-        videoOffsets = collectPlayoutTimestamps(stats, "video");
+        audioTimestamp = primaryPlayoutTimestamp(stats, "audio");
+        videoTimestamp = primaryPlayoutTimestamp(stats, "video");
     }
     else {
         const audioStats = liveKitAudioTrack?.getRTCStatsReport;
@@ -339,14 +346,10 @@ const readAvSyncOffsetMillis = async () => {
             audioStats.call(liveKitAudioTrack),
             videoStats.call(liveKitVideoTrack),
         ]);
-        audio = collectPlayoutTimestamps(audioReport, "audio");
-        videoOffsets = collectPlayoutTimestamps(videoReport, "video");
+        audioTimestamp = primaryPlayoutTimestamp(audioReport, "audio");
+        videoTimestamp = primaryPlayoutTimestamp(videoReport, "video");
     }
-    if (audio.length !== 1 || videoOffsets.length !== 1)
-        return null;
-    const audioTimestamp = audio[0];
-    const videoTimestamp = videoOffsets[0];
-    if (audioTimestamp === undefined || videoTimestamp === undefined)
+    if (audioTimestamp === null || videoTimestamp === null)
         return null;
     return Math.round(Math.abs(audioTimestamp - videoTimestamp));
 };
@@ -827,7 +830,7 @@ const connectAvatar = async () => {
         return;
     }
     connectButton.disabled = true;
-    connectEvidenceStartedAt = performance.now();
+    connectEvidenceStartedAt = 0;
     resetTelemetry();
     videoEvidencePosted = false;
     reconnectStartedAt = null;
@@ -840,6 +843,7 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         backendSessionStarted = true;
+        connectEvidenceStartedAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;

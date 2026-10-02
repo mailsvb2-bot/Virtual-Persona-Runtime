@@ -466,31 +466,42 @@ const postMediaEvidence = async (
   await refreshSessionEvidence();
 };
 
-const collectPlayoutTimestamps = (
+const primaryPlayoutTimestamp = (
   stats: RTCStatsReport | undefined,
-  expectedKind?: "audio" | "video",
-): number[] => {
-  const timestamps: number[] = [];
-  stats?.forEach((raw) => {
-    const stat = raw as unknown as InboundRtpSyncStat;
+  expectedKind: "audio" | "video",
+): number | null => {
+  if (!stats) return null;
+  const candidates: number[] = [];
+  stats.forEach((raw) => {
+    const stat = raw as unknown as InboundRtpSyncStat & { codecId?: string };
     if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp)) return;
     const packetsReceived = stat.packetsReceived;
     if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0) return;
     const kind = stat.kind ?? stat.mediaType;
-    if (expectedKind && kind !== undefined && kind !== expectedKind) return;
-    timestamps.push(stat.estimatedPlayoutTimestamp as number);
+    if (kind !== undefined && kind !== expectedKind) return;
+
+    // A receiver report may contain an RTX retransmission SSRC alongside the actual video media
+    // SSRC. RTX is not a second avatar track, so it may be excluded using the report's codec
+    // metadata. After that exclusion the Canon still requires one unambiguous active media stream:
+    // multiple remaining audio/video candidates are deliberately not guessed or ranked.
+    if (stat.codecId) {
+      const codec = stats.get(stat.codecId) as { mimeType?: string } | undefined;
+      if (codec?.mimeType?.toLowerCase().endsWith("/rtx")) return;
+    }
+
+    candidates.push(stat.estimatedPlayoutTimestamp as number);
   });
-  return timestamps;
+  return candidates.length === 1 ? candidates[0] ?? null : null;
 };
 
 const readAvSyncOffsetMillis = async (): Promise<number | null> => {
   const currentPeer = peer;
-  let audio: number[] = [];
-  let videoOffsets: number[] = [];
+  let audioTimestamp: number | null;
+  let videoTimestamp: number | null;
   if (currentPeer) {
     const stats = await currentPeer.getStats();
-    audio = collectPlayoutTimestamps(stats, "audio");
-    videoOffsets = collectPlayoutTimestamps(stats, "video");
+    audioTimestamp = primaryPlayoutTimestamp(stats, "audio");
+    videoTimestamp = primaryPlayoutTimestamp(stats, "video");
   } else {
     const audioStats = liveKitAudioTrack?.getRTCStatsReport;
     const videoStats = liveKitVideoTrack?.getRTCStatsReport;
@@ -499,13 +510,10 @@ const readAvSyncOffsetMillis = async (): Promise<number | null> => {
       audioStats.call(liveKitAudioTrack),
       videoStats.call(liveKitVideoTrack),
     ]);
-    audio = collectPlayoutTimestamps(audioReport, "audio");
-    videoOffsets = collectPlayoutTimestamps(videoReport, "video");
+    audioTimestamp = primaryPlayoutTimestamp(audioReport, "audio");
+    videoTimestamp = primaryPlayoutTimestamp(videoReport, "video");
   }
-  if (audio.length !== 1 || videoOffsets.length !== 1) return null;
-  const audioTimestamp = audio[0];
-  const videoTimestamp = videoOffsets[0];
-  if (audioTimestamp === undefined || videoTimestamp === undefined) return null;
+  if (audioTimestamp === null || videoTimestamp === null) return null;
   return Math.round(Math.abs(audioTimestamp - videoTimestamp));
 };
 
@@ -1020,7 +1028,7 @@ const connectAvatar = async (): Promise<void> => {
     return;
   }
   connectButton.disabled = true;
-  connectEvidenceStartedAt = performance.now();
+  connectEvidenceStartedAt = 0;
   resetTelemetry();
   videoEvidencePosted = false;
   reconnectStartedAt = null;
@@ -1033,6 +1041,10 @@ const connectAvatar = async (): Promise<void> => {
     const audience = audienceSelect.value as SessionAudience;
     const start = await api<StartResponse>("/api/avatar/start", { consent: true, audience });
     backendSessionStarted = true;
+    // QualityContract measures first useful video for an already prepared avatar after the
+    // provider media path is available. Exclude provider session creation/preparation itself:
+    // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
+    connectEvidenceStartedAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
