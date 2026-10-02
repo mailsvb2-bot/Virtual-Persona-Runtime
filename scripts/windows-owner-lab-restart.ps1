@@ -1,6 +1,7 @@
 param(
     [int]$Port = 8787,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [switch]$Rt0Evidence
 )
 
 $ErrorActionPreference = 'Stop'
@@ -119,6 +120,42 @@ function Clear-ProviderEnvironmentOverrides {
     }
     Write-Host "Cleared inherited provider env overrides; canonical Windows credential profile is authoritative."
 }
+function Resolve-Rt0EvidenceBrowser {
+    $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += Join-Path $env:ProgramFiles 'Mozilla Firefox\firefox.exe'
+    }
+    if ($programFilesX86) {
+        $candidates += Join-Path $programFilesX86 'Mozilla Firefox\firefox.exe'
+    }
+    $candidates = @($candidates | Where-Object { Test-Path -LiteralPath $_ })
+
+    $firefox = $candidates | Select-Object -First 1
+    if (-not $firefox) {
+        throw @"
+RT0 exact-candidate A/V-sync evidence requires a browser that exposes
+RTCInboundRtpStreamStats.estimatedPlayoutTimestamp. Install Firefox 142 or newer, then rerun:
+  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
+The Owner Lab backend was not opened in a non-evidence browser.
+"@
+    }
+
+    $version = (Get-Item -LiteralPath $firefox).VersionInfo.ProductVersion
+    $majorText = ($version -split '\.')[0]
+    $major = 0
+    if (-not [int]::TryParse($majorText, [ref]$major) -or $major -lt 142) {
+        throw "RT0 exact-candidate A/V-sync evidence requires Firefox 142 or newer; found Firefox $version at $firefox"
+    }
+
+    Write-Host "RT0 evidence browser: Firefox $version ($firefox)"
+    return $firefox
+}
+
+$evidenceBrowser = $null
+if ($Rt0Evidence -and -not $NoBrowser) {
+    $evidenceBrowser = Resolve-Rt0EvidenceBrowser
+}
 
 Assert-SafeToRestart
 Stop-PortListener
@@ -169,7 +206,11 @@ try {
     $status = Get-LabStatus
     Write-Host "Owner Lab ready: pid=$listenerPid port=$Port egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
     if (-not $NoBrowser) {
-        Start-Process $baseUrl
+        if ($Rt0Evidence) {
+            Start-Process -FilePath $evidenceBrowser -ArgumentList '-new-window', $baseUrl | Out-Null
+        } else {
+            Start-Process $baseUrl
+        }
     }
 } catch {
     throw
