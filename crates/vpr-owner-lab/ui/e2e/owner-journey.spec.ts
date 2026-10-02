@@ -34,6 +34,8 @@ type FixtureState = {
   textMessages: string[];
   apiPaths: string[];
   staleStatusOnceAfterStart: boolean;
+  avatarStartDelayMillis: number;
+  mediaEvidence: Array<{ kind: string; elapsed_millis: number }>;
   voiceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
   appearanceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
 };
@@ -379,11 +381,18 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
     }
     if (path === "/api/evidence/media") {
       const kind = String(body.kind ?? "");
+      const elapsedMillis = Number(body.elapsed_millis ?? Number.NaN);
+      if (Number.isFinite(elapsedMillis)) {
+        state.mediaEvidence.push({ kind, elapsed_millis: elapsedMillis });
+      }
       if (kind === "audio_started") state.voiceReady = true;
       if (kind === "video_ready") state.videoReady = true;
       return json(route, { ok: true });
     }
     if (path === "/api/avatar/start") {
+      if (state.avatarStartDelayMillis > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, state.avatarStartDelayMillis));
+      }
       const audience = String(body.audience ?? "owner");
       state.startAudiences.push(audience);
       state.sessionAudience = audience as "owner" | "visitor";
@@ -468,6 +477,8 @@ const initialState = (): FixtureState => ({
   textMessages: [],
   apiPaths: [],
   staleStatusOnceAfterStart: false,
+  avatarStartDelayMillis: 0,
+  mediaEvidence: [],
   voiceReference: null,
   appearanceReference: null,
 });
@@ -853,6 +864,7 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   state.captureState = "reviewed";
   state.ownerReviewed = true;
   state.transportKind = "live_kit";
+  state.avatarStartDelayMillis = 750;
   state.claims = [{
     claim_id: "preference-tone",
     statement: "Предпочитаю спокойный тон",
@@ -874,6 +886,11 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   await expect(page.locator("#readiness-text")).toHaveText("Готов");
   await expect(page.locator("#readiness-video")).toHaveText("Готов");
   await expect(page.locator("#readiness-voice")).toHaveText("Подготовка…");
+  const videoReady = state.mediaEvidence.find((event) => event.kind === "video_ready");
+  expect(videoReady).toBeDefined();
+  // The 750 ms provider-session preparation delay above must not contaminate the
+  // prepared-avatar first-useful-video latency measured after the media path is returned.
+  expect(videoReady?.elapsed_millis ?? Number.POSITIVE_INFINITY).toBeLessThan(500);
 
   const layout = await page.evaluate(() => {
     const stage = document.querySelector<HTMLElement>(".stage");
