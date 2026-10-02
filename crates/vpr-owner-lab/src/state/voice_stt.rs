@@ -1,10 +1,13 @@
 use vpr_integration::{
-    AudioInput, ProviderError, ProviderErrorKind, SttPort, SttRequest, SttStreamEvent,
-    SttStreamRequest, Transcript, UsageEvidence,
+    AudioInput, ProviderErrorKind, SttPort, SttRequest, SttStreamEvent, SttStreamRequest,
+    Transcript, UsageEvidence,
 };
 use vpr_runtime::{ActiveTurn, AuthorizedSttStream, ProviderExecutionError};
 
-use super::{LabError, voice::terminalize_provider_error};
+use super::{
+    LabError,
+    voice::{terminalize_failed_turn, terminalize_provider_error},
+};
 
 const STT_STREAM_CHUNK_BYTES: usize = 640;
 
@@ -83,15 +86,13 @@ impl VoiceSttInput {
                     }
                 }
                 let usage = stream.usage();
-                let transcript = final_transcript.ok_or_else(|| {
-                    terminalize_provider_error(
-                        turn,
-                        ProviderExecutionError::Provider(ProviderError {
-                            kind: ProviderErrorKind::InvalidResponse,
-                            retryable: false,
-                        }),
-                    )
-                })?;
+                // A clean STT stream can legitimately finish without a final transcript when the
+                // captured utterance is silence, too short, or otherwise not recognized. That is
+                // user/input-level evidence, not an internal VPR failure. Keep true provider
+                // protocol/transport failures typed above, but classify an empty final result as
+                // INVALID_INPUT so the operator can retry without misdiagnosing the runtime.
+                let transcript = final_transcript
+                    .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
                 Ok((transcript, usage))
             }
             VoiceSttMode::Buffered(pcm) => {
