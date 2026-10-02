@@ -56,6 +56,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
+    rt0_evidence_mode: bool,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
     reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
@@ -75,6 +76,7 @@ struct AppState {
 struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
+    rt0_evidence_mode: bool,
 }
 
 #[derive(Serialize)]
@@ -119,6 +121,15 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
     let egress_enabled = launch::resolve_egress_enabled(&launch_options, egress_env.as_deref());
+    let rt0_evidence_mode = match env::var("VPR_OWNER_LAB_RT0_EVIDENCE") {
+        Ok(value) if value.eq_ignore_ascii_case("true") => true,
+        Ok(value) if value.eq_ignore_ascii_case("false") => false,
+        Ok(_) => return Err("VPR_OWNER_LAB_RT0_EVIDENCE must be true or false".into()),
+        Err(env::VarError::NotPresent) => false,
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err("VPR_OWNER_LAB_RT0_EVIDENCE must be valid text".into());
+        }
+    };
     let port = env::var("VPR_OWNER_LAB_PORT")
         .ok()
         .map(|value| value.parse::<u16>())
@@ -140,6 +151,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let voice_playback = engine.voice_playback_registry();
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
+        rt0_evidence_mode,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
@@ -434,6 +446,7 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
             &BootstrapResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
+                rt0_evidence_mode: state.rt0_evidence_mode,
             },
         )
     })
@@ -518,63 +531,3 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
         | LabError::ConsentRequired
         | LabError::Runtime(
             Rt0ReasonCode::AuthRevoked
-            | Rt0ReasonCode::AuthExpired
-            | Rt0ReasonCode::AuthScopeDenied,
-        ) => 403,
-        LabError::InvalidInput => 400,
-        LabError::InvalidState | LabError::Runtime(_) => 409,
-        LabError::Provider(Rt0ReasonCode::BudgetExhausted) => 402,
-        LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
-        LabError::Provider(Rt0ReasonCode::ProviderTimeout) => 504,
-        LabError::Provider(_) => 502,
-        LabError::PersistenceFailed | LabError::Internal => 500,
-    };
-    error_response(status, error.code())
-}
-
-fn json_response(status: u16, value: &impl Serialize) -> HttpResponse {
-    match serde_json::to_vec(value) {
-        Ok(body) => response(status, body, "application/json; charset=utf-8"),
-        Err(_) => error_response(500, "INTERNAL_ERROR"),
-    }
-}
-
-fn error_response(status: u16, code: &str) -> HttpResponse {
-    let body = serde_json::to_vec(&ErrorResponse { ok: false, code })
-        .unwrap_or_else(|_| b"{\"ok\":false,\"code\":\"INTERNAL_ERROR\"}".to_vec());
-    response(status, body, "application/json; charset=utf-8")
-}
-
-fn static_response(body: &str, content_type: &str) -> HttpResponse {
-    response(200, body.as_bytes().to_vec(), content_type)
-}
-
-fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
-    let mut response = Response::from_data(body).with_status_code(StatusCode(status));
-    for (name, value) in [
-        ("Content-Type", content_type),
-        ("Cache-Control", "no-store"),
-        ("X-Content-Type-Options", "nosniff"),
-        ("Referrer-Policy", "no-referrer"),
-        ("Cross-Origin-Opener-Policy", "same-origin"),
-        ("Cross-Origin-Resource-Policy", "same-origin"),
-        ("X-Frame-Options", "DENY"),
-        ("Content-Security-Policy", CONTENT_SECURITY_POLICY),
-    ] {
-        if let Ok(header) = Header::from_bytes(name, value) {
-            response.add_header(header);
-        }
-    }
-    response
-}
-
-fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes).map_err(|_| "secure random source unavailable")?;
-    let mut token = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        token.push(char::from(HEX[usize::from(byte >> 4)]));
-        token.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    Ok(token)
-}
