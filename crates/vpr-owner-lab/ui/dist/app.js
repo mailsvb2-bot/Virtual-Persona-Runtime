@@ -58,6 +58,9 @@ const metricStt = byId("metric-stt");
 const metricLlm = byId("metric-llm");
 const metricLlmFirst = byId("metric-llm-first");
 const metricServerTotal = byId("metric-server-total");
+const metricBackendComplete = byId("metric-backend-complete");
+const metricClientDelivery = byId("metric-client-delivery");
+const metricProviderAudioDelay = byId("metric-provider-audio-delay");
 const metricTextFirst = byId("metric-text-first");
 const metricFirstAudio = byId("metric-first-audio");
 const metricVideoReady = byId("metric-video-ready");
@@ -69,6 +72,8 @@ const readinessVoice = byId("readiness-voice");
 const readinessVideo = byId("readiness-video");
 let csrfToken = "";
 let egressEnabled = false;
+let rt0EvidenceMode = false;
+let rt0PlaybackPending = false;
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
@@ -149,6 +154,9 @@ const resetTelemetry = () => {
     metricLlm.textContent = "—";
     metricLlmFirst.textContent = "—";
     metricServerTotal.textContent = "—";
+    metricBackendComplete.textContent = "—";
+    metricClientDelivery.textContent = "—";
+    metricProviderAudioDelay.textContent = "—";
     metricTextFirst.textContent = "—";
     metricFirstAudio.textContent = "—";
     metricVideoReady.textContent = "—";
@@ -167,6 +175,18 @@ const renderTelemetry = (snapshot) => {
     const firstAudio = voice
         ? lastMediaEvent(snapshot.media_events, "audio_started", voice.request_sequence)
         : lastMediaEvent(snapshot.media_events, "audio_started");
+    const backendComplete = voice
+        ? lastMediaEvent(snapshot.media_events, "backend_complete_received", voice.request_sequence)
+        : undefined;
+    const clientDelivery = voice
+        ? lastMediaEvent(snapshot.media_events, "client_delivery_sent", voice.request_sequence)
+        : undefined;
+    metricBackendComplete.textContent = formatMillis(backendComplete?.elapsed_millis);
+    metricClientDelivery.textContent = formatMillis(clientDelivery?.elapsed_millis);
+    metricProviderAudioDelay.textContent =
+        firstAudio && clientDelivery
+            ? formatMillis(Math.max(0, firstAudio.elapsed_millis - clientDelivery.elapsed_millis))
+            : "—";
     metricFirstAudio.textContent = formatMillis(firstAudio?.elapsed_millis);
     metricVideoReady.textContent = formatMillis(lastMediaEvent(snapshot.media_events, "video_ready")?.elapsed_millis);
     const avSamples = voice
@@ -543,9 +563,12 @@ const updateControls = () => {
     const clientInterruptReady = transportReady
         && activeClientControl?.interrupt === true
         && playbackReady;
-    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
+    const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
+    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
     interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
-    voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
+    voiceButton.disabled = recording
+        ? false
+        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
         || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
@@ -577,6 +600,7 @@ const handleProviderClientEvent = (raw) => {
         else if (normalized?.kind === "playback_done") {
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
+            rt0PlaybackPending = false;
         }
         updateControls();
     })
@@ -659,6 +683,7 @@ const clearRealtimeMedia = () => {
 };
 const closePeerTransport = () => {
     voiceCommandScheduler.interrupt();
+    rt0PlaybackPending = false;
     stopMicrophoneCapture();
     stopRemoteEvidence();
     providerDataChannel?.close();
@@ -1160,14 +1185,26 @@ const finishMicrophoneTurn = async () => {
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
         finishAccepted = true;
         let deliveryFailure = null;
+        let clientDeliverySentElapsed = null;
+        let providerCommandDelivered = false;
+        const deliveryTasks = [];
         const scheduleSegmentDelivery = (segment) => {
             const command = segment.client_command;
             if (!command)
                 return;
-            void (async () => {
+            const task = (async () => {
                 const sent = await voiceCommandScheduler.dispatch(command);
                 if (!sent)
                     return;
+                providerCommandDelivered = true;
+                const voice = activeVoiceEvidence;
+                if (rt0EvidenceMode
+                    && voice?.requestSequence === requestSequence
+                    && clientDeliverySentElapsed === null) {
+                    clientDeliverySentElapsed = performance.now() - voice.startedAt;
+                    rt0PlaybackPending = true;
+                    updateControls();
+                }
                 await api("/api/avatar/client-delivery-sent", {
                     evidence_turn_sequence: segment.evidence_turn_sequence,
                     evidence_output_sequence: segment.evidence_output_sequence,
@@ -1175,13 +1212,34 @@ const finishMicrophoneTurn = async () => {
             })().catch((error) => {
                 deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
                 voiceCommandScheduler.interrupt();
+                if (!rt0EvidenceMode || !providerCommandDelivered) {
+                    rt0PlaybackPending = false;
+                }
+                updateControls();
                 void api("/api/avatar/interrupt", {}).catch(() => undefined);
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
                     setStatus(deliveryFailure.message, "error");
                 }
+                throw deliveryFailure;
             });
+            deliveryTasks.push(task);
+            if (!rt0EvidenceMode)
+                void task.catch(() => undefined);
         };
         const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+        const voiceAtBackendComplete = activeVoiceEvidence;
+        const backendCompleteElapsed = voiceAtBackendComplete?.requestSequence === requestSequence
+            ? performance.now() - voiceAtBackendComplete.startedAt
+            : null;
+        if (rt0EvidenceMode) {
+            if (backendCompleteElapsed !== null) {
+                await postMediaEvidence("backend_complete_received", backendCompleteElapsed, requestSequence);
+            }
+            await Promise.all(deliveryTasks);
+            if (clientDeliverySentElapsed !== null) {
+                await postMediaEvidence("client_delivery_sent", clientDeliverySentElapsed, requestSequence);
+            }
+        }
         if (deliveryFailure)
             throw deliveryFailure;
         const voice = activeVoiceEvidence;
@@ -1226,6 +1284,9 @@ const toggleVoice = async () => {
             await finishMicrophoneTurn();
         }
         else {
+            if (rt0EvidenceMode && rt0PlaybackPending) {
+                throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
+            }
             if (voiceCommandScheduler.hasActivePlayback) {
                 await interruptAvatar();
             }
@@ -1242,6 +1303,10 @@ const speak = async () => {
     const text = message.value.trim();
     if (!text)
         return;
+    if (rt0EvidenceMode && rt0PlaybackPending) {
+        setStatus("RT0 evidence: дождитесь окончания текущего playback или нажмите «Прервать».", "error");
+        return;
+    }
     const requestSequence = ++nextTextRequestSequence;
     textRequestInFlight = true;
     updateControls();
@@ -1292,6 +1357,7 @@ const interruptAvatar = async () => {
                 playback_id: playbackId,
             });
             await dispatchClientCommand(command);
+            rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
             updateControls();
             await refreshSessionEvidence();
@@ -1299,6 +1365,8 @@ const interruptAvatar = async () => {
         }
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
+            rt0PlaybackPending = false;
+            updateControls();
         }
         await refreshSessionEvidence();
     }
@@ -1377,6 +1445,7 @@ void api("/api/bootstrap")
     csrfToken = bootstrap.csrf_token;
     publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
+    rt0EvidenceMode = bootstrap.rt0_evidence_mode === true;
     await syncStatus();
     ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
     if (sessionState.backend.session_audience)

@@ -74,6 +74,7 @@ mod windows_restart_script_tests {
         let script = fs::read_to_string(script_path()).expect("restart script must be readable");
         assert!(script.contains("VPR_OWNER_LAB_ALLOW_EGRESS=true"));
         assert!(script.contains("VPR_OWNER_LAB_PORT=$Port"));
+        assert!(script.contains("VPR_OWNER_LAB_RT0_EVIDENCE=$rt0EvidenceValue"));
         assert!(script.contains("--allow-egress"));
         assert!(script.contains("Assert-ExpectedListener"));
         assert!(script.contains("Clear-ProviderEnvironmentOverrides"));
@@ -85,6 +86,8 @@ mod windows_restart_script_tests {
         assert!(script.contains("VPR_LOCAL_AVATAR_API_TOKEN"));
         assert!(script.contains("VPR_OWNER_LAB_STT_API_KEY"));
         assert!(script.contains("VPR_OWNER_LAB_LLM_API_KEY"));
+        assert!(script.contains("VPR_OWNER_LAB_RT0_EVIDENCE"));
+        assert!(script.contains("bootstrap.rt0_evidence_mode"));
         assert!(script.contains("vpr-provider-credentials.exe"));
         assert!(script.contains("probe-avatar"));
         assert!(script.contains("bootstrap.egress_enabled"));

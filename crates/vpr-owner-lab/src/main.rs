@@ -56,6 +56,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
+    rt0_evidence_mode: bool,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
     reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
@@ -75,6 +76,7 @@ struct AppState {
 struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
+    rt0_evidence_mode: bool,
 }
 
 #[derive(Serialize)]
@@ -119,6 +121,15 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
     let egress_enabled = launch::resolve_egress_enabled(&launch_options, egress_env.as_deref());
+    let rt0_evidence_mode = match env::var("VPR_OWNER_LAB_RT0_EVIDENCE") {
+        Ok(value) if value.eq_ignore_ascii_case("true") => true,
+        Ok(value) if value.eq_ignore_ascii_case("false") => false,
+        Ok(_) => return Err("VPR_OWNER_LAB_RT0_EVIDENCE must be true or false".into()),
+        Err(env::VarError::NotPresent) => false,
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err("VPR_OWNER_LAB_RT0_EVIDENCE must be valid text".into());
+        }
+    };
     let port = env::var("VPR_OWNER_LAB_PORT")
         .ok()
         .map(|value| value.parse::<u16>())
@@ -140,6 +151,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let voice_playback = engine.voice_playback_registry();
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
+        rt0_evidence_mode,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
@@ -434,6 +446,7 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
             &BootstrapResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
+                rt0_evidence_mode: state.rt0_evidence_mode,
             },
         )
     })

@@ -113,7 +113,8 @@ function Clear-ProviderEnvironmentOverrides {
         'VPR_OWNER_LAB_LLM_PROVIDER',
         'VPR_OWNER_LAB_LLM_ENDPOINT',
         'VPR_OWNER_LAB_LLM_API_KEY',
-        'VPR_OWNER_LAB_LLM_MODEL'
+        'VPR_OWNER_LAB_LLM_MODEL',
+        'VPR_OWNER_LAB_RT0_EVIDENCE'
     )
     foreach ($name in $names) {
         Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
@@ -189,7 +190,8 @@ try {
         throw 'Avatar provider preflight failed; Owner Lab was not started'
     }
 
-    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && `"$exe`" --allow-egress"
+    $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
+    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && set `"VPR_OWNER_LAB_RT0_EVIDENCE=$rt0EvidenceValue`" && `"$exe`" --allow-egress"
     Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
     Wait-LabUp
 
@@ -198,6 +200,9 @@ try {
     $status = Get-LabStatus
     if (-not $bootstrap.egress_enabled -or -not $status.egress_enabled) {
         throw 'New Owner Lab started, but backend egress is still disabled'
+    }
+    if ($Rt0Evidence -and -not $bootstrap.rt0_evidence_mode) {
+        throw 'RT0 evidence launcher requested strict mode, but backend did not acknowledge it'
     }
     if ($status.conversation_readiness -ne 'text_and_voice') {
         throw "Provider profile is incomplete: conversation_readiness=$($status.conversation_readiness)"

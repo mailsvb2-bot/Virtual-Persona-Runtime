@@ -454,7 +454,10 @@ impl LabSessionEvidenceRecorder {
         }
         let request_required = matches!(
             input.kind,
-            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
+            LabMediaEvidenceKind::BackendCompleteReceived
+                | LabMediaEvidenceKind::ClientDeliverySent
+                | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::InterruptionStopped
         );
         if request_required != input.request_sequence.is_some() {
             return Err(LabEvidenceError::InvalidInput);

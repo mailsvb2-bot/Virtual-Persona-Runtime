@@ -8,7 +8,7 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.6";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.7";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
@@ -18,6 +18,8 @@ const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 #[serde(rename_all = "snake_case")]
 pub enum LabMediaEvidenceKind {
     VideoReady,
+    BackendCompleteReceived,
+    ClientDeliverySent,
     AudioStarted,
     InterruptionStopped,
     ReconnectRestored,
@@ -513,7 +515,10 @@ fn validate_and_collect_media(
         }
         let requires_request = matches!(
             event.kind,
-            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
+            LabMediaEvidenceKind::BackendCompleteReceived
+                | LabMediaEvidenceKind::ClientDeliverySent
+                | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::InterruptionStopped
         );
         if requires_request != event.request_sequence.is_some() {
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
@@ -537,6 +542,8 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
+            LabMediaEvidenceKind::BackendCompleteReceived
+            | LabMediaEvidenceKind::ClientDeliverySent => {}
         }
     }
     Ok(())

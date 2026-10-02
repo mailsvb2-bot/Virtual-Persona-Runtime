@@ -367,6 +367,7 @@ fn bootstrap(port: u16, host: &str) -> String {
     assert!(!bootstrap.body.contains("integration-secret"));
     let bootstrap_json: Value = serde_json::from_str(&bootstrap.body).unwrap();
     assert_eq!(bootstrap_json["egress_enabled"], true);
+    assert_eq!(bootstrap_json["rt0_evidence_mode"], false);
     let csrf = bootstrap_json["csrf_token"].as_str().unwrap();
     assert_eq!(csrf.len(), 64);
     csrf.to_owned()

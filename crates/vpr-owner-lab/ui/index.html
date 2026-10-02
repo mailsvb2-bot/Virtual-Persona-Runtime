@@ -144,7 +144,7 @@
       <meter id="microphone-level" min="0" max="1" value="0"></meter>
       <p id="microphone-level-text" class="hint">Сигнал появится во время записи.</p>
       <label>Голосовой разговор</label>
-      <p class="hint">Push-to-talk: микрофон обрабатывается в браузере и отправляется как PCM только после остановки записи.</p>
+      <p class="hint">Push-to-talk: микрофон обрабатывается в браузере и отправляется как PCM только после остановки записи. В строгом RT0 evidence-режиме следующий turn блокируется до завершения текущего playback; для barge-in используйте «Прервать».</p>
       <div class="row">
         <button id="voice" class="primary" disabled>Начать говорить</button>
       </div>
@@ -158,6 +158,9 @@
         <div class="metric-card"><span>LLM total</span><strong id="metric-llm">—</strong></div>
         <div class="metric-card"><span>LLM первый ответ</span><strong id="metric-llm-first">—</strong></div>
         <div class="metric-card"><span>Backend total</span><strong id="metric-server-total">—</strong></div>
+        <div class="metric-card"><span>Backend complete в браузере</span><strong id="metric-backend-complete">—</strong></div>
+        <div class="metric-card"><span>did.speak отправлен</span><strong id="metric-client-delivery">—</strong></div>
+        <div class="metric-card"><span>D-ID → звук</span><strong id="metric-provider-audio-delay">—</strong></div>
         <div class="metric-card"><span>Первый текст</span><strong id="metric-text-first">—</strong></div>
         <div class="metric-card"><span>До начала аудио</span><strong id="metric-first-audio">—</strong></div>
         <div class="metric-card"><span>Первое видео</span><strong id="metric-video-ready">—</strong></div>

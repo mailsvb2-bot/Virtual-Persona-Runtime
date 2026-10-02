@@ -83,12 +83,20 @@
       () => element("readiness-voice", HTMLElement).textContent === "Готов",
       "voice-readiness-ready",
     );
+    await waitFor(
+      () => voice.disabled,
+      "rt0-evidence-blocks-next-turn-during-playback",
+    );
 
     const playbackDone = window.__vprExpressivePlaybackDone;
     if (typeof playbackDone !== "function") {
       throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
     }
     playbackDone();
+    await waitFor(
+      () => !voice.disabled,
+      "rt0-evidence-unblocks-next-turn-after-playback",
+    );
   };
 
   const run = async () => {
@@ -180,6 +188,9 @@
         llm: element("metric-llm", HTMLElement).textContent ?? "",
         llmFirst: element("metric-llm-first", HTMLElement).textContent ?? "",
         serverTotal: element("metric-server-total", HTMLElement).textContent ?? "",
+        backendComplete: element("metric-backend-complete", HTMLElement).textContent ?? "",
+        clientDelivery: element("metric-client-delivery", HTMLElement).textContent ?? "",
+        providerAudioDelay: element("metric-provider-audio-delay", HTMLElement).textContent ?? "",
         firstAudio: element("metric-first-audio", HTMLElement).textContent ?? "",
         videoReady: element("metric-video-ready", HTMLElement).textContent ?? "",
         avSync: element("metric-av-sync", HTMLElement).textContent ?? "",

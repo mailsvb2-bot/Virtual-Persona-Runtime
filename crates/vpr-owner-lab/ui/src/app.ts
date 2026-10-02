@@ -21,7 +21,7 @@ import {
   type SessionAudience,
 } from "./session-runtime-state.js";
 
-type Bootstrap = { csrf_token: string; egress_enabled: boolean };
+type Bootstrap = { csrf_token: string; egress_enabled: boolean; rt0_evidence_mode: boolean };
 type TextResult = { reply: string; locale: string; evidence_turn_sequence: number; first_meaningful_response_millis: number; total_millis: number };
 type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
@@ -52,7 +52,13 @@ type ClientEvent =
 type StartResponse = { evidence_session_sequence: number; transport: RealtimeTransport; capabilities: string[]; client_control: ClientControl | null };
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
-type MediaEvidenceKind = "video_ready" | "audio_started" | "interruption_stopped" | "reconnect_restored";
+type MediaEvidenceKind =
+  | "video_ready"
+  | "backend_complete_received"
+  | "client_delivery_sent"
+  | "audio_started"
+  | "interruption_stopped"
+  | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type InboundRtpSyncStat = { type?: string; kind?: string; mediaType?: string; estimatedPlayoutTimestamp?: number; packetsReceived?: number };
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
@@ -184,6 +190,9 @@ const metricStt = byId<HTMLElement>("metric-stt");
 const metricLlm = byId<HTMLElement>("metric-llm");
 const metricLlmFirst = byId<HTMLElement>("metric-llm-first");
 const metricServerTotal = byId<HTMLElement>("metric-server-total");
+const metricBackendComplete = byId<HTMLElement>("metric-backend-complete");
+const metricClientDelivery = byId<HTMLElement>("metric-client-delivery");
+const metricProviderAudioDelay = byId<HTMLElement>("metric-provider-audio-delay");
 const metricTextFirst = byId<HTMLElement>("metric-text-first");
 const metricFirstAudio = byId<HTMLElement>("metric-first-audio");
 const metricVideoReady = byId<HTMLElement>("metric-video-ready");
@@ -196,6 +205,8 @@ const readinessVideo = byId<HTMLElement>("readiness-video");
 
 let csrfToken = "";
 let egressEnabled = false;
+let rt0EvidenceMode = false;
+let rt0PlaybackPending = false;
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
@@ -294,6 +305,9 @@ const resetTelemetry = (): void => {
   metricLlm.textContent = "—";
   metricLlmFirst.textContent = "—";
   metricServerTotal.textContent = "—";
+  metricBackendComplete.textContent = "—";
+  metricClientDelivery.textContent = "—";
+  metricProviderAudioDelay.textContent = "—";
   metricTextFirst.textContent = "—";
   metricFirstAudio.textContent = "—";
   metricVideoReady.textContent = "—";
@@ -314,6 +328,18 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
   const firstAudio = voice
     ? lastMediaEvent(snapshot.media_events, "audio_started", voice.request_sequence)
     : lastMediaEvent(snapshot.media_events, "audio_started");
+  const backendComplete = voice
+    ? lastMediaEvent(snapshot.media_events, "backend_complete_received", voice.request_sequence)
+    : undefined;
+  const clientDelivery = voice
+    ? lastMediaEvent(snapshot.media_events, "client_delivery_sent", voice.request_sequence)
+    : undefined;
+  metricBackendComplete.textContent = formatMillis(backendComplete?.elapsed_millis);
+  metricClientDelivery.textContent = formatMillis(clientDelivery?.elapsed_millis);
+  metricProviderAudioDelay.textContent =
+    firstAudio && clientDelivery
+      ? formatMillis(Math.max(0, firstAudio.elapsed_millis - clientDelivery.elapsed_millis))
+      : "—";
   metricFirstAudio.textContent = formatMillis(firstAudio?.elapsed_millis);
   metricVideoReady.textContent = formatMillis(
     lastMediaEvent(snapshot.media_events, "video_ready")?.elapsed_millis,
@@ -718,9 +744,12 @@ const updateControls = (): void => {
   const clientInterruptReady = transportReady
     && activeClientControl?.interrupt === true
     && playbackReady;
-  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight;
+  const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
+  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
   interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
-  voiceButton.disabled = recording ? false : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight;
+  voiceButton.disabled = recording
+    ? false
+    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
@@ -751,6 +780,7 @@ const handleProviderClientEvent = (raw: string): void => {
       } else if (normalized?.kind === "playback_done") {
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
+        rt0PlaybackPending = false;
       }
       updateControls();
     })
@@ -848,6 +878,7 @@ const clearRealtimeMedia = (): void => {
 
 const closePeerTransport = (): void => {
   voiceCommandScheduler.interrupt();
+  rt0PlaybackPending = false;
   stopMicrophoneCapture();
   stopRemoteEvidence();
   providerDataChannel?.close();
@@ -1383,12 +1414,26 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     finishAccepted = true;
 
     let deliveryFailure: Error | null = null;
+    let clientDeliverySentElapsed: number | null = null;
+    let providerCommandDelivered = false;
+    const deliveryTasks: Promise<void>[] = [];
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       const command = segment.client_command;
       if (!command) return;
-      void (async () => {
+      const task = (async () => {
         const sent = await voiceCommandScheduler.dispatch(command);
         if (!sent) return;
+        providerCommandDelivered = true;
+        const voice = activeVoiceEvidence;
+        if (
+          rt0EvidenceMode
+          && voice?.requestSequence === requestSequence
+          && clientDeliverySentElapsed === null
+        ) {
+          clientDeliverySentElapsed = performance.now() - voice.startedAt;
+          rt0PlaybackPending = true;
+          updateControls();
+        }
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
           evidence_output_sequence: segment.evidence_output_sequence,
@@ -1396,14 +1441,43 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       })().catch((error: unknown) => {
         deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
         voiceCommandScheduler.interrupt();
+        if (!rt0EvidenceMode || !providerCommandDelivered) {
+          rt0PlaybackPending = false;
+        }
+        updateControls();
         void api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
         if (activeVoiceEvidence?.requestSequence === requestSequence) {
           setStatus(deliveryFailure.message, "error");
         }
+        throw deliveryFailure;
       });
+      deliveryTasks.push(task);
+      if (!rt0EvidenceMode) void task.catch(() => undefined);
     };
 
     const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+    const voiceAtBackendComplete = activeVoiceEvidence;
+    const backendCompleteElapsed =
+      voiceAtBackendComplete?.requestSequence === requestSequence
+        ? performance.now() - voiceAtBackendComplete.startedAt
+        : null;
+    if (rt0EvidenceMode) {
+      if (backendCompleteElapsed !== null) {
+        await postMediaEvidence(
+          "backend_complete_received",
+          backendCompleteElapsed,
+          requestSequence,
+        );
+      }
+      await Promise.all(deliveryTasks);
+      if (clientDeliverySentElapsed !== null) {
+        await postMediaEvidence(
+          "client_delivery_sent",
+          clientDeliverySentElapsed,
+          requestSequence,
+        );
+      }
+    }
     if (deliveryFailure) throw deliveryFailure;
 
     const voice = activeVoiceEvidence;
@@ -1447,6 +1521,9 @@ const toggleVoice = async (): Promise<void> => {
     if (recording) {
       await finishMicrophoneTurn();
     } else {
+      if (rt0EvidenceMode && rt0PlaybackPending) {
+        throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
+      }
       if (voiceCommandScheduler.hasActivePlayback) {
         await interruptAvatar();
       }
@@ -1462,6 +1539,10 @@ const toggleVoice = async (): Promise<void> => {
 const speak = async (): Promise<void> => {
   const text = message.value.trim();
   if (!text) return;
+  if (rt0EvidenceMode && rt0PlaybackPending) {
+    setStatus("RT0 evidence: дождитесь окончания текущего playback или нажмите «Прервать».", "error");
+    return;
+  }
   const requestSequence = ++nextTextRequestSequence;
   textRequestInFlight = true;
   updateControls();
@@ -1513,6 +1594,7 @@ const interruptAvatar = async (): Promise<void> => {
         playback_id: playbackId,
       });
       await dispatchClientCommand(command);
+      rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
       updateControls();
       await refreshSessionEvidence();
@@ -1520,6 +1602,8 @@ const interruptAvatar = async (): Promise<void> => {
     }
     if (!voiceRequestInFlight) {
       await api<{ ok: true }>("/api/avatar/interrupt", {});
+      rt0PlaybackPending = false;
+      updateControls();
     }
     await refreshSessionEvidence();
   } catch (error) {
@@ -1601,6 +1685,7 @@ void api<Bootstrap>("/api/bootstrap")
     csrfToken = bootstrap.csrf_token;
     publishBootstrap(csrfToken);
     egressEnabled = bootstrap.egress_enabled;
+    rt0EvidenceMode = bootstrap.rt0_evidence_mode === true;
     await syncStatus();
     ownerCaptureReviewed = sessionState.backend.owner_context_state === "reviewed";
     if (sessionState.backend.session_audience) audienceSelect.value = sessionState.backend.session_audience;
