@@ -47,6 +47,9 @@ type ExpressiveJourneyReport = {
     llm: string;
     llmFirst: string;
     serverTotal: string;
+    backendComplete: string;
+    clientDelivery: string;
+    providerAudioDelay: string;
     firstAudio: string;
     videoReady: string;
     avSync: string;
@@ -211,6 +214,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(evidence?.voice_attempts.some((attempt) =>
     attempt.status === "completed" && attempt.canonical_playback_confirmed
   )).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
@@ -218,6 +223,9 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(metrics?.llm).toMatch(/\d+ мс/);
   expect(metrics?.llmFirst).toMatch(/\d+ мс/);
   expect(metrics?.serverTotal).toMatch(/\d+ мс/);
+  expect(metrics?.backendComplete).toMatch(/\d+ мс/);
+  expect(metrics?.clientDelivery).toMatch(/\d+ мс/);
+  expect(metrics?.providerAudioDelay).toMatch(/\d+ мс/);
   expect(metrics?.firstAudio).toMatch(/\d+ мс/);
   expect(metrics?.videoReady).toMatch(/\d+ мс/);
   expect(metrics?.avSync).toBe("60 мс · 3 изм.");
