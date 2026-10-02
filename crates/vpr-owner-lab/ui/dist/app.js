@@ -183,9 +183,10 @@ const renderTelemetry = (snapshot) => {
         : undefined;
     metricBackendComplete.textContent = formatMillis(backendComplete?.elapsed_millis);
     metricClientDelivery.textContent = formatMillis(clientDelivery?.elapsed_millis);
-    metricProviderAudioDelay.textContent = firstAudio && clientDelivery
-        ? formatMillis(Math.max(0, firstAudio.elapsed_millis - clientDelivery.elapsed_millis))
-        : "—";
+    metricProviderAudioDelay.textContent =
+        firstAudio && clientDelivery
+            ? formatMillis(Math.max(0, firstAudio.elapsed_millis - clientDelivery.elapsed_millis))
+            : "—";
     metricFirstAudio.textContent = formatMillis(firstAudio?.elapsed_millis);
     metricVideoReady.textContent = formatMillis(lastMediaEvent(snapshot.media_events, "video_ready")?.elapsed_millis);
     const avSamples = voice
