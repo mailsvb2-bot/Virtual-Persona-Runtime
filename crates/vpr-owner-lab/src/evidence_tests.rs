@@ -352,6 +352,50 @@ fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
 }
 
 #[test]
+fn delivery_stage_media_is_request_scoped_and_duplicate_safe() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(19, ParticipantRole::Owner).unwrap();
+    recorder.begin_voice_request(1).unwrap();
+    recorder.complete_voice_request(1, &voice_result()).unwrap();
+
+    for (kind, elapsed_millis) in [
+        (LabMediaEvidenceKind::BackendCompleteReceived, 360),
+        (LabMediaEvidenceKind::ClientDeliverySent, 410),
+    ] {
+        let event = LabMediaEvidenceInput {
+            session_sequence: 19,
+            request_sequence: Some(1),
+            kind,
+            elapsed_millis,
+        };
+        recorder.record_media(&event).unwrap();
+        assert_eq!(
+            recorder.record_media(&event),
+            Err(LabEvidenceError::DuplicateEvidence)
+        );
+        assert_eq!(
+            recorder.record_media(&LabMediaEvidenceInput {
+                request_sequence: None,
+                ..event.clone()
+            }),
+            Err(LabEvidenceError::InvalidInput)
+        );
+    }
+
+    let snapshot = recorder.snapshot().unwrap();
+    assert!(snapshot.media_events.iter().any(|event| {
+        event.kind == LabMediaEvidenceKind::BackendCompleteReceived
+            && event.request_sequence == Some(1)
+            && event.elapsed_millis == 360
+    }));
+    assert!(snapshot.media_events.iter().any(|event| {
+        event.kind == LabMediaEvidenceKind::ClientDeliverySent
+            && event.request_sequence == Some(1)
+            && event.elapsed_millis == 410
+    }));
+}
+
+#[test]
 fn session_attempt_and_media_retention_limits_fail_closed_at_exact_boundary() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(20, ParticipantRole::Owner).unwrap();
