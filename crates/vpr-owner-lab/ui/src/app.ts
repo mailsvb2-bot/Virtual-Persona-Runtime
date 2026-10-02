@@ -1415,6 +1415,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
 
     let deliveryFailure: Error | null = null;
     let clientDeliverySentElapsed: number | null = null;
+    let providerCommandDelivered = false;
     const deliveryTasks: Promise<void>[] = [];
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       const command = segment.client_command;
@@ -1422,6 +1423,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       const task = (async () => {
         const sent = await voiceCommandScheduler.dispatch(command);
         if (!sent) return;
+        providerCommandDelivered = true;
         const voice = activeVoiceEvidence;
         if (
           rt0EvidenceMode
@@ -1439,7 +1441,9 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       })().catch((error: unknown) => {
         deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
         voiceCommandScheduler.interrupt();
-        rt0PlaybackPending = false;
+        if (!rt0EvidenceMode || !providerCommandDelivered) {
+          rt0PlaybackPending = false;
+        }
         updateControls();
         void api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
         if (activeVoiceEvidence?.requestSequence === requestSequence) {
@@ -1579,8 +1583,6 @@ const interruptAvatar = async (): Promise<void> => {
     && activeClientControl?.interrupt === true
     && playbackReady;
   voiceCommandScheduler.interrupt();
-  rt0PlaybackPending = false;
-  updateControls();
   try {
     if (voiceRequestInFlight) {
       // Cancel the canonical turn first. This stops the provider stream and releases the runtime
@@ -1592,6 +1594,7 @@ const interruptAvatar = async (): Promise<void> => {
         playback_id: playbackId,
       });
       await dispatchClientCommand(command);
+      rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
       updateControls();
       await refreshSessionEvidence();
@@ -1599,6 +1602,8 @@ const interruptAvatar = async (): Promise<void> => {
     }
     if (!voiceRequestInFlight) {
       await api<{ ok: true }>("/api/avatar/interrupt", {});
+      rt0PlaybackPending = false;
+      updateControls();
     }
     await refreshSessionEvidence();
   } catch (error) {
