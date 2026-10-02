@@ -1028,7 +1028,7 @@ const connectAvatar = async (): Promise<void> => {
     return;
   }
   connectButton.disabled = true;
-  connectEvidenceStartedAt = performance.now();
+  connectEvidenceStartedAt = 0;
   resetTelemetry();
   videoEvidencePosted = false;
   reconnectStartedAt = null;
@@ -1041,6 +1041,10 @@ const connectAvatar = async (): Promise<void> => {
     const audience = audienceSelect.value as SessionAudience;
     const start = await api<StartResponse>("/api/avatar/start", { consent: true, audience });
     backendSessionStarted = true;
+    // QualityContract measures first useful video for an already prepared avatar after the
+    // provider media path is available. Exclude provider session creation/preparation itself:
+    // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
+    connectEvidenceStartedAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
