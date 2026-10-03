@@ -47,6 +47,10 @@ fn voice_result() -> LabVoiceResult {
 }
 
 #[test]
+fn assert_duration_freezes_after_seal(recorder: &mut LabSessionEvidenceRecorder) {
+    assert_duration_freezes_after_seal(&mut recorder);
+}
+
 fn session_reset_and_snapshot_are_payload_redacted() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(3, ParticipantRole::Owner).unwrap();
