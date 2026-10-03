@@ -364,7 +364,11 @@ fn doctor_accepts_local_avatar_provider_without_any_did_configuration() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    for secret in ["local-avatar-secret", "stt-local-secret", "llm-local-secret"] {
+    for secret in [
+        "local-avatar-secret",
+        "stt-local-secret",
+        "llm-local-secret",
+    ] {
         assert!(!all_output.contains(secret));
     }
     assert!(!all_output.contains("D-ID"));
