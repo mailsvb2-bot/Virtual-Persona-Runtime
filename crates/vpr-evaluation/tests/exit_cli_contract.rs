@@ -288,7 +288,7 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
         }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.8",
+        "schema_version":"rt0-owner-lab-session-evidence-0.9",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,

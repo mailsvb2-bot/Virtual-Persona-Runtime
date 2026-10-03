@@ -60,6 +60,13 @@
 
   const recordStreamingVoiceTurn = async (transcript, reply) => {
     const voice = element("voice", HTMLButtonElement);
+    const playbackDone = window.__vprExpressivePlaybackDone;
+    if (typeof playbackDone !== "function") {
+      throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
+    }
+    const initialSpeakCount = commands().filter((command) => command.topic === "did.speak").length;
+    const spokenParts = [];
+
     await waitFor(() => !voice.disabled, "voice-enabled");
     voice.click();
     await waitFor(
@@ -68,12 +75,41 @@
     );
     voice.click();
 
-    await waitFor(
-      () => commands().filter((command) => command.topic === "did.speak").length === 1,
-      "did-speak-command",
-    );
-    const spoken = commands().find((command) => command.topic === "did.speak")?.text ?? "";
-    if (!spoken.includes(reply)) throw new Error("EXPRESSIVE_SPOKEN_REPLY_MISMATCH");
+    while (spokenParts.join(" ") !== reply) {
+      const expectedCount = initialSpeakCount + spokenParts.length + 1;
+      await waitFor(
+        () => commands().filter((command) => command.topic === "did.speak").length >= expectedCount,
+        "did-speak-command",
+      );
+      const speakCommands = commands().filter((command) => command.topic === "did.speak");
+      const current = speakCommands[expectedCount - 1];
+      const payload = JSON.parse(current?.text ?? "{}");
+      const input = payload?.script?.input;
+      if (typeof input !== "string" || input.trim() === "") {
+        throw new Error("EXPRESSIVE_SPOKEN_REPLY_MISMATCH");
+      }
+      if (payload?.script?.should_queue_speaks !== true) {
+        throw new Error("EXPRESSIVE_SPEAK_QUEUE_FLAG_MISSING");
+      }
+      spokenParts.push(input.trim());
+      const spoken = spokenParts.join(" ");
+      if (!reply.startsWith(spoken)) {
+        throw new Error("EXPRESSIVE_SPOKEN_REPLY_MISMATCH");
+      }
+
+      await waitFor(
+        () => voice.disabled,
+        "rt0-evidence-blocks-next-turn-during-playback",
+      );
+      playbackDone();
+
+      if (spoken !== reply) {
+        await waitFor(
+          () => voice.disabled,
+          "rt0-evidence-remains-blocked-between-streamed-phrases",
+        );
+      }
+    }
 
     await waitFor(
       () => statusText().includes(`Вы: ${transcript}`) && statusText().includes(`Ответ: ${reply}`),
@@ -84,19 +120,10 @@
       "voice-readiness-ready",
     );
     await waitFor(
-      () => voice.disabled,
-      "rt0-evidence-blocks-next-turn-during-playback",
-    );
-
-    const playbackDone = window.__vprExpressivePlaybackDone;
-    if (typeof playbackDone !== "function") {
-      throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
-    }
-    playbackDone();
-    await waitFor(
       () => !voice.disabled,
-      "rt0-evidence-unblocks-next-turn-after-playback",
+      "rt0-evidence-unblocks-next-turn-after-final-playback",
     );
+    return spokenParts.length;
   };
 
   const run = async () => {
@@ -166,7 +193,7 @@
       await waitFor(() => !voice.disabled, "voice-after-audio-restore");
       await postPhase("media-recovery-complete");
 
-      await recordStreamingVoiceTurn(
+      const initialSpeakCount = await recordStreamingVoiceTurn(
         "Привет из браузера",
         "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
       );
@@ -199,7 +226,7 @@
       };
 
       const beforeInterrupt = commands();
-      if (beforeInterrupt.filter((command) => command.topic === "did.speak").length !== 1) {
+      if (beforeInterrupt.filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
         throw new Error("EXPRESSIVE_INITIAL_SPEAK_COUNT_MISMATCH");
       }
 
@@ -212,7 +239,7 @@
 
       const interrupt = element("interrupt", HTMLButtonElement);
       await waitFor(() => !interrupt.disabled, "interrupt-enabled");
-      if (commands().filter((command) => command.topic === "did.speak").length !== 1) {
+      if (commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
         throw new Error("EXPRESSIVE_INTERRUPTED_TURN_SPOKE_TOO_EARLY");
       }
       interrupt.click();
@@ -220,7 +247,7 @@
       await sleep(800);
 
       const commandsAfterInterrupt = commands();
-      if (commandsAfterInterrupt.filter((command) => command.topic === "did.speak").length !== 1) {
+      if (commandsAfterInterrupt.filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
         throw new Error("EXPRESSIVE_INTERRUPTED_TURN_LEAKED_SPEECH");
       }
       if (!commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")) {

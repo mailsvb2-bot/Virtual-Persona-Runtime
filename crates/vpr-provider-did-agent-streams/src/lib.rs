@@ -461,6 +461,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             script: LiveKitSpeakScript {
                 kind: "text",
                 input: text,
+                should_queue_speaks: true,
             },
         })
         .map_err(|_| invalid_response())?;

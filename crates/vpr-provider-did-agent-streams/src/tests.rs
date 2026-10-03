@@ -460,6 +460,7 @@ fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     let text_payload: serde_json::Value = serde_json::from_str(&text.payload).unwrap();
     assert_eq!(text_payload["script"]["type"], "text");
     assert_eq!(text_payload["script"]["input"], "Привет");
+    assert_eq!(text_payload["script"]["should_queue_speaks"], true);
 
     let interrupt = provider
         .prepare_client_interrupt(&live, None, &probe)

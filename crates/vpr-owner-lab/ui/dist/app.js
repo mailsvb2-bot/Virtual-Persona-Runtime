@@ -94,6 +94,7 @@ let micSource = null;
 let micWorklet = null;
 let micRequestSequence = null;
 let micSamplesSent = 0;
+let voiceDeliveryGeneration = 0;
 let micPendingPcm = new Uint8Array(0);
 let micChunkTail = Promise.resolve();
 let micUploadFailure = null;
@@ -350,6 +351,7 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     let inboundForKind = 0;
     let excludedRtx = 0;
     let missingTimestamp = 0;
+    let missingSenderReportMapping = 0;
     const candidates = [];
     stats.forEach((raw, key) => {
         const stat = raw;
@@ -374,6 +376,14 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         packetCounts.set(id, packetsReceived);
         if (!Number.isFinite(stat.estimatedPlayoutTimestamp)) {
             missingTimestamp += 1;
+            const remote = stat.remoteId
+                ? stats.get(stat.remoteId)
+                : undefined;
+            if (!remote
+                || remote.type !== "remote-outbound-rtp"
+                || !Number.isFinite(remote.remoteTimestamp)) {
+                missingSenderReportMapping += 1;
+            }
             return;
         }
         candidates.push({
@@ -413,11 +423,16 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         }
     }
     if (candidates.length === 0) {
+        const issue = missingTimestamp > 0
+            ? missingSenderReportMapping === missingTimestamp
+                ? "sender_report_timing_unavailable"
+                : "timestamp_unavailable"
+            : "stats_unavailable";
         return {
             timestamp: null,
             packetCounts,
-            issue: missingTimestamp > 0 ? "timestamp_unavailable" : "stats_unavailable",
-            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, rtx=${excludedRtx}`,
+            issue,
+            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-timing-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
         };
     }
     return {
@@ -728,7 +743,7 @@ const handleProviderClientEvent = (raw) => {
         else if (normalized?.kind === "playback_done") {
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
-            rt0PlaybackPending = false;
+            rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
         }
         updateControls();
     })
@@ -810,6 +825,7 @@ const clearRealtimeMedia = () => {
     updateControls();
 };
 const closePeerTransport = () => {
+    voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
     stopMicrophoneCapture();
@@ -1292,6 +1308,7 @@ const finishMicrophoneTurn = async () => {
     }
     voiceRequestInFlight = true;
     const attemptedRequestSequence = requestSequence;
+    const deliveryGeneration = ++voiceDeliveryGeneration;
     let finishAccepted = false;
     updateControls();
     setStatus("Завершаю распознавание и начинаю ответ…");
@@ -1314,37 +1331,55 @@ const finishMicrophoneTurn = async () => {
         finishAccepted = true;
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
-        let providerCommandDelivered = false;
         const deliveryTasks = [];
         const scheduleSegmentDelivery = (segment) => {
+            if (deliveryGeneration !== voiceDeliveryGeneration)
+                return;
             const command = segment.client_command;
             if (!command)
                 return;
+            let commandSent = false;
+            const dispatch = voiceCommandScheduler.dispatch(command);
+            if (rt0EvidenceMode) {
+                rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+                updateControls();
+            }
             const task = (async () => {
-                const sent = await voiceCommandScheduler.dispatch(command);
-                if (!sent)
+                const sent = await dispatch;
+                if (!sent) {
+                    if (rt0EvidenceMode) {
+                        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+                        updateControls();
+                    }
                     return;
-                providerCommandDelivered = true;
+                }
+                commandSent = true;
                 const voice = activeVoiceEvidence;
                 if (rt0EvidenceMode
                     && voice?.requestSequence === requestSequence
                     && clientDeliverySentElapsed === null) {
                     clientDeliverySentElapsed = performance.now() - voice.startedAt;
-                    rt0PlaybackPending = true;
-                    updateControls();
                 }
                 await api("/api/avatar/client-delivery-sent", {
                     evidence_turn_sequence: segment.evidence_turn_sequence,
                     evidence_output_sequence: segment.evidence_output_sequence,
                 });
-            })().catch((error) => {
+            })().catch(async (error) => {
                 deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
-                voiceCommandScheduler.interrupt();
-                if (!rt0EvidenceMode || !providerCommandDelivered) {
-                    rt0PlaybackPending = false;
+                if (commandSent) {
+                    const providerInterrupted = await interruptAvatar(false);
+                    if (rt0EvidenceMode && !providerInterrupted) {
+                        rt0PlaybackPending = true;
+                        updateControls();
+                    }
                 }
-                updateControls();
-                void api("/api/avatar/interrupt", {}).catch(() => undefined);
+                else {
+                    voiceDeliveryGeneration += 1;
+                    voiceCommandScheduler.interrupt();
+                    rt0PlaybackPending = false;
+                    updateControls();
+                    await api("/api/avatar/interrupt", {}).catch(() => undefined);
+                }
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
                     setStatus(deliveryFailure.message, "error");
                 }
@@ -1458,9 +1493,9 @@ const speak = async () => {
             setStatus(terminalStatus.text, terminalStatus.kind);
     }
 };
-const interruptAvatar = async () => {
+const interruptAvatar = async (recordEvidence = true) => {
     const voice = activeVoiceEvidence;
-    if (voice?.audioStarted) {
+    if (recordEvidence && voice?.audioStarted) {
         interruptEvidenceWatch = {
             requestSequence: voice.requestSequence,
             startedAt: performance.now(),
@@ -1475,6 +1510,7 @@ const interruptAvatar = async () => {
         && sessionState.realtime.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     try {
         if (voiceRequestInFlight) {
@@ -1489,19 +1525,23 @@ const interruptAvatar = async () => {
             sessionState.setPlaybackId(null);
             updateControls();
             await refreshSessionEvidence();
-            return;
+            return true;
         }
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
             rt0PlaybackPending = false;
             updateControls();
+            await refreshSessionEvidence();
+            return true;
         }
         await refreshSessionEvidence();
+        return false;
     }
     catch (error) {
         interruptEvidenceWatch = null;
         setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
         updateControls();
+        return false;
     }
 };
 const endSession = async (kind) => {
