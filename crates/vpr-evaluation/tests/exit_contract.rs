@@ -198,7 +198,7 @@ fn session_snapshot_bytes_with_av_sync(
     ];
     media_events.extend(interruption);
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-0.7",
+        "schema_version":"rt0-owner-lab-session-evidence-0.8",
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
