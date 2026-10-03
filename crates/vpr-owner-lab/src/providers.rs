@@ -1,5 +1,8 @@
 use std::env;
 
+mod avatar_selection;
+
+use avatar_selection::{avatar_provider_config_complete_with, select_avatar_provider_with};
 use sha2::{Digest, Sha256};
 
 use crate::provider_credentials::ProviderCredentialProfile;
@@ -126,22 +129,7 @@ fn provider_config_complete_with(
     require_voice: bool,
     mut get: impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
-    let did_complete = get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some();
-    let local_complete = get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
-        && get("VPR_LOCAL_AVATAR_API_TOKEN").is_some();
-    let avatar = get("VPR_OWNER_LAB_AVATAR_PROVIDER")
-        .map(|value| value.to_ascii_lowercase())
-        .or_else(|| match (did_complete, local_complete) {
-            (true, false) => Some("did".into()),
-            (false, true) => Some("local-open-source".into()),
-            _ => None,
-        });
-    let avatar_complete = match avatar.as_deref() {
-        Some("did" | "d-id" | "did-agent-streams") => did_complete,
-        Some("local" | "local-open-source") => local_complete,
-        _ => false,
-    };
-    if !avatar_complete {
+    if !avatar_provider_config_complete_with(&mut get) {
         return false;
     }
 
@@ -169,9 +157,10 @@ fn provider_config_complete_with(
 fn build_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
+    let mut get = optional_env;
     let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
         .or_else(|| profile.map(|profile| profile.avatar_provider.to_ascii_lowercase()))
-        .or_else(infer_avatar_provider_from_environment)
+        .or_else(|| select_avatar_provider_with(&mut get))
         .ok_or_else(|| {
             "avatar provider is not configured; set VPR_OWNER_LAB_AVATAR_PROVIDER or configure one provider completely"
                 .to_owned()
@@ -240,18 +229,6 @@ fn build_avatar(
             ))
         }
         _ => Err(format!("unsupported avatar provider: {name}")),
-    }
-}
-
-fn infer_avatar_provider_from_environment() -> Option<String> {
-    let did_complete =
-        optional_env("VPR_DID_API_KEY").is_some() && optional_env("VPR_DID_AGENT_ID").is_some();
-    let local_complete = optional_env("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
-        && optional_env("VPR_LOCAL_AVATAR_API_TOKEN").is_some();
-    match (did_complete, local_complete) {
-        (true, false) => Some("did".into()),
-        (false, true) => Some("local-open-source".into()),
-        _ => None,
     }
 }
 
