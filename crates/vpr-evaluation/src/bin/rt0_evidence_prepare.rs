@@ -168,13 +168,11 @@ fn validated_workspace_path(path: &Path, worktree_root: &Path) -> Result<PathBuf
         if !ancestor.is_dir() {
             return Err(emit_error("EVIDENCE_PATH_INVALID"));
         }
+        let suffix = path
+            .strip_prefix(ancestor)
+            .map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
         let ancestor =
             fs::canonicalize(ancestor).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
-        let suffix = path
-            .strip_prefix(path.ancestors().find(|candidate| candidate.exists()).ok_or_else(|| {
-                emit_error("EVIDENCE_PATH_INVALID")
-            })?)
-            .map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
         ancestor.join(suffix)
     };
 
