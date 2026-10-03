@@ -5,7 +5,8 @@ use parking_lot::Mutex;
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::{
-    LabAvSyncEvidenceInput, LabError, LabEvidenceError, LabMediaEvidenceInput,
+    LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabError, LabEvidenceError,
+    LabMediaEvidenceInput,
     LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
     LabVoicePlaybackRegistry, OwnerLabEngine,
 };
@@ -204,6 +205,13 @@ pub fn record_av_sync(
     input: &LabAvSyncEvidenceInput,
 ) -> Result<(), LabEvidenceError> {
     recorder.lock().record_av_sync(input)
+}
+
+pub fn record_av_sync_diagnostic(
+    recorder: &Mutex<LabSessionEvidenceRecorder>,
+    input: &LabAvSyncDiagnosticInput,
+) -> Result<(), LabEvidenceError> {
+    recorder.lock().record_av_sync_diagnostic(input)
 }
 
 pub const fn error_status(error: LabEvidenceError) -> u16 {
