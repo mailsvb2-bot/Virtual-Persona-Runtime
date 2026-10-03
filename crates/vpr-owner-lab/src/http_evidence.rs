@@ -38,27 +38,21 @@ pub fn route_post(
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     let result = match path {
         "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
-            record_media(
-                &state.engine,
-                &state.voice_playback,
-                &state.evidence,
-                &body,
-            )
-            .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-            .map_err(|error| error_response(error.status(), error.code()))
+            record_media(&state.engine, &state.voice_playback, &state.evidence, &body)
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                .map_err(|error| error_response(error.status(), error.code()))
         }),
         "/api/evidence/av-sync" => parse_json::<LabAvSyncEvidenceInput>(request).and_then(|body| {
             record_av_sync(&state.evidence, &body)
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(error_status(error), error.code()))
         }),
-        "/api/evidence/av-sync-diagnostic" => {
-            parse_json::<LabAvSyncDiagnosticInput>(request).and_then(|body| {
+        "/api/evidence/av-sync-diagnostic" => parse_json::<LabAvSyncDiagnosticInput>(request)
+            .and_then(|body| {
                 record_av_sync_diagnostic(&state.evidence, &body)
                     .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                     .map_err(|error| error_response(error_status(error), error.code()))
-            })
-        }
+            }),
         "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
             export_terminal_snapshot(&state.engine, &state.evidence, &state.evidence_export)
                 .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
