@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 mod av_sync_diagnostic;
 use av_sync_diagnostic::validate_av_sync_diagnostics;
 pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
+mod snapshot_header;
+use snapshot_header::validate_snapshot_header;
 
 use crate::session_statistics::{add_cost, distribution};
 use crate::{
@@ -500,19 +502,6 @@ impl SessionAggregateAccumulator {
             provider_charge_microunits: self.provider_charge,
         })
     }
-}
-
-fn validate_snapshot_header(
-    snapshot: &LabSessionEvidenceSnapshot,
-) -> Result<(), LabSessionAggregateError> {
-    if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
-        || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
-        || snapshot.session_sequence == 0
-        || snapshot.session_duration_millis == 0
-    {
-        return Err(LabSessionAggregateError::InvalidSnapshot);
-    }
-    Ok(())
 }
 
 fn validate_and_collect_media(
