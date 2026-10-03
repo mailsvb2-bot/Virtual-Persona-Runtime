@@ -26,7 +26,8 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
-    LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
+    LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput,
+    LabSessionEvidenceRecorder,
     LabVoicePlaybackRegistry, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
     ParticipantRole, ProviderBundle, restore_reviewed_persona,
 };
@@ -397,6 +398,14 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 .map(|()| json_response(200, &serde_json::json!({"ok": true})))
                 .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
+        "/api/evidence/av-sync-diagnostic" => parse_json::<LabAvSyncDiagnosticInput>(request)
+            .and_then(|body| {
+                http_evidence::record_av_sync_diagnostic(&state.evidence, &body)
+                    .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                    .map_err(|error| {
+                        error_response(http_evidence::error_status(error), error.code())
+                    })
+            }),
         "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
             http_evidence::export_terminal_snapshot(
                 &state.engine,
