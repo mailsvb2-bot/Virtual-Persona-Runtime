@@ -89,6 +89,20 @@ fn prepare_materializes_only_exact_release_spec_and_reports_real_gaps() {
 }
 
 #[test]
+fn prepare_creates_missing_parent_directories_outside_worktree() {
+    let temp = TempDir::new();
+    let evidence = temp.child("nested").join("deeper").join("rt0");
+    assert!(!evidence.parent().unwrap().exists());
+
+    let output = run(&evidence);
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(
+        fs::read(evidence.join("release-spec.md")).unwrap(),
+        RT0_RELEASE_SPEC_BYTES
+    );
+}
+
+#[test]
 fn prepare_is_idempotent_for_exact_release_spec() {
     let temp = TempDir::new();
     let evidence = temp.child("rt0");
