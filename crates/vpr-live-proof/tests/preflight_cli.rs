@@ -330,6 +330,48 @@ fn doctor_validates_candidate_inputs_and_provider_config_without_egress() {
 }
 
 #[test]
+fn doctor_accepts_local_avatar_provider_without_any_did_configuration() {
+    let repo = TempRepo::new();
+    let probe_audio = external_output(&repo, "doctor-local-probe.raw");
+    fs::write(&probe_audio, vec![0_u8; 3_200]).unwrap();
+    let (profile, owner_audio, visitor_audio) = write_conversation_inputs(&repo);
+
+    let output = doctor_command(&repo, &probe_audio, &profile, &owner_audio, &visitor_audio)
+        .env("VPR_OWNER_LAB_AVATAR_PROVIDER", "local-open-source")
+        .env("VPR_LOCAL_AVATAR_ENDPOINT", "http://127.0.0.1:9")
+        .env("VPR_LOCAL_AVATAR_API_TOKEN", "local-avatar-secret")
+        .env("VPR_OWNER_LAB_STT_PROVIDER", "deepgram")
+        .env("VPR_OWNER_LAB_STT_ENDPOINT", "http://127.0.0.1:9/stt")
+        .env("VPR_OWNER_LAB_STT_API_KEY", "stt-local-secret")
+        .env("VPR_OWNER_LAB_STT_MODEL", "nova-3")
+        .env("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek")
+        .env("VPR_OWNER_LAB_LLM_ENDPOINT", "http://127.0.0.1:9/llm")
+        .env("VPR_OWNER_LAB_LLM_API_KEY", "llm-local-secret")
+        .env("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(receipt["provider_configuration_passed"], true);
+    let all_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for secret in ["local-avatar-secret", "stt-local-secret", "llm-local-secret"] {
+        assert!(!all_output.contains(secret));
+    }
+    assert!(!all_output.contains("D-ID"));
+    remove_inputs(&[probe_audio, profile, owner_audio, visitor_audio]);
+}
+
+#[test]
 fn doctor_rejects_invalid_private_inputs_before_provider_configuration() {
     let repo = TempRepo::new();
     let probe_audio = external_output(&repo, "doctor-invalid-probe.raw");
