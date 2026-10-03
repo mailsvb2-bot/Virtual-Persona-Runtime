@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 pub use vpr_evaluation::{
-    LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
-    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
+    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
+    LabAvSyncReference, LabAvSyncTrackIssue, LabMediaEvidence, LabMediaEvidenceInput,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
     LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
     ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
@@ -45,6 +46,7 @@ pub struct LabSessionEvidenceRecorder {
     voice_attempts: BTreeMap<u64, LabVoiceAttemptEvidence>,
     media_events: Vec<LabMediaEvidence>,
     av_sync_samples: Vec<LabAvSyncEvidence>,
+    av_sync_diagnostics: Vec<LabAvSyncDiagnostic>,
 }
 
 impl LabSessionEvidenceRecorder {
@@ -67,6 +69,7 @@ impl LabSessionEvidenceRecorder {
         self.voice_attempts.clear();
         self.media_events.clear();
         self.av_sync_samples.clear();
+        self.av_sync_diagnostics.clear();
         Ok(())
     }
 
@@ -430,6 +433,62 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
+    /// Records a sanitized final reason when bounded browser A/V-sync sampling could not
+    /// collect all required samples for a completed canonical-playback request.
+    ///
+    /// # Errors
+    /// Fails for stale sessions, malformed/duplicate diagnostics, unknown requests, requests
+    /// without canonical playback, or requests that already have complete A/V-sync proof.
+    pub fn record_av_sync_diagnostic(
+        &mut self,
+        input: &LabAvSyncDiagnosticInput,
+    ) -> Result<(), LabEvidenceError> {
+        if self.session_sequence != Some(input.session_sequence) || self.sealed {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        if input.request_sequence == 0
+            || input.attempts == 0
+            || input.audio_issue.is_none() && input.video_issue.is_none()
+        {
+            return Err(LabEvidenceError::InvalidInput);
+        }
+        let attempt = self
+            .voice_attempts
+            .get(&input.request_sequence)
+            .ok_or(LabEvidenceError::InvalidState)?;
+        if attempt.status != LabVoiceAttemptStatus::Completed
+            || !attempt.canonical_playback_confirmed
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        let complete_samples = (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
+            self.av_sync_samples.iter().any(|sample| {
+                sample.request_sequence == input.request_sequence
+                    && sample.sample_sequence == sample_sequence
+            })
+        });
+        if complete_samples {
+            return Err(LabEvidenceError::InvalidState);
+        }
+        if self
+            .av_sync_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.request_sequence == input.request_sequence)
+        {
+            return Err(LabEvidenceError::DuplicateEvidence);
+        }
+        if self.av_sync_diagnostics.len() >= RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS {
+            return Err(LabEvidenceError::CapacityExceeded);
+        }
+        self.av_sync_diagnostics.push(LabAvSyncDiagnostic {
+            request_sequence: input.request_sequence,
+            attempts: input.attempts,
+            audio_issue: input.audio_issue,
+            video_issue: input.video_issue,
+        });
+        Ok(())
+    }
+
     /// Records one browser-observed media-plane latency event without promoting it to canonical
     /// playback proof. Audio-start evidence reaches `canonical_playback_proven` only through
     /// `record_canonical_playback` after runtime reconciliation.
@@ -535,6 +594,7 @@ impl LabSessionEvidenceRecorder {
             voice_attempts: self.voice_attempts.values().cloned().collect(),
             media_events: self.media_events.clone(),
             av_sync_samples: self.av_sync_samples.clone(),
+            av_sync_diagnostics: self.av_sync_diagnostics.clone(),
         })
     }
 }
