@@ -62,7 +62,8 @@ pub use session_binding::{
     bind_owner_lab_session_evidence,
 };
 pub use session_evidence::{
-    LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
+    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
+    LabAvSyncReference, LabAvSyncTrackIssue, LabMediaEvidence,
     LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionAggregateError,
     LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptEvidence,
     LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
