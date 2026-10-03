@@ -141,7 +141,7 @@ fn incomplete_av_sync_can_carry_one_sanitized_diagnostic_without_becoming_proof(
     }];
     let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
     assert!(!aggregate.av_sync_proven);
-    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().count, 2);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 2);
 
     let mut contradictory = snapshot(4, 1, 100);
     contradictory.av_sync_diagnostics = vec![LabAvSyncDiagnostic {
