@@ -163,8 +163,7 @@ fn import_env_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 #[cfg(windows)]
-fn avatar_provider_from_process_environment(
-) -> Result<String, Box<dyn Error + Send + Sync>> {
+fn avatar_provider_from_process_environment() -> Result<String, Box<dyn Error + Send + Sync>> {
     if let Some(explicit) = optional_process_value("VPR_OWNER_LAB_AVATAR_PROVIDER") {
         return match explicit.to_ascii_lowercase().as_str() {
             "did" | "d-id" | "did-agent-streams" => Ok("did".into()),
