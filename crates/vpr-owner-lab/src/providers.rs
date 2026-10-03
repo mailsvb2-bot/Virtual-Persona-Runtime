@@ -2,7 +2,7 @@ use std::env;
 
 mod avatar_selection;
 
-use avatar_selection::{avatar_provider_config_complete_with, select_avatar_provider_with};
+use avatar_selection::{avatar_provider_config_complete_with, select_environment_avatar_provider_with};
 use sha2::{Digest, Sha256};
 
 use crate::provider_credentials::ProviderCredentialProfile;
@@ -154,9 +154,12 @@ fn build_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
     let mut get = optional_env;
-    let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
+    let environment_selection = select_environment_avatar_provider_with(&mut get).map_err(|_| {
+        "avatar provider environment is incomplete or ambiguous; set VPR_OWNER_LAB_AVATAR_PROVIDER explicitly"
+            .to_owned()
+    })?;
+    let name = environment_selection
         .or_else(|| profile.map(|profile| profile.avatar_provider.to_ascii_lowercase()))
-        .or_else(|| select_avatar_provider_with(&mut get))
         .ok_or_else(|| {
             "avatar provider is not configured; set VPR_OWNER_LAB_AVATAR_PROVIDER or configure one provider completely"
                 .to_owned()
