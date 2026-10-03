@@ -103,6 +103,7 @@
     constructor(kind) {
       this.kind = kind;
       this.mediaStreamTrack = new FakeTrack(kind);
+      this.statsPoll = 0;
     }
     attach(element) {
       element.style.width = "4096px";
@@ -110,6 +111,7 @@
       return element;
     }
     async getRTCStatsReport() {
+      this.statsPoll += 1;
       const timestamp = this.kind === "audio" ? 1000 : 1060;
       const entries = [
         [
@@ -117,12 +119,22 @@
           { mimeType: this.kind === "audio" ? "audio/opus" : "video/VP8" },
         ],
         [
+          `${this.kind}-inbound-stale`,
+          {
+            type: "inbound-rtp",
+            kind: this.kind,
+            codecId: `${this.kind}-codec`,
+            packetsReceived: 7,
+            estimatedPlayoutTimestamp: timestamp + 4000,
+          },
+        ],
+        [
           `${this.kind}-inbound`,
           {
             type: "inbound-rtp",
             kind: this.kind,
             codecId: `${this.kind}-codec`,
-            packetsReceived: 20,
+            packetsReceived: 20 + this.statsPoll * 5,
             estimatedPlayoutTimestamp: timestamp,
           },
         ],
