@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabEvidenceError, LabSessionEvidenceRecorder,
+    LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
+    RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS,
+};
 
 impl LabSessionEvidenceRecorder {
     /// Records a sanitized final reason when bounded browser A/V-sync sampling could not
