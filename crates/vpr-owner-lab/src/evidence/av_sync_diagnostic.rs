@@ -1,7 +1,6 @@
 use super::{
     LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabEvidenceError, LabSessionEvidenceRecorder,
-    LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
-    RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS,
+    LabVoiceAttemptStatus, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS,
 };
 
 impl LabSessionEvidenceRecorder {
@@ -60,6 +59,4 @@ impl LabSessionEvidenceRecorder {
         });
         Ok(())
     }
-
-
 }
