@@ -6,9 +6,12 @@ use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::{
     LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabError, LabEvidenceError,
-    LabMediaEvidenceInput,
-    LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
-    LabVoicePlaybackRegistry, OwnerLabEngine,
+    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceRecorder,
+    LabSessionEvidenceSnapshot, LabVoicePlaybackRegistry, OwnerLabEngine,
+};
+
+use super::{
+    AppState, HttpResponse, error_response, json_response, parse_empty_json, parse_json, response,
 };
 
 pub fn request_sequence(request: &Request) -> Result<u64, LabEvidenceError> {
@@ -26,6 +29,44 @@ pub fn snapshot(
     recorder: &Mutex<LabSessionEvidenceRecorder>,
 ) -> Result<LabSessionEvidenceSnapshot, LabEvidenceError> {
     recorder.lock().snapshot()
+}
+
+pub fn route_post(
+    path: &str,
+    request: &mut Request,
+    state: &AppState,
+) -> Option<Result<HttpResponse, HttpResponse>> {
+    let result = match path {
+        "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
+            record_media(
+                &state.engine,
+                &state.voice_playback,
+                &state.evidence,
+                &body,
+            )
+            .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+            .map_err(|error| error_response(error.status(), error.code()))
+        }),
+        "/api/evidence/av-sync" => parse_json::<LabAvSyncEvidenceInput>(request).and_then(|body| {
+            record_av_sync(&state.evidence, &body)
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                .map_err(|error| error_response(error_status(error), error.code()))
+        }),
+        "/api/evidence/av-sync-diagnostic" => {
+            parse_json::<LabAvSyncDiagnosticInput>(request).and_then(|body| {
+                record_av_sync_diagnostic(&state.evidence, &body)
+                    .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                    .map_err(|error| error_response(error_status(error), error.code()))
+            })
+        }
+        "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
+            export_terminal_snapshot(&state.engine, &state.evidence, &state.evidence_export)
+                .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
+                .map_err(|error| error_response(error.status(), error.code()))
+        }),
+        _ => return None,
+    };
+    Some(result)
 }
 
 #[derive(Debug, Default)]
