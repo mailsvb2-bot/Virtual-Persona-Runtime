@@ -29,6 +29,7 @@ pub(super) fn select_environment_avatar_provider_with(
     }
 }
 
+#[cfg(any(windows, test))]
 pub(super) fn avatar_provider_config_complete_with(
     get: &mut impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
@@ -70,8 +71,7 @@ mod tests {
             "VPR_LOCAL_AVATAR_ENDPOINT",
             "VPR_LOCAL_AVATAR_API_TOKEN",
         ];
-        let mut get =
-            |name| values.contains(&name).then(|| "configured".to_owned());
+        let mut get = |name| values.contains(&name).then(|| "configured".to_owned());
         assert_eq!(
             select_environment_avatar_provider_with(&mut get),
             Err(AvatarEnvironmentSelectionError::IncompleteOrAmbiguous)
