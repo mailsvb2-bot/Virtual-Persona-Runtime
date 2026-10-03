@@ -153,14 +153,29 @@ fn validated_workspace_path(path: &Path, worktree_root: &Path) -> Result<PathBuf
         }
         resolved
     } else {
-        let parent = path
-            .parent()
+        if path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::CurDir | std::path::Component::ParentDir
+            )
+        }) {
+            return Err(emit_error("EVIDENCE_PATH_INVALID"));
+        }
+        let ancestor = path
+            .ancestors()
+            .find(|candidate| candidate.exists())
             .ok_or_else(|| emit_error("EVIDENCE_PATH_INVALID"))?;
-        let parent = fs::canonicalize(parent).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
-        let name = path
-            .file_name()
-            .ok_or_else(|| emit_error("EVIDENCE_PATH_INVALID"))?;
-        parent.join(name)
+        if !ancestor.is_dir() {
+            return Err(emit_error("EVIDENCE_PATH_INVALID"));
+        }
+        let ancestor =
+            fs::canonicalize(ancestor).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
+        let suffix = path
+            .strip_prefix(path.ancestors().find(|candidate| candidate.exists()).ok_or_else(|| {
+                emit_error("EVIDENCE_PATH_INVALID")
+            })?)
+            .map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
+        ancestor.join(suffix)
     };
 
     if resolved.starts_with(root) {
