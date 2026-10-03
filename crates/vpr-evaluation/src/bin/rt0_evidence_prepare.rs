@@ -186,7 +186,7 @@ fn emit_error(code: &'static str) -> i32 {
     eprintln!(
         "{}",
         serde_json::to_string(&CliError { ok: false, code })
-            .unwrap_or_else(|_| "{"ok":false}".into())
+            .unwrap_or_else(|_| r#"{"ok":false}"#.into())
     );
     2
 }
