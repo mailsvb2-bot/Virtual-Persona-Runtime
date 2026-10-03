@@ -788,8 +788,17 @@ for forbidden_evidence_payload in (
     if forbidden_evidence_payload in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session evidence must not persist raw payload: {forbidden_evidence_payload}")
 owner_lab_http_evidence = (owner_lab_src / "http_evidence.rs").read_text(encoding="utf-8")
-for required_media_endpoint in ("/api/evidence/media", "/api/evidence/session"):
-    if required_media_endpoint not in owner_lab_main:
+if "/api/evidence/session" not in owner_lab_main:
+    raise SystemExit("Owner Lab HTTP evidence endpoint missing /api/evidence/session")
+if "http_evidence::route_post" not in owner_lab_main:
+    raise SystemExit("Owner Lab main router must delegate evidence POST routes to http_evidence.rs")
+for required_media_endpoint in (
+    "/api/evidence/media",
+    "/api/evidence/av-sync",
+    "/api/evidence/av-sync-diagnostic",
+    "/api/evidence/session/export",
+):
+    if required_media_endpoint not in owner_lab_http_evidence:
         raise SystemExit(f"Owner Lab HTTP evidence endpoint missing {required_media_endpoint}")
 if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
     raise SystemExit("Owner Lab HTTP evidence correlation header must remain isolated in http_evidence.rs")
