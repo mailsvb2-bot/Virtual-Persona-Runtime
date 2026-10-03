@@ -111,7 +111,7 @@ impl ProviderCredentialProfile {
         self.validate()
     }
 
-    /// Selects the stored D-ID binding without deleting a configured local fallback.
+    /// Selects the stored D-ID binding without deleting another configured avatar binding.
     pub fn select_did_avatar(&mut self) {
         self.avatar_provider = "did".into();
     }
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn local_avatar_selection_is_persistable_without_deleting_did_fallback() {
+    fn local_avatar_selection_is_persistable_without_deleting_other_avatar_binding() {
         let mut profile = ProviderCredentialProfile::canonical_rt0(
             "did-secret",
             "did-agent",
