@@ -281,10 +281,11 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
             }));
         }
         json!({
-            "schema_version":"rt0-owner-lab-session-evidence-0.9",
+            "schema_version":"rt0-owner-lab-session-evidence-1.0",
             "scope":"browser_observed_media_plane_only",
             "session_sequence":session_sequence,
             "participant_role":role,
+            "session_duration_millis":15000,
             "canonical_playback_proven":true,
             "av_sync_proven":false,
             "text_attempts":[{
