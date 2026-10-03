@@ -30,8 +30,8 @@ VPR_LOCAL_AVATAR_API_TOKEN=<secret>
 ```
 
 STT and LLM configuration remains unchanged. D-ID credentials may coexist in the secure profile as
-an inactive alternative binding, but they are not a fallback and are not read when `local-open-source`
-is selected.
+an inactive alternative binding, but they are not a fallback. When `local-open-source` is selected,
+those D-ID credentials are not passed to or probed by the local avatar adapter.
 
 Remote plaintext HTTP is rejected. HTTP is accepted only for loopback development.
 
