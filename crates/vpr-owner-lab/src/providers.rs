@@ -2,7 +2,9 @@ use std::env;
 
 mod avatar_selection;
 
-use avatar_selection::{avatar_provider_config_complete_with, select_environment_avatar_provider_with};
+#[cfg(any(windows, test))]
+use avatar_selection::avatar_provider_config_complete_with;
+use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
 
 use crate::provider_credentials::ProviderCredentialProfile;
@@ -36,10 +38,10 @@ pub struct ProviderBundle {
 }
 
 impl ProviderBundle {
-    /// Builds the Owner Lab provider composition; environment values override secure storage.
+    /// Builds the Owner Lab provider composition with environment precedence.
     ///
     /// # Errors
-    /// Fails for incomplete or rejected provider configuration.
+    /// Fails for invalid configuration.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
         Self::from_env_with_secure_store(require_voice, allow_secure_store)
@@ -48,7 +50,7 @@ impl ProviderBundle {
     /// Builds providers from process environment only.
     ///
     /// # Errors
-    /// Fails for incomplete or rejected environment configuration.
+    /// Fails for invalid configuration.
     pub fn from_environment(require_voice: bool) -> Result<Self, String> {
         Self::from_env_with_secure_store(require_voice, false)
     }
