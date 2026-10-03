@@ -25,18 +25,29 @@ npm run build
 cd ../../..
 ```
 
-Run the local lab with a D-ID Agents Streams credential:
+Run the local lab with one explicitly selected supported realtime-avatar provider. For the self-hosted provider:
 
 ```bash
+VPR_OWNER_LAB_AVATAR_PROVIDER=local-open-source \
+VPR_LOCAL_AVATAR_ENDPOINT='https://avatar.example.test' \
+VPR_LOCAL_AVATAR_API_TOKEN='<avatar-token>' \
+VPR_OWNER_LAB_ALLOW_EGRESS=true \
+cargo run -p vpr-owner-lab
+```
+
+Or select D-ID explicitly:
+
+```bash
+VPR_OWNER_LAB_AVATAR_PROVIDER=did \
 VPR_DID_API_KEY='<key>' \
 VPR_DID_AGENT_ID='<agent-id>' \
 VPR_OWNER_LAB_ALLOW_EGRESS=true \
 cargo run -p vpr-owner-lab
 ```
 
-Then open `http://127.0.0.1:8787`. `VPR_DID_ENDPOINT` and `VPR_OWNER_LAB_PORT` are optional overrides. `VPR_DID_FLUENT=true` applies only to the legacy D-ID Streams path and may be enabled for compatible presenters. Provider API credentials remain in the Rust process. The browser receives only the session-scoped signaling or transport material required by the negotiated realtime transport.
+Then open `http://127.0.0.1:8787`. `VPR_OWNER_LAB_PORT` is an optional override. `VPR_DID_ENDPOINT` and `VPR_DID_FLUENT=true` apply only when D-ID is selected. Provider API credentials remain in the Rust process. The browser receives only the session-scoped signaling or transport material required by the negotiated realtime transport.
 
-D-ID is one adapter, not the architecture center. Future avatar providers may implement the same `RealtimeAvatarPort` using WebRTC, LiveKit, or another explicitly modeled transport without changing canonical Persona identity or authority.
+D-ID and `local-open-source` are peer adapters behind the same `RealtimeAvatarPort`; neither is canonical Persona or Appearance identity, and no adapter may silently take over when another provider is selected.
 
 Optional push-to-talk voice conversation can be enabled without changing the avatar-only path. Configure one STT provider and one LLM provider together:
 
@@ -49,7 +60,9 @@ VPR_OWNER_LAB_LLM_PROVIDER=openai-compatible \
 VPR_OWNER_LAB_LLM_ENDPOINT='<chat-completions-endpoint>' \
 VPR_OWNER_LAB_LLM_API_KEY='<llm-key>' \
 VPR_OWNER_LAB_LLM_MODEL='<llm-model>' \
-VPR_DID_API_KEY='<key>' VPR_DID_AGENT_ID='<agent-id>' \
+VPR_OWNER_LAB_AVATAR_PROVIDER=local-open-source \
+VPR_LOCAL_AVATAR_ENDPOINT='https://avatar.example.test' \
+VPR_LOCAL_AVATAR_API_TOKEN='<avatar-token>' \
 VPR_OWNER_LAB_ALLOW_EGRESS=true cargo run -p vpr-owner-lab
 ```
 
@@ -71,7 +84,7 @@ Otherwise run the secure setup once:
 cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set
 ```
 
-The setup asks for the D-ID API key, D-ID agent ID, Deepgram API key, and DeepSeek API key. Secret values are entered without terminal echo. D-ID is validated before the profile is saved. The raw D-ID key format is `API_USERNAME:API_PASSWORD`; an accidental leading `Basic ` prefix is stripped before storage. The saved profile selects D-ID with the historical RT0 `VPR_DID_FLUENT` behavior (disabled/unset), Deepgram `nova-3`, and DeepSeek `deepseek-flash`.
+The setup first asks which avatar provider to use. A D-ID profile asks for the D-ID API key and agent ID; a `local-open-source` profile asks only for the local worker endpoint and service token and does not require D-ID credentials. Both profiles then collect the RT0 Deepgram and DeepSeek credentials. Secret values are entered without terminal echo, and the selected avatar provider is probed before the profile is saved. For D-ID, the raw key format is `API_USERNAME:API_PASSWORD`; an accidental leading `Basic ` prefix is stripped before storage.
 
 To replace only D-ID credentials while preserving the stored Deepgram and DeepSeek keys:
 
@@ -93,7 +106,7 @@ Remove the stored profile:
 cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- clear
 ```
 
-Owner Lab and `vpr-live-proof` automatically fall back to this Windows credential profile when matching `VPR_*` environment variables are absent. Explicit environment variables still take priority. For hermetic CI or a deliberate environment-only run, set `VPR_PROVIDER_CREDENTIAL_SOURCE=environment`; that disables Windows Credential Manager fallback for the process and fails closed if the environment is incomplete. API-key values are never printed or included in provider descriptors or evidence.
+Owner Lab and `vpr-live-proof` use this Windows credential profile when the corresponding `VPR_*` environment configuration is absent. Explicit environment avatar selection is authoritative: a complete selected/inferred avatar environment overrides the stored avatar binding, while partial or ambiguous avatar environment fails closed instead of silently reverting to the stored provider. For hermetic CI or a deliberate environment-only run, set `VPR_PROVIDER_CREDENTIAL_SOURCE=environment`; that disables Windows Credential Manager lookup for the process and fails closed if the environment is incomplete. API-key values are never printed or included in provider descriptors or evidence.
 
 For the Windows RT0 operator path, use the safe launcher:
 
@@ -109,7 +122,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-re
 
 The evidence mode fails before provider launch unless Firefox 142+ is installed, then opens Owner Lab in that Firefox instance. This is required because the RT0 A/V-sync contract accepts only WebRTC `RTCInboundRtpStreamStats.estimatedPlayoutTimestamp`; Chromium/Edge do not currently expose that measurement reliably enough for this gate. Normal development launches keep using the default browser.
 
-The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs a safe D-ID credential/agent preflight (metadata lookup first; if metadata access is forbidden, it may create and immediately close one legacy stream to verify the historical runtime path), pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. This prevents stale environment credentials, an old process, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
+The launcher preserves the canonical reviewed Persona when it can do so losslessly, stops the stale listener on the selected port, fast-forwards `main`, rebuilds Owner Lab, clears inherited provider `VPR_*` overrides so the secure Windows Credential Manager profile is authoritative, runs `probe-avatar` against the avatar provider selected by that profile, pins `VPR_OWNER_LAB_PORT`, enables egress both through the process environment and `--allow-egress`, verifies that the expected `vpr-owner-lab.exe` owns that port, and checks both bootstrap and runtime status before opening the browser. D-ID-specific diagnostics run only when D-ID is the selected adapter; `local-open-source` launches do not require or probe D-ID. This prevents stale environment credentials, an old process, a hidden provider switch, or a wrong-port Owner Lab instance from masquerading as the canonical launch path.
 
 For deliberate manual runs, the lower-level process-scoped opt-in is still available:
 
