@@ -9,7 +9,7 @@ use super::{LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemp
 pub enum LabAvSyncTrackIssue {
     StatsUnavailable,
     TimestampUnavailable,
-    SenderReportUnavailable,
+    SenderReportTimingUnavailable,
     AmbiguousStreams,
     NoUniqueActiveStream,
 }

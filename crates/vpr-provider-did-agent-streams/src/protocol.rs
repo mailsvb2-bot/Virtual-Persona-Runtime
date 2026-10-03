@@ -34,6 +34,7 @@ pub(super) struct LiveKitSpeakScript<'a> {
     #[serde(rename = "type")]
     pub(super) kind: &'static str,
     pub(super) input: &'a str,
+    pub(super) should_queue_speaks: bool,
 }
 
 #[derive(Deserialize)]

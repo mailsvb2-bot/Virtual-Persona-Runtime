@@ -63,7 +63,7 @@ type AvSyncReference = "web_rtc_estimated_playout_timestamp";
 type AvSyncTrackIssue =
   | "stats_unavailable"
   | "timestamp_unavailable"
-  | "sender_report_unavailable"
+  | "sender_report_timing_unavailable"
   | "ambiguous_streams"
   | "no_unique_active_stream";
 type InboundRtpSyncStat = {
@@ -637,14 +637,14 @@ const selectPlayoutTimestamp = (
   if (candidates.length === 0) {
     const issue: AvSyncTrackIssue = missingTimestamp > 0
       ? missingSenderReportMapping === missingTimestamp
-        ? "sender_report_unavailable"
+        ? "sender_report_timing_unavailable"
         : "timestamp_unavailable"
       : "stats_unavailable";
     return {
       timestamp: null,
       packetCounts,
       issue,
-      diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-mapping-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
+      diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-timing-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
     };
   }
 

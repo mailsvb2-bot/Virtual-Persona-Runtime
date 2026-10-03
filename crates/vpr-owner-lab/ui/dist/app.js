@@ -424,14 +424,14 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     if (candidates.length === 0) {
         const issue = missingTimestamp > 0
             ? missingSenderReportMapping === missingTimestamp
-                ? "sender_report_unavailable"
+                ? "sender_report_timing_unavailable"
                 : "timestamp_unavailable"
             : "stats_unavailable";
         return {
             timestamp: null,
             packetCounts,
             issue,
-            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-mapping-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
+            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-timing-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
         };
     }
     return {
