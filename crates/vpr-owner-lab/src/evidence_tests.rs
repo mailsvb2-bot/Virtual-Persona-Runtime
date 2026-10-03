@@ -352,6 +352,76 @@ fn stale_unknown_and_duplicate_media_evidence_fail_closed() {
 }
 
 #[test]
+fn av_sync_diagnostic_is_request_scoped_and_cannot_coexist_with_complete_proof() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(18, ParticipantRole::Owner).unwrap();
+    recorder.begin_voice_request(1).unwrap();
+    recorder.complete_voice_request(1, &voice_result()).unwrap();
+    let audio_started = LabMediaEvidenceInput {
+        session_sequence: 18,
+        request_sequence: Some(1),
+        kind: LabMediaEvidenceKind::AudioStarted,
+        elapsed_millis: 400,
+    };
+    recorder
+        .record_canonical_playback(&audio_started, 7, 1)
+        .unwrap();
+
+    let diagnostic = LabAvSyncDiagnosticInput {
+        session_sequence: 18,
+        request_sequence: 1,
+        attempts: 50,
+        audio_issue: Some(LabAvSyncTrackIssue::TimestampUnavailable),
+        video_issue: None,
+    };
+    recorder.record_av_sync_diagnostic(&diagnostic).unwrap();
+    assert_eq!(
+        recorder.record_av_sync_diagnostic(&diagnostic),
+        Err(LabEvidenceError::DuplicateEvidence)
+    );
+    let snapshot = recorder.snapshot().unwrap();
+    assert!(!snapshot.av_sync_proven);
+    assert_eq!(snapshot.av_sync_diagnostics.len(), 1);
+    assert_eq!(
+        snapshot.av_sync_diagnostics[0].audio_issue,
+        Some(LabAvSyncTrackIssue::TimestampUnavailable)
+    );
+
+    let mut proven = LabSessionEvidenceRecorder::default();
+    proven.begin_session(19, ParticipantRole::Owner).unwrap();
+    proven.begin_voice_request(1).unwrap();
+    proven.complete_voice_request(1, &voice_result()).unwrap();
+    proven
+        .record_canonical_playback(
+            &LabMediaEvidenceInput {
+                session_sequence: 19,
+                ..audio_started
+            },
+            7,
+            1,
+        )
+        .unwrap();
+    for sample_sequence in 1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
+        proven
+            .record_av_sync(&LabAvSyncEvidenceInput {
+                session_sequence: 19,
+                request_sequence: 1,
+                sample_sequence,
+                reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+                absolute_offset_millis: 50,
+            })
+            .unwrap();
+    }
+    assert_eq!(
+        proven.record_av_sync_diagnostic(&LabAvSyncDiagnosticInput {
+            session_sequence: 19,
+            ..diagnostic
+        }),
+        Err(LabEvidenceError::InvalidState)
+    );
+}
+
+#[test]
 fn delivery_stage_media_is_request_scoped_and_duplicate_safe() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(19, ParticipantRole::Owner).unwrap();
