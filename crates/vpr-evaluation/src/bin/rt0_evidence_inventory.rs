@@ -15,9 +15,9 @@ use vpr_evaluation::{
     BoundGoldenReport, BoundLabSessionEvidenceAggregate, EvidenceVerificationContext,
     GoldenEvidenceBundle, GoldenSuite, LiveProviderProbeReceipt, ProviderStateManifest,
     RT0_EVIDENCE_REQUIRED_FILES, RT0_EXIT_EVIDENCE_SCHEMA, RT0_LIVE_PROVIDER_PROBE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-    RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence, evaluate_bound_golden_suite, sha256_hex,
-    validate_live_provider_probe, validate_rt0_exit_supporting_artifacts,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, Rt0ExitEvidence,
+    evaluate_bound_golden_suite, sha256_hex, validate_live_provider_probe,
+    validate_rt0_exit_supporting_artifacts,
 };
 
 const SCHEMA: &str = "rt0-evidence-inventory-0.8";
