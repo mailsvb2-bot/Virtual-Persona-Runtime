@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 mod av_sync_diagnostic;
 use av_sync_diagnostic::validate_av_sync_diagnostics;
 pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
+mod snapshot_header;
+use snapshot_header::validate_snapshot_header;
 
 use crate::session_statistics::{add_cost, distribution};
 use crate::{
@@ -12,8 +14,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.9";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.7";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.0";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.8";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -104,6 +106,7 @@ pub struct LabSessionEvidenceSnapshot {
     pub scope: String,
     pub session_sequence: u64,
     pub participant_role: ParticipantRole,
+    pub session_duration_millis: u64,
     pub canonical_playback_proven: bool,
     pub av_sync_proven: bool,
     pub text_attempts: Vec<LabTextAttemptEvidence>,
@@ -120,6 +123,7 @@ pub struct LabSessionEvidenceAggregate {
     pub schema_version: String,
     pub source_schema_version: String,
     pub sessions: u32,
+    pub session_duration_millis: u64,
     pub completed_text_attempts: u32,
     pub failed_text_attempts: u32,
     pub completed_voice_attempts: u32,
@@ -185,6 +189,7 @@ pub fn aggregate_owner_lab_session_evidence(
 
 #[derive(Default)]
 struct SessionAggregateAccumulator {
+    session_duration_millis: u64,
     completed_text: u32,
     failed_text: u32,
     completed_voice: u32,
@@ -212,6 +217,10 @@ impl SessionAggregateAccumulator {
         &mut self,
         snapshot: &LabSessionEvidenceSnapshot,
     ) -> Result<(), LabSessionAggregateError> {
+        self.session_duration_millis = self
+            .session_duration_millis
+            .checked_add(snapshot.session_duration_millis)
+            .ok_or(LabSessionAggregateError::Overflow)?;
         let mut text_request_sequences = HashSet::new();
         for attempt in &snapshot.text_attempts {
             if attempt.request_sequence == 0
@@ -470,6 +479,7 @@ impl SessionAggregateAccumulator {
             schema_version: RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA.into(),
             source_schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             sessions,
+            session_duration_millis: self.session_duration_millis,
             completed_text_attempts: self.completed_text,
             failed_text_attempts: self.failed_text,
             completed_voice_attempts: self.completed_voice,
@@ -492,18 +502,6 @@ impl SessionAggregateAccumulator {
             provider_charge_microunits: self.provider_charge,
         })
     }
-}
-
-fn validate_snapshot_header(
-    snapshot: &LabSessionEvidenceSnapshot,
-) -> Result<(), LabSessionAggregateError> {
-    if snapshot.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
-        || snapshot.scope != RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE
-        || snapshot.session_sequence == 0
-    {
-        return Err(LabSessionAggregateError::InvalidSnapshot);
-    }
-    Ok(())
 }
 
 fn validate_and_collect_media(

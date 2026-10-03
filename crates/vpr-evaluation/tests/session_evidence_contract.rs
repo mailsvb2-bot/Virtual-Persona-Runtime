@@ -52,6 +52,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
         participant_role: ParticipantRole::Owner,
+        session_duration_millis: 15_000,
         canonical_playback_proven: true,
         av_sync_proven: true,
         text_attempts: vec![completed_text(request, base)],

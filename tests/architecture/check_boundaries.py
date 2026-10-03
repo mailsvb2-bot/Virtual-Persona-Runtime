@@ -768,8 +768,8 @@ for required_evidence_boundary in (
     if required_evidence_boundary not in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
 for required_shared_evidence in (
-    "rt0-owner-lab-session-evidence-0.9",
-    "rt0-owner-lab-session-aggregate-0.7",
+    "rt0-owner-lab-session-evidence-1.0",
+    "rt0-owner-lab-session-aggregate-0.8",
     "aggregate_owner_lab_session_evidence",
     "llm_first_meaningful_response",
     "canonical_playback_proven",

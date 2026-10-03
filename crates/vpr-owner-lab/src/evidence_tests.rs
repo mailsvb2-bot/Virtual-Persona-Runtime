@@ -46,6 +46,46 @@ fn voice_result() -> LabVoiceResult {
     }
 }
 
+fn assert_duration_freezes_after_seal(recorder: &mut LabSessionEvidenceRecorder) {
+    recorder.seal_session();
+    let sealed_duration = recorder.snapshot().unwrap().session_duration_millis;
+    assert!(sealed_duration > 0);
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    assert_eq!(
+        recorder.snapshot().unwrap().session_duration_millis,
+        sealed_duration
+    );
+}
+
+fn assert_snapshot_is_bound_and_redacted(snapshot: &LabSessionEvidenceSnapshot) {
+    let json = serde_json::to_string(snapshot).unwrap();
+    assert_eq!(snapshot.text_attempts[0].canonical_turn_sequence, Some(6));
+    assert_eq!(snapshot.text_attempts[0].canonical_output_sequence, Some(2));
+    assert_eq!(
+        snapshot.text_attempts[0].first_meaningful_response_millis,
+        Some(90)
+    );
+    assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
+    assert_eq!(
+        snapshot.voice_attempts[0].canonical_output_sequence,
+        Some(1)
+    );
+    assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
+    assert_eq!(
+        snapshot.voice_attempts[0].llm_first_meaningful_millis,
+        Some(80)
+    );
+    assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
+    assert_eq!(snapshot.participant_role, ParticipantRole::Owner);
+    assert!(snapshot.session_duration_millis > 0);
+    assert!(snapshot.canonical_playback_proven);
+    assert!(snapshot.av_sync_proven);
+    assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
+    assert!(!json.contains("приватный транскрипт"));
+    assert!(!json.contains("приватный ответ"));
+    assert!(!json.contains("приватный текстовый ответ"));
+}
+
 #[test]
 fn session_reset_and_snapshot_are_payload_redacted() {
     let mut recorder = LabSessionEvidenceRecorder::default();
@@ -98,32 +138,8 @@ fn session_reset_and_snapshot_are_payload_redacted() {
             .unwrap();
     }
     let snapshot = recorder.snapshot().unwrap();
-    let json = serde_json::to_string(&snapshot).unwrap();
-    assert_eq!(snapshot.text_attempts[0].canonical_turn_sequence, Some(6));
-    assert_eq!(snapshot.text_attempts[0].canonical_output_sequence, Some(2));
-    assert_eq!(
-        snapshot.text_attempts[0].first_meaningful_response_millis,
-        Some(90)
-    );
-    assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
-    assert_eq!(
-        snapshot.voice_attempts[0].canonical_output_sequence,
-        Some(1)
-    );
-    assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
-    assert_eq!(
-        snapshot.voice_attempts[0].llm_first_meaningful_millis,
-        Some(80)
-    );
-    assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
-    assert_eq!(snapshot.participant_role, ParticipantRole::Owner);
-    assert!(snapshot.canonical_playback_proven);
-    assert!(snapshot.av_sync_proven);
-    assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
-    assert!(!json.contains("приватный транскрипт"));
-    assert!(!json.contains("приватный ответ"));
-    assert!(!json.contains("приватный текстовый ответ"));
-    recorder.seal_session();
+    assert_snapshot_is_bound_and_redacted(&snapshot);
+    assert_duration_freezes_after_seal(&mut recorder);
     assert_eq!(
         recorder.begin_text_request(2),
         Err(LabEvidenceError::InvalidState)

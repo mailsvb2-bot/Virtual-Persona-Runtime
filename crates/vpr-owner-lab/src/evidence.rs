@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 mod av_sync_diagnostic;
 
@@ -44,6 +45,8 @@ pub struct LabSessionEvidenceRecorder {
     session_sequence: Option<u64>,
     participant_role: Option<ParticipantRole>,
     sealed: bool,
+    session_started: Option<Instant>,
+    sealed_duration_millis: Option<u64>,
     text_attempts: BTreeMap<u64, LabTextAttemptEvidence>,
     voice_attempts: BTreeMap<u64, LabVoiceAttemptEvidence>,
     media_events: Vec<LabMediaEvidence>,
@@ -67,6 +70,8 @@ impl LabSessionEvidenceRecorder {
         self.session_sequence = Some(session_sequence);
         self.participant_role = Some(participant_role);
         self.sealed = false;
+        self.session_started = Some(Instant::now());
+        self.sealed_duration_millis = None;
         self.text_attempts.clear();
         self.voice_attempts.clear();
         self.media_events.clear();
@@ -78,7 +83,8 @@ impl LabSessionEvidenceRecorder {
     /// Seals the current session against new voice/media evidence while preserving terminalization
     /// of an already registered in-flight voice request.
     pub fn seal_session(&mut self) {
-        if self.session_sequence.is_some() {
+        if self.session_sequence.is_some() && !self.sealed {
+            self.sealed_duration_millis = self.session_started.map(elapsed_millis);
             self.sealed = true;
         }
     }
@@ -518,6 +524,10 @@ impl LabSessionEvidenceRecorder {
         let participant_role = self
             .participant_role
             .ok_or(LabEvidenceError::InvalidState)?;
+        let session_duration_millis = self
+            .sealed_duration_millis
+            .or_else(|| self.session_started.map(elapsed_millis))
+            .ok_or(LabEvidenceError::InvalidState)?;
         let completed_attempts: Vec<&LabVoiceAttemptEvidence> = self
             .voice_attempts
             .values()
@@ -541,6 +551,7 @@ impl LabSessionEvidenceRecorder {
             scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
             participant_role,
+            session_duration_millis,
             canonical_playback_proven,
             av_sync_proven,
             text_attempts: self.text_attempts.values().cloned().collect(),
@@ -550,6 +561,12 @@ impl LabSessionEvidenceRecorder {
             av_sync_diagnostics: self.av_sync_diagnostics.clone(),
         })
     }
+}
+
+fn elapsed_millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis())
+        .unwrap_or(u64::MAX)
+        .max(1)
 }
 
 #[cfg(test)]

@@ -229,6 +229,56 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     .unwrap();
 }
 
+fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Value {
+    let mut media = vec![
+        json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
+        json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
+    ];
+    if interruption {
+        media.push(json!({
+            "request_sequence":1,
+            "kind":"interruption_stopped",
+            "elapsed_millis":250
+        }));
+    }
+    json!({
+        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "scope":"browser_observed_media_plane_only",
+        "session_sequence":session_sequence,
+        "participant_role":role,
+        "session_duration_millis":15000,
+        "canonical_playback_proven":true,
+        "av_sync_proven":false,
+        "text_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":5 + session_sequence,
+            "canonical_output_sequence":15 + session_sequence,
+            "status":"completed",
+            "failure_code":null,
+            "first_meaningful_response_millis":if role == "owner" { 900 } else { 2_400 },
+            "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
+            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+        }],
+        "voice_attempts":[{
+            "request_sequence":1,
+            "canonical_turn_sequence":10 + session_sequence,
+            "canonical_output_sequence":20 + session_sequence,
+            "canonical_playback_confirmed":true,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":100,
+            "llm_millis":120,
+            "llm_first_meaningful_millis":80,
+            "avatar_millis":150,
+            "server_total_millis":370,
+            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+        }],
+        "media_events":media,
+        "av_sync_samples":[]
+    })
+}
+
 fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state_bytes: &[u8]) {
     let conversation = json!({
         "schema_version":"rt0-live-conversation-attempt-0.1",
@@ -268,56 +318,8 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
     )
     .unwrap();
 
-    let snapshot = |role: &str, session_sequence: u64, interruption: bool| {
-        let mut media = vec![
-            json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
-            json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
-        ];
-        if interruption {
-            media.push(json!({
-                "request_sequence":1,
-                "kind":"interruption_stopped",
-                "elapsed_millis":250
-            }));
-        }
-        json!({
-            "schema_version":"rt0-owner-lab-session-evidence-0.9",
-            "scope":"browser_observed_media_plane_only",
-            "session_sequence":session_sequence,
-            "participant_role":role,
-            "canonical_playback_proven":true,
-            "av_sync_proven":false,
-            "text_attempts":[{
-                "request_sequence":1,
-                "canonical_turn_sequence":5 + session_sequence,
-                "canonical_output_sequence":15 + session_sequence,
-            "status":"completed",
-                "failure_code":null,
-                "first_meaningful_response_millis":if role == "owner" { 900 } else { 2_400 },
-                "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
-                "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
-            }],
-            "voice_attempts":[{
-                "request_sequence":1,
-                "canonical_turn_sequence":10 + session_sequence,
-                "canonical_output_sequence":20 + session_sequence,
-                "canonical_playback_confirmed":true,
-                "status":"completed",
-                "failure_code":null,
-                "stt_millis":100,
-                "llm_millis":120,
-                "llm_first_meaningful_millis":80,
-                "avatar_millis":150,
-                "server_total_millis":370,
-                "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
-                "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
-            }],
-            "media_events":media,
-            "av_sync_samples":[]
-        })
-    };
-    let owner_bytes = serde_json::to_vec_pretty(&snapshot("owner", 1, true)).unwrap();
-    let visitor_bytes = serde_json::to_vec_pretty(&snapshot("visitor", 2, false)).unwrap();
+    let owner_bytes = serde_json::to_vec_pretty(&session_snapshot("owner", 1, true)).unwrap();
+    let visitor_bytes = serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false)).unwrap();
     fs::write(dir.join("session-owner.json"), &owner_bytes).unwrap();
     fs::write(dir.join("session-visitor.json"), &visitor_bytes).unwrap();
     let bound = bind_owner_lab_session_evidence(
