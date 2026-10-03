@@ -3,10 +3,8 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 mod av_sync_diagnostic;
-pub use av_sync_diagnostic::{
-    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue,
-};
 use av_sync_diagnostic::validate_av_sync_diagnostics;
+pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
 
 use crate::session_statistics::{add_cost, distribution};
 use crate::{
