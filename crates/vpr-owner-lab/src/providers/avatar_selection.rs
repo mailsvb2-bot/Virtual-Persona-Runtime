@@ -1,5 +1,5 @@
 pub(super) fn select_avatar_provider_with(
-    mut get: impl FnMut(&'static str) -> Option<String>,
+    get: &mut impl FnMut(&'static str) -> Option<String>,
 ) -> Option<String> {
     if let Some(explicit) = get("VPR_OWNER_LAB_AVATAR_PROVIDER") {
         return Some(explicit.to_ascii_lowercase());
@@ -16,7 +16,7 @@ pub(super) fn select_avatar_provider_with(
 }
 
 pub(super) fn avatar_provider_config_complete_with(
-    mut get: impl FnMut(&'static str) -> Option<String>,
+    get: &mut impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
     let did_complete = get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some();
     let local_complete = get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
