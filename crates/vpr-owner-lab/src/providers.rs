@@ -36,13 +36,9 @@ pub struct ProviderBundle {
 }
 
 impl ProviderBundle {
-    /// Builds the exact provider composition used by Owner Lab.
-    ///
-    /// Explicit environment variables have highest priority. On Windows, missing values fall back
-    /// to the current user's VPR provider profile in Windows Credential Manager. Set
-    /// `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` to disable that fallback and require a
-    /// hermetic environment-only configuration. API keys are consumed by concrete adapters but are
-    /// never retained in descriptors.
+    /// Builds the Owner Lab provider composition. Environment values override the optional
+    /// Windows secure profile; `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` disables that fallback.
+    /// Secrets are never retained in descriptors.
     ///
     /// # Errors
     /// Returns a redacted configuration error when required settings are missing or rejected.
