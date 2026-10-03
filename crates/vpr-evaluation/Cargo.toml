@@ -27,6 +27,10 @@ name = "vpr-rt0-evidence-inventory"
 path = "src/bin/rt0_evidence_inventory.rs"
 
 [[bin]]
+name = "vpr-rt0-evidence-prepare"
+path = "src/bin/rt0_evidence_prepare.rs"
+
+[[bin]]
 name = "vpr-rt0-supporting-preflight"
 path = "src/bin/rt0_supporting_preflight.rs"
 
