@@ -1,4 +1,5 @@
 mod binding;
+mod evidence_workspace;
 mod exit;
 mod exit_assembly;
 mod exit_checks;
@@ -22,6 +23,11 @@ pub use binding::{
     GoldenEvidenceBundle, ProviderRole, ProviderStateBinding, ProviderStateManifest,
     RT0_EVIDENCE_BINDING_SCHEMA, RT0_PROVIDER_STATE_SCHEMA, evaluate_bound_golden_suite,
     sha256_hex, validate_candidate_sha, validate_provider_state_manifest,
+};
+
+pub use evidence_workspace::{
+    RT0_EVIDENCE_REQUIRED_FILES, RT0_RELEASE_SPEC_BYTES, Rt0EvidenceWorkspaceError,
+    prepare_rt0_evidence_workspace,
 };
 
 pub use golden::{

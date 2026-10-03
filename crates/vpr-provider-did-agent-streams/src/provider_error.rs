@@ -58,10 +58,7 @@ pub(super) fn expect_success(response: Response) -> Result<Response, ProviderErr
 fn map_status(status: u16) -> ProviderError {
     match status {
         401 | 403 => policy_denied(),
-        402 => ProviderError {
-            kind: ProviderErrorKind::InsufficientCredits,
-            retryable: false,
-        },
+        402 => insufficient_credits(),
         408 => ProviderError {
             kind: ProviderErrorKind::Timeout,
             retryable: true,
@@ -95,6 +92,13 @@ pub(super) fn map_transport_error(error: &reqwest::Error) -> ProviderError {
 pub(super) const fn cancelled() -> ProviderError {
     ProviderError {
         kind: ProviderErrorKind::Cancelled,
+        retryable: false,
+    }
+}
+
+pub(super) const fn insufficient_credits() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::InsufficientCredits,
         retryable: false,
     }
 }

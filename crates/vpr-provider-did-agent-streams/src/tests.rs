@@ -382,6 +382,61 @@ fn account_auth_probe_uses_account_credits_and_basic_authorization() {
 }
 
 #[test]
+fn account_auth_probe_fails_on_explicit_zero_balance() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"remaining":0.0,"total":15.0}"#.to_owned(),
+    )]);
+    let provider = adapter(endpoint);
+
+    let error = provider.probe_account_auth_detailed().unwrap_err();
+    let DidRuntimeAccessFailure::Provider(error) = error else {
+        panic!("expected typed provider error");
+    };
+    assert_eq!(error.kind, ProviderErrorKind::InsufficientCredits);
+    assert!(!error.retryable);
+    assert!(captured.recv().unwrap().starts_with("GET /credits "));
+}
+
+#[test]
+fn account_auth_probe_fails_when_all_legacy_credit_buckets_are_empty() {
+    let (endpoint, _) = serve(vec![(
+        "200 OK",
+        r#"[{"remaining":0.0,"total":5.0},{"remaining":0.0,"total":10.0}]"#.to_owned(),
+    )]);
+    let provider = adapter(endpoint);
+
+    let error = provider.probe_account_auth_detailed().unwrap_err();
+    let DidRuntimeAccessFailure::Provider(error) = error else {
+        panic!("expected typed provider error");
+    };
+    assert_eq!(error.kind, ProviderErrorKind::InsufficientCredits);
+}
+
+#[test]
+fn account_auth_probe_accepts_positive_known_balance() {
+    let (endpoint, _) = serve(vec![(
+        "200 OK",
+        r#"{"remaining":1.25,"total":15.0}"#.to_owned(),
+    )]);
+    let provider = adapter(endpoint);
+
+    provider.probe_account_auth_detailed().unwrap();
+}
+
+#[test]
+fn account_auth_probe_does_not_treat_not_found_as_zero_balance() {
+    let (endpoint, _) = serve(vec![("404 Not Found", "{}".to_owned())]);
+    let provider = adapter(endpoint);
+
+    let error = provider.probe_account_auth_detailed().unwrap_err();
+    let DidRuntimeAccessFailure::Provider(error) = error else {
+        panic!("expected typed provider error");
+    };
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+}
+
+#[test]
 fn account_auth_probe_preserves_unauthorized_status() {
     let (endpoint, captured) = serve(vec![("401 Unauthorized", "{}".to_owned())]);
     let provider = adapter(endpoint);

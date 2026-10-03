@@ -5,18 +5,45 @@ use vpr_integration::{
 
 use super::protocol::{CreateStreamRequest, CreateStreamResponse};
 use super::provider_error::{
-    DidRuntimeAccessFailure, expect_success, invalid_response, map_transport_error, policy_denied,
+    DidRuntimeAccessFailure, expect_success, insufficient_credits, invalid_response,
+    map_transport_error, policy_denied,
 };
 use super::{DidAgentStreamsAvatar, DidRuntimeAccessProbe, PresenterLookupError};
+
+fn credits_exhausted(value: &serde_json::Value) -> Option<bool> {
+    if let Some(remaining) = value.get("remaining").and_then(serde_json::Value::as_f64) {
+        return remaining.is_finite().then_some(remaining <= 0.0);
+    }
+
+    let items = value
+        .get("credits")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| value.as_array())?;
+    if items.is_empty() {
+        return None;
+    }
+
+    let mut total_remaining = 0.0;
+    for item in items {
+        let remaining = item.get("remaining")?.as_f64()?;
+        if !remaining.is_finite() {
+            return None;
+        }
+        total_remaining += remaining;
+    }
+    Some(total_remaining <= 0.0)
+}
 
 impl DidAgentStreamsAvatar {
     /// Verifies that D-ID accepts the configured account API key without touching an Agent.
     ///
-    /// The probe uses the read-only account-level `GET /credits` endpoint and does not inspect
-    /// or expose response data.
+    /// The probe uses the read-only account-level `GET /credits` endpoint. It inspects only
+    /// recognized non-secret remaining-credit fields so a known exhausted balance can fail before
+    /// session creation; unknown valid response shapes are treated only as successful auth.
     ///
     /// # Errors
-    /// Preserves 401 versus 403 for safe operator diagnostics.
+    /// Preserves 401 versus 403 for safe operator diagnostics and returns typed insufficient-credit
+    /// evidence only when the successful account response explicitly proves a zero balance.
     pub fn probe_account_auth_detailed(&self) -> Result<(), DidRuntimeAccessFailure> {
         let mut url = self.base_url.clone();
         {
@@ -31,12 +58,20 @@ impl DidAgentStreamsAvatar {
             .send()
             .map_err(|error| DidRuntimeAccessFailure::Provider(map_transport_error(&error)))?;
         match response.status().as_u16() {
-            401 => Err(DidRuntimeAccessFailure::Unauthorized),
-            403 => Err(DidRuntimeAccessFailure::Forbidden),
-            _ => expect_success(response)
-                .map(|_| ())
-                .map_err(DidRuntimeAccessFailure::Provider),
+            401 => return Err(DidRuntimeAccessFailure::Unauthorized),
+            403 => return Err(DidRuntimeAccessFailure::Forbidden),
+            _ => {}
         }
+
+        let response = expect_success(response).map_err(DidRuntimeAccessFailure::Provider)?;
+        let bytes = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, None)
+            .map_err(DidRuntimeAccessFailure::Provider)?;
+        let body: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|_| DidRuntimeAccessFailure::Provider(invalid_response()))?;
+        if credits_exhausted(&body) == Some(true) {
+            return Err(DidRuntimeAccessFailure::Provider(insufficient_credits()));
+        }
+        Ok(())
     }
 
     /// Probes the same D-ID access path used by runtime. If agent metadata is forbidden with 403,
