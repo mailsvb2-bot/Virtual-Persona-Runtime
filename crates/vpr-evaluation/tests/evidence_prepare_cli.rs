@@ -52,7 +52,10 @@ fn prepare_materializes_only_exact_release_spec_and_reports_real_gaps() {
     assert_eq!(output.status.code(), Some(0));
 
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema_version"], json!("rt0-evidence-preparation-0.1"));
+    assert_eq!(
+        report["schema_version"],
+        json!("rt0-evidence-preparation-0.1")
+    );
     assert_eq!(report["workspace_prepared"], json!(true));
     assert_eq!(report["release_ready_claimed"], json!(false));
     assert_eq!(report["release_spec_written"], json!(true));
