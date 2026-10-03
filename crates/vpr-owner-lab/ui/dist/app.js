@@ -350,6 +350,7 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     let inboundForKind = 0;
     let excludedRtx = 0;
     let missingTimestamp = 0;
+    let missingSenderReportMapping = 0;
     const candidates = [];
     stats.forEach((raw, key) => {
         const stat = raw;
@@ -374,6 +375,14 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         packetCounts.set(id, packetsReceived);
         if (!Number.isFinite(stat.estimatedPlayoutTimestamp)) {
             missingTimestamp += 1;
+            const remote = stat.remoteId
+                ? stats.get(stat.remoteId)
+                : undefined;
+            if (!remote
+                || remote.type !== "remote-outbound-rtp"
+                || !Number.isFinite(remote.remoteTimestamp)) {
+                missingSenderReportMapping += 1;
+            }
             return;
         }
         candidates.push({
@@ -413,11 +422,16 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         }
     }
     if (candidates.length === 0) {
+        const issue = missingTimestamp > 0
+            ? missingSenderReportMapping === missingTimestamp
+                ? "sender_report_unavailable"
+                : "timestamp_unavailable"
+            : "stats_unavailable";
         return {
             timestamp: null,
             packetCounts,
-            issue: missingTimestamp > 0 ? "timestamp_unavailable" : "stats_unavailable",
-            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, rtx=${excludedRtx}`,
+            issue,
+            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, sender-report-mapping-missing=${missingSenderReportMapping}, rtx=${excludedRtx}`,
         };
     }
     return {

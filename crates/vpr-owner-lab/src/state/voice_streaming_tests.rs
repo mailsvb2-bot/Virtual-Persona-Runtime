@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream, ProviderDescriptor,
     ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientRoute,
     RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, SttAudioStream, SttPort,
     SttRequest, SttStreamEvent, SttStreamRequest, Transcript, UsageEvidence, WebRtcIceServer,
     WebRtcSessionDescription,
@@ -23,6 +24,7 @@ struct StreamingStats {
 
 struct StreamingAvatar {
     stats: Arc<StreamingStats>,
+    client_text: bool,
 }
 
 impl RealtimeAvatarPort for StreamingAvatar {
@@ -38,10 +40,13 @@ impl RealtimeAvatarPort for StreamingAvatar {
         &self,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
-        Ok(RealtimeAvatarSession {
-            provider_resource_id: "stream".into(),
-            provider_session_id: "session".into(),
-            transport: RealtimeAvatarTransport::WebRtc {
+        let transport = if self.client_text {
+            RealtimeAvatarTransport::LiveKit {
+                server_url: "wss://livekit.example.test".into(),
+                token: "session-token".into(),
+            }
+        } else {
+            RealtimeAvatarTransport::WebRtc {
                 offer: WebRtcSessionDescription {
                     kind: "offer".into(),
                     sdp: "v=0".into(),
@@ -51,7 +56,12 @@ impl RealtimeAvatarPort for StreamingAvatar {
                     username: None,
                     credential: None,
                 }],
-            },
+            }
+        };
+        Ok(RealtimeAvatarSession {
+            provider_resource_id: "stream".into(),
+            provider_session_id: "session".into(),
+            transport,
         })
     }
 
@@ -93,6 +103,36 @@ impl RealtimeAvatarPort for StreamingAvatar {
         _cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    fn client_control(
+        &self,
+        _session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        self.client_text.then_some(RealtimeAvatarClientControl {
+            event_route: None,
+            interrupt: true,
+            interrupt_requires_playback_id: false,
+            text_input: true,
+        })
+    }
+
+    fn prepare_client_text(
+        &self,
+        _session: &RealtimeAvatarSession,
+        text: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        if !self.client_text || cancellation.is_cancelled() || text.trim().is_empty() {
+            return Err(cancelled());
+        }
+        self.stats.avatar_text.fetch_add(1, Ordering::SeqCst);
+        Ok(RealtimeAvatarClientCommand {
+            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                topic: "test.speak".into(),
+            },
+            payload: text.to_owned(),
+        })
     }
 
     fn close_session(&self, _session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
@@ -282,11 +322,36 @@ impl LlmPort for StreamingVoiceLlm {
     }
 }
 
+fn client_text_streaming_voice_engine() -> (OwnerLabEngine, Arc<StreamingStats>, Arc<AtomicBool>) {
+    let stats = Arc::new(StreamingStats::default());
+    let release_tail = Arc::new(AtomicBool::new(false));
+    let avatar = StreamingAvatar {
+        stats: Arc::clone(&stats),
+        client_text: true,
+    };
+    let stt = StreamingStt {
+        stats: Arc::clone(&stats),
+        emit_final: true,
+    };
+    let llm = StreamingVoiceLlm {
+        stats: Arc::clone(&stats),
+        release_tail: Arc::clone(&release_tail),
+    };
+    let mut engine = OwnerLabEngine::new(Box::new(avatar), true)
+        .unwrap()
+        .with_voice(Box::new(stt), Box::new(llm));
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    (engine, stats, release_tail)
+}
+
 fn streaming_voice_engine() -> (OwnerLabEngine, Arc<StreamingStats>, Arc<AtomicBool>) {
     let stats = Arc::new(StreamingStats::default());
     let release_tail = Arc::new(AtomicBool::new(false));
     let avatar = StreamingAvatar {
         stats: Arc::clone(&stats),
+        client_text: false,
     };
     let stt = StreamingStt {
         stats: Arc::clone(&stats),
@@ -358,10 +423,54 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
 }
 
 #[test]
+fn client_text_streaming_emits_first_phrase_before_llm_tail_completes() {
+    let (mut engine, stats, release_tail) = client_text_streaming_voice_engine();
+    let (segment_tx, segment_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let result = engine.voice_turn_streaming(
+            sample_pcm(),
+            |_| {},
+            |segment| {
+                segment_tx.send(segment).unwrap();
+                Ok(())
+            },
+        );
+        result_tx.send(result).unwrap();
+    });
+
+    let first = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(first.evidence_output_sequence > 0);
+    assert!(first.client_command.is_some());
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        result_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+
+    release_tail.store(true, Ordering::SeqCst);
+    let second = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(second.client_command.is_some());
+    assert_ne!(
+        first.evidence_output_sequence,
+        second.evidence_output_sequence
+    );
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 2);
+
+    let result = result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .unwrap();
+    assert_eq!(result.reply, "Первая фраза. Вторая фраза.");
+    worker.join().unwrap();
+}
+
+#[test]
 fn streaming_voice_without_final_stt_transcript_is_invalid_input_not_internal_error() {
     let stats = Arc::new(StreamingStats::default());
     let avatar = StreamingAvatar {
         stats: Arc::clone(&stats),
+        client_text: false,
     };
     let stt = StreamingStt {
         stats: Arc::clone(&stats),
