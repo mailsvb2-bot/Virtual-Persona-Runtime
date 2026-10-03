@@ -974,7 +974,7 @@ const handleProviderClientEvent = (raw: string): void => {
       } else if (normalized?.kind === "playback_done") {
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
-        rt0PlaybackPending = false;
+        rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
       }
       updateControls();
     })
@@ -1614,9 +1614,20 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       const command = segment.client_command;
       if (!command) return;
+      const dispatch = voiceCommandScheduler.dispatch(command);
+      if (rt0EvidenceMode) {
+        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+        updateControls();
+      }
       const task = (async () => {
-        const sent = await voiceCommandScheduler.dispatch(command);
-        if (!sent) return;
+        const sent = await dispatch;
+        if (!sent) {
+          if (rt0EvidenceMode) {
+            rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+            updateControls();
+          }
+          return;
+        }
         providerCommandDelivered = true;
         const voice = activeVoiceEvidence;
         if (
@@ -1625,8 +1636,6 @@ const finishMicrophoneTurn = async (): Promise<void> => {
           && clientDeliverySentElapsed === null
         ) {
           clientDeliverySentElapsed = performance.now() - voice.startedAt;
-          rt0PlaybackPending = true;
-          updateControls();
         }
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
@@ -1635,9 +1644,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       })().catch((error: unknown) => {
         deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
         voiceCommandScheduler.interrupt();
-        if (!rt0EvidenceMode || !providerCommandDelivered) {
-          rt0PlaybackPending = false;
-        }
+        rt0PlaybackPending = false;
         updateControls();
         void api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
         if (activeVoiceEvidence?.requestSequence === requestSequence) {

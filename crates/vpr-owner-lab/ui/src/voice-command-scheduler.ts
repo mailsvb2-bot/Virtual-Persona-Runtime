@@ -6,6 +6,7 @@ type PlaybackBarrier = {
 export class PlaybackAwareCommandScheduler<T> {
   private currentPlayback: PlaybackBarrier | null = null;
   private generation = 0;
+  private pendingCommands = 0;
   private queueTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly send: (command: T) => Promise<void>) {}
@@ -14,7 +15,12 @@ export class PlaybackAwareCommandScheduler<T> {
     return this.currentPlayback !== null;
   }
 
+  get hasPendingPlayback(): boolean {
+    return this.pendingCommands > 0;
+  }
+
   dispatch(command: T): Promise<boolean> {
+    this.pendingCommands += 1;
     const generation = this.generation;
     let resolveResult!: (sent: boolean) => void;
     let rejectResult!: (error: unknown) => void;
@@ -55,6 +61,9 @@ export class PlaybackAwareCommandScheduler<T> {
           this.currentPlayback = null;
           barrier.resolve();
         }
+        if (generation === this.generation && this.pendingCommands > 0) {
+          this.pendingCommands -= 1;
+        }
         rejectResult(error);
       }
     };
@@ -71,11 +80,13 @@ export class PlaybackAwareCommandScheduler<T> {
     const barrier = this.currentPlayback;
     if (!barrier) return;
     this.currentPlayback = null;
+    if (this.pendingCommands > 0) this.pendingCommands -= 1;
     barrier.resolve();
   }
 
   interrupt(): void {
     this.generation += 1;
+    this.pendingCommands = 0;
     const barrier = this.currentPlayback;
     this.currentPlayback = null;
     barrier?.resolve();

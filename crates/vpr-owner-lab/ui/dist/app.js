@@ -742,7 +742,7 @@ const handleProviderClientEvent = (raw) => {
         else if (normalized?.kind === "playback_done") {
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
-            rt0PlaybackPending = false;
+            rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
         }
         updateControls();
     })
@@ -1334,18 +1334,26 @@ const finishMicrophoneTurn = async () => {
             const command = segment.client_command;
             if (!command)
                 return;
+            const dispatch = voiceCommandScheduler.dispatch(command);
+            if (rt0EvidenceMode) {
+                rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+                updateControls();
+            }
             const task = (async () => {
-                const sent = await voiceCommandScheduler.dispatch(command);
-                if (!sent)
+                const sent = await dispatch;
+                if (!sent) {
+                    if (rt0EvidenceMode) {
+                        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
+                        updateControls();
+                    }
                     return;
+                }
                 providerCommandDelivered = true;
                 const voice = activeVoiceEvidence;
                 if (rt0EvidenceMode
                     && voice?.requestSequence === requestSequence
                     && clientDeliverySentElapsed === null) {
                     clientDeliverySentElapsed = performance.now() - voice.startedAt;
-                    rt0PlaybackPending = true;
-                    updateControls();
                 }
                 await api("/api/avatar/client-delivery-sent", {
                     evidence_turn_sequence: segment.evidence_turn_sequence,
@@ -1354,9 +1362,7 @@ const finishMicrophoneTurn = async () => {
             })().catch((error) => {
                 deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
                 voiceCommandScheduler.interrupt();
-                if (!rt0EvidenceMode || !providerCommandDelivered) {
-                    rt0PlaybackPending = false;
-                }
+                rt0PlaybackPending = false;
                 updateControls();
                 void api("/api/avatar/interrupt", {}).catch(() => undefined);
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {

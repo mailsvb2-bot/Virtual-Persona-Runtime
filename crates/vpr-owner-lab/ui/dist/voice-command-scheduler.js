@@ -2,6 +2,7 @@ export class PlaybackAwareCommandScheduler {
     send;
     currentPlayback = null;
     generation = 0;
+    pendingCommands = 0;
     queueTail = Promise.resolve();
     constructor(send) {
         this.send = send;
@@ -9,7 +10,11 @@ export class PlaybackAwareCommandScheduler {
     get hasActivePlayback() {
         return this.currentPlayback !== null;
     }
+    get hasPendingPlayback() {
+        return this.pendingCommands > 0;
+    }
     dispatch(command) {
+        this.pendingCommands += 1;
         const generation = this.generation;
         let resolveResult;
         let rejectResult;
@@ -48,6 +53,9 @@ export class PlaybackAwareCommandScheduler {
                     this.currentPlayback = null;
                     barrier.resolve();
                 }
+                if (generation === this.generation && this.pendingCommands > 0) {
+                    this.pendingCommands -= 1;
+                }
                 rejectResult(error);
             }
         };
@@ -60,10 +68,13 @@ export class PlaybackAwareCommandScheduler {
         if (!barrier)
             return;
         this.currentPlayback = null;
+        if (this.pendingCommands > 0)
+            this.pendingCommands -= 1;
         barrier.resolve();
     }
     interrupt() {
         this.generation += 1;
+        this.pendingCommands = 0;
         const barrier = this.currentPlayback;
         this.currentPlayback = null;
         barrier?.resolve();
