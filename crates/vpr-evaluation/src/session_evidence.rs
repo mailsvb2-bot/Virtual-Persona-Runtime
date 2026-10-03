@@ -134,6 +134,7 @@ pub struct LabSessionEvidenceSnapshot {
     pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
     pub media_events: Vec<LabMediaEvidence>,
     pub av_sync_samples: Vec<LabAvSyncEvidence>,
+    #[serde(default)]
     pub av_sync_diagnostics: Vec<LabAvSyncDiagnostic>,
 }
 
