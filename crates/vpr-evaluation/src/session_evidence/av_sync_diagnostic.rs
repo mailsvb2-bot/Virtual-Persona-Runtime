@@ -2,9 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{
-    LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
-};
+use super::{LabSessionAggregateError, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -56,4 +54,3 @@ pub(super) fn validate_av_sync_diagnostics(
     }
     Ok(())
 }
-
