@@ -37,7 +37,7 @@ pub enum Rt0EvidenceWorkspaceError {
     ReleaseSpecWriteFailed,
 }
 
-/// Ensures the RT0 evidence directory contains the exact ReleaseSpec bytes compiled with this
+/// Ensures the RT0 evidence directory contains the exact `ReleaseSpec` bytes compiled with this
 /// candidate. Existing matching bytes are left untouched; conflicting bytes fail closed.
 ///
 /// This deliberately creates no placeholder provider, browser, Golden, privacy, cost, quality,
@@ -45,7 +45,7 @@ pub enum Rt0EvidenceWorkspaceError {
 ///
 /// # Errors
 /// Returns a stable error when the workspace cannot be created/read/written or already contains a
-/// different ReleaseSpec.
+/// different `ReleaseSpec`.
 pub fn prepare_rt0_evidence_workspace(root: &Path) -> Result<bool, Rt0EvidenceWorkspaceError> {
     fs::create_dir_all(root).map_err(|_| Rt0EvidenceWorkspaceError::CreateDirectoryFailed)?;
     let release_spec = root.join("release-spec.md");
