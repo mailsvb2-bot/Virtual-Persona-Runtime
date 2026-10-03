@@ -117,6 +117,7 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     );
     assert_eq!(snapshot.scope, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE);
     assert_eq!(snapshot.participant_role, ParticipantRole::Owner);
+    assert!(snapshot.session_duration_millis > 0);
     assert!(snapshot.canonical_playback_proven);
     assert!(snapshot.av_sync_proven);
     assert_eq!(snapshot.av_sync_samples[0].absolute_offset_millis, 60);
@@ -124,6 +125,13 @@ fn session_reset_and_snapshot_are_payload_redacted() {
     assert!(!json.contains("приватный ответ"));
     assert!(!json.contains("приватный текстовый ответ"));
     recorder.seal_session();
+    let sealed_duration = recorder.snapshot().unwrap().session_duration_millis;
+    assert!(sealed_duration > 0);
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    assert_eq!(
+        recorder.snapshot().unwrap().session_duration_millis,
+        sealed_duration
+    );
     assert_eq!(
         recorder.begin_text_request(2),
         Err(LabEvidenceError::InvalidState)
