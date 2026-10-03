@@ -98,6 +98,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
                 absolute_offset_millis: base / 10 + 30,
             },
         ],
+        av_sync_diagnostics: vec![],
     }
 }
 
