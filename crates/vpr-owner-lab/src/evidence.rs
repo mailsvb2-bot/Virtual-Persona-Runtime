@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
+mod av_sync_diagnostic;
+
 pub use vpr_evaluation::{
-    LabAvSyncEvidence, LabAvSyncEvidenceInput, LabAvSyncReference, LabMediaEvidence,
-    LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
-    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
+    LabAvSyncReference, LabAvSyncTrackIssue, LabMediaEvidence, LabMediaEvidenceInput,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabTextAttemptEvidence, LabTextAttemptStatus,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
@@ -45,6 +48,7 @@ pub struct LabSessionEvidenceRecorder {
     voice_attempts: BTreeMap<u64, LabVoiceAttemptEvidence>,
     media_events: Vec<LabMediaEvidence>,
     av_sync_samples: Vec<LabAvSyncEvidence>,
+    av_sync_diagnostics: Vec<LabAvSyncDiagnostic>,
 }
 
 impl LabSessionEvidenceRecorder {
@@ -67,6 +71,7 @@ impl LabSessionEvidenceRecorder {
         self.voice_attempts.clear();
         self.media_events.clear();
         self.av_sync_samples.clear();
+        self.av_sync_diagnostics.clear();
         Ok(())
     }
 
@@ -412,6 +417,13 @@ impl LabSessionEvidenceRecorder {
         {
             return Err(LabEvidenceError::InvalidState);
         }
+        if self
+            .av_sync_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.request_sequence == input.request_sequence)
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
         if self.av_sync_samples.iter().any(|sample| {
             sample.request_sequence == input.request_sequence
                 && sample.sample_sequence == input.sample_sequence
@@ -535,6 +547,7 @@ impl LabSessionEvidenceRecorder {
             voice_attempts: self.voice_attempts.values().cloned().collect(),
             media_events: self.media_events.clone(),
             av_sync_samples: self.av_sync_samples.clone(),
+            av_sync_diagnostics: self.av_sync_diagnostics.clone(),
         })
     }
 }

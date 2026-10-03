@@ -9,10 +9,11 @@ mod state;
 mod windows_secure_store;
 
 pub use evidence::{
-    LabAvSyncEvidenceInput, LabAvSyncReference, LabEvidenceError, LabMediaEvidenceInput,
-    LabMediaEvidenceKind, LabSessionEvidenceRecorder, LabSessionEvidenceSnapshot,
-    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES, RT0_OWNER_LAB_MAX_MEDIA_EVENTS,
+    LabAvSyncDiagnosticInput, LabAvSyncEvidenceInput, LabAvSyncReference, LabAvSyncTrackIssue,
+    LabEvidenceError, LabMediaEvidenceInput, LabMediaEvidenceKind, LabSessionEvidenceRecorder,
+    LabSessionEvidenceSnapshot, LabTextAttemptEvidence, LabTextAttemptStatus,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_OWNER_LAB_MAX_AV_SYNC_SAMPLES, RT0_OWNER_LAB_MAX_MEDIA_EVENTS,
     RT0_OWNER_LAB_MAX_SESSION_ATTEMPTS, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 

@@ -1,8 +1,8 @@
 use vpr_evaluation::{
-    LabAvSyncEvidence, LabAvSyncReference, LabMediaEvidence, LabMediaEvidenceKind,
-    LabSessionAggregateError, LabSessionEvidenceSnapshot, LabTextAttemptEvidence,
-    LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
-    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabAvSyncDiagnostic, LabAvSyncEvidence, LabAvSyncReference, LabAvSyncTrackIssue,
+    LabMediaEvidence, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
+    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
+    ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
     SessionUsageEvidence, aggregate_owner_lab_session_evidence,
 };
 
@@ -98,6 +98,7 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
                 absolute_offset_millis: base / 10 + 30,
             },
         ],
+        av_sync_diagnostics: vec![],
     }
 }
 
@@ -124,6 +125,34 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert!(aggregate.av_sync_proven);
     assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p50, 40);
     assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p95, 60);
+}
+
+#[test]
+fn incomplete_av_sync_can_carry_one_sanitized_diagnostic_without_becoming_proof() {
+    let mut input = snapshot(3, 1, 100);
+    input.av_sync_samples.truncate(2);
+    input.av_sync_proven = false;
+    input.av_sync_diagnostics = vec![LabAvSyncDiagnostic {
+        request_sequence: 1,
+        attempts: 50,
+        audio_issue: Some(LabAvSyncTrackIssue::TimestampUnavailable),
+        video_issue: None,
+    }];
+    let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 2);
+
+    let mut contradictory = snapshot(4, 1, 100);
+    contradictory.av_sync_diagnostics = vec![LabAvSyncDiagnostic {
+        request_sequence: 1,
+        attempts: 50,
+        audio_issue: Some(LabAvSyncTrackIssue::TimestampUnavailable),
+        video_issue: None,
+    }];
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[contradictory]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
 }
 
 #[test]

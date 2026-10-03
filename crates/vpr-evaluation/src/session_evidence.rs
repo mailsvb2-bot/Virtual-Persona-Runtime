@@ -2,13 +2,17 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+mod av_sync_diagnostic;
+use av_sync_diagnostic::validate_av_sync_diagnostics;
+pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
+
 use crate::session_statistics::{add_cost, distribution};
 use crate::{
     LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.7";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-0.8";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.6";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
@@ -106,6 +110,8 @@ pub struct LabSessionEvidenceSnapshot {
     pub voice_attempts: Vec<LabVoiceAttemptEvidence>,
     pub media_events: Vec<LabMediaEvidence>,
     pub av_sync_samples: Vec<LabAvSyncEvidence>,
+    #[serde(default)]
+    pub av_sync_diagnostics: Vec<LabAvSyncDiagnostic>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -272,6 +278,12 @@ impl SessionAggregateAccumulator {
             &request_status,
             &playback_requests,
             &mut self.av_sync,
+        )?;
+        validate_av_sync_diagnostics(
+            snapshot,
+            &request_status,
+            &playback_requests,
+            &av_sync_requests,
         )?;
         let derived_av_sync = derived_playback && av_sync_requests == completed_requests;
         if snapshot.av_sync_proven != derived_av_sync {

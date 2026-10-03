@@ -26,9 +26,9 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
-    LabAvSyncEvidenceInput, LabError, LabMediaEvidenceInput, LabSessionEvidenceRecorder,
-    LabVoicePlaybackRegistry, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
-    ParticipantRole, ProviderBundle, restore_reviewed_persona,
+    LabError, LabSessionEvidenceRecorder, LabVoicePlaybackRegistry, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
+    restore_reviewed_persona,
 };
 use vpr_runtime::TurnInterruptHandle;
 
@@ -324,6 +324,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
     if let Some(result) = http_avatar_input::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
+    if let Some(result) = http_evidence::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     if path == "/api/references/clear" {
         return http_references::clear_response(request, &state.reference_intake)
             .unwrap_or_else(|response| response);
@@ -382,30 +385,6 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
-        "/api/evidence/media" => parse_json::<LabMediaEvidenceInput>(request).and_then(|body| {
-            http_evidence::record_media(
-                &state.engine,
-                &state.voice_playback,
-                &state.evidence,
-                &body,
-            )
-            .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-            .map_err(|error| error_response(error.status(), error.code()))
-        }),
-        "/api/evidence/av-sync" => parse_json::<LabAvSyncEvidenceInput>(request).and_then(|body| {
-            http_evidence::record_av_sync(&state.evidence, &body)
-                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
-        }),
-        "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
-            http_evidence::export_terminal_snapshot(
-                &state.engine,
-                &state.evidence,
-                &state.evidence_export,
-            )
-            .map(|bytes| response(200, bytes, "application/json; charset=utf-8"))
-            .map_err(|error| error_response(error.status(), error.code()))
-        }),
         "/api/avatar/interrupt" => {
             parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
         }

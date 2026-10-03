@@ -60,6 +60,11 @@ type MediaEvidenceKind =
   | "interruption_stopped"
   | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
+type AvSyncTrackIssue =
+  | "stats_unavailable"
+  | "timestamp_unavailable"
+  | "ambiguous_streams"
+  | "no_unique_active_stream";
 type InboundRtpSyncStat = {
   type?: string;
   kind?: string;
@@ -72,6 +77,7 @@ type AvSyncCandidate = { id: string; timestamp: number; packetsReceived: number 
 type AvSyncTrackSelection = {
   timestamp: number | null;
   packetCounts: Map<string, number>;
+  issue: AvSyncTrackIssue | null;
   diagnostic: string;
 };
 type AvSyncReadState = {
@@ -116,6 +122,12 @@ type AvSyncEvidence = {
   sample_sequence: number;
   absolute_offset_millis: number;
 };
+type AvSyncDiagnosticEvidence = {
+  request_sequence: number;
+  attempts: number;
+  audio_issue: AvSyncTrackIssue | null;
+  video_issue: AvSyncTrackIssue | null;
+};
 type SessionEvidenceSnapshot = {
   schema_version: string;
   canonical_playback_proven: boolean;
@@ -124,6 +136,7 @@ type SessionEvidenceSnapshot = {
   voice_attempts: VoiceAttemptEvidence[];
   media_events: MediaEventEvidence[];
   av_sync_samples: AvSyncEvidence[];
+  av_sync_diagnostics: AvSyncDiagnosticEvidence[];
 };
 
 
@@ -266,7 +279,8 @@ let remoteEvidenceFrame: number | null = null;
 let baselineRms = 0.002;
 let activeVoiceEvidence: ActiveVoiceEvidence | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
-let avSyncDiagnostic: string | null = null;
+let avSyncCollectionPending = false;
+let pendingAvSyncEvidence: Promise<void> | null = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
@@ -292,7 +306,8 @@ const isSessionEvidenceSnapshot = (value: unknown): value is SessionEvidenceSnap
     && Array.isArray(candidate.text_attempts)
     && Array.isArray(candidate.voice_attempts)
     && Array.isArray(candidate.media_events)
-    && Array.isArray(candidate.av_sync_samples);
+    && Array.isArray(candidate.av_sync_samples)
+    && Array.isArray(candidate.av_sync_diagnostics);
 };
 
 const lastCompleted = <T extends { status: string }>(items: T[]): T | undefined =>
@@ -330,7 +345,6 @@ const resetTelemetry = (): void => {
   metricFirstAudio.textContent = "—";
   metricVideoReady.textContent = "—";
   metricAvSync.textContent = "—";
-  avSyncDiagnostic = null;
   metricPlayback.textContent = "—";
   metricCost.textContent = "нет измеренных данных";
 };
@@ -367,11 +381,17 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
   const avSamples = voice
     ? snapshot.av_sync_samples.filter((sample) => sample.request_sequence === voice.request_sequence)
     : snapshot.av_sync_samples;
+  const avDiagnostic = voice
+    ? snapshot.av_sync_diagnostics.find((item) => item.request_sequence === voice.request_sequence)
+    : undefined;
   if (snapshot.av_sync_proven && avSamples.length > 0) {
     const maxOffset = Math.max(...avSamples.map((sample) => sample.absolute_offset_millis));
     metricAvSync.textContent = `${maxOffset} мс · ${avSamples.length} изм.`;
-  } else if (voice && avSyncDiagnostic) {
-    metricAvSync.textContent = `не доказан · ${avSyncDiagnostic}`;
+  } else if (avDiagnostic) {
+    const audioIssue = avDiagnostic.audio_issue ?? "ok";
+    const videoIssue = avDiagnostic.video_issue ?? "ok";
+    metricAvSync.textContent =
+      `не доказан · audio=${audioIssue}, video=${videoIssue}, ${avDiagnostic.attempts} попыток`;
   } else {
     metricAvSync.textContent = voice ? "ещё не доказан" : "—";
   }
@@ -523,6 +543,7 @@ const selectPlayoutTimestamp = (
     return {
       timestamp: null,
       packetCounts,
+      issue: "stats_unavailable",
       diagnostic: `${expectedKind}: stats unavailable`,
     };
   }
@@ -568,6 +589,7 @@ const selectPlayoutTimestamp = (
     return {
       timestamp: candidates[0]?.timestamp ?? null,
       packetCounts,
+      issue: null,
       diagnostic: `${expectedKind}: one RTP timestamp candidate`,
     };
   }
@@ -581,6 +603,7 @@ const selectPlayoutTimestamp = (
       return {
         timestamp: advancing[0]?.timestamp ?? null,
         packetCounts,
+        issue: null,
         diagnostic: `${expectedKind}: selected sole advancing RTP stream`,
       };
     }
@@ -588,6 +611,7 @@ const selectPlayoutTimestamp = (
       return {
         timestamp: null,
         packetCounts,
+        issue: "no_unique_active_stream",
         diagnostic: `${expectedKind}: ${advancing.length} advancing RTP streams`,
       };
     }
@@ -597,6 +621,7 @@ const selectPlayoutTimestamp = (
     return {
       timestamp: null,
       packetCounts,
+      issue: missingTimestamp > 0 ? "timestamp_unavailable" : "stats_unavailable",
       diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, rtx=${excludedRtx}`,
     };
   }
@@ -604,13 +629,19 @@ const selectPlayoutTimestamp = (
   return {
     timestamp: null,
     packetCounts,
+    issue: previousPackets ? "no_unique_active_stream" : "ambiguous_streams",
     diagnostic: `${expectedKind}: ${candidates.length} RTP timestamp candidates awaiting unique activity`,
   };
 };
 
 const readAvSyncOffsetMillis = async (
   state: AvSyncReadState,
-): Promise<{ offsetMillis: number | null; diagnostic: string }> => {
+): Promise<{
+  offsetMillis: number | null;
+  diagnostic: string;
+  audioIssue: AvSyncTrackIssue | null;
+  videoIssue: AvSyncTrackIssue | null;
+}> => {
   const currentPeer = peer;
   let audioSelection: AvSyncTrackSelection;
   let videoSelection: AvSyncTrackSelection;
@@ -625,6 +656,8 @@ const readAvSyncOffsetMillis = async (
       return {
         offsetMillis: null,
         diagnostic: "LiveKit track stats method unavailable",
+        audioIssue: "stats_unavailable",
+        videoIssue: "stats_unavailable",
       };
     }
     const [audioReport, videoReport] = await Promise.all([
@@ -641,11 +674,15 @@ const readAvSyncOffsetMillis = async (
     return {
       offsetMillis: null,
       diagnostic: `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
+      audioIssue: audioSelection.issue,
+      videoIssue: videoSelection.issue,
     };
   }
   return {
     offsetMillis: Math.round(Math.abs(audioSelection.timestamp - videoSelection.timestamp)),
     diagnostic: "audio/video playout timestamps available",
+    audioIssue: null,
+    videoIssue: null,
   };
 };
 
@@ -656,12 +693,14 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
     audioPackets: null,
     videoPackets: null,
   };
-  let lastDiagnostic = "A/V stats not sampled";
+  let lastAudioIssue: AvSyncTrackIssue | null = "stats_unavailable";
+  let lastVideoIssue: AvSyncTrackIssue | null = "stats_unavailable";
 
   while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
     attempts += 1;
     const reading = await readAvSyncOffsetMillis(readState);
-    lastDiagnostic = reading.diagnostic;
+    if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
+    if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
     if (reading.offsetMillis !== null) {
       await api<{ ok: true }>("/api/evidence/av-sync", {
         session_sequence: evidenceSessionSequence,
@@ -671,7 +710,6 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
         absolute_offset_millis: reading.offsetMillis,
       });
       sampleSequence += 1;
-      avSyncDiagnostic = null;
     }
     if (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
       await new Promise<void>((resolve) => window.setTimeout(resolve, AV_SYNC_SAMPLE_INTERVAL_MILLIS));
@@ -679,13 +717,29 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   }
 
   if (sampleSequence <= AV_SYNC_SAMPLE_COUNT) {
-    avSyncDiagnostic = lastDiagnostic;
+    await api<{ ok: true }>("/api/evidence/av-sync-diagnostic", {
+      session_sequence: evidenceSessionSequence,
+      request_sequence: requestSequence,
+      attempts,
+      audio_issue: lastAudioIssue,
+      video_issue: lastVideoIssue,
+    });
   }
   await refreshSessionEvidence();
 };
 const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null => {
   if (!voice.responseComplete || voice.audioStartedElapsed === null) return null;
-  voice.avSyncEvidence ??= collectAvSyncEvidence(voice.requestSequence);
+  if (!voice.avSyncEvidence) {
+    avSyncCollectionPending = true;
+    updateControls();
+    const collection = collectAvSyncEvidence(voice.requestSequence).finally(() => {
+      if (pendingAvSyncEvidence === collection) pendingAvSyncEvidence = null;
+      avSyncCollectionPending = false;
+      updateControls();
+    });
+    pendingAvSyncEvidence = collection;
+    voice.avSyncEvidence = collection;
+  }
   return voice.avSyncEvidence;
 };
 
@@ -870,7 +924,8 @@ const updateControls = (): void => {
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
-  closeButton.disabled = !backendSessionPresent();
+  closeButton.disabled = !backendSessionPresent()
+    || (rt0EvidenceMode && avSyncCollectionPending);
   connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
   audienceSelect.disabled = backendSessionPresent();
   if (visitorOption) visitorOption.disabled = !ownerCaptureReviewed;
@@ -1731,6 +1786,10 @@ const interruptAvatar = async (): Promise<void> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
+  if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
+    setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
+    await pendingAvSyncEvidence.catch(() => undefined);
+  }
   closePeerTransport();
   try {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
