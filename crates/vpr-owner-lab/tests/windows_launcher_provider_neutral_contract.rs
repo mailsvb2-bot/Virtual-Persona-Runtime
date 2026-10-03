@@ -1,5 +1,4 @@
-const WINDOWS_LAUNCHER: &str =
-    include_str!("../../../scripts/windows-owner-lab-restart.ps1");
+const WINDOWS_LAUNCHER: &str = include_str!("../../../scripts/windows-owner-lab-restart.ps1");
 
 #[test]
 fn windows_launcher_probes_the_selected_avatar_provider() {
