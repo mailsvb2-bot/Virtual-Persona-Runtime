@@ -411,7 +411,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
             .map_err(|error| error_response(error.status(), error.code()))
         }),
         "/api/avatar/interrupt" => parse_empty_json(request)
-            .and_then(|()| interrupt_active_turn(state))
+            .and_then(|()| interrupt_active_turn(state)),
         "/api/session/revoke" => parse_empty_json(request).and_then(|()| end_session(state, false)),
         "/api/session/close" => parse_empty_json(request).and_then(|()| end_session(state, true)),
         _ => Ok(error_response(404, "NOT_FOUND")),
