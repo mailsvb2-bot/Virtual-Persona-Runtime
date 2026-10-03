@@ -94,6 +94,7 @@ let micSource = null;
 let micWorklet = null;
 let micRequestSequence = null;
 let micSamplesSent = 0;
+let voiceDeliveryGeneration = 0;
 let micPendingPcm = new Uint8Array(0);
 let micChunkTail = Promise.resolve();
 let micUploadFailure = null;
@@ -824,6 +825,7 @@ const clearRealtimeMedia = () => {
     updateControls();
 };
 const closePeerTransport = () => {
+    voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
     stopMicrophoneCapture();
@@ -1306,6 +1308,7 @@ const finishMicrophoneTurn = async () => {
     }
     voiceRequestInFlight = true;
     const attemptedRequestSequence = requestSequence;
+    const deliveryGeneration = ++voiceDeliveryGeneration;
     let finishAccepted = false;
     updateControls();
     setStatus("Завершаю распознавание и начинаю ответ…");
@@ -1328,12 +1331,14 @@ const finishMicrophoneTurn = async () => {
         finishAccepted = true;
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
-        let providerCommandDelivered = false;
         const deliveryTasks = [];
         const scheduleSegmentDelivery = (segment) => {
+            if (deliveryGeneration !== voiceDeliveryGeneration)
+                return;
             const command = segment.client_command;
             if (!command)
                 return;
+            let commandSent = false;
             const dispatch = voiceCommandScheduler.dispatch(command);
             if (rt0EvidenceMode) {
                 rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
@@ -1348,7 +1353,7 @@ const finishMicrophoneTurn = async () => {
                     }
                     return;
                 }
-                providerCommandDelivered = true;
+                commandSent = true;
                 const voice = activeVoiceEvidence;
                 if (rt0EvidenceMode
                     && voice?.requestSequence === requestSequence
@@ -1359,12 +1364,22 @@ const finishMicrophoneTurn = async () => {
                     evidence_turn_sequence: segment.evidence_turn_sequence,
                     evidence_output_sequence: segment.evidence_output_sequence,
                 });
-            })().catch((error) => {
+            })().catch(async (error) => {
                 deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
-                voiceCommandScheduler.interrupt();
-                rt0PlaybackPending = false;
-                updateControls();
-                void api("/api/avatar/interrupt", {}).catch(() => undefined);
+                if (commandSent) {
+                    const providerInterrupted = await interruptAvatar(false);
+                    if (rt0EvidenceMode && !providerInterrupted) {
+                        rt0PlaybackPending = true;
+                        updateControls();
+                    }
+                }
+                else {
+                    voiceDeliveryGeneration += 1;
+                    voiceCommandScheduler.interrupt();
+                    rt0PlaybackPending = false;
+                    updateControls();
+                    await api("/api/avatar/interrupt", {}).catch(() => undefined);
+                }
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
                     setStatus(deliveryFailure.message, "error");
                 }
@@ -1478,9 +1493,9 @@ const speak = async () => {
             setStatus(terminalStatus.text, terminalStatus.kind);
     }
 };
-const interruptAvatar = async () => {
+const interruptAvatar = async (recordEvidence = true) => {
     const voice = activeVoiceEvidence;
-    if (voice?.audioStarted) {
+    if (recordEvidence && voice?.audioStarted) {
         interruptEvidenceWatch = {
             requestSequence: voice.requestSequence,
             startedAt: performance.now(),
@@ -1495,6 +1510,7 @@ const interruptAvatar = async () => {
         && sessionState.realtime.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     try {
         if (voiceRequestInFlight) {
@@ -1509,19 +1525,23 @@ const interruptAvatar = async () => {
             sessionState.setPlaybackId(null);
             updateControls();
             await refreshSessionEvidence();
-            return;
+            return true;
         }
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", {});
             rt0PlaybackPending = false;
             updateControls();
+            await refreshSessionEvidence();
+            return true;
         }
         await refreshSessionEvidence();
+        return false;
     }
     catch (error) {
         interruptEvidenceWatch = null;
         setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
         updateControls();
+        return false;
     }
 };
 const endSession = async (kind) => {
