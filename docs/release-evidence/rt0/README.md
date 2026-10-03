@@ -33,6 +33,26 @@ The Owner Lab browser exposes a CSRF-protected `Скачать evidence snapshot
 The private owner-specific Golden report must be generated through `vpr-rt0-owner-golden` from the exact private owner suite/evidence, ReleaseSpec, provider-state bytes and candidate SHA. The command refuses non-owner suites and does not overwrite an existing report.
 
 A checker PASS is necessary evidence hygiene, not proof that the referenced private artifacts are genuine. Keep the private Golden evidence bundle, the recomputed bound Golden report, the exact sanitized provider-state manifest, the sanitized live-provider probe, the sanitized conversation-attempt receipt, the raw sanitized Owner Lab session snapshots, the bound Owner Lab session aggregate, the sanitized exit manifest, and every hashed underlying artifact together for the exact candidate. The inventory preflight schema `rt0-evidence-inventory-0.8` requires the exact `release-spec.md` and `private-golden-evidence.json` bytes plus raw session snapshots themselves, independently binds the ReleaseSpec digest to both the exit manifest and bound Golden report, recomputes the archived bound Golden report from the private Golden bytes with the compiled mandatory suite, validates the live-provider probe with the same canonical semantic validator used by the exit gate, and validates the exit manifest plus supporting-artifact bindings with the same canonical supporting validator used by the release gate. It verifies exact candidate/provider state, presented Golden/probe/conversation/session digests, supporting projections, raw-snapshot recomputation, and owner/visitor conversation-claim derivation from the credentialed receipt plus server-role-bound session snapshots before `inventory_complete` can become true; missing, stale, tampered, duplicate, extra or unbound evidence keeps the inventory incomplete. The release exit CLI also requires the ten canonical supporting evidence files as explicit verifier inputs and hashes their exact bytes against the CI, E2E, owner/visitor conversation, acceptance, quality, cost, privacy/permissions, human-evaluation and known-limitations digests declared in `exit-evidence.json`. For each of the nine JSON files it additionally requires the parsed document to equal the canonical supporting projection with only `artifact_sha256` omitted. CI/E2E projections also carry `candidate_sha`; owner/visitor conversation, acceptance, quality, cost, privacy/permissions, and human-evaluation projections carry both `candidate_sha` and `provider_state_sha256`. A changed claim, stale passed automation result, or real-evidence artifact from another candidate/provider configuration therefore remains invalid even if its new file digest is honestly recomputed and written back into the manifest. `known-limitations.md` remains an exact-byte document binding. It then re-runs the compiled mandatory 13-case Golden suite, requires the recomputed report to exactly match the archived report, recomputes the provider-state digest, verifies the exact live-provider probe plus conversation/session evidence digests and candidate/provider-state bindings, recomputes the session aggregate from the raw snapshots, and rejects provider/model/representation drift or cross-candidate runtime-evidence reuse. `release.rt0_exit_gate` remains `NOT_IMPLEMENTED` until such real evidence exists and is reviewed.
+## Exact-candidate evidence workspace preparation
+
+Before any credentialed or browser evidence capture, prepare the external evidence workspace from the
+exact clean candidate:
+
+```text
+cargo run -p vpr-evaluation --bin vpr-rt0-evidence-prepare -- /secure/evidence/rt0-candidate
+```
+
+The command derives the candidate from `git rev-parse HEAD`, rejects a dirty worktree, rejects
+relative paths and paths inside the Git worktree, verifies that the ReleaseSpec embedded in the
+binary exactly matches the checked-out ReleaseSpec, and writes only the exact `release-spec.md`
+bytes. It is idempotent when those bytes already match and fails closed rather than overwriting a
+conflicting ReleaseSpec.
+
+The preparation receipt lists present and missing artifacts from the same canonical required-file
+list used by `vpr-rt0-evidence-inventory` and always reports
+`release_ready_claimed=false`. It does not create synthetic provider, browser, Golden, cost,
+privacy, quality, human-review, or release evidence.
+
 ## Local exact-candidate doctor
 
 Before spending provider calls on a real RT0 candidate, the operator can validate the local inputs and provider configuration without network egress:
@@ -57,7 +77,7 @@ A doctor PASS means only that the local candidate, private inputs and provider c
 VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- /secure/evidence/provider-state.json
 ```
 
-The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires one explicitly selected supported realtime-avatar provider plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. D-ID is one supported avatar adapter, not an RT0 requirement; `local-open-source` can be selected without configuring any D-ID credential. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
+The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires one explicitly selected supported realtime-avatar provider plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. D-ID is one supported avatar adapter, not an RT0 requirement; `local-open-source` can be selected without configuring any D-ID credential. When D-ID is selected, its account preflight uses the read-only `/credits` endpoint and fails early only when a successful response explicitly proves a zero remaining balance; an unknown response shape is not invented into a budget failure, and HTTP 404 remains an API error rather than being misclassified as zero credit. Runtime HTTP 402 remains the authoritative insufficient-credit failure path during session creation. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
 
 A preflight PASS proves only that an exact clean candidate has a complete local provider configuration and explicit egress authorization. It does **not** prove external provider reachability, conversation quality, or RT0 completion. `provider.real_*` and `release.rt0_exit_gate` remain `NOT_IMPLEMENTED` until credentialed live runs and the rest of the exit evidence exist.
 
