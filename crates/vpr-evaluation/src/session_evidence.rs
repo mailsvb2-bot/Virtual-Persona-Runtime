@@ -2,6 +2,12 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+mod av_sync_diagnostic;
+pub use av_sync_diagnostic::{
+    LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue,
+};
+use av_sync_diagnostic::validate_av_sync_diagnostics;
+
 use crate::session_statistics::{add_cost, distribution};
 use crate::{
     LabTextAttemptEvidence, LabTextAttemptStatus, LatencyDistributionMillis, ParticipantRole,
@@ -57,34 +63,6 @@ pub struct LabAvSyncEvidence {
     pub sample_sequence: u32,
     pub reference: LabAvSyncReference,
     pub absolute_offset_millis: u64,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum LabAvSyncTrackIssue {
-    StatsUnavailable,
-    TimestampUnavailable,
-    AmbiguousStreams,
-    NoUniqueActiveStream,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LabAvSyncDiagnosticInput {
-    pub session_sequence: u64,
-    pub request_sequence: u64,
-    pub attempts: u32,
-    pub audio_issue: Option<LabAvSyncTrackIssue>,
-    pub video_issue: Option<LabAvSyncTrackIssue>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LabAvSyncDiagnostic {
-    pub request_sequence: u64,
-    pub attempts: u32,
-    pub audio_issue: Option<LabAvSyncTrackIssue>,
-    pub video_issue: Option<LabAvSyncTrackIssue>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -580,29 +558,6 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
             LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
-        }
-    }
-    Ok(())
-}
-
-fn validate_av_sync_diagnostics(
-    snapshot: &LabSessionEvidenceSnapshot,
-    request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
-    playback_requests: &HashSet<u64>,
-    proven_requests: &HashSet<u64>,
-) -> Result<(), LabSessionAggregateError> {
-    let mut unique = HashSet::new();
-    for diagnostic in &snapshot.av_sync_diagnostics {
-        if diagnostic.request_sequence == 0
-            || diagnostic.attempts == 0
-            || diagnostic.audio_issue.is_none() && diagnostic.video_issue.is_none()
-            || request_status.get(&diagnostic.request_sequence)
-                != Some(&LabVoiceAttemptStatus::Completed)
-            || !playback_requests.contains(&diagnostic.request_sequence)
-            || proven_requests.contains(&diagnostic.request_sequence)
-            || !unique.insert(diagnostic.request_sequence)
-        {
-            return Err(LabSessionAggregateError::InvalidMediaEvidence);
         }
     }
     Ok(())
