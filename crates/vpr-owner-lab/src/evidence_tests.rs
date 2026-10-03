@@ -66,7 +66,10 @@ fn assert_snapshot_is_bound_and_redacted(snapshot: &LabSessionEvidenceSnapshot) 
         Some(90)
     );
     assert_eq!(snapshot.voice_attempts[0].canonical_turn_sequence, Some(7));
-    assert_eq!(snapshot.voice_attempts[0].canonical_output_sequence, Some(1));
+    assert_eq!(
+        snapshot.voice_attempts[0].canonical_output_sequence,
+        Some(1)
+    );
     assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
     assert_eq!(
         snapshot.voice_attempts[0].llm_first_meaningful_millis,
