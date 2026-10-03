@@ -50,23 +50,22 @@ fn run() -> Result<(), i32> {
     verify_embedded_release_spec(&snapshot.root)?;
     let evidence_dir = validated_workspace_path(Path::new(evidence_dir), &snapshot.root)?;
 
-    let release_spec_written =
-        prepare_rt0_evidence_workspace(&evidence_dir).map_err(|error| {
-            emit_error(match error {
-                vpr_evaluation::Rt0EvidenceWorkspaceError::CreateDirectoryFailed => {
-                    "EVIDENCE_DIRECTORY_CREATE_FAILED"
-                }
-                vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecConflict => {
-                    "RELEASE_SPEC_CONFLICT"
-                }
-                vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecReadFailed => {
-                    "RELEASE_SPEC_READ_FAILED"
-                }
-                vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecWriteFailed => {
-                    "RELEASE_SPEC_WRITE_FAILED"
-                }
-            })
-        })?;
+    let release_spec_written = prepare_rt0_evidence_workspace(&evidence_dir).map_err(|error| {
+        emit_error(match error {
+            vpr_evaluation::Rt0EvidenceWorkspaceError::CreateDirectoryFailed => {
+                "EVIDENCE_DIRECTORY_CREATE_FAILED"
+            }
+            vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecConflict => {
+                "RELEASE_SPEC_CONFLICT"
+            }
+            vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecReadFailed => {
+                "RELEASE_SPEC_READ_FAILED"
+            }
+            vpr_evaluation::Rt0EvidenceWorkspaceError::ReleaseSpecWriteFailed => {
+                "RELEASE_SPEC_WRITE_FAILED"
+            }
+        })
+    })?;
 
     let resolved_evidence_dir =
         fs::canonicalize(&evidence_dir).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
@@ -157,8 +156,7 @@ fn validated_workspace_path(path: &Path, worktree_root: &Path) -> Result<PathBuf
         let parent = path
             .parent()
             .ok_or_else(|| emit_error("EVIDENCE_PATH_INVALID"))?;
-        let parent =
-            fs::canonicalize(parent).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
+        let parent = fs::canonicalize(parent).map_err(|_| emit_error("EVIDENCE_PATH_INVALID"))?;
         let name = path
             .file_name()
             .ok_or_else(|| emit_error("EVIDENCE_PATH_INVALID"))?;
