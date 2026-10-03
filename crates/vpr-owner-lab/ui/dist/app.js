@@ -116,6 +116,7 @@ let remoteEvidenceFrame = null;
 let baselineRms = 0.002;
 let activeVoiceEvidence = null;
 let interruptEvidenceWatch = null;
+let avSyncDiagnostic = null;
 const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
@@ -123,7 +124,7 @@ const MICROPHONE_STORAGE_KEY = "vpr.owner-lab.microphone-device-id";
 const AV_SYNC_REFERENCE = "web_rtc_estimated_playout_timestamp";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
-const AV_SYNC_MAX_ATTEMPTS = 12;
+const AV_SYNC_MAX_ATTEMPTS = 50;
 const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
@@ -161,6 +162,7 @@ const resetTelemetry = () => {
     metricFirstAudio.textContent = "—";
     metricVideoReady.textContent = "—";
     metricAvSync.textContent = "—";
+    avSyncDiagnostic = null;
     metricPlayback.textContent = "—";
     metricCost.textContent = "нет измеренных данных";
 };
@@ -195,6 +197,9 @@ const renderTelemetry = (snapshot) => {
     if (snapshot.av_sync_proven && avSamples.length > 0) {
         const maxOffset = Math.max(...avSamples.map((sample) => sample.absolute_offset_millis));
         metricAvSync.textContent = `${maxOffset} мс · ${avSamples.length} изм.`;
+    }
+    else if (voice && avSyncDiagnostic) {
+        metricAvSync.textContent = `не доказан · ${avSyncDiagnostic}`;
     }
     else {
         metricAvSync.textContent = voice ? "ещё не доказан" : "—";
@@ -325,76 +330,159 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
     });
     await refreshSessionEvidence();
 };
-const primaryPlayoutTimestamp = (stats, expectedKind) => {
-    if (!stats)
-        return null;
+const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
+    const packetCounts = new Map();
+    if (!stats) {
+        return {
+            timestamp: null,
+            packetCounts,
+            diagnostic: `${expectedKind}: stats unavailable`,
+        };
+    }
+    let inboundForKind = 0;
+    let excludedRtx = 0;
+    let missingTimestamp = 0;
     const candidates = [];
-    stats.forEach((raw) => {
+    stats.forEach((raw, key) => {
         const stat = raw;
-        if (stat.type !== "inbound-rtp" || !Number.isFinite(stat.estimatedPlayoutTimestamp))
-            return;
-        const packetsReceived = stat.packetsReceived;
-        if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0)
+        if (stat.type !== "inbound-rtp")
             return;
         const kind = stat.kind ?? stat.mediaType;
         if (kind !== undefined && kind !== expectedKind)
             return;
+        inboundForKind += 1;
+        const packetsReceived = stat.packetsReceived;
+        if (packetsReceived === undefined || !Number.isFinite(packetsReceived) || packetsReceived <= 0) {
+            return;
+        }
         if (stat.codecId) {
             const codec = stats.get(stat.codecId);
-            if (codec?.mimeType?.toLowerCase().endsWith("/rtx"))
+            if (codec?.mimeType?.toLowerCase().endsWith("/rtx")) {
+                excludedRtx += 1;
                 return;
+            }
         }
-        candidates.push(stat.estimatedPlayoutTimestamp);
+        const id = String(key);
+        packetCounts.set(id, packetsReceived);
+        if (!Number.isFinite(stat.estimatedPlayoutTimestamp)) {
+            missingTimestamp += 1;
+            return;
+        }
+        candidates.push({
+            id,
+            timestamp: stat.estimatedPlayoutTimestamp,
+            packetsReceived,
+        });
     });
-    return candidates.length === 1 ? candidates[0] ?? null : null;
+    if (candidates.length === 1) {
+        return {
+            timestamp: candidates[0]?.timestamp ?? null,
+            packetCounts,
+            diagnostic: `${expectedKind}: one RTP timestamp candidate`,
+        };
+    }
+    if (candidates.length > 1 && previousPackets) {
+        const advancing = candidates.filter((candidate) => {
+            const previous = previousPackets.get(candidate.id);
+            return previous !== undefined && candidate.packetsReceived > previous;
+        });
+        if (advancing.length === 1) {
+            return {
+                timestamp: advancing[0]?.timestamp ?? null,
+                packetCounts,
+                diagnostic: `${expectedKind}: selected sole advancing RTP stream`,
+            };
+        }
+        if (advancing.length > 1) {
+            return {
+                timestamp: null,
+                packetCounts,
+                diagnostic: `${expectedKind}: ${advancing.length} advancing RTP streams`,
+            };
+        }
+    }
+    if (candidates.length === 0) {
+        return {
+            timestamp: null,
+            packetCounts,
+            diagnostic: `${expectedKind}: inbound=${inboundForKind}, timestamp-missing=${missingTimestamp}, rtx=${excludedRtx}`,
+        };
+    }
+    return {
+        timestamp: null,
+        packetCounts,
+        diagnostic: `${expectedKind}: ${candidates.length} RTP timestamp candidates awaiting unique activity`,
+    };
 };
-const readAvSyncOffsetMillis = async () => {
+const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
-    let audioTimestamp;
-    let videoTimestamp;
+    let audioSelection;
+    let videoSelection;
     if (currentPeer) {
         const stats = await currentPeer.getStats();
-        audioTimestamp = primaryPlayoutTimestamp(stats, "audio");
-        videoTimestamp = primaryPlayoutTimestamp(stats, "video");
+        audioSelection = selectPlayoutTimestamp(stats, "audio", state.audioPackets);
+        videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
     }
     else {
         const audioStats = liveKitAudioTrack?.getRTCStatsReport;
         const videoStats = liveKitVideoTrack?.getRTCStatsReport;
-        if (!audioStats || !videoStats)
-            return null;
+        if (!audioStats || !videoStats) {
+            return {
+                offsetMillis: null,
+                diagnostic: "LiveKit track stats method unavailable",
+            };
+        }
         const [audioReport, videoReport] = await Promise.all([
             audioStats.call(liveKitAudioTrack),
             videoStats.call(liveKitVideoTrack),
         ]);
-        audioTimestamp = primaryPlayoutTimestamp(audioReport, "audio");
-        videoTimestamp = primaryPlayoutTimestamp(videoReport, "video");
+        audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
+        videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
     }
-    if (audioTimestamp === null || videoTimestamp === null)
-        return null;
-    return Math.round(Math.abs(audioTimestamp - videoTimestamp));
+    state.audioPackets = audioSelection.packetCounts;
+    state.videoPackets = videoSelection.packetCounts;
+    if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
+        return {
+            offsetMillis: null,
+            diagnostic: `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
+        };
+    }
+    return {
+        offsetMillis: Math.round(Math.abs(audioSelection.timestamp - videoSelection.timestamp)),
+        diagnostic: "audio/video playout timestamps available",
+    };
 };
 const collectAvSyncEvidence = async (requestSequence) => {
     let sampleSequence = 1;
     let attempts = 0;
+    const readState = {
+        audioPackets: null,
+        videoPackets: null,
+    };
+    let lastDiagnostic = "A/V stats not sampled";
     while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
         attempts += 1;
-        const absoluteOffsetMillis = await readAvSyncOffsetMillis();
-        if (absoluteOffsetMillis !== null) {
+        const reading = await readAvSyncOffsetMillis(readState);
+        lastDiagnostic = reading.diagnostic;
+        if (reading.offsetMillis !== null) {
             await api("/api/evidence/av-sync", {
                 session_sequence: evidenceSessionSequence,
                 request_sequence: requestSequence,
                 sample_sequence: sampleSequence,
                 reference: AV_SYNC_REFERENCE,
-                absolute_offset_millis: absoluteOffsetMillis,
+                absolute_offset_millis: reading.offsetMillis,
             });
             sampleSequence += 1;
+            avSyncDiagnostic = null;
         }
         if (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
             await new Promise((resolve) => window.setTimeout(resolve, AV_SYNC_SAMPLE_INTERVAL_MILLIS));
         }
     }
-    if (sampleSequence > 1)
-        await refreshSessionEvidence();
+    if (sampleSequence <= AV_SYNC_SAMPLE_COUNT) {
+        avSyncDiagnostic = lastDiagnostic;
+    }
+    await refreshSessionEvidence();
 };
 const ensureAvSyncEvidence = (voice) => {
     if (!voice.responseComplete || voice.audioStartedElapsed === null)
