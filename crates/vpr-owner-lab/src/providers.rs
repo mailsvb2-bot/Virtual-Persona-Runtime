@@ -126,17 +126,19 @@ fn provider_config_complete_with(
     require_voice: bool,
     mut get: impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
+    let did_complete = get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some();
+    let local_complete = get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
+        && get("VPR_LOCAL_AVATAR_API_TOKEN").is_some();
     let avatar = get("VPR_OWNER_LAB_AVATAR_PROVIDER")
-        .unwrap_or_else(|| "did".into())
-        .to_ascii_lowercase();
-    let avatar_complete = match avatar.as_str() {
-        "did" | "d-id" | "did-agent-streams" => {
-            get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some()
-        }
-        "local" | "local-open-source" => {
-            get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
-                && get("VPR_LOCAL_AVATAR_API_TOKEN").is_some()
-        }
+        .map(|value| value.to_ascii_lowercase())
+        .or_else(|| match (did_complete, local_complete) {
+            (true, false) => Some("did".into()),
+            (false, true) => Some("local-open-source".into()),
+            _ => None,
+        });
+    let avatar_complete = match avatar.as_deref() {
+        Some("did" | "d-id" | "did-agent-streams") => did_complete,
+        Some("local" | "local-open-source") => local_complete,
         _ => false,
     };
     if !avatar_complete {
@@ -169,7 +171,11 @@ fn build_avatar(
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
     let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
         .or_else(|| profile.map(|profile| profile.avatar_provider.to_ascii_lowercase()))
-        .unwrap_or_else(|| "did".to_owned());
+        .or_else(infer_avatar_provider_from_environment)
+        .ok_or_else(|| {
+            "avatar provider is not configured; set VPR_OWNER_LAB_AVATAR_PROVIDER or configure one provider completely"
+                .to_owned()
+        })?;
     match name.as_str() {
         "did" | "d-id" | "did-agent-streams" => {
             let endpoint = resolved_value(
@@ -234,6 +240,18 @@ fn build_avatar(
             ))
         }
         _ => Err(format!("unsupported avatar provider: {name}")),
+    }
+}
+
+fn infer_avatar_provider_from_environment() -> Option<String> {
+    let did_complete =
+        optional_env("VPR_DID_API_KEY").is_some() && optional_env("VPR_DID_AGENT_ID").is_some();
+    let local_complete = optional_env("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
+        && optional_env("VPR_LOCAL_AVATAR_API_TOKEN").is_some();
+    match (did_complete, local_complete) {
+        (true, false) => Some("did".into()),
+        (false, true) => Some("local-open-source".into()),
+        _ => None,
     }
 }
 
@@ -514,6 +532,40 @@ mod tests {
         let (avatar, descriptor) = super::build_avatar(Some(&profile)).unwrap();
         assert_eq!(descriptor.provider, "local-open-source");
         assert_eq!(avatar.descriptor().provider, "local-open-source");
+    }
+
+    #[test]
+    fn local_avatar_environment_is_complete_without_any_did_configuration() {
+        let values = [
+            ("VPR_LOCAL_AVATAR_ENDPOINT", "https://avatar.example.test"),
+            ("VPR_LOCAL_AVATAR_API_TOKEN", "worker-token"),
+            ("VPR_OWNER_LAB_STT_PROVIDER", "deepgram"),
+            ("VPR_OWNER_LAB_STT_ENDPOINT", "https://stt.example.test"),
+            ("VPR_OWNER_LAB_STT_API_KEY", "stt-secret"),
+            ("VPR_OWNER_LAB_STT_MODEL", "nova-3"),
+            ("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek"),
+            ("VPR_OWNER_LAB_LLM_ENDPOINT", "https://llm.example.test"),
+            ("VPR_OWNER_LAB_LLM_API_KEY", "llm-secret"),
+            ("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash"),
+        ];
+        assert!(provider_config_complete_with(true, |name| {
+            values
+                .iter()
+                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
+        }));
+    }
+
+    #[test]
+    fn ambiguous_avatar_environment_requires_explicit_selection() {
+        let values = [
+            "VPR_DID_API_KEY",
+            "VPR_DID_AGENT_ID",
+            "VPR_LOCAL_AVATAR_ENDPOINT",
+            "VPR_LOCAL_AVATAR_API_TOKEN",
+        ];
+        assert!(!provider_config_complete_with(false, |name| {
+            values.contains(&name).then(|| "configured".into())
+        }));
     }
 
     #[test]
