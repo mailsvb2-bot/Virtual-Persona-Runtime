@@ -399,13 +399,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 .map_err(|error| error_response(http_evidence::error_status(error), error.code()))
         }),
         "/api/evidence/av-sync-diagnostic" => parse_json::<LabAvSyncDiagnosticInput>(request)
-            .and_then(|body| {
-                http_evidence::record_av_sync_diagnostic(&state.evidence, &body)
-                    .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                    .map_err(|error| {
-                        error_response(http_evidence::error_status(error), error.code())
-                    })
-            }),
+            .and_then(|body| http_evidence::record_av_sync_diagnostic(&state.evidence, &body)
+                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
+                .map_err(|error| error_response(http_evidence::error_status(error), error.code()))),
         "/api/evidence/session/export" => parse_empty_json(request).and_then(|()| {
             http_evidence::export_terminal_snapshot(
                 &state.engine,

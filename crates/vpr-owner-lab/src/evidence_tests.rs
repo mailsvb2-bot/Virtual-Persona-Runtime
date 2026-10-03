@@ -379,6 +379,16 @@ fn av_sync_diagnostic_is_request_scoped_and_cannot_coexist_with_complete_proof()
         recorder.record_av_sync_diagnostic(&diagnostic),
         Err(LabEvidenceError::DuplicateEvidence)
     );
+    assert_eq!(
+        recorder.record_av_sync(&LabAvSyncEvidenceInput {
+            session_sequence: 18,
+            request_sequence: 1,
+            sample_sequence: 1,
+            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+            absolute_offset_millis: 50,
+        }),
+        Err(LabEvidenceError::InvalidState)
+    );
     let snapshot = recorder.snapshot().unwrap();
     assert!(!snapshot.av_sync_proven);
     assert_eq!(snapshot.av_sync_diagnostics.len(), 1);

@@ -483,8 +483,10 @@ const collectAvSyncEvidence = async (requestSequence) => {
     while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
         attempts += 1;
         const reading = await readAvSyncOffsetMillis(readState);
-        lastAudioIssue = reading.audioIssue;
-        lastVideoIssue = reading.videoIssue;
+        if (reading.audioIssue !== null)
+            lastAudioIssue = reading.audioIssue;
+        if (reading.videoIssue !== null)
+            lastVideoIssue = reading.videoIssue;
         if (reading.offsetMillis !== null) {
             await api("/api/evidence/av-sync", {
                 session_sequence: evidenceSessionSequence,

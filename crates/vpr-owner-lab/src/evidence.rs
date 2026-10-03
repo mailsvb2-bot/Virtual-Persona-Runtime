@@ -415,6 +415,13 @@ impl LabSessionEvidenceRecorder {
         {
             return Err(LabEvidenceError::InvalidState);
         }
+        if self
+            .av_sync_diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.request_sequence == input.request_sequence)
+        {
+            return Err(LabEvidenceError::InvalidState);
+        }
         if self.av_sync_samples.iter().any(|sample| {
             sample.request_sequence == input.request_sequence
                 && sample.sample_sequence == input.sample_sequence
