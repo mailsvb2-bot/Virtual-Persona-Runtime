@@ -1,5 +1,10 @@
 use std::env;
 
+mod avatar_selection;
+
+#[cfg(any(windows, test))]
+use avatar_selection::avatar_provider_config_complete_with;
+use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
 
 use crate::provider_credentials::ProviderCredentialProfile;
@@ -33,28 +38,19 @@ pub struct ProviderBundle {
 }
 
 impl ProviderBundle {
-    /// Builds the exact provider composition used by Owner Lab.
-    ///
-    /// Explicit environment variables have highest priority. On Windows, missing values fall back
-    /// to the current user's VPR provider profile in Windows Credential Manager. Set
-    /// `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` to disable that fallback and require a
-    /// hermetic environment-only configuration. API keys are consumed by concrete adapters but are
-    /// never retained in descriptors.
+    /// Builds the Owner Lab provider composition with environment precedence.
     ///
     /// # Errors
-    /// Returns a redacted configuration error when required settings are missing or rejected.
+    /// Fails for invalid configuration.
     pub fn from_env(require_voice: bool) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
         Self::from_env_with_secure_store(require_voice, allow_secure_store)
     }
 
-    /// Builds providers from process environment only, never consulting Windows Credential Manager.
-    ///
-    /// This is intended for hermetic proof/test boundaries where an ambient per-user credential
-    /// store must not be able to satisfy missing environment configuration.
+    /// Builds providers from process environment only.
     ///
     /// # Errors
-    /// Returns a redacted configuration error when required environment settings are missing or rejected.
+    /// Fails for invalid configuration.
     pub fn from_environment(require_voice: bool) -> Result<Self, String> {
         Self::from_env_with_secure_store(require_voice, false)
     }
@@ -126,20 +122,7 @@ fn provider_config_complete_with(
     require_voice: bool,
     mut get: impl FnMut(&'static str) -> Option<String>,
 ) -> bool {
-    let avatar = get("VPR_OWNER_LAB_AVATAR_PROVIDER")
-        .unwrap_or_else(|| "did".into())
-        .to_ascii_lowercase();
-    let avatar_complete = match avatar.as_str() {
-        "did" | "d-id" | "did-agent-streams" => {
-            get("VPR_DID_API_KEY").is_some() && get("VPR_DID_AGENT_ID").is_some()
-        }
-        "local" | "local-open-source" => {
-            get("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
-                && get("VPR_LOCAL_AVATAR_API_TOKEN").is_some()
-        }
-        _ => false,
-    };
-    if !avatar_complete {
+    if !avatar_provider_config_complete_with(&mut get) {
         return false;
     }
 
@@ -167,9 +150,17 @@ fn provider_config_complete_with(
 fn build_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
-    let name = optional_env_lower("VPR_OWNER_LAB_AVATAR_PROVIDER")
+    let mut get = optional_env;
+    let environment_selection = select_environment_avatar_provider_with(&mut get).map_err(|_| {
+        "avatar provider environment is incomplete or ambiguous; set VPR_OWNER_LAB_AVATAR_PROVIDER explicitly"
+            .to_owned()
+    })?;
+    let name = environment_selection
         .or_else(|| profile.map(|profile| profile.avatar_provider.to_ascii_lowercase()))
-        .unwrap_or_else(|| "did".to_owned());
+        .ok_or_else(|| {
+            "avatar provider is not configured; set VPR_OWNER_LAB_AVATAR_PROVIDER or configure one provider completely"
+                .to_owned()
+        })?;
     match name.as_str() {
         "did" | "d-id" | "did-agent-streams" => {
             let endpoint = resolved_value(
@@ -514,6 +505,40 @@ mod tests {
         let (avatar, descriptor) = super::build_avatar(Some(&profile)).unwrap();
         assert_eq!(descriptor.provider, "local-open-source");
         assert_eq!(avatar.descriptor().provider, "local-open-source");
+    }
+
+    #[test]
+    fn local_avatar_environment_is_complete_without_any_did_configuration() {
+        let values = [
+            ("VPR_LOCAL_AVATAR_ENDPOINT", "https://avatar.example.test"),
+            ("VPR_LOCAL_AVATAR_API_TOKEN", "worker-token"),
+            ("VPR_OWNER_LAB_STT_PROVIDER", "deepgram"),
+            ("VPR_OWNER_LAB_STT_ENDPOINT", "https://stt.example.test"),
+            ("VPR_OWNER_LAB_STT_API_KEY", "stt-secret"),
+            ("VPR_OWNER_LAB_STT_MODEL", "nova-3"),
+            ("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek"),
+            ("VPR_OWNER_LAB_LLM_ENDPOINT", "https://llm.example.test"),
+            ("VPR_OWNER_LAB_LLM_API_KEY", "llm-secret"),
+            ("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash"),
+        ];
+        assert!(provider_config_complete_with(true, |name| {
+            values
+                .iter()
+                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
+        }));
+    }
+
+    #[test]
+    fn ambiguous_avatar_environment_requires_explicit_selection() {
+        let values = [
+            "VPR_DID_API_KEY",
+            "VPR_DID_AGENT_ID",
+            "VPR_LOCAL_AVATAR_ENDPOINT",
+            "VPR_LOCAL_AVATAR_API_TOKEN",
+        ];
+        assert!(!provider_config_complete_with(false, |name| {
+            values.contains(&name).then(|| "configured".into())
+        }));
     }
 
     #[test]

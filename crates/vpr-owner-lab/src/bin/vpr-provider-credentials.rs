@@ -57,20 +57,31 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
 
 #[cfg(windows)]
 fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
-    println!("VPR RT0 provider setup: D-ID + Deepgram + DeepSeek");
+    println!("VPR RT0 provider setup: choose an avatar provider + Deepgram + DeepSeek.");
     println!("Secrets are entered without echo and stored in Windows Credential Manager.");
-    let did_api_key = prompt_secret("D-ID API key: ")?;
-    let did_agent_id = prompt_line("D-ID agent ID: ")?;
-    let deepgram_api_key = prompt_secret("Deepgram API key: ")?;
-    let deepseek_api_key = prompt_secret("DeepSeek API key: ")?;
+    let avatar_provider =
+        prompt_line("Avatar provider (did/local-open-source): ")?.to_ascii_lowercase();
+    let profile = match avatar_provider.as_str() {
+        "did" | "d-id" | "did-agent-streams" => {
+            let did_api_key = prompt_secret("D-ID API key: ")?;
+            let did_agent_id = prompt_line("D-ID agent ID: ")?;
+            ProviderCredentialProfile::canonical_rt0(
+                &did_api_key,
+                &did_agent_id,
+                prompt_secret("Deepgram API key: ")?,
+                prompt_secret("DeepSeek API key: ")?,
+            )
+        }
+        "local" | "local-open-source" => ProviderCredentialProfile::local_rt0(
+            &prompt_line("Local avatar HTTPS endpoint: ")?,
+            &prompt_secret("Local avatar API token: ")?,
+            prompt_secret("Deepgram API key: ")?,
+            prompt_secret("DeepSeek API key: ")?,
+        ),
+        _ => return Err("avatar provider must be did or local-open-source".into()),
+    };
 
-    let profile = ProviderCredentialProfile::canonical_rt0(
-        &did_api_key,
-        &did_agent_id,
-        deepgram_api_key,
-        deepseek_api_key,
-    );
-    probe_profile_did(&profile)?;
+    probe_selected_avatar(&profile)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
     print_safe_profile(&profile);
@@ -99,9 +110,7 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn set_local_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    println!(
-        "Configure self-hosted realtime avatar worker; D-ID credentials remain stored as fallback."
-    );
+    println!("Configure and select the self-hosted realtime avatar worker.");
     let endpoint = prompt_line("Local avatar HTTPS endpoint: ")?;
     let api_token = prompt_secret("Local avatar API token: ")?;
     profile.select_local_avatar(&endpoint, &api_token)?;
@@ -128,19 +137,60 @@ fn use_did_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn import_env_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     require_canonical_provider_if_set("VPR_OWNER_LAB_STT_PROVIDER", "deepgram")?;
     require_canonical_provider_if_set("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek")?;
-    let did_api_key = required_process_value("VPR_DID_API_KEY")?;
-    let did_agent_id = required_process_value("VPR_DID_AGENT_ID")?;
-    let profile = ProviderCredentialProfile::canonical_rt0(
-        &did_api_key,
-        &did_agent_id,
-        required_process_value("VPR_OWNER_LAB_STT_API_KEY")?,
-        required_process_value("VPR_OWNER_LAB_LLM_API_KEY")?,
-    );
-    probe_profile_did(&profile)?;
+    let deepgram_api_key = required_process_value("VPR_OWNER_LAB_STT_API_KEY")?;
+    let deepseek_api_key = required_process_value("VPR_OWNER_LAB_LLM_API_KEY")?;
+    let avatar_provider = avatar_provider_from_process_environment()?;
+    let profile = match avatar_provider.as_str() {
+        "did" => ProviderCredentialProfile::canonical_rt0(
+            &required_process_value("VPR_DID_API_KEY")?,
+            &required_process_value("VPR_DID_AGENT_ID")?,
+            deepgram_api_key,
+            deepseek_api_key,
+        ),
+        "local-open-source" => ProviderCredentialProfile::local_rt0(
+            &required_process_value("VPR_LOCAL_AVATAR_ENDPOINT")?,
+            &required_process_value("VPR_LOCAL_AVATAR_API_TOKEN")?,
+            deepgram_api_key,
+            deepseek_api_key,
+        ),
+        _ => unreachable!("avatar provider resolver returns canonical names only"),
+    };
+    probe_selected_avatar(&profile)?;
     save_provider_profile(&profile)?;
     println!("Imported current CMD provider credentials into Windows Credential Manager.");
     print_safe_profile(&profile);
     Ok(())
+}
+
+#[cfg(windows)]
+fn avatar_provider_from_process_environment() -> Result<String, Box<dyn Error + Send + Sync>> {
+    if let Some(explicit) = optional_process_value("VPR_OWNER_LAB_AVATAR_PROVIDER") {
+        return match explicit.to_ascii_lowercase().as_str() {
+            "did" | "d-id" | "did-agent-streams" => Ok("did".into()),
+            "local" | "local-open-source" => Ok("local-open-source".into()),
+            _ => Err("VPR_OWNER_LAB_AVATAR_PROVIDER selects an unsupported avatar provider".into()),
+        };
+    }
+    let did_complete = optional_process_value("VPR_DID_API_KEY").is_some()
+        && optional_process_value("VPR_DID_AGENT_ID").is_some();
+    let local_complete = optional_process_value("VPR_LOCAL_AVATAR_ENDPOINT").is_some()
+        && optional_process_value("VPR_LOCAL_AVATAR_API_TOKEN").is_some();
+    match (did_complete, local_complete) {
+        (true, false) => Ok("did".into()),
+        (false, true) => Ok("local-open-source".into()),
+        _ => Err(
+            "set VPR_OWNER_LAB_AVATAR_PROVIDER when avatar configuration is missing or ambiguous"
+                .into(),
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn optional_process_value(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(windows)]
@@ -189,9 +239,16 @@ fn status() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn probe_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
+    probe_selected_avatar(&profile)
+}
+
+#[cfg(windows)]
+fn probe_selected_avatar(
+    profile: &ProviderCredentialProfile,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     match profile.avatar_provider.as_str() {
-        "did" | "d-id" | "did-agent-streams" => probe_profile_did(&profile),
-        "local" | "local-open-source" => probe_profile_local_avatar(&profile),
+        "did" | "d-id" | "did-agent-streams" => probe_profile_did(profile),
+        "local" | "local-open-source" => probe_profile_local_avatar(profile),
         _ => Err("secure VPR provider profile selects an unsupported avatar provider".into()),
     }
 }
