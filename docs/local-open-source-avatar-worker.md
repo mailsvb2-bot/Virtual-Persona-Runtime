@@ -29,8 +29,9 @@ VPR_LOCAL_AVATAR_ENDPOINT=https://avatar.example.ru
 VPR_LOCAL_AVATAR_API_TOKEN=<secret>
 ```
 
-STT and LLM configuration remains unchanged. D-ID credentials may remain stored as fallback but are
-not read by the local adapter when this provider is selected.
+STT and LLM configuration remains unchanged. D-ID credentials may coexist in the secure profile as
+an inactive alternative binding, but they are not a fallback and are not read when `local-open-source`
+is selected.
 
 Remote plaintext HTTP is rejected. HTTP is accepted only for loopback development.
 
@@ -132,7 +133,7 @@ for any non-loopback deployment.
 
 ## RT0 acceptance measurements
 
-Before replacing D-ID for RT0 evidence, measure at least:
+Before using `local-open-source` for RT0 evidence, measure at least:
 
 - session creation latency
 - first video frame latency
