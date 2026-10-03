@@ -57,7 +57,7 @@ A doctor PASS means only that the local candidate, private inputs and provider c
 VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- /secure/evidence/provider-state.json
 ```
 
-The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires D-ID plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
+The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires one explicitly selected supported realtime-avatar provider plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. D-ID is one supported avatar adapter, not an RT0 requirement; `local-open-source` can be selected without configuring any D-ID credential. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
 
 A preflight PASS proves only that an exact clean candidate has a complete local provider configuration and explicit egress authorization. It does **not** prove external provider reachability, conversation quality, or RT0 completion. `provider.real_*` and `release.rt0_exit_gate` remain `NOT_IMPLEMENTED` until credentialed live runs and the rest of the exit evidence exist.
 
@@ -187,7 +187,7 @@ The aggregate can support browser-observed first-audio, interruption-stop, first
 
 ### Windows secure provider profile
 
-For the canonical local Windows operator path, run `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set` once. If the operator still has the historical CMD session containing the previous `VPR_*` values, `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env` migrates those current-process values without displaying or retyping the secrets. VPR stores the D-ID, Deepgram, and DeepSeek credentials in Windows Credential Manager for the current Windows user together with the canonical non-secret RT0 provider settings.
+For the local Windows operator path, run `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set` once and select the avatar provider. The secure profile can be created directly for D-ID or for `local-open-source`; a local-avatar profile does not require or invent D-ID credentials. If the operator still has a CMD session containing `VPR_*` values, `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env` imports the selected avatar configuration plus the configured STT/LLM credentials without displaying or retyping secrets. Historical profiles that predate avatar selection continue to deserialize as D-ID for migration compatibility only.
 
 `ProviderBundle` resolves explicit process environment first and then the matching Windows credential profile. A stored secret therefore cannot silently override an explicitly selected different provider. For hermetic validation, `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` disables Windows Credential Manager fallback for that process and makes incomplete environment configuration fail closed. The normal fallback remains available to Owner Lab and `vpr-live-proof`, while provider-state and evidence remain secret-free.
 
