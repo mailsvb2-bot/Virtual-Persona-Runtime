@@ -5,9 +5,9 @@ mod av_sync_diagnostic;
 pub use vpr_evaluation::{
     LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
     LabAvSyncReference, LabAvSyncTrackIssue, LabMediaEvidence, LabMediaEvidenceInput,
-    LabMediaEvidenceKind, LabSessionEvidenceSnapshot,
-    LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabTextAttemptEvidence, LabTextAttemptStatus,
+    LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
+    RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
