@@ -75,6 +75,38 @@ Replace those placeholders only from reviewed observations for the exact candida
 Until then, `vpr-rt0-supporting-preflight` must fail. The scaffold exists to eliminate filename,
 binding and field-shape mistakes, not to manufacture evidence.
 
+## RT0 runtime-evidence readiness
+
+Before replacing any runtime-backed scaffold files, inspect the exact owner/visitor capture with the
+non-promoting readiness command:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/conversation-attempt.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/rt0-candidate/session-owner.json \
+  /secure/evidence/rt0-candidate/session-visitor.json
+```
+
+The command revalidates the credentialed conversation receipt, recomputes the exact bound session
+aggregate from the supplied raw snapshots, and refuses stale/cross-candidate/provider or detached
+inputs. Its JSON report names missing runtime evidence explicitly, including missing owner/visitor
+completed voice evidence, canonical playback, text first response, first audio, interruption,
+first useful video, A/V sync, reconnect restoration, or measured session duration. It also reports
+the observed runtime cost subtotal signals and counts A/V diagnostic causes such as
+`timestamp_unavailable` and `sender_report_timing_unavailable`.
+
+When the runtime supporting projection is complete, the command evaluates its QualityEvidence with
+the same canonical quality-threshold checker used by the RT0 exit gate. Exit `0` means the runtime
+conversation/quality portion is structurally complete and its current quality thresholds pass.
+Exit `1` means the exact-bound inputs are valid but runtime evidence is incomplete or one or more
+quality thresholds fail. Exit `2` means input/binding is invalid. The report always sets
+`release_ready_claimed=false` and explicitly keeps manual cost review, privacy acceptance, human
+quality review, participant provenance review, and known-limitations review outstanding; it cannot
+promote RT0 by itself.
+
 ## RT0 runtime-backed supporting projection
 
 After the exact owner/visitor browser sessions have been exported and bound, derive the three
