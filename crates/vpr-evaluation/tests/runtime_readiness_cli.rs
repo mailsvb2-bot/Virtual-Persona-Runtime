@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -25,7 +25,7 @@ fn provider_state() -> Vec<u8> {
 }
 
 fn digest(ch: char) -> String {
-    std::iter::repeat_n(ch, 64).collect()
+    std::iter::repeat(ch).take(64).collect()
 }
 
 fn conversation_attempt(provider_state_bytes: &[u8]) -> Vec<u8> {
