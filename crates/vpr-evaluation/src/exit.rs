@@ -235,6 +235,14 @@ pub enum Rt0ExitFailureCode {
     KnownLimitationsNotReviewed,
 }
 
+/// Evaluates only the canonical RT0 quality thresholds without making a release-readiness claim.
+#[must_use]
+pub fn rt0_quality_failure_codes(evidence: &QualityEvidence) -> Vec<Rt0ExitFailureCode> {
+    let mut failures = Vec::new();
+    evaluate_quality(evidence, &mut failures);
+    failures
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Rt0ExitReport {
