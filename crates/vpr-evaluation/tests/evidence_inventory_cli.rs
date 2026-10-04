@@ -157,6 +157,8 @@ fn bind_projected_claim(
     projected["candidate_sha"] = json!(candidate_sha);
     if let Some(provider_state_sha256) = provider_state_sha256 {
         projected["provider_state_sha256"] = json!(provider_state_sha256);
+    } else {
+        projected["evidence_reference_sha256"] = json!("c".repeat(64));
     }
     let bytes = serde_json::to_vec_pretty(&projected).unwrap();
     fs::write(dir.join(name), &bytes).unwrap();
