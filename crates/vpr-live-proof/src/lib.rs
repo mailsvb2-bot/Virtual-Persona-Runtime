@@ -2,11 +2,8 @@ mod conversation;
 mod probe;
 
 use serde::Serialize;
-use vpr_evaluation::{
-    ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
-    sha256_hex,
-};
-use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
+use vpr_evaluation::{ProviderStateManifest, sha256_hex};
+use vpr_owner_lab::ProviderBundle;
 
 pub use conversation::{
     LiveConversationAttemptError, LiveConversationAttemptReceipt, LiveConversationClaimInput,
@@ -118,7 +115,9 @@ fn prepare_provider_configuration(
         ProviderBundle::from_env(true)
     }
     .map_err(|_| LiveProofPreflightError::ProviderConfigurationInvalid)?;
-    let provider_state = provider_state(&providers)?;
+    let provider_state = providers
+        .provider_state_manifest()
+        .map_err(|_| LiveProofPreflightError::ProviderConfigurationInvalid)?;
     let provider_state_bytes = serde_json::to_vec_pretty(&provider_state)
         .map_err(|_| LiveProofPreflightError::ProviderStateSerializationFailed)?;
     Ok(PreparedLiveProof {
@@ -193,36 +192,6 @@ pub fn inspect_provider_configuration_environment_only(
         provider_state_sha256: receipt.provider_state_sha256.clone(),
         provider_state: receipt.provider_state.clone(),
     })
-}
-
-fn provider_state(
-    bundle: &ProviderBundle,
-) -> Result<ProviderStateManifest, LiveProofPreflightError> {
-    let stt = bundle
-        .stt_descriptor
-        .as_ref()
-        .ok_or(LiveProofPreflightError::ProviderConfigurationInvalid)?;
-    let llm = bundle
-        .llm_descriptor
-        .as_ref()
-        .ok_or(LiveProofPreflightError::ProviderConfigurationInvalid)?;
-    Ok(ProviderStateManifest {
-        schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
-        providers: vec![
-            binding(ProviderRole::Stt, stt),
-            binding(ProviderRole::Llm, llm),
-            binding(ProviderRole::Avatar, &bundle.avatar_descriptor),
-        ],
-    })
-}
-
-fn binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> ProviderStateBinding {
-    ProviderStateBinding {
-        role,
-        provider: descriptor.provider.clone(),
-        model_or_representation: descriptor.model_or_representation.clone(),
-        configuration_fingerprint_sha256: descriptor.configuration_fingerprint_sha256.clone(),
-    }
 }
 
 fn valid_git_sha(value: &str) -> bool {
