@@ -327,8 +327,10 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
     )
     .unwrap();
 
-    let owner_bytes = serde_json::to_vec_pretty(&session_snapshot("owner", 1, true, provider_digest)).unwrap();
-    let visitor_bytes = serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false, provider_digest)).unwrap();
+    let owner_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("owner", 1, true, provider_digest)).unwrap();
+    let visitor_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false, provider_digest)).unwrap();
     fs::write(dir.join("session-owner.json"), &owner_bytes).unwrap();
     fs::write(dir.join("session-visitor.json"), &visitor_bytes).unwrap();
     let bound = bind_owner_lab_session_evidence(
