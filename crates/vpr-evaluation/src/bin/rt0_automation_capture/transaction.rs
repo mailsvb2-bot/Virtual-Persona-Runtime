@@ -168,11 +168,8 @@ fn recover_if_needed(
         fs::remove_file(marker).map_err(|_| fail("AUTOMATION_CAPTURE_RECOVERY_FAILED"))?;
         return Ok(());
     }
-    if !each_artifact_matches_scaffold_or_transaction(root, scaffold, artifacts) {
-        return Err(fail("STALE_AUTOMATION_CAPTURE_AMBIGUOUS"));
-    }
-
-    restore(root, scaffold).map_err(|_| fail("AUTOMATION_CAPTURE_RECOVERY_FAILED"))?;
+    restore_transaction_owned(root, scaffold, artifacts)
+        .map_err(|_| fail("STALE_AUTOMATION_CAPTURE_AMBIGUOUS"))?;
     cleanup_staged(root);
     fs::remove_file(marker).map_err(|_| fail("AUTOMATION_CAPTURE_RECOVERY_FAILED"))
 }
@@ -204,13 +201,13 @@ fn replace_artifacts(
         let target = root.join(name);
         let expected_scaffold = &scaffold[index].1;
         if !fs::read(&target).is_ok_and(|actual| actual == *expected_scaffold) {
-            restore(root, &scaffold[..index])
+            restore_transaction_owned(root, &scaffold[..index], &artifacts[..index])
                 .map_err(|_| fail("AUTOMATION_CAPTURE_ROLLBACK_FAILED"))?;
             return Err(fail("AUTOMATION_CAPTURE_CONCURRENT_MODIFICATION"));
         }
         let bytes = fs::read(staged_path).map_err(|_| fail("AUTOMATION_CAPTURE_STAGE_FAILED"))?;
         if overwrite_synced(&target, &bytes).is_err() {
-            restore(root, &scaffold[..=index])
+            restore_transaction_owned(root, &scaffold[..index], &artifacts[..index])
                 .map_err(|_| fail("AUTOMATION_CAPTURE_ROLLBACK_FAILED"))?;
             return Err(fail("AUTOMATION_CAPTURE_WRITE_FAILED"));
         }
@@ -244,25 +241,32 @@ fn artifacts_match(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> bool {
         .all(|(name, bytes)| fs::read(root.join(name)).is_ok_and(|actual| actual == *bytes))
 }
 
-fn each_artifact_matches_scaffold_or_transaction(
+fn restore_transaction_owned(
     root: &Path,
     scaffold: &[(&'static str, Vec<u8>)],
     artifacts: &[(&'static str, Vec<u8>)],
-) -> bool {
-    scaffold
-        .iter()
-        .zip(artifacts)
-        .all(|((scaffold_name, scaffold_bytes), (artifact_name, artifact_bytes))| {
-            scaffold_name == artifact_name
-                && fs::read(root.join(scaffold_name)).is_ok_and(|actual| {
-                    actual == *scaffold_bytes || actual == *artifact_bytes
-                })
-        })
-}
+) -> std::io::Result<()> {
+    if scaffold.len() != artifacts.len() {
+        return Err(std::io::Error::other("rollback artifact set mismatch"));
+    }
 
-fn restore(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> std::io::Result<()> {
-    for (name, bytes) in expected {
-        overwrite_synced(&root.join(name), bytes)?;
+    for ((scaffold_name, scaffold_bytes), (artifact_name, artifact_bytes)) in
+        scaffold.iter().zip(artifacts)
+    {
+        if scaffold_name != artifact_name {
+            return Err(std::io::Error::other("rollback artifact name mismatch"));
+        }
+        let path = root.join(scaffold_name);
+        let actual = fs::read(&path)?;
+        if actual == *scaffold_bytes {
+            continue;
+        }
+        if actual != *artifact_bytes {
+            return Err(std::io::Error::other(
+                "rollback target changed outside this transaction",
+            ));
+        }
+        overwrite_synced(&path, scaffold_bytes)?;
     }
     Ok(())
 }
@@ -409,6 +413,24 @@ mod tests {
             b"operator-owned\n"
         );
         assert!(dir.0.join(COMMIT_MARKER).exists());
+    }
+
+    #[test]
+    fn rollback_refuses_to_overwrite_external_change() {
+        let dir = TempDir::new("rollback-external-change");
+        let (scaffold, artifacts, _) = fixtures();
+        for (name, bytes) in &scaffold {
+            fs::write(dir.0.join(name), bytes).unwrap();
+        }
+
+        fs::write(dir.0.join(artifacts[0].0), &artifacts[0].1).unwrap();
+        fs::write(dir.0.join(artifacts[0].0), b"operator changed after replace\n").unwrap();
+
+        assert!(restore_transaction_owned(&dir.0, &scaffold[..1], &artifacts[..1]).is_err());
+        assert_eq!(
+            fs::read(dir.0.join(artifacts[0].0)).unwrap(),
+            b"operator changed after replace\n"
+        );
     }
 
     #[test]
