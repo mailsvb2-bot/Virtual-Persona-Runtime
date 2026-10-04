@@ -37,7 +37,9 @@ fn current_clean_candidate() -> Result<String, Box<dyn Error + Send + Sync>> {
     validate_candidate_sha(&candidate)
         .map_err(|_| "Owner Lab evidence candidate SHA is invalid")?;
 
-    let status = Command::new("git").args(["status", "--porcelain"]).output()?;
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()?;
     if !status.status.success() {
         return Err("could not inspect Git worktree for Owner Lab evidence".into());
     }
