@@ -75,6 +75,33 @@ Replace those placeholders only from reviewed observations for the exact candida
 Until then, `vpr-rt0-supporting-preflight` must fail. The scaffold exists to eliminate filename,
 binding and field-shape mistakes, not to manufacture evidence.
 
+## RT0 live-run readiness diagnostics
+
+Before spending another credentialed provider run, inspect the exact bound browser/runtime evidence
+against the same QualityContract used by the final RT0 exit checker:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-live-readiness -- \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/rt0-candidate/session-owner.json \
+  /secure/evidence/rt0-candidate/session-visitor.json
+```
+
+The command recomputes the bound aggregate from the exact raw snapshots and refuses a stale,
+detached, cross-candidate or cross-provider input. Its JSON report names missing or exceeded runtime
+quality evidence for text response, first audio, interruption stop, first useful video, A/V sync and
+recoverable reconnect. Thresholds are shared with the final RT0 exit checker rather than copied into
+a second implementation. It also reports canonical-playback/A-V proof state, attempt counts,
+measured session duration and any runtime-known cost subtotal.
+
+`runtime_quality_ready=true` means only that the exact raw runtime/browser quality evidence is
+complete and inside the RT0 QualityContract. It does **not** mean RT0 is release-ready: complete
+provider cost review (including avatar where applicable), real participant provenance, Golden,
+privacy/permission, acceptance, human review and known limitations remain separately mandatory.
+The command never writes or promotes release evidence.
+
 ## RT0 runtime-backed supporting projection
 
 After the exact owner/visitor browser sessions have been exported and bound, derive the three
