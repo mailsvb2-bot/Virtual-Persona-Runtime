@@ -115,7 +115,7 @@ pub fn derive_rt0_live_readiness(
     }
     push_latency_blocker(
         &mut blockers,
-        &quality.text_first_meaning_response,
+        &quality.text_first_meaningful_response,
         Rt0LiveReadinessBlocker::TextLatencyMissing,
         Rt0LiveReadinessBlocker::TextLatencyExceeded,
     );
