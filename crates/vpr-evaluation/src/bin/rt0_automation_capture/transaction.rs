@@ -62,6 +62,7 @@ pub(super) struct AutomationCaptureTransaction<'a> {
 }
 
 impl<'a> AutomationCaptureTransaction<'a> {
+    #[must_use]
     pub(super) fn new(
         root: &'a Path,
         candidate_sha: &str,
