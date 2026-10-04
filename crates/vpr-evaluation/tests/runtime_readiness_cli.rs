@@ -202,15 +202,24 @@ impl Fixture {
     }
 
     fn run(&self, candidate: &str) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_vpr-rt0-runtime-readiness"))
+        self.run_with_snapshots(candidate, &[&self.owner, &self.visitor])
+    }
+
+    fn run_with_snapshots(
+        &self,
+        candidate: &str,
+        snapshots: &[&PathBuf],
+    ) -> std::process::Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-runtime-readiness"));
+        command
             .arg(&self.provider)
             .arg(&self.conversation)
             .arg(&self.bound)
-            .arg(candidate)
-            .arg(&self.owner)
-            .arg(&self.visitor)
-            .output()
-            .unwrap()
+            .arg(candidate);
+        for snapshot in snapshots {
+            command.arg(snapshot);
+        }
+        command.output().unwrap()
     }
 }
 
@@ -259,6 +268,51 @@ fn missing_reconnect_is_actionable_and_non_promoting() {
         "recoverable_reconnect"
     ));
     assert_eq!(report["release_ready_claimed"], false);
+}
+
+#[test]
+fn missing_visitor_role_can_never_return_success() {
+    let root = temp_dir("owner-only");
+    let provider_bytes = provider_state();
+    let conversation_bytes = conversation_attempt(&provider_bytes);
+    let owner_bytes = snapshot(ParticipantRole::Owner, 1, 500, true);
+    let bound = bind_owner_lab_session_evidence(
+        &[owner_bytes.as_slice()],
+        &provider_bytes,
+        CANDIDATE,
+    )
+    .unwrap();
+
+    let provider = root.join("provider-state.json");
+    let conversation = root.join("conversation-attempt.json");
+    let bound_path = root.join("bound-session-aggregate.json");
+    let owner = root.join("owner-session.json");
+    fs::write(&provider, provider_bytes).unwrap();
+    fs::write(&conversation, conversation_bytes).unwrap();
+    fs::write(&bound_path, serde_json::to_vec_pretty(&bound).unwrap()).unwrap();
+    fs::write(&owner, owner_bytes).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-runtime-readiness"))
+        .arg(&provider)
+        .arg(&conversation)
+        .arg(&bound_path)
+        .arg(CANDIDATE)
+        .arg(&owner)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let report = stdout_json(&output);
+    assert!(contains(
+        &report["missing_runtime_evidence"],
+        "visitor_session_snapshot"
+    ));
+    assert!(contains(
+        &report["missing_runtime_evidence"],
+        "visitor_completed_voice_attempt"
+    ));
+    assert_eq!(report["release_ready_claimed"], false);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
