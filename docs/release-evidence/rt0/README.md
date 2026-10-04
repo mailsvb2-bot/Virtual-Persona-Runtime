@@ -2,6 +2,9 @@
 
 This directory is intentionally **not** proof that RT0 is complete.
 
+For a real exit attempt, follow [RUNBOOK.md](RUNBOOK.md) in order. The runbook is the canonical
+operator sequence; individual sections below document the contracts behind those steps.
+
 An RT0 exit candidate must bind evidence to one exact combination of:
 
 - Git commit;
