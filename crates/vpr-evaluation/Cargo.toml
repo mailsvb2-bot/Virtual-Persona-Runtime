@@ -58,3 +58,7 @@ path = "src/bin/rt0_supporting_capture.rs"
 [[bin]]
 name = "vpr-rt0-supporting-input-prefill"
 path = "src/bin/rt0_supporting_input_prefill.rs"
+
+[[bin]]
+name = "vpr-rt0-live-readiness"
+path = "src/bin/rt0_live_readiness.rs"
