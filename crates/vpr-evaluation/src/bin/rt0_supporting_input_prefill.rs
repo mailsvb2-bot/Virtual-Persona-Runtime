@@ -141,7 +141,13 @@ fn write_create_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(|_| "refusing to overwrite existing reviewed-observations input".to_string())?;
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                "refusing to overwrite existing reviewed-observations input".to_string()
+            } else {
+                format!("prefill output could not be created: {error}")
+            }
+        })?;
     if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
         drop(file);
         let _ = fs::remove_file(path);
