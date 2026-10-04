@@ -199,7 +199,7 @@ fn replace_artifacts(
     for (index, ((name, _), staged_path)) in artifacts.iter().zip(staged).enumerate() {
         let target = root.join(name);
         let expected_scaffold = &scaffold[index].1;
-        if fs::read(&target).is_err_or(|actual| actual != *expected_scaffold) {
+        if !fs::read(&target).is_ok_and(|actual| actual == *expected_scaffold) {
             restore(root, &scaffold[..index])
                 .map_err(|_| fail("AUTOMATION_CAPTURE_ROLLBACK_FAILED"))?;
             return Err(fail("AUTOMATION_CAPTURE_CONCURRENT_MODIFICATION"));
@@ -221,7 +221,7 @@ fn create_journal(path: &Path, journal: &TransactionJournal) -> std::io::Result<
         .parent()
         .ok_or_else(|| std::io::Error::other("journal path has no parent"))?;
     let temp = parent.join(format!(
-        ".rt0-automation-capture.commit.{}.{}.tmp",
+        "{STAGE_PREFIX}journal.{}.{}.tmp",
         process::id(),
         transaction_nonce()
     ));
@@ -248,7 +248,11 @@ fn restore(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> std::io::Result
 }
 
 fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), i32> {
-    write_new_synced_io(path, bytes).map_err(|_| fail("AUTOMATION_CAPTURE_STAGE_FAILED"))
+    if write_new_synced_io(path, bytes).is_err() {
+        let _ = fs::remove_file(path);
+        return Err(fail("AUTOMATION_CAPTURE_STAGE_FAILED"));
+    }
+    Ok(())
 }
 
 fn write_new_synced_io(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
