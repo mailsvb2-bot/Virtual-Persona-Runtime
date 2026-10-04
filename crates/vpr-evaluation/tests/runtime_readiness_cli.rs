@@ -298,13 +298,7 @@ fn missing_visitor_role_can_never_return_success() {
     let provider_bytes = provider_state();
     let provider_state_sha256 = sha256_hex(&provider_bytes);
     let conversation_bytes = conversation_attempt(&provider_bytes);
-    let owner_bytes = snapshot(
-        ParticipantRole::Owner,
-        1,
-        500,
-        true,
-        &provider_state_sha256,
-    );
+    let owner_bytes = snapshot(ParticipantRole::Owner, 1, 500, true, &provider_state_sha256);
     let bound =
         bind_owner_lab_session_evidence(&[owner_bytes.as_slice()], &provider_bytes, CANDIDATE)
             .unwrap();
