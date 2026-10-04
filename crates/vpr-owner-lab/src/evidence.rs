@@ -77,8 +77,8 @@ impl LabSessionEvidenceRecorder {
         {
             return Err(LabEvidenceError::InvalidInput);
         }
-        self.candidate_sha = candidate_sha.to_owned();
-        self.provider_state_sha256 = provider_state_sha256.to_owned();
+        candidate_sha.clone_into(&mut self.candidate_sha);
+        provider_state_sha256.clone_into(&mut self.provider_state_sha256);
         Ok(())
     }
 
