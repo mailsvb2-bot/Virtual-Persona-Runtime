@@ -167,6 +167,9 @@ fn recover_if_needed(
         fs::remove_file(marker).map_err(|_| fail("AUTOMATION_CAPTURE_RECOVERY_FAILED"))?;
         return Ok(());
     }
+    if !each_artifact_matches_scaffold_or_transaction(root, scaffold, artifacts) {
+        return Err(fail("STALE_AUTOMATION_CAPTURE_AMBIGUOUS"));
+    }
 
     restore(root, scaffold).map_err(|_| fail("AUTOMATION_CAPTURE_RECOVERY_FAILED"))?;
     cleanup_staged(root);
@@ -238,6 +241,22 @@ fn artifacts_match(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> bool {
     expected
         .iter()
         .all(|(name, bytes)| fs::read(root.join(name)).is_ok_and(|actual| actual == *bytes))
+}
+
+fn each_artifact_matches_scaffold_or_transaction(
+    root: &Path,
+    scaffold: &[(&'static str, Vec<u8>)],
+    artifacts: &[(&'static str, Vec<u8>)],
+) -> bool {
+    scaffold
+        .iter()
+        .zip(artifacts)
+        .all(|((scaffold_name, scaffold_bytes), (artifact_name, artifact_bytes))| {
+            scaffold_name == artifact_name
+                && fs::read(root.join(scaffold_name)).is_ok_and(|actual| {
+                    actual == *scaffold_bytes || actual == *artifact_bytes
+                })
+        })
 }
 
 fn restore(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> std::io::Result<()> {
@@ -364,6 +383,31 @@ mod tests {
             fs::read(dir.0.join("ci-evidence.json")).unwrap(),
             b"operator edited\n"
         );
+    }
+
+    #[test]
+    fn recovery_never_overwrites_unrecognized_operator_content() {
+        let dir = TempDir::new("ambiguous-recovery");
+        let (scaffold, artifacts, journal) = fixtures();
+        for (name, bytes) in &scaffold {
+            fs::write(dir.0.join(name), bytes).unwrap();
+        }
+        fs::write(dir.0.join(artifacts[0].0), b"operator-owned\n").unwrap();
+        create_journal(&dir.0.join(COMMIT_MARKER), &journal).unwrap();
+
+        let transaction = AutomationCaptureTransaction::new(
+            &dir.0,
+            &"a".repeat(40),
+            b"input",
+            &scaffold,
+            &artifacts,
+        );
+        assert_eq!(transaction.commit(), Err(2));
+        assert_eq!(
+            fs::read(dir.0.join(artifacts[0].0)).unwrap(),
+            b"operator-owned\n"
+        );
+        assert!(dir.0.join(COMMIT_MARKER).exists());
     }
 
     #[test]
