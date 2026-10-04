@@ -120,7 +120,10 @@ fn runtime_cost_roles(
     aggregate: &vpr_evaluation::LabSessionEvidenceAggregate,
     cost: Option<u64>,
 ) -> Vec<ProviderRole> {
-    if cost.is_none() {
+    if cost.is_none()
+        || aggregate.failed_text_attempts > 0
+        || aggregate.failed_voice_attempts > 0
+    {
         return Vec::new();
     }
     if aggregate.completed_voice_attempts > 0 {
@@ -247,6 +250,23 @@ mod tests {
             value["cost"]["provider_charge_covered_provider_roles"],
             json!(["llm"])
         );
+    }
+
+    #[test]
+    fn failed_runtime_attempts_never_claim_complete_cost_coverage() {
+        let mut evidence = bound(Some(17), Some(19));
+        evidence.aggregate.failed_voice_attempts = 1;
+        let value = prefill(&evidence);
+        assert_eq!(
+            value["cost"]["estimated_cost_covered_provider_roles"],
+            json!([])
+        );
+        assert_eq!(
+            value["cost"]["provider_charge_covered_provider_roles"],
+            json!([])
+        );
+        assert_eq!(value["cost"]["estimated_cost_microunits"], 17);
+        assert_eq!(value["cost"]["provider_charge_microunits"], 19);
     }
 
     #[test]
