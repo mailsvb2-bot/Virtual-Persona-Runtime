@@ -82,12 +82,7 @@ impl<'a> AutomationCaptureTransaction<'a> {
 
     pub(super) fn commit(&self) -> Result<CaptureOutcome, i32> {
         let lock = acquire_lock(self.root)?;
-        recover_if_needed(
-            self.root,
-            &self.journal,
-            self.scaffold,
-            self.artifacts,
-        )?;
+        recover_if_needed(self.root, &self.journal, self.scaffold, self.artifacts)?;
 
         if artifacts_match(self.root, self.artifacts) {
             return Ok(CaptureOutcome::AlreadyCommitted);
@@ -155,8 +150,7 @@ fn recover_if_needed(
         return Ok(());
     }
 
-    let marker_bytes =
-        fs::read(&marker).map_err(|_| fail("AUTOMATION_CAPTURE_JOURNAL_INVALID"))?;
+    let marker_bytes = fs::read(&marker).map_err(|_| fail("AUTOMATION_CAPTURE_JOURNAL_INVALID"))?;
     let previous: TransactionJournal = serde_json::from_slice(&marker_bytes)
         .map_err(|_| fail("AUTOMATION_CAPTURE_JOURNAL_INVALID"))?;
     if previous != *journal {
@@ -181,7 +175,12 @@ fn stage_artifacts(
     let nonce = transaction_nonce();
     let mut staged = Vec::with_capacity(artifacts.len());
     for (index, (_, bytes)) in artifacts.iter().enumerate() {
-        let path = root.join(format!("{STAGE_PREFIX}{}.{}.{}.tmp", process::id(), nonce, index));
+        let path = root.join(format!(
+            "{STAGE_PREFIX}{}.{}.{}.tmp",
+            process::id(),
+            nonce,
+            index
+        ));
         if let Err(code) = write_new_synced(&path, bytes) {
             cleanup(&staged);
             return Err(code);
@@ -325,6 +324,9 @@ fn transaction_nonce() -> u128 {
 mod tests {
     use super::*;
 
+    type ArtifactSet = Vec<(&'static str, Vec<u8>)>;
+    type FixtureData = (ArtifactSet, ArtifactSet, TransactionJournal);
+
     struct TempDir(PathBuf);
 
     impl TempDir {
@@ -345,11 +347,7 @@ mod tests {
         }
     }
 
-    fn fixtures() -> (
-        Vec<(&'static str, Vec<u8>)>,
-        Vec<(&'static str, Vec<u8>)>,
-        TransactionJournal,
-    ) {
+    fn fixtures() -> FixtureData {
         let scaffold = vec![
             ("ci-evidence.json", b"ci failed\n".to_vec()),
             ("e2e-evidence.json", b"e2e failed\n".to_vec()),
@@ -369,8 +367,13 @@ mod tests {
         for (name, bytes) in &scaffold {
             fs::write(dir.0.join(name), bytes).unwrap();
         }
-        let transaction =
-            AutomationCaptureTransaction::new(&dir.0, &"a".repeat(40), b"input", &scaffold, &artifacts);
+        let transaction = AutomationCaptureTransaction::new(
+            &dir.0,
+            &"a".repeat(40),
+            b"input",
+            &scaffold,
+            &artifacts,
+        );
         assert_eq!(transaction.commit(), Ok(CaptureOutcome::Committed));
         assert_eq!(transaction.commit(), Ok(CaptureOutcome::AlreadyCommitted));
     }
@@ -381,8 +384,13 @@ mod tests {
         let (scaffold, artifacts, _) = fixtures();
         fs::write(dir.0.join(scaffold[0].0), b"operator edited\n").unwrap();
         fs::write(dir.0.join(scaffold[1].0), &scaffold[1].1).unwrap();
-        let transaction =
-            AutomationCaptureTransaction::new(&dir.0, &"a".repeat(40), b"input", &scaffold, &artifacts);
+        let transaction = AutomationCaptureTransaction::new(
+            &dir.0,
+            &"a".repeat(40),
+            b"input",
+            &scaffold,
+            &artifacts,
+        );
         assert_eq!(transaction.commit(), Err(2));
         assert_eq!(
             fs::read(dir.0.join("ci-evidence.json")).unwrap(),
@@ -424,7 +432,11 @@ mod tests {
         }
 
         fs::write(dir.0.join(artifacts[0].0), &artifacts[0].1).unwrap();
-        fs::write(dir.0.join(artifacts[0].0), b"operator changed after replace\n").unwrap();
+        fs::write(
+            dir.0.join(artifacts[0].0),
+            b"operator changed after replace\n",
+        )
+        .unwrap();
 
         assert!(restore_transaction_owned(&dir.0, &scaffold[..1], &artifacts[..1]).is_err());
         assert_eq!(
@@ -443,8 +455,13 @@ mod tests {
         fs::write(dir.0.join(artifacts[0].0), &artifacts[0].1).unwrap();
         create_journal(&dir.0.join(COMMIT_MARKER), &journal).unwrap();
 
-        let transaction =
-            AutomationCaptureTransaction::new(&dir.0, &"a".repeat(40), b"input", &scaffold, &artifacts);
+        let transaction = AutomationCaptureTransaction::new(
+            &dir.0,
+            &"a".repeat(40),
+            b"input",
+            &scaffold,
+            &artifacts,
+        );
         assert_eq!(transaction.commit(), Ok(CaptureOutcome::Committed));
         assert!(artifacts_match(&dir.0, &artifacts));
         assert!(!dir.0.join(COMMIT_MARKER).exists());
