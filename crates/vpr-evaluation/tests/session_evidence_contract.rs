@@ -2,8 +2,9 @@ use vpr_evaluation::{
     LabAvSyncDiagnostic, LabAvSyncEvidence, LabAvSyncReference, LabAvSyncTrackIssue,
     LabMediaEvidence, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
     LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
-    ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
-    SessionUsageEvidence, aggregate_owner_lab_session_evidence,
+    ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
+    aggregate_owner_lab_session_evidence,
 };
 
 fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
@@ -341,5 +342,26 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
     assert_eq!(
         aggregate_owner_lab_session_evidence(&[cross_request]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+
+#[test]
+fn development_status_tracks_current_session_schema_contracts() {
+    let status = include_str!("../../../docs/release-evidence/rt0/DEVELOPMENT_STATUS.md");
+    let raw = RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
+        .strip_prefix("rt0-owner-lab-session-evidence-")
+        .unwrap();
+    let aggregate = RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA
+        .strip_prefix("rt0-owner-lab-session-aggregate-")
+        .unwrap();
+
+    assert!(
+        status.contains(&format!("Raw session schema `{raw}`")),
+        "DEVELOPMENT_STATUS must name the current raw session evidence schema"
+    );
+    assert!(
+        status.contains(&format!("aggregate schema `{aggregate}`")),
+        "DEVELOPMENT_STATUS must name the current session aggregate schema"
     );
 }
