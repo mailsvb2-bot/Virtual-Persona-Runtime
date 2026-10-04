@@ -4,6 +4,15 @@ use crate::{
     RecordStatus, Rt0ExitFailureCode,
 };
 
+pub const RT0_TEXT_FIRST_MEANINGFUL_P50_MAX_MILLIS: u64 = 1_000;
+pub const RT0_TEXT_FIRST_MEANINGFUL_P95_MAX_MILLIS: u64 = 2_500;
+pub const RT0_FIRST_MEANINGFUL_AUDIO_P50_MAX_MILLIS: u64 = 1_500;
+pub const RT0_FIRST_MEANINGFUL_AUDIO_P95_MAX_MILLIS: u64 = 3_000;
+pub const RT0_INTERRUPTION_STOP_P95_MAX_MILLIS: u64 = 500;
+pub const RT0_FIRST_USEFUL_VIDEO_P95_MAX_MILLIS: u64 = 2_500;
+pub const RT0_AV_SYNC_P95_MAX_MILLIS: u64 = 120;
+pub const RT0_RECOVERABLE_RECONNECT_P95_MAX_MILLIS: u64 = 5_000;
+
 pub(crate) fn evaluate_conversations(
     evidence: &ConversationPairEvidence,
     failures: &mut Vec<Rt0ExitFailureCode>,
@@ -53,24 +62,26 @@ pub(crate) fn evaluate_quality(evidence: &QualityEvidence, failures: &mut Vec<Rt
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::QualityEvidenceNotReal);
     }
-    if evidence.text_first_meaningful_response.p50 > 1_000
-        || evidence.text_first_meaningful_response.p95 > 2_500
+    if evidence.text_first_meaningful_response.p50 > RT0_TEXT_FIRST_MEANINGFUL_P50_MAX_MILLIS
+        || evidence.text_first_meaningful_response.p95 > RT0_TEXT_FIRST_MEANINGFUL_P95_MAX_MILLIS
     {
         failures.push(Rt0ExitFailureCode::TextLatencyExceeded);
     }
-    if evidence.first_meaningful_audio.p50 > 1_500 || evidence.first_meaningful_audio.p95 > 3_000 {
+    if evidence.first_meaningful_audio.p50 > RT0_FIRST_MEANINGFUL_AUDIO_P50_MAX_MILLIS
+        || evidence.first_meaningful_audio.p95 > RT0_FIRST_MEANINGFUL_AUDIO_P95_MAX_MILLIS
+    {
         failures.push(Rt0ExitFailureCode::AudioLatencyExceeded);
     }
-    if evidence.interruption_stop.p95 > 500 {
+    if evidence.interruption_stop.p95 > RT0_INTERRUPTION_STOP_P95_MAX_MILLIS {
         failures.push(Rt0ExitFailureCode::InterruptionLatencyExceeded);
     }
-    if evidence.first_useful_video.p95 > 2_500 {
+    if evidence.first_useful_video.p95 > RT0_FIRST_USEFUL_VIDEO_P95_MAX_MILLIS {
         failures.push(Rt0ExitFailureCode::VideoLatencyExceeded);
     }
-    if evidence.av_sync_absolute_offset.p95 > 120 {
+    if evidence.av_sync_absolute_offset.p95 > RT0_AV_SYNC_P95_MAX_MILLIS {
         failures.push(Rt0ExitFailureCode::AvSyncExceeded);
     }
-    if evidence.recoverable_reconnect.p95 > 5_000 {
+    if evidence.recoverable_reconnect.p95 > RT0_RECOVERABLE_RECONNECT_P95_MAX_MILLIS {
         failures.push(Rt0ExitFailureCode::ReconnectLatencyExceeded);
     }
 }
