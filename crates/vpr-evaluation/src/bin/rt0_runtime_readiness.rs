@@ -125,12 +125,9 @@ fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> 
     )
     .map_err(|_| "CONVERSATION_ATTEMPT_INVALID")?;
 
-    let recomputed = bind_owner_lab_session_evidence(
-        &snapshot_refs,
-        &provider_state_bytes,
-        exact_candidate_sha,
-    )
-    .map_err(|_| "SESSION_BINDING_INVALID")?;
+    let recomputed =
+        bind_owner_lab_session_evidence(&snapshot_refs, &provider_state_bytes, exact_candidate_sha)
+            .map_err(|_| "SESSION_BINDING_INVALID")?;
     if recomputed != bound {
         return Err("BOUND_AGGREGATE_MISMATCH");
     }
@@ -215,11 +212,7 @@ fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> 
     );
     let (runtime_supporting_projection_ready, runtime_projection_error, quality_threshold_failures) =
         match projection {
-            Ok(projection) => (
-                true,
-                None,
-                rt0_quality_failure_codes(&projection.quality),
-            ),
+            Ok(projection) => (true, None, rt0_quality_failure_codes(&projection.quality)),
             Err(error) => (false, Some(format!("{error:?}")), Vec::new()),
         };
     let quality_thresholds_pass =
