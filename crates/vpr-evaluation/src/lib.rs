@@ -9,8 +9,8 @@ mod exit_support;
 mod exit_validation;
 mod golden;
 mod known_limitations;
-mod live_readiness;
 mod live_provider;
+mod live_readiness;
 mod owner_golden;
 mod session_binding;
 mod session_evidence;
@@ -46,7 +46,8 @@ pub use live_provider::{
 
 pub use live_readiness::{
     RT0_LIVE_READINESS_SCHEMA, Rt0LatencyReadiness, Rt0LiveReadinessBlocker,
-    Rt0LiveReadinessReport, Rt0QualityReadiness, derive_rt0_live_readiness,
+    Rt0LiveReadinessReport, Rt0QualityReadiness, Rt0ReadinessDecisionFlags,
+    Rt0RuntimeProofFlags, derive_rt0_live_readiness,
 };
 
 pub use owner_golden::{OwnerGoldenError, evaluate_bound_owner_golden_suite};
