@@ -118,9 +118,13 @@ cargo run -p vpr-evaluation --bin vpr-rt0-supporting-input-prefill -- \
 
 The prefill command recomputes the bound aggregate from the raw snapshots and refuses a detached,
 stale, cross-candidate or cross-provider aggregate. It copies only mechanically supported runtime
-facts into the manual-review input: exact measured session duration and complete-known STT+LLM
-estimate/provider-charge subtotals. Such runtime cost coverage is explicitly labeled only
-`["stt","llm"]`; the command never invents avatar cost or avatar coverage. Acceptance,
+facts into the manual-review input: exact measured session duration and runtime-known STT/LLM
+estimate/provider-charge subtotals. Complete runtime role coverage is declared only when the
+recorded modalities support it and there are no failed text/voice attempts whose provider cost may
+be absent from the aggregate. Text-only evidence can therefore claim only `["llm"]`; a clean
+voice-backed aggregate can claim `["stt","llm"]`; any failed attempt leaves coverage empty while
+retaining the known subtotal as a lower-bound review aid. The command never invents avatar cost or
+avatar coverage. Acceptance,
 privacy/permission results, participant provenance, human dimensions and known-limitations review
 remain fail-closed. The emitted attestation is deliberately `REVIEW_REQUIRED`, which is not accepted
 by `vpr-rt0-supporting-capture`. A reviewer must inspect the exact candidate observations, replace
