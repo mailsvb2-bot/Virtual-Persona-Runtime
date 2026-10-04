@@ -1,6 +1,7 @@
 use std::env;
 
 mod avatar_selection;
+mod provider_state;
 
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
@@ -10,9 +11,6 @@ use sha2::{Digest, Sha256};
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
-use vpr_evaluation::{
-    ProviderRole, ProviderStateBinding, ProviderStateManifest, RT0_PROVIDER_STATE_SCHEMA,
-};
 use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
@@ -56,31 +54,6 @@ impl ProviderBundle {
     /// Fails for invalid configuration.
     pub fn from_environment(require_voice: bool) -> Result<Self, String> {
         Self::from_env_with_secure_store(require_voice, false)
-    }
-
-    /// Returns the sanitized provider-state manifest for the exact provider composition.
-    ///
-    /// The manifest contains no credentials. Voice evidence requires all RT0 provider roles.
-    ///
-    /// # Errors
-    /// Fails when STT or LLM configuration is absent.
-    pub fn provider_state_manifest(&self) -> Result<ProviderStateManifest, String> {
-        let stt = self
-            .stt_descriptor
-            .as_ref()
-            .ok_or_else(|| "provider state requires STT configuration".to_owned())?;
-        let llm = self
-            .llm_descriptor
-            .as_ref()
-            .ok_or_else(|| "provider state requires LLM configuration".to_owned())?;
-        Ok(ProviderStateManifest {
-            schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
-            providers: vec![
-                provider_state_binding(ProviderRole::Stt, stt),
-                provider_state_binding(ProviderRole::Llm, llm),
-                provider_state_binding(ProviderRole::Avatar, &self.avatar_descriptor),
-            ],
-        })
     }
 
     fn from_env_with_secure_store(
@@ -394,18 +367,6 @@ fn openai_compatible_provider_name(name: &str) -> Option<&'static str> {
         "openai" | "openai-compatible" => Some("openai-compatible"),
         "deepseek" => Some("deepseek"),
         _ => None,
-    }
-}
-
-fn provider_state_binding(
-    role: ProviderRole,
-    descriptor: &ProviderDescriptor,
-) -> ProviderStateBinding {
-    ProviderStateBinding {
-        role,
-        provider: descriptor.provider.clone(),
-        model_or_representation: descriptor.model_or_representation.clone(),
-        configuration_fingerprint_sha256: descriptor.configuration_fingerprint_sha256.clone(),
     }
 }
 
