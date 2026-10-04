@@ -100,7 +100,8 @@ fn reviewed_automation_replaces_only_canonical_ci_e2e_scaffold() {
         ("e2e-evidence.json", "github-actions:e2e:37191364067"),
     ] {
         let value: Value =
-            serde_json::from_slice(&fs::read(root.0.join("supporting").join(name)).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(root.0.join("supporting").join(name)).unwrap())
+                .unwrap();
         assert_eq!(value["status"], "passed");
         assert_eq!(value["candidate_sha"], CANDIDATE);
         assert!(value.get("evidence_reference").is_none());
@@ -134,7 +135,8 @@ fn review_attestation_is_required_before_any_scaffold_change() {
 
     for name in ["ci-evidence.json", "e2e-evidence.json"] {
         let value: Value =
-            serde_json::from_slice(&fs::read(root.0.join("supporting").join(name)).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(root.0.join("supporting").join(name)).unwrap())
+                .unwrap();
         assert_eq!(value["status"], "failed");
     }
 }
