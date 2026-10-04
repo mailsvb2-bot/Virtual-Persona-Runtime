@@ -128,9 +128,11 @@ process lock plus a recovery journal, stages both outputs before replacement, de
 modification, rolls back a partial matching transaction, and is idempotent after a completed
 matching capture. Existing modified automation evidence is never overwritten.
 
-The canonical supporting files contain only `status` and `candidate_sha`; private automation
-references are not copied into release-supporting JSON. The receipt hashes those references and the
-exact private review input. The capture tool never turns a failed reviewed result into passed and
+The canonical supporting files contain `status`, `candidate_sha`, and
+`evidence_reference_sha256`. The private automation reference itself is never copied into
+release-supporting JSON; only its SHA-256 digest is retained, so the later supporting-artifact digest
+cryptographically binds the reviewed reference without disclosing it. The receipt also hashes those
+references and the exact private review input. The capture tool never turns a failed reviewed result into passed and
 never queries or invents a GitHub result: the reviewer remains responsible for the truth of the
 attestation.
 
