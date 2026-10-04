@@ -397,8 +397,9 @@ mod tests {
         let candidate = "a".repeat(40);
         let provider = "b".repeat(64);
         let mut reviewed = input();
-        reviewed.human_evaluation.visitor_distinct_non_owner_human_verified =
-            CheckStatus::Failed;
+        reviewed
+            .human_evaluation
+            .visitor_distinct_non_owner_human_verified = CheckStatus::Failed;
         let artifacts = build_artifacts(&reviewed, &candidate, &provider);
         let human: Value = serde_json::from_slice(
             &artifacts
@@ -409,10 +410,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(human["owner_human_participant_verified"], "passed");
-        assert_eq!(
-            human["visitor_distinct_non_owner_human_verified"],
-            "failed"
-        );
+        assert_eq!(human["visitor_distinct_non_owner_human_verified"], "failed");
     }
 
     #[test]
