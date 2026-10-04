@@ -515,6 +515,14 @@ if not owner_lab_production_ui_files or any(
     for path in owner_lab_production_ui_files
 ):
     raise SystemExit("Owner Lab production UI boundary must exclude E2E harnesses")
+
+expressive_e2e_launcher = (ROOT / "tests" / "e2e" / "run_owner_lab_expressive_backend.py").read_text(
+    encoding="utf-8"
+)
+if '"VPR_OWNER_LAB_RT0_EVIDENCE": "true"' in expressive_e2e_launcher:
+    raise SystemExit(
+        "Synthetic expressive E2E must not run in RT0 release-evidence mode"
+    )
 owner_lab_production_ui = "\n".join(
     path.read_text(encoding="utf-8") for path in owner_lab_production_ui_files
 )
