@@ -47,9 +47,11 @@ fn provider_state() -> Value {
     })
 }
 
-fn snapshot(session: u64) -> Value {
+fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":if session == 1 { "owner" } else { "visitor" },
@@ -90,9 +92,12 @@ fn snapshot(session: u64) -> Value {
 }
 
 fn prepare_bound(dir: &TempDir) -> (PathBuf, PathBuf, PathBuf) {
-    let provider = dir.file("provider.json", &provider_state());
-    let owner = dir.file("owner.json", &snapshot(1));
-    let visitor = dir.file("visitor.json", &snapshot(2));
+    let provider_value = provider_state();
+    let provider_bytes = serde_json::to_vec(&provider_value).unwrap();
+    let provider_state_sha256 = vpr_evaluation::sha256_hex(&provider_bytes);
+    let provider = dir.file("provider.json", &provider_value);
+    let owner = dir.file("owner.json", &snapshot(1, &provider_state_sha256));
+    let visitor = dir.file("visitor.json", &snapshot(2, &provider_state_sha256));
     let aggregate = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-session-aggregate"))
         .arg("bind")
         .arg(&provider)
