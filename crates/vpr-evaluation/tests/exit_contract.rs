@@ -169,6 +169,7 @@ fn session_snapshot_bytes_with_av_sync(
     role: ParticipantRole,
     session_sequence: u64,
     offsets: [u64; 3],
+    provider_state_sha256: &str,
 ) -> Vec<u8> {
     let interruption = if role == ParticipantRole::Owner {
         vec![serde_json::json!({
@@ -198,7 +199,9 @@ fn session_snapshot_bytes_with_av_sync(
     ];
     media_events.extend(interruption);
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -249,15 +252,26 @@ fn session_snapshot_bytes_with_av_sync(
     .unwrap()
 }
 
-fn session_snapshot_bytes() -> (Vec<u8>, Vec<u8>) {
+fn session_snapshot_bytes(provider_state_bytes: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let provider_state_sha256 = sha256_hex(provider_state_bytes);
     (
-        session_snapshot_bytes_with_av_sync(ParticipantRole::Owner, 1, [40, 60, 120]),
-        session_snapshot_bytes_with_av_sync(ParticipantRole::Visitor, 2, [40, 60, 120]),
+        session_snapshot_bytes_with_av_sync(
+            ParticipantRole::Owner,
+            1,
+            [40, 60, 120],
+            &provider_state_sha256,
+        ),
+        session_snapshot_bytes_with_av_sync(
+            ParticipantRole::Visitor,
+            2,
+            [40, 60, 120],
+            &provider_state_sha256,
+        ),
     )
 }
 
 fn bound_session_aggregate(provider_state_bytes: &[u8]) -> BoundLabSessionEvidenceAggregate {
-    let (owner, visitor) = session_snapshot_bytes();
+    let (owner, visitor) = session_snapshot_bytes(provider_state_bytes);
     bind_owner_lab_session_evidence(
         &[owner.as_slice(), visitor.as_slice()],
         provider_state_bytes,
