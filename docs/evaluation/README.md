@@ -107,6 +107,33 @@ sets `release_ready_claimed=false` and lists the mandatory work outside this dia
 CI/E2E evidence, complete cost review, privacy/permissions, acceptance paths, Golden evidence, human
 quality/provenance review, and known-limitations review. It cannot promote RT0 by itself.
 
+## RT0 reviewed automation capture
+
+`ci-evidence.json` and `e2e-evidence.json` must not be hand-edited from the failed scaffold to a
+passed state. After reviewing the required automation for the exact candidate, prepare a private
+input using schema `rt0-automation-observations-0.1`, the exact candidate SHA,
+`attestation="reviewed_exact_candidate_automation"`, and non-empty CI/E2E evidence references.
+
+Capture those reviewed results through:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-automation-capture -- \
+  /secure/input/rt0-reviewed-automation.json \
+  /secure/evidence/rt0-candidate/supporting \
+  "$(git rev-parse HEAD)"
+```
+
+The command replaces only the exact untouched failed CI/E2E scaffold for that candidate. It uses a
+process lock plus a recovery journal, stages both outputs before replacement, detects concurrent
+modification, rolls back a partial matching transaction, and is idempotent after a completed
+matching capture. Existing modified automation evidence is never overwritten.
+
+The canonical supporting files contain only `status` and `candidate_sha`; private automation
+references are not copied into release-supporting JSON. The receipt hashes those references and the
+exact private review input. The capture tool never turns a failed reviewed result into passed and
+never queries or invents a GitHub result: the reviewer remains responsible for the truth of the
+attestation.
+
 ## RT0 runtime-backed supporting projection
 
 After the exact owner/visitor browser sessions have been exported and bound, derive the three
