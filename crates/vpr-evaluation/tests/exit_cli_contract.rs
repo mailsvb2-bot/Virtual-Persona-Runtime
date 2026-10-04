@@ -341,13 +341,8 @@ fn session_snapshot(
 
 fn session_snapshot_bytes_pair(provider_state_sha256: &str) -> (Vec<u8>, Vec<u8>) {
     (
-        serde_json::to_vec_pretty(&session_snapshot(
-            "owner",
-            1,
-            true,
-            provider_state_sha256,
-        ))
-        .unwrap(),
+        serde_json::to_vec_pretty(&session_snapshot("owner", 1, true, provider_state_sha256))
+            .unwrap(),
         serde_json::to_vec_pretty(&session_snapshot(
             "visitor",
             2,
