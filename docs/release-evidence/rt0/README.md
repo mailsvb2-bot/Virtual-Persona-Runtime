@@ -113,6 +113,34 @@ The input must be raw PCM S16LE, mono, 16 kHz and must live outside the Git work
 The serialized probe receipt schema is `rt0-live-provider-probe-0.3`. It contains only stage latency, usage/cost counters, transcript/output character counts, exact candidate/provider-state binding, SHA-256 + duration binding for the private STT PCM input, and realtime-avatar control-plane open/close timing. It never stores raw input audio, transcript text, generated reply, WebRTC signaling, provider session identifiers, credentials, or provider-generated media. The headless probe intentionally does **not** submit speech or claim audible playback: RT0 media proof is browser-bound and the selected realtime-avatar adapter may require browser WebRTC negotiation before media can be observed. Actual voice evidence comes from the browser Owner Lab session snapshot: canonical output binding plus observed remote audio, rendered video, A/V-sync samples, interruption evidence and human voice review on the same exact candidate/provider state.
 
 A probe PASS proves credentialed provider reachability only. It does not prove a real owner/non-owner conversation, rendered media delivery, human quality, Golden Set completion, or RT0 release readiness. `provider.real_*` and `release.rt0_exit_gate` therefore remain `NOT_IMPLEMENTED` until the required external evidence exists and is reviewed.
+## Runtime evidence readiness
+
+After exporting the exact owner/visitor browser snapshots and creating the bound session aggregate,
+run the non-promoting runtime readiness report before replacing runtime-backed supporting artifacts:
+
+```text
+cargo run -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/conversation-attempt.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/rt0-candidate/session-owner.json \
+  /secure/evidence/rt0-candidate/session-visitor.json
+```
+
+The command recomputes the exact session binding from the raw snapshots and reports missing runtime
+evidence separately: owner/visitor completed voice attempts, canonical playback, text first response,
+first audio, interruption stop, first useful video, A/V sync, reconnect restoration, and session
+duration. It also exposes A/V diagnostic cause counts and the runtime-observed cost subtotal signals.
+When all runtime-backed quality fields exist, it evaluates them with the same canonical thresholds as
+the RT0 exit gate.
+
+This command never creates release evidence and always emits `release_ready_claimed=false`.
+A runtime-readiness exit `0` only means the exact-bound conversation/quality runtime portion is
+complete and currently within its quality thresholds. Cost review, privacy/permission acceptance,
+human quality review, real owner/distinct-non-owner provenance review, Golden evidence, acceptance
+paths, and known-limitations review remain separate mandatory RT0 evidence.
+
 ## Credentialed owner/visitor conversation attempt
 
 `vpr-live-proof conversation` reuses the canonical Owner Lab engine for one owner turn followed by one visitor-scoped turn over the same reviewed `DIGITAL_TWIN` Persona and the same credentialed STT/LLM/avatar provider composition:
