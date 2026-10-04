@@ -33,6 +33,7 @@ struct AutomationObservation {
 struct AutomatedSupportingClaim<'a> {
     status: CheckStatus,
     candidate_sha: &'a str,
+    evidence_reference_sha256: &'a str,
 }
 
 #[derive(Debug, Serialize)]
@@ -116,12 +117,15 @@ fn build_artifacts(
     input: &AutomationInput,
     candidate_sha: &str,
 ) -> Result<Vec<(&'static str, Vec<u8>)>, i32> {
+    let ci_reference_sha256 = sha256_hex(input.ci.evidence_reference.trim().as_bytes());
+    let e2e_reference_sha256 = sha256_hex(input.e2e.evidence_reference.trim().as_bytes());
     Ok(vec![
         (
             "ci-evidence.json",
             pretty_bytes(&AutomatedSupportingClaim {
                 status: input.ci.status,
                 candidate_sha,
+                evidence_reference_sha256: &ci_reference_sha256,
             })?,
         ),
         (
@@ -129,6 +133,7 @@ fn build_artifacts(
             pretty_bytes(&AutomatedSupportingClaim {
                 status: input.e2e.status,
                 candidate_sha,
+                evidence_reference_sha256: &e2e_reference_sha256,
             })?,
         ),
     ])
@@ -137,21 +142,15 @@ fn build_artifacts(
 fn automation_scaffold(
     candidate_sha: &str,
 ) -> Result<Vec<(&'static str, Vec<u8>)>, i32> {
+    let scaffold = |status: CheckStatus| {
+        serde_json::json!({
+            "status": status,
+            "candidate_sha": candidate_sha,
+        })
+    };
     Ok(vec![
-        (
-            "ci-evidence.json",
-            pretty_bytes(&AutomatedSupportingClaim {
-                status: CheckStatus::Failed,
-                candidate_sha,
-            })?,
-        ),
-        (
-            "e2e-evidence.json",
-            pretty_bytes(&AutomatedSupportingClaim {
-                status: CheckStatus::Failed,
-                candidate_sha,
-            })?,
-        ),
+        ("ci-evidence.json", pretty_bytes(&scaffold(CheckStatus::Failed))?),
+        ("e2e-evidence.json", pretty_bytes(&scaffold(CheckStatus::Failed))?),
     ])
 }
 
