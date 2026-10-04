@@ -393,6 +393,29 @@ mod tests {
     }
 
     #[test]
+    fn capture_preserves_failed_participant_provenance_without_promotion() {
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let mut reviewed = input();
+        reviewed.human_evaluation.visitor_distinct_non_owner_human_verified =
+            CheckStatus::Failed;
+        let artifacts = build_artifacts(&reviewed, &candidate, &provider);
+        let human: Value = serde_json::from_slice(
+            &artifacts
+                .iter()
+                .find(|(name, _)| *name == "human-evaluation.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        assert_eq!(human["owner_human_participant_verified"], "passed");
+        assert_eq!(
+            human["visitor_distinct_non_owner_human_verified"],
+            "failed"
+        );
+    }
+
+    #[test]
     fn capture_requires_explicit_real_observation_attestation() {
         let mut value = input();
         value.attestation = "synthetic".into();
