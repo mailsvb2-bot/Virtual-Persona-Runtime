@@ -104,6 +104,8 @@ fn exit_evidence(
         },
         "human_evaluation":{
             "origin":"real","rubric_version":"rt0-human-v1","reviewer_count":1,
+            "owner_human_participant_verified":"passed",
+            "visitor_distinct_non_owner_human_verified":"passed",
             "dimensions":{"voice_similarity":"recorded","voice_naturalness":"recorded",
                 "appearance_plausibility":"recorded","persona_similarity":"recorded",
                 "conversation_naturalness":"recorded"},
