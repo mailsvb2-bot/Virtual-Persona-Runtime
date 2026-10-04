@@ -31,9 +31,19 @@ fn provider_state() -> Vec<u8> {
     .unwrap()
 }
 
-fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
+const CANDIDATE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn snapshot(
+    session: u64,
+    request: u64,
+    elapsed: u64,
+    candidate_sha: &str,
+    provider_state_sha256: &str,
+) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":candidate_sha,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
@@ -77,12 +87,13 @@ fn snapshot(session: u64, request: u64, elapsed: u64) -> Vec<u8> {
 #[test]
 fn binding_covers_exact_candidate_provider_state_and_raw_snapshot_bytes() {
     let provider_state = provider_state();
-    let one = snapshot(1, 1, 400);
-    let two = snapshot(2, 1, 600);
+    let provider_state_sha256 = sha256_hex(&provider_state);
+    let one = snapshot(1, 1, 400, CANDIDATE, &provider_state_sha256);
+    let two = snapshot(2, 1, 600, CANDIDATE, &provider_state_sha256);
     let bound = bind_owner_lab_session_evidence(
         &[one.as_slice(), two.as_slice()],
         &provider_state,
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        CANDIDATE,
     )
     .unwrap();
 
@@ -109,7 +120,8 @@ fn binding_covers_exact_candidate_provider_state_and_raw_snapshot_bytes() {
 #[test]
 fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
     let provider_state = provider_state();
-    let one = snapshot(1, 1, 400);
+    let provider_state_sha256 = sha256_hex(&provider_state);
+    let one = snapshot(1, 1, 400, CANDIDATE, &provider_state_sha256);
     assert_eq!(
         bind_owner_lab_session_evidence(&[one.as_slice()], &provider_state, "not-a-sha"),
         Err(LabSessionBindingError::InvalidCandidateSha)
@@ -120,7 +132,7 @@ fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
         bind_owner_lab_session_evidence(
             &[one.as_slice()],
             invalid_provider,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            CANDIDATE
         ),
         Err(LabSessionBindingError::InvalidProviderState)
     );
@@ -138,7 +150,8 @@ fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
 #[test]
 fn binding_rejects_duplicate_raw_artifacts_before_aggregation() {
     let provider_state = provider_state();
-    let one = snapshot(1, 1, 400);
+    let provider_state_sha256 = sha256_hex(&provider_state);
+    let one = snapshot(1, 1, 400, CANDIDATE, &provider_state_sha256);
     assert_eq!(
         bind_owner_lab_session_evidence(
             &[one.as_slice(), one.as_slice()],
@@ -146,5 +159,35 @@ fn binding_rejects_duplicate_raw_artifacts_before_aggregation() {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         ),
         Err(LabSessionBindingError::DuplicateArtifact)
+    );
+}
+
+
+#[test]
+fn binding_rejects_cross_candidate_and_cross_provider_rebinding() {
+    let provider_state = provider_state();
+    let provider_state_sha256 = sha256_hex(&provider_state);
+    let one = snapshot(1, 1, 400, CANDIDATE, &provider_state_sha256);
+
+    assert_eq!(
+        bind_owner_lab_session_evidence(
+            &[one.as_slice()],
+            &provider_state,
+            "dddddddddddddddddddddddddddddddddddddddd",
+        ),
+        Err(LabSessionBindingError::CandidateMismatch)
+    );
+
+    let mut other_provider: serde_json::Value =
+        serde_json::from_slice(&provider_state).unwrap();
+    other_provider["providers"][1]["provider"] = serde_json::json!("gemini");
+    let other_provider_state = serde_json::to_vec(&other_provider).unwrap();
+    assert_eq!(
+        bind_owner_lab_session_evidence(
+            &[one.as_slice()],
+            &other_provider_state,
+            CANDIDATE,
+        ),
+        Err(LabSessionBindingError::ProviderStateMismatch)
     );
 }
