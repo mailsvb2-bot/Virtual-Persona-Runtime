@@ -277,7 +277,12 @@ fn conversation_attempt(provider_state_sha256: &str) -> Value {
     })
 }
 
-fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Value {
+fn session_snapshot(
+    role: &str,
+    session_sequence: u64,
+    interruption: bool,
+    provider_state_sha256: &str,
+) -> Value {
     let mut media_events = vec![
         json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
         json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
@@ -291,7 +296,9 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
         }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -383,9 +390,21 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
     let conversation_attempt_bytes =
         serde_json::to_vec_pretty(&conversation_attempt(&provider_state_sha256)).unwrap();
     let owner_session_snapshot_bytes =
-        serde_json::to_vec_pretty(&session_snapshot("owner", 1, true)).unwrap();
+        serde_json::to_vec_pretty(&session_snapshot(
+            "owner",
+            1,
+            true,
+            &provider_state_sha256,
+        ))
+        .unwrap();
     let visitor_session_snapshot_bytes =
-        serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false)).unwrap();
+        serde_json::to_vec_pretty(&session_snapshot(
+            "visitor",
+            2,
+            false,
+            &provider_state_sha256,
+        ))
+        .unwrap();
     let bound_session_aggregate = bind_owner_lab_session_evidence(
         &[
             owner_session_snapshot_bytes.as_slice(),
