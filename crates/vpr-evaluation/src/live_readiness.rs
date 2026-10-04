@@ -51,6 +51,19 @@ pub struct Rt0QualityReadiness {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Rt0RuntimeProofFlags {
+    pub canonical_playback_proven: bool,
+    pub av_sync_proven: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Rt0ReadinessDecisionFlags {
+    pub complete_provider_cost_review_still_required: bool,
+    pub runtime_quality_ready: bool,
+    pub rerun_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Rt0LiveReadinessReport {
     pub schema_version: String,
     pub candidate_sha: String,
@@ -61,17 +74,17 @@ pub struct Rt0LiveReadinessReport {
     pub failed_text_attempts: u32,
     pub completed_voice_attempts: u32,
     pub failed_voice_attempts: u32,
-    pub canonical_playback_proven: bool,
-    pub av_sync_proven: bool,
+    #[serde(flatten)]
+    pub proof: Rt0RuntimeProofFlags,
     pub estimated_cost_microunits: Option<u64>,
     pub provider_charge_microunits: Option<u64>,
-    pub complete_provider_cost_review_still_required: bool,
+    #[serde(flatten)]
+    pub decision: Rt0ReadinessDecisionFlags,
     pub quality: Rt0QualityReadiness,
     pub blockers: Vec<Rt0LiveReadinessBlocker>,
-    pub runtime_quality_ready: bool,
-    pub rerun_required: bool,
 }
 
+#[must_use]
 pub fn derive_rt0_live_readiness(
     bound: &BoundLabSessionEvidenceAggregate,
 ) -> Rt0LiveReadinessReport {
@@ -165,15 +178,19 @@ pub fn derive_rt0_live_readiness(
         failed_text_attempts: aggregate.failed_text_attempts,
         completed_voice_attempts: aggregate.completed_voice_attempts,
         failed_voice_attempts: aggregate.failed_voice_attempts,
-        canonical_playback_proven: aggregate.canonical_playback_proven,
-        av_sync_proven: aggregate.av_sync_proven,
+        proof: Rt0RuntimeProofFlags {
+            canonical_playback_proven: aggregate.canonical_playback_proven,
+            av_sync_proven: aggregate.av_sync_proven,
+        },
         estimated_cost_microunits: aggregate.estimated_cost_microunits,
         provider_charge_microunits: aggregate.provider_charge_microunits,
-        complete_provider_cost_review_still_required: true,
+        decision: Rt0ReadinessDecisionFlags {
+            complete_provider_cost_review_still_required: true,
+            runtime_quality_ready,
+            rerun_required: !runtime_quality_ready,
+        },
         quality,
         blockers,
-        runtime_quality_ready,
-        rerun_required: !runtime_quality_ready,
     }
 }
 
@@ -220,7 +237,6 @@ fn push_latency_blocker(
         blockers.push(exceeded);
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -275,8 +291,8 @@ mod tests {
     #[test]
     fn exact_release_spec_boundaries_are_ready() {
         let report = derive_rt0_live_readiness(&passing_bound());
-        assert!(report.runtime_quality_ready);
-        assert!(!report.rerun_required);
+        assert!(report.decision.runtime_quality_ready);
+        assert!(!report.decision.rerun_required);
         assert!(report.blockers.is_empty());
         assert!(report.quality.first_meaningful_audio.passes_threshold);
     }
@@ -286,8 +302,8 @@ mod tests {
         let mut bound = passing_bound();
         bound.aggregate.recoverable_reconnect = None;
         let report = derive_rt0_live_readiness(&bound);
-        assert!(!report.runtime_quality_ready);
-        assert!(report.rerun_required);
+        assert!(!report.decision.runtime_quality_ready);
+        assert!(report.decision.rerun_required);
         assert!(
             report
                 .blockers
@@ -317,6 +333,6 @@ mod tests {
                 .blockers
                 .contains(&Rt0LiveReadinessBlocker::AvSyncNotProven)
         );
-        assert!(!report.runtime_quality_ready);
+        assert!(!report.decision.runtime_quality_ready);
     }
 }
