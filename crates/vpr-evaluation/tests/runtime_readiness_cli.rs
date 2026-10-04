@@ -205,11 +205,7 @@ impl Fixture {
         self.run_with_snapshots(candidate, &[&self.owner, &self.visitor])
     }
 
-    fn run_with_snapshots(
-        &self,
-        candidate: &str,
-        snapshots: &[&PathBuf],
-    ) -> std::process::Output {
+    fn run_with_snapshots(&self, candidate: &str, snapshots: &[&PathBuf]) -> std::process::Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-runtime-readiness"));
         command
             .arg(&self.provider)
@@ -276,12 +272,9 @@ fn missing_visitor_role_can_never_return_success() {
     let provider_bytes = provider_state();
     let conversation_bytes = conversation_attempt(&provider_bytes);
     let owner_bytes = snapshot(ParticipantRole::Owner, 1, 500, true);
-    let bound = bind_owner_lab_session_evidence(
-        &[owner_bytes.as_slice()],
-        &provider_bytes,
-        CANDIDATE,
-    )
-    .unwrap();
+    let bound =
+        bind_owner_lab_session_evidence(&[owner_bytes.as_slice()], &provider_bytes, CANDIDATE)
+            .unwrap();
 
     let provider = root.join("provider-state.json");
     let conversation = root.join("conversation-attempt.json");
