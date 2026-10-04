@@ -108,6 +108,8 @@ pub fn rt0_manual_supporting_scaffold(
                 "origin": "synthetic",
                 "rubric_version": "UNREVIEWED",
                 "reviewer_count": 0,
+                "owner_human_participant_verified": "failed",
+                "visitor_distinct_non_owner_human_verified": "failed",
                 "dimensions": {
                     "voice_similarity": "missing",
                     "voice_naturalness": "missing",
