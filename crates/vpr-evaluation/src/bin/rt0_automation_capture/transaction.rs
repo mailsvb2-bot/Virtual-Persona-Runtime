@@ -210,7 +210,21 @@ fn replace_artifacts(
 fn create_journal(path: &Path, journal: &TransactionJournal) -> std::io::Result<()> {
     let mut bytes = serde_json::to_vec(journal).map_err(std::io::Error::other)?;
     bytes.push(b'\n');
-    write_new_synced_io(path, &bytes)
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("journal path has no parent"))?;
+    let temp = parent.join(format!(
+        ".rt0-automation-capture.commit.{}.{}.tmp",
+        process::id(),
+        transaction_nonce()
+    ));
+    let result = (|| {
+        write_new_synced_io(&temp, &bytes)?;
+        fs::hard_link(&temp, path)?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(temp);
+    result
 }
 
 fn artifacts_match(root: &Path, expected: &[(&'static str, Vec<u8>)]) -> bool {
