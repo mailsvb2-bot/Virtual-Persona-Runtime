@@ -95,7 +95,11 @@ pub fn derive_rt0_runtime_supporting_projection(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
 
-    let snapshots = parse_role_bound_snapshots(session_snapshot_artifacts)?;
+    let snapshots = parse_role_bound_snapshots(
+        session_snapshot_artifacts,
+        exact_candidate_sha,
+        provider_state_digest,
+    )?;
     let owner_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Owner)?;
     let visitor_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Visitor)?;
     let conversations = ConversationPairEvidence {
@@ -261,6 +265,8 @@ fn valid_conversation_turn(turn: &ConversationTurnBinding, role: ParticipantRole
 
 fn parse_role_bound_snapshots(
     artifacts: &[&[u8]],
+    exact_candidate_sha: &str,
+    provider_state_digest: &str,
 ) -> Result<Vec<LabSessionEvidenceSnapshot>, Rt0ExitEvidenceError> {
     if artifacts.is_empty() {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
@@ -268,8 +274,15 @@ fn parse_role_bound_snapshots(
     artifacts
         .iter()
         .map(|bytes| {
-            serde_json::from_slice::<LabSessionEvidenceSnapshot>(bytes)
-                .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+            let snapshot = serde_json::from_slice::<LabSessionEvidenceSnapshot>(bytes)
+                .map_err(|_| Rt0ExitEvidenceError::RuntimeEvidenceInvalid)?;
+            if snapshot.candidate_sha != exact_candidate_sha {
+                return Err(Rt0ExitEvidenceError::RuntimeEvidenceCandidateMismatch);
+            }
+            if snapshot.provider_state_sha256 != provider_state_digest {
+                return Err(Rt0ExitEvidenceError::RuntimeEvidenceProviderStateMismatch);
+            }
+            Ok(snapshot)
         })
         .collect()
 }
