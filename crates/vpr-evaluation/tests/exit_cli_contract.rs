@@ -339,6 +339,25 @@ fn session_snapshot(
     })
 }
 
+fn session_snapshot_bytes_pair(provider_state_sha256: &str) -> (Vec<u8>, Vec<u8>) {
+    (
+        serde_json::to_vec_pretty(&session_snapshot(
+            "owner",
+            1,
+            true,
+            provider_state_sha256,
+        ))
+        .unwrap(),
+        serde_json::to_vec_pretty(&session_snapshot(
+            "visitor",
+            2,
+            false,
+            provider_state_sha256,
+        ))
+        .unwrap(),
+    )
+}
+
 struct PreparedPaths {
     _dir: TempDir,
     evidence: PathBuf,
@@ -389,22 +408,8 @@ fn prepare(evidence_mutator: impl FnOnce(&mut Value)) -> PreparedPaths {
         serde_json::to_vec_pretty(&live_provider_probe(&provider_state_sha256)).unwrap();
     let conversation_attempt_bytes =
         serde_json::to_vec_pretty(&conversation_attempt(&provider_state_sha256)).unwrap();
-    let owner_session_snapshot_bytes =
-        serde_json::to_vec_pretty(&session_snapshot(
-            "owner",
-            1,
-            true,
-            &provider_state_sha256,
-        ))
-        .unwrap();
-    let visitor_session_snapshot_bytes =
-        serde_json::to_vec_pretty(&session_snapshot(
-            "visitor",
-            2,
-            false,
-            &provider_state_sha256,
-        ))
-        .unwrap();
+    let (owner_session_snapshot_bytes, visitor_session_snapshot_bytes) =
+        session_snapshot_bytes_pair(&provider_state_sha256);
     let bound_session_aggregate = bind_owner_lab_session_evidence(
         &[
             owner_session_snapshot_bytes.as_slice(),
