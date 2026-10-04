@@ -91,8 +91,7 @@ cargo run -p vpr-evaluation --bin vpr-rt0-supporting-scaffold -- \
   "$CANDIDATE"
 ```
 
-Every substantive value starts failed, synthetic or missing. Do not edit the canonical scaffold
-files by hand.
+Every substantive value starts failed, synthetic or missing. Do not edit the canonical scaffold files by hand.
 
 ## 5. Capture real browser owner and distinct non-owner sessions
 
@@ -102,8 +101,8 @@ Start Owner Lab with explicit egress permission:
 cargo run -p vpr-owner-lab -- --allow-egress
 ```
 
-On the same candidate/provider state, collect a real owner session and a session with a **distinct
-real non-owner human**. The required live observations include Russian conversation, audible
+On the same candidate/provider state, collect a real owner session and a session with a
+**distinct real non-owner human**. The required live observations include Russian conversation, audible
 canonical playback, rendered video, real owner interruption, A/V-sync samples and a recoverable
 reconnect observation.
 
