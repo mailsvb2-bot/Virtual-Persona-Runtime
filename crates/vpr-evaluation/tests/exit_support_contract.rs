@@ -134,9 +134,15 @@ fn claim_bytes<T: Serialize>(claim: &T) -> Vec<u8> {
     serde_json::to_vec_pretty(&value).unwrap()
 }
 
-fn automated_claim_bytes<T: Serialize>(claim: &T, candidate_sha: &str) -> Vec<u8> {
+fn candidate_claim_value<T: Serialize>(claim: &T, candidate_sha: &str) -> Value {
     let mut value: Value = serde_json::from_slice(&claim_bytes(claim)).unwrap();
     value["candidate_sha"] = json!(candidate_sha);
+    value
+}
+
+fn automated_claim_bytes<T: Serialize>(claim: &T, candidate_sha: &str) -> Vec<u8> {
+    let mut value = candidate_claim_value(claim, candidate_sha);
+    value["evidence_reference_sha256"] = json!("c".repeat(64));
     serde_json::to_vec_pretty(&value).unwrap()
 }
 
@@ -145,8 +151,7 @@ fn real_claim_bytes<T: Serialize>(
     candidate_sha: &str,
     provider_state_sha256: &str,
 ) -> Vec<u8> {
-    let mut value: Value =
-        serde_json::from_slice(&automated_claim_bytes(claim, candidate_sha)).unwrap();
+    let mut value = candidate_claim_value(claim, candidate_sha);
     value["provider_state_sha256"] = json!(provider_state_sha256);
     serde_json::to_vec_pretty(&value).unwrap()
 }
@@ -248,6 +253,25 @@ fn automated_claim_candidate_binding_is_fail_closed_even_after_rehash() {
                 "automated supporting claim {index} accepted detached candidate binding",
             );
         }
+    }
+}
+
+#[test]
+fn automated_reference_digest_is_fail_closed_even_after_rehash() {
+    for index in 0..2 {
+        let mut evidence = evidence();
+        let mut fixture = SupportingFixture::bind(&mut evidence);
+        let bytes = fixture.bytes_mut(index);
+        let mut detached: Value = serde_json::from_slice(bytes).unwrap();
+        detached["evidence_reference_sha256"] = json!("not-a-digest");
+        *bytes = serde_json::to_vec_pretty(&detached).unwrap();
+        set_digest(&mut evidence, index, sha256_hex(bytes));
+
+        assert_eq!(
+            validate_rt0_exit_supporting_artifacts(&evidence, fixture.as_verification()),
+            Err(Rt0ExitEvidenceError::InvalidArtifactDigest),
+            "automated supporting claim {index} accepted invalid reviewed-reference digest",
+        );
     }
 }
 
