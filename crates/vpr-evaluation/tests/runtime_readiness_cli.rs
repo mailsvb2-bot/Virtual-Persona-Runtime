@@ -69,6 +69,7 @@ fn snapshot(
     session_sequence: u64,
     first_audio_millis: u64,
     reconnect: bool,
+    provider_state_sha256: &str,
 ) -> Vec<u8> {
     let mut media_events = vec![
         json!({
@@ -98,7 +99,9 @@ fn snapshot(
     }
 
     serde_json::to_vec_pretty(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -169,9 +172,22 @@ impl Fixture {
     fn new(label: &str, first_audio_millis: u64, reconnect: bool) -> Self {
         let root = temp_dir(label);
         let provider_bytes = provider_state();
+        let provider_state_sha256 = sha256_hex(&provider_bytes);
         let conversation_bytes = conversation_attempt(&provider_bytes);
-        let owner_bytes = snapshot(ParticipantRole::Owner, 1, first_audio_millis, reconnect);
-        let visitor_bytes = snapshot(ParticipantRole::Visitor, 2, first_audio_millis, reconnect);
+        let owner_bytes = snapshot(
+            ParticipantRole::Owner,
+            1,
+            first_audio_millis,
+            reconnect,
+            &provider_state_sha256,
+        );
+        let visitor_bytes = snapshot(
+            ParticipantRole::Visitor,
+            2,
+            first_audio_millis,
+            reconnect,
+            &provider_state_sha256,
+        );
         let bound = bind_owner_lab_session_evidence(
             &[owner_bytes.as_slice(), visitor_bytes.as_slice()],
             &provider_bytes,
@@ -280,8 +296,15 @@ fn missing_reconnect_is_actionable_and_non_promoting() {
 fn missing_visitor_role_can_never_return_success() {
     let root = temp_dir("owner-only");
     let provider_bytes = provider_state();
+    let provider_state_sha256 = sha256_hex(&provider_bytes);
     let conversation_bytes = conversation_attempt(&provider_bytes);
-    let owner_bytes = snapshot(ParticipantRole::Owner, 1, 500, true);
+    let owner_bytes = snapshot(
+        ParticipantRole::Owner,
+        1,
+        500,
+        true,
+        &provider_state_sha256,
+    );
     let bound =
         bind_owner_lab_session_evidence(&[owner_bytes.as_slice()], &provider_bytes, CANDIDATE)
             .unwrap();
