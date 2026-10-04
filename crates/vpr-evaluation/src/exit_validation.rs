@@ -98,7 +98,7 @@ pub fn derive_rt0_runtime_supporting_projection(
     let snapshots = parse_role_bound_snapshots(
         session_snapshot_artifacts,
         exact_candidate_sha,
-        provider_state_digest,
+        &provider_state_digest,
     )?;
     let owner_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Owner)?;
     let visitor_proof = derive_role_conversation_proof(&snapshots, ParticipantRole::Visitor)?;
@@ -206,7 +206,11 @@ pub fn validate_rt0_conversation_evidence_binding(
         exact_candidate_sha,
         provider_state_digest,
     )?;
-    let snapshots = parse_role_bound_snapshots(session_snapshot_artifacts)?;
+    let snapshots = parse_role_bound_snapshots(
+        session_snapshot_artifacts,
+        exact_candidate_sha,
+        provider_state_digest,
+    )?;
     let owner = derive_role_conversation_proof(&snapshots, ParticipantRole::Owner)?;
     let visitor = derive_role_conversation_proof(&snapshots, ParticipantRole::Visitor)?;
     if !conversation_claim_matches(
