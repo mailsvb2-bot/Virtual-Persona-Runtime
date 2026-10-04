@@ -158,7 +158,6 @@ fn binding_rejects_duplicate_raw_artifacts_before_aggregation() {
     );
 }
 
-
 #[test]
 fn binding_rejects_cross_candidate_and_cross_provider_rebinding() {
     let provider_state = provider_state();
