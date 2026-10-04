@@ -106,6 +106,10 @@ On the same candidate/provider state, collect a real owner session and a session
 canonical playback, rendered video, real owner interruption, A/V-sync samples and a recoverable
 reconnect observation.
 
+Every exported release-evidence snapshot is stamped by Owner Lab with the exact clean Git candidate
+and provider-state digest captured at process start. Never hand-add or rewrite those provenance fields;
+the binder rejects missing, stale, cross-candidate or cross-provider snapshots.
+
 Terminate or revoke each session and export its exact sanitized evidence snapshot before starting
 the next session. Save the exact response bytes outside the worktree, for example:
 
