@@ -25,7 +25,7 @@ fn provider_state() -> Vec<u8> {
 }
 
 fn digest(ch: char) -> String {
-    std::iter::repeat(ch).take(64).collect()
+    ch.to_string().repeat(64)
 }
 
 fn conversation_attempt(provider_state_bytes: &[u8]) -> Vec<u8> {
