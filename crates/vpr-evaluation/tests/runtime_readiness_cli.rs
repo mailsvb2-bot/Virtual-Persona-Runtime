@@ -243,12 +243,22 @@ fn complete_passing_runtime_evidence_reports_ready_without_claiming_release_read
     assert_eq!(output.status.code(), Some(0));
     let report = stdout_json(&output);
     assert_eq!(report["schema_version"], "rt0-runtime-readiness-0.1");
-    assert_eq!(report["runtime_supporting_projection_ready"], true);
-    assert_eq!(report["quality_thresholds_pass"], true);
+    assert_eq!(report["runtime_supporting_projection"], "passed");
+    assert_eq!(report["quality_thresholds"], "passed");
     assert_eq!(report["missing_runtime_evidence"], json!([]));
     assert_eq!(report["release_ready_claimed"], false);
-    assert_eq!(report["manual_cost_review_required"], true);
-    assert_eq!(report["participant_provenance_review_required"], true);
+    assert!(contains(
+        &report["remaining_non_runtime_requirements"],
+        "cost_review"
+    ));
+    assert!(contains(
+        &report["remaining_non_runtime_requirements"],
+        "participant_provenance_review"
+    ));
+    assert!(contains(
+        &report["remaining_non_runtime_requirements"],
+        "golden_evidence"
+    ));
 }
 
 #[test]
@@ -257,8 +267,8 @@ fn missing_reconnect_is_actionable_and_non_promoting() {
     let output = fixture.run(CANDIDATE);
     assert_eq!(output.status.code(), Some(1));
     let report = stdout_json(&output);
-    assert_eq!(report["runtime_supporting_projection_ready"], false);
-    assert_eq!(report["quality_thresholds_pass"], false);
+    assert_eq!(report["runtime_supporting_projection"], "failed");
+    assert_eq!(report["quality_thresholds"], "failed");
     assert!(contains(
         &report["missing_runtime_evidence"],
         "recoverable_reconnect"
@@ -314,8 +324,8 @@ fn threshold_failure_is_reported_through_the_canonical_quality_contract() {
     let output = fixture.run(CANDIDATE);
     assert_eq!(output.status.code(), Some(1));
     let report = stdout_json(&output);
-    assert_eq!(report["runtime_supporting_projection_ready"], true);
-    assert_eq!(report["quality_thresholds_pass"], false);
+    assert_eq!(report["runtime_supporting_projection"], "passed");
+    assert_eq!(report["quality_thresholds"], "failed");
     assert!(contains(
         &report["quality_threshold_failures"],
         "AUDIO_LATENCY_EXCEEDED"
