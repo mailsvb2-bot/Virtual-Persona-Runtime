@@ -75,13 +75,8 @@ fn run(args: &[String]) -> Result<(), i32> {
 
     let artifacts = build_artifacts(&input, candidate_sha)?;
     let scaffold = automation_scaffold(candidate_sha)?;
-    let transaction = AutomationCaptureTransaction::new(
-        root,
-        candidate_sha,
-        &input_bytes,
-        &scaffold,
-        &artifacts,
-    );
+    let transaction =
+        AutomationCaptureTransaction::new(root, candidate_sha, &input_bytes, &scaffold, &artifacts);
     let outcome = transaction.commit()?;
 
     let receipt = CaptureReceipt {
@@ -139,9 +134,7 @@ fn build_artifacts(
     ])
 }
 
-fn automation_scaffold(
-    candidate_sha: &str,
-) -> Result<Vec<(&'static str, Vec<u8>)>, i32> {
+fn automation_scaffold(candidate_sha: &str) -> Result<Vec<(&'static str, Vec<u8>)>, i32> {
     let scaffold = |status: CheckStatus| {
         serde_json::json!({
             "status": status,
@@ -149,8 +142,14 @@ fn automation_scaffold(
         })
     };
     Ok(vec![
-        ("ci-evidence.json", pretty_bytes(&scaffold(CheckStatus::Failed))?),
-        ("e2e-evidence.json", pretty_bytes(&scaffold(CheckStatus::Failed))?),
+        (
+            "ci-evidence.json",
+            pretty_bytes(&scaffold(CheckStatus::Failed))?,
+        ),
+        (
+            "e2e-evidence.json",
+            pretty_bytes(&scaffold(CheckStatus::Failed))?,
+        ),
     ])
 }
 
