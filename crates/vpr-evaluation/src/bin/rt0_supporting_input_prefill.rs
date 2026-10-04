@@ -1,4 +1,10 @@
-use std::{env, fs, path::Path, process};
+use std::{
+    env, fs,
+    fs::OpenOptions,
+    io::Write,
+    path::Path,
+    process,
+};
 
 use serde_json::{Value, json};
 use vpr_evaluation::{BoundLabSessionEvidenceAggregate, ProviderRole, bind_owner_lab_session_evidence};
@@ -23,9 +29,6 @@ fn run(args: &[String]) -> Result<(), String> {
     }
 
     let output = Path::new(&args[0]);
-    if output.exists() {
-        return Err("refusing to overwrite existing reviewed-observations input".into());
-    }
 
     let provider_state = read(&args[1], "provider state")?;
     let bound_bytes = read(&args[2], "bound session aggregate")?;
@@ -48,7 +51,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut bytes =
         serde_json::to_vec_pretty(&value).map_err(|_| "prefill JSON serialization failed")?;
     bytes.push(b'\n');
-    fs::write(output, bytes).map_err(|_| "prefill output could not be created")?;
+    write_create_new(output, &bytes)?;
 
     println!(
         "RT0 reviewed-observations prefill created at {}. REVIEW_REQUIRED is intentionally \
@@ -117,6 +120,20 @@ fn runtime_cost_roles(cost: Option<u64>) -> Vec<ProviderRole> {
 
 fn read(path: &str, label: &str) -> Result<Vec<u8>, String> {
     fs::read(path).map_err(|_| format!("{label} could not be read"))
+}
+
+fn write_create_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|_| "refusing to overwrite existing reviewed-observations input".to_string())?;
+    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(format!("prefill output could not be created: {error}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
