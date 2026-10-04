@@ -3,8 +3,8 @@ use vpr_evaluation::{
     LabMediaEvidence, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
     LabTextAttemptEvidence, LabTextAttemptStatus, LabVoiceAttemptEvidence, LabVoiceAttemptStatus,
     ParticipantRole, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, SessionUsageEvidence,
-    aggregate_owner_lab_session_evidence,
+    RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    SessionUsageEvidence, aggregate_owner_lab_session_evidence,
 };
 
 fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
@@ -363,5 +363,19 @@ fn development_status_tracks_current_session_schema_contracts() {
     assert!(
         status.contains(&format!("aggregate schema `{aggregate}`")),
         "DEVELOPMENT_STATUS must name the current session aggregate schema"
+    );
+
+    let evaluation = include_str!("../../../docs/evaluation/README.md");
+    assert!(
+        evaluation.contains(RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA),
+        "evaluation guide must name the current raw session evidence schema"
+    );
+    assert!(
+        evaluation.contains(RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA),
+        "evaluation guide must name the current session aggregate schema"
+    );
+    assert!(
+        evaluation.contains(RT0_OWNER_LAB_SESSION_BINDING_SCHEMA),
+        "evaluation guide must name the current bound aggregate schema"
     );
 }
