@@ -259,7 +259,9 @@ fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> 
         release_ready_claimed: false,
     };
 
-    let ready = report.runtime_supporting_projection_ready && report.quality_thresholds_pass;
+    let ready = report.missing_runtime_evidence.is_empty()
+        && report.runtime_supporting_projection_ready
+        && report.quality_thresholds_pass;
     Ok((report, ready))
 }
 
