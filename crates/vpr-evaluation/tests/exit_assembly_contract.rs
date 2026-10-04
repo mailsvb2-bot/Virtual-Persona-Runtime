@@ -94,6 +94,8 @@ impl SupportingFixture {
                 "origin":"real",
                 "rubric_version":"rt0-human-rubric-1",
                 "reviewer_count":1,
+                "owner_human_participant_verified":"passed",
+                "visitor_distinct_non_owner_human_verified":"passed",
                 "dimensions":{
                     "voice_similarity":"recorded",
                     "voice_naturalness":"recorded",
