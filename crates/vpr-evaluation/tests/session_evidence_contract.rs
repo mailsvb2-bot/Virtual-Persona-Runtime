@@ -345,7 +345,6 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
     );
 }
 
-
 #[test]
 fn development_status_tracks_current_session_schema_contracts() {
     let status = include_str!("../../../docs/release-evidence/rt0/DEVELOPMENT_STATUS.md");
