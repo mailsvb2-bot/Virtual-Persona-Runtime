@@ -9,6 +9,7 @@ mod exit_support;
 mod exit_validation;
 mod golden;
 mod known_limitations;
+mod live_readiness;
 mod live_provider;
 mod owner_golden;
 mod session_binding;
@@ -41,6 +42,11 @@ pub use live_provider::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LiveProviderProbeValidationError,
     LlmProbeEvidence, ProbeUsage, RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,
     validate_live_provider_probe,
+};
+
+pub use live_readiness::{
+    RT0_LIVE_READINESS_SCHEMA, Rt0LatencyReadiness, Rt0LiveReadinessBlocker,
+    Rt0LiveReadinessReport, Rt0QualityReadiness, derive_rt0_live_readiness,
 };
 
 pub use owner_golden::{OwnerGoldenError, evaluate_bound_owner_golden_suite};
