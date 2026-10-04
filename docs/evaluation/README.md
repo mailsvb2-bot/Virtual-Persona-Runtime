@@ -117,12 +117,18 @@ cargo run -p vpr-evaluation --bin vpr-rt0-supporting-capture -- \
   "$(git rev-parse HEAD)"
 ```
 
-The input schema is `rt0-manual-supporting-observations-0.1` and requires
+The input schema is `rt0-manual-supporting-observations-0.2` and requires
 `attestation="reviewed_real_observations"`. The command derives the exact candidate and
 provider-state bindings itself, emits `origin="real"` only from that explicit reviewed-observation
 attestation, preserves every passed/failed observation unchanged, requires all five human-review
-dimensions to have actually been recorded, and rejects duplicate cost-role declarations. It also
-constructs the known-limitations review marker instead of trusting a hand-edited marker in the body.
+dimensions to have actually been recorded, and rejects duplicate cost-role declarations. The
+`human_evaluation` object must also contain
+`owner_human_participant_verified="passed|failed"` and
+`visitor_distinct_non_owner_human_verified="passed|failed"`. These are reviewer attestations of
+participant provenance, not values inferred from role labels, filenames, voice similarity, or media.
+A visitor-scoped browser/runtime snapshot therefore cannot by itself satisfy the distinct real
+non-owner participant requirement. The command also constructs the known-limitations review marker
+instead of trusting a hand-edited marker in the body.
 
 The command replaces only the exact untouched synthetic placeholders previously created by
 `vpr-rt0-supporting-scaffold`. If any of those five files has already been edited or reviewed, it
