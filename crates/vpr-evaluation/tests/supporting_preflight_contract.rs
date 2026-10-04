@@ -192,12 +192,8 @@ fn failed_participant_provenance_remains_valid_preflight_evidence() {
         json!("failed"),
     );
     assert!(
-        preflight_rt0_supporting_artifacts(
-            fixture.as_preflight(),
-            &provider_state(),
-            &candidate()
-        )
-        .is_ok()
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate())
+            .is_ok()
     );
 }
 
