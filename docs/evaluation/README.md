@@ -96,12 +96,37 @@ The command recomputes the bound session aggregate from the exact raw snapshots 
 cross-candidate, cross-provider or detached inputs. It writes only
 `owner-conversation.json`, `visitor-conversation.json` and `quality.json`. If those files still
 match the exact synthetic scaffold bytes for the same candidate/provider state, the command replaces
-only those placeholders. Any modified, reviewed or real existing file is never overwritten. and uses the same canonical derivation logic as the exit verifier for Russian
+only those placeholders. Any modified, reviewed or real existing file is never overwritten. The command uses the same canonical derivation logic as the exit verifier for Russian
 locale, completed turns, canonical playback/voice, rendered video, owner interruption and all six
 session-backed QualityContract latency distributions.
 
 This command is intentionally non-promoting. It does not infer acceptance, privacy/permission,
 cost, Golden or human-review results because those require separate real observations or review.
+
+Before manual review, generate the private reviewed-observations input from the exact runtime
+evidence instead of copying measured duration or known STT/LLM cost subtotals by hand:
+
+```bash
+cargo run -p vpr-evaluation --bin vpr-rt0-supporting-input-prefill -- \
+  /secure/input/rt0-reviewed-observations.json \
+  /secure/evidence/rt0-candidate/provider-state.json \
+  /secure/evidence/rt0-candidate/bound-session-aggregate.json \
+  "$(git rev-parse HEAD)" \
+  /secure/evidence/rt0-candidate/session-owner.json \
+  /secure/evidence/rt0-candidate/session-visitor.json
+```
+
+The prefill command recomputes the bound aggregate from the raw snapshots and refuses a detached,
+stale, cross-candidate or cross-provider aggregate. It copies only mechanically supported runtime
+facts into the manual-review input: exact measured session duration and complete-known STT+LLM
+estimate/provider-charge subtotals. Such runtime cost coverage is explicitly labeled only
+`["stt","llm"]`; the command never invents avatar cost or avatar coverage. Acceptance,
+privacy/permission results, participant provenance, human dimensions and known-limitations review
+remain fail-closed. The emitted attestation is deliberately `REVIEW_REQUIRED`, which is not accepted
+by `vpr-rt0-supporting-capture`. A reviewer must inspect the exact candidate observations, replace
+that attestation with `reviewed_real_observations`, complete every manual field, and add any
+provider-specific avatar amount/coverage only when real billing or reviewed estimate evidence
+supports it. Existing operator input is never overwritten.
 
 ## RT0 reviewed manual supporting capture
 
