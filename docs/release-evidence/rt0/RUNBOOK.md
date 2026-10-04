@@ -95,10 +95,16 @@ Every substantive value starts failed, synthetic or missing. Do not edit the can
 
 ## 5. Capture real browser owner and distinct non-owner sessions
 
-Start Owner Lab with explicit egress permission:
+Start Owner Lab in strict RT0 evidence mode with explicit egress permission. Strict mode is mandatory for release evidence: if the exact clean Git candidate or provider-state provenance cannot be bound, Owner Lab must refuse to start rather than produce an unusable paid capture.
 
 ```bash
-cargo run -p vpr-owner-lab -- --allow-egress
+VPR_OWNER_LAB_RT0_EVIDENCE=true cargo run --locked -p vpr-owner-lab -- --allow-egress
+```
+
+On Windows, prefer the canonical launcher, which sets and verifies the same strict mode and selects the required evidence browser:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
 ```
 
 On the same candidate/provider state, collect a real owner session and a session with a
