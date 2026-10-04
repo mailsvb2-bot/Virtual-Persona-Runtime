@@ -103,9 +103,10 @@ the same canonical quality-threshold checker used by the RT0 exit gate. Exit `0`
 conversation/quality portion is structurally complete and its current quality thresholds pass.
 Exit `1` means the exact-bound inputs are valid but runtime evidence is incomplete or one or more
 quality thresholds fail. Exit `2` means input/binding is invalid. The report always sets
-`release_ready_claimed=false` and explicitly keeps manual cost review, privacy acceptance, human
-quality review, participant provenance review, and known-limitations review outstanding; it cannot
-promote RT0 by itself.
+`release_ready_claimed=false` and lists the mandatory work outside this runtime diagnostic in
+`remaining_non_runtime_requirements`, including automated CI/E2E, cost review, privacy/permissions,
+acceptance paths, Golden evidence, human quality/provenance review, and known-limitations review. It
+cannot promote RT0 by itself.
 
 ## RT0 runtime-backed supporting projection
 
