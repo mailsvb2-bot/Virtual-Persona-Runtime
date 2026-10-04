@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -72,7 +72,7 @@ fn reviewed_input(root: &TempDir, attestation: &str) -> PathBuf {
     path
 }
 
-fn run(root: &TempDir, input: &PathBuf) -> std::process::Output {
+fn run(root: &TempDir, input: &Path) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_vpr-rt0-automation-capture"))
         .arg(input)
         .arg(root.0.join("supporting"))
