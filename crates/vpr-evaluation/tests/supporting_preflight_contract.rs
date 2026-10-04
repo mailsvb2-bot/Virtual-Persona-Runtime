@@ -33,8 +33,16 @@ impl Fixture {
         let provider = sha256_hex(&provider_state);
         let distribution = json!({"samples":3,"p50":100,"p95":200});
         Self {
-            ci: bytes(&json!({"status":"passed","candidate_sha":candidate})),
-            e2e: bytes(&json!({"status":"passed","candidate_sha":candidate})),
+            ci: bytes(&json!({
+                "status":"passed",
+                "candidate_sha":candidate,
+                "evidence_reference_sha256":"c".repeat(64)
+            })),
+            e2e: bytes(&json!({
+                "status":"passed",
+                "candidate_sha":candidate,
+                "evidence_reference_sha256":"d".repeat(64)
+            })),
             owner: bytes(&json!({
                 "origin":"real",
                 "role":"owner",

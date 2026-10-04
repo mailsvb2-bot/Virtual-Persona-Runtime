@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::binding::valid_sha256;
@@ -7,6 +7,14 @@ use crate::{
     BoundGoldenReport, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitReport,
     Rt0ExitVerificationContext, evaluate_rt0_exit_evidence, sha256_hex,
 };
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AutomatedSupportingClaim {
+    status: crate::CheckStatus,
+    candidate_sha: String,
+    evidence_reference_sha256: String,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rt0ExitSupportingArtifacts<'a> {
@@ -86,15 +94,18 @@ fn validate_supporting_claims(
     evidence: &Rt0ExitEvidence,
     artifacts: Rt0ExitSupportingArtifacts<'_>,
 ) -> Result<(), Rt0ExitEvidenceError> {
+    validate_automated_supporting_claim(
+        artifacts.ci,
+        &evidence.automated.ci,
+        &evidence.candidate_sha,
+    )?;
+    validate_automated_supporting_claim(
+        artifacts.e2e,
+        &evidence.automated.e2e,
+        &evidence.candidate_sha,
+    )?;
+
     let claims = [
-        (
-            artifacts.ci,
-            automated_claim_without_digest(&evidence.automated.ci, &evidence.candidate_sha)?,
-        ),
-        (
-            artifacts.e2e,
-            automated_claim_without_digest(&evidence.automated.e2e, &evidence.candidate_sha)?,
-        ),
         (
             artifacts.owner_conversation,
             real_claim_without_digest(
@@ -177,9 +188,26 @@ fn claim_without_digest<T: Serialize>(claim: &T) -> Result<Value, Rt0ExitEvidenc
     Ok(value)
 }
 
-fn automated_claim_without_digest<T: Serialize>(
+fn validate_automated_supporting_claim(
+    bytes: &[u8],
+    claim: &crate::ArtifactCheckEvidence,
+    candidate_sha: &str,
+) -> Result<(), Rt0ExitEvidenceError> {
+    let actual: AutomatedSupportingClaim =
+        serde_json::from_slice(bytes).map_err(|_| Rt0ExitEvidenceError::InvalidArtifactDigest)?;
+    if actual.status != claim.status
+        || actual.candidate_sha != candidate_sha
+        || !valid_sha256(&actual.evidence_reference_sha256)
+    {
+        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
+    }
+    Ok(())
+}
+
+fn real_claim_without_digest<T: Serialize>(
     claim: &T,
     candidate_sha: &str,
+    provider_state_sha256: &str,
 ) -> Result<Value, Rt0ExitEvidenceError> {
     let mut value = claim_without_digest(claim)?;
     let Some(object) = value.as_object_mut() else {
@@ -189,18 +217,6 @@ fn automated_claim_without_digest<T: Serialize>(
         "candidate_sha".into(),
         Value::String(candidate_sha.to_owned()),
     );
-    Ok(value)
-}
-
-fn real_claim_without_digest<T: Serialize>(
-    claim: &T,
-    candidate_sha: &str,
-    provider_state_sha256: &str,
-) -> Result<Value, Rt0ExitEvidenceError> {
-    let mut value = automated_claim_without_digest(claim, candidate_sha)?;
-    let Some(object) = value.as_object_mut() else {
-        return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
-    };
     object.insert(
         "provider_state_sha256".into(),
         Value::String(provider_state_sha256.to_owned()),

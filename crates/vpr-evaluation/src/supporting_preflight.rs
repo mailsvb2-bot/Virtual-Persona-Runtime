@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::binding::{valid_git_sha, validate_provider_state};
+use crate::binding::{valid_git_sha, valid_sha256, validate_provider_state};
 use crate::exit_validation::validate_quality_latencies;
 use crate::known_limitations::parse_known_limitations_review_status;
 use crate::{
@@ -70,6 +70,7 @@ pub enum Rt0SupportingPreflightError {
 struct AutomatedSupportingClaim {
     status: CheckStatus,
     candidate_sha: String,
+    evidence_reference_sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,7 +247,11 @@ fn validate_automated(
     let claim: AutomatedSupportingClaim =
         serde_json::from_slice(bytes).map_err(|_| Rt0SupportingPreflightError::InvalidJson)?;
     let _ = claim.status;
-    validate_candidate(&claim.candidate_sha, exact_candidate_sha)
+    validate_candidate(&claim.candidate_sha, exact_candidate_sha)?;
+    if !valid_sha256(&claim.evidence_reference_sha256) {
+        return Err(Rt0SupportingPreflightError::InvalidJson);
+    }
+    Ok(())
 }
 
 fn validate_conversation(

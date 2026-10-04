@@ -26,8 +26,16 @@ impl SupportingFixture {
     fn new(provider_state_sha256: &str) -> Self {
         let text_distribution = json!({"samples": 1, "p50": 100, "p95": 100});
         Self {
-            ci: bytes(&json!({"status":"failed","candidate_sha":CANDIDATE})),
-            e2e: bytes(&json!({"status":"passed","candidate_sha":CANDIDATE})),
+            ci: bytes(&json!({
+                "status":"failed",
+                "candidate_sha":CANDIDATE,
+                "evidence_reference_sha256":"c".repeat(64)
+            })),
+            e2e: bytes(&json!({
+                "status":"passed",
+                "candidate_sha":CANDIDATE,
+                "evidence_reference_sha256":"d".repeat(64)
+            })),
             owner: bytes(&json!({
                 "origin":"real",
                 "role":"owner",

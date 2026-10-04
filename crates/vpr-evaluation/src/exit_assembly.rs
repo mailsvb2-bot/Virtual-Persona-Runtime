@@ -77,12 +77,12 @@ pub fn assemble_rt0_exit_evidence(
         ci: projected_claim(
             inputs.supporting.ci,
             &supporting.artifact_digests.ci,
-            ProjectionBinding::Candidate,
+            ProjectionBinding::CandidateWithAutomationReference,
         )?,
         e2e: projected_claim(
             inputs.supporting.e2e,
             &supporting.artifact_digests.e2e,
-            ProjectionBinding::Candidate,
+            ProjectionBinding::CandidateWithAutomationReference,
         )?,
     };
     let conversations = ConversationPairEvidence {
@@ -233,7 +233,7 @@ fn validate_core_artifacts(
 
 #[derive(Debug, Clone, Copy)]
 enum ProjectionBinding {
-    Candidate,
+    CandidateWithAutomationReference,
     CandidateAndProvider,
 }
 
@@ -250,10 +250,17 @@ fn projected_claim<T: DeserializeOwned>(
     if object.remove("candidate_sha").is_none() {
         return Err(Rt0ExitAssemblyError::SupportingProjectionInvalid);
     }
-    if matches!(binding, ProjectionBinding::CandidateAndProvider)
-        && object.remove("provider_state_sha256").is_none()
-    {
-        return Err(Rt0ExitAssemblyError::SupportingProjectionInvalid);
+    match binding {
+        ProjectionBinding::CandidateWithAutomationReference => {
+            if object.remove("evidence_reference_sha256").is_none() {
+                return Err(Rt0ExitAssemblyError::SupportingProjectionInvalid);
+            }
+        }
+        ProjectionBinding::CandidateAndProvider => {
+            if object.remove("provider_state_sha256").is_none() {
+                return Err(Rt0ExitAssemblyError::SupportingProjectionInvalid);
+            }
+        }
     }
     object.insert(
         "artifact_sha256".into(),
