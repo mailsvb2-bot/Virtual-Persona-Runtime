@@ -129,11 +129,7 @@ fn binding_rejects_invalid_candidate_provider_state_and_snapshot_bytes() {
 
     let invalid_provider = br#"{"schema_version":"rt0-provider-state-0.1","providers":[]}"#;
     assert_eq!(
-        bind_owner_lab_session_evidence(
-            &[one.as_slice()],
-            invalid_provider,
-            CANDIDATE
-        ),
+        bind_owner_lab_session_evidence(&[one.as_slice()], invalid_provider, CANDIDATE),
         Err(LabSessionBindingError::InvalidProviderState)
     );
 
@@ -178,16 +174,11 @@ fn binding_rejects_cross_candidate_and_cross_provider_rebinding() {
         Err(LabSessionBindingError::CandidateMismatch)
     );
 
-    let mut other_provider: serde_json::Value =
-        serde_json::from_slice(&provider_state).unwrap();
+    let mut other_provider: serde_json::Value = serde_json::from_slice(&provider_state).unwrap();
     other_provider["providers"][1]["provider"] = serde_json::json!("gemini");
     let other_provider_state = serde_json::to_vec(&other_provider).unwrap();
     assert_eq!(
-        bind_owner_lab_session_evidence(
-            &[one.as_slice()],
-            &other_provider_state,
-            CANDIDATE,
-        ),
+        bind_owner_lab_session_evidence(&[one.as_slice()], &other_provider_state, CANDIDATE,),
         Err(LabSessionBindingError::ProviderStateMismatch)
     );
 }
