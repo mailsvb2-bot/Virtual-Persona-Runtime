@@ -1,13 +1,9 @@
-use std::{
-    env, fs,
-    fs::OpenOptions,
-    io::Write,
-    path::Path,
-    process,
-};
+use std::{env, fs, fs::OpenOptions, io::Write, path::Path, process};
 
 use serde_json::{Value, json};
-use vpr_evaluation::{BoundLabSessionEvidenceAggregate, ProviderRole, bind_owner_lab_session_evidence};
+use vpr_evaluation::{
+    BoundLabSessionEvidenceAggregate, ProviderRole, bind_owner_lab_session_evidence,
+};
 
 const OUTPUT_SCHEMA: &str = "rt0-manual-supporting-observations-0.2";
 const REVIEW_REQUIRED: &str = "REVIEW_REQUIRED";
@@ -62,14 +58,10 @@ fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn prefill(bound: &BoundLabSessionEvidenceAggregate) -> Value {
-    let estimated_roles = runtime_cost_roles(
-        &bound.aggregate,
-        bound.aggregate.estimated_cost_microunits,
-    );
-    let provider_charge_roles = runtime_cost_roles(
-        &bound.aggregate,
-        bound.aggregate.provider_charge_microunits,
-    );
+    let estimated_roles =
+        runtime_cost_roles(&bound.aggregate, bound.aggregate.estimated_cost_microunits);
+    let provider_charge_roles =
+        runtime_cost_roles(&bound.aggregate, bound.aggregate.provider_charge_microunits);
 
     json!({
         "schema_version": OUTPUT_SCHEMA,
@@ -120,10 +112,7 @@ fn runtime_cost_roles(
     aggregate: &vpr_evaluation::LabSessionEvidenceAggregate,
     cost: Option<u64>,
 ) -> Vec<ProviderRole> {
-    if cost.is_none()
-        || aggregate.failed_text_attempts > 0
-        || aggregate.failed_voice_attempts > 0
-    {
+    if cost.is_none() || aggregate.failed_text_attempts > 0 || aggregate.failed_voice_attempts > 0 {
         return Vec::new();
     }
     if aggregate.completed_voice_attempts > 0 {
