@@ -137,9 +137,10 @@ the RT0 exit gate.
 
 This command never creates release evidence and always emits `release_ready_claimed=false`.
 A runtime-readiness exit `0` only means the exact-bound conversation/quality runtime portion is
-complete and currently within its quality thresholds. Cost review, privacy/permission acceptance,
-human quality review, real owner/distinct-non-owner provenance review, Golden evidence, acceptance
-paths, and known-limitations review remain separate mandatory RT0 evidence.
+complete and currently within its quality thresholds. The report's
+`remaining_non_runtime_requirements` still names automated CI/E2E, cost review,
+privacy/permissions, human quality review, real owner/distinct-non-owner provenance review, Golden
+evidence, acceptance paths, and known-limitations review as separate mandatory RT0 evidence.
 
 ## Credentialed owner/visitor conversation attempt
 
