@@ -59,3 +59,18 @@ fn rt0_runbook_forbids_manual_edits_of_canonical_generated_artifacts() {
     assert!(RUNBOOK.contains("no hand-edited canonical generated artifacts"));
     assert!(RUNBOOK.contains("Do not edit the canonical scaffold files by hand"));
 }
+
+
+#[test]
+fn rt0_runbook_requires_strict_owner_lab_provenance_mode() {
+    assert!(
+        RUNBOOK.contains(
+            "VPR_OWNER_LAB_RT0_EVIDENCE=true cargo run --locked -p vpr-owner-lab -- --allow-egress"
+        ),
+        "RT0 runbook must fail closed on exact candidate/provider provenance"
+    );
+    assert!(
+        RUNBOOK.contains("windows-owner-lab-restart.ps1 -Rt0Evidence"),
+        "RT0 Windows runbook must use the strict evidence launcher"
+    );
+}
