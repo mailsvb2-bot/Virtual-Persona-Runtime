@@ -78,7 +78,7 @@ pub fn derive_rt0_live_readiness(
     let aggregate = &bound.aggregate;
     let quality = Rt0QualityReadiness {
         text_first_meaningful_response: latency_readiness(
-            aggregate.text_first_meaning_response(),
+            aggregate.text_first_meaningful_response,
             Some(RT0_TEXT_FIRST_MEANINGFUL_P50_MAX_MILLIS),
             RT0_TEXT_FIRST_MEANINGFUL_P95_MAX_MILLIS,
         ),
@@ -221,15 +221,6 @@ fn push_latency_blocker(
     }
 }
 
-trait AggregateTextLatency {
-    fn text_first_meaning_response(&self) -> Option<LatencyDistributionMillis>;
-}
-
-impl AggregateTextLatency for crate::LabSessionEvidenceAggregate {
-    fn text_first_meaning_response(&self) -> Option<LatencyDistributionMillis> {
-        self.text_first_meaningful_response
-    }
-}
 
 #[cfg(test)]
 mod tests {
