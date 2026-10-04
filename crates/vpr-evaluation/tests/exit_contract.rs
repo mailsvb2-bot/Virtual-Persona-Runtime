@@ -1447,6 +1447,52 @@ fn incomplete_human_dimensions_fail_exit_without_corrupting_evidence_structure()
 }
 
 #[test]
+fn runtime_cost_duration_must_match_recomputed_session_duration() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.measured_duration_millis -= 1;
+
+    assert_eq!(
+        evaluate(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+    );
+}
+
+#[test]
+fn runtime_known_cost_is_a_lower_bound_for_claimed_total() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+    let bound = bound_session_aggregate(&fixture.provider_state_bytes);
+    let runtime_known = bound.aggregate.estimated_cost_microunits.unwrap();
+    assert!(runtime_known > 0);
+
+    let mut evidence = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    evidence.cost.estimated_cost_microunits = Some(runtime_known - 1);
+
+    assert_eq!(
+        evaluate(
+            &evidence,
+            &golden,
+            &golden_bytes,
+            &fixture,
+            RELEASE_SPEC,
+            CANDIDATE,
+        ),
+        Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
+    );
+}
+
+#[test]
 fn runtime_supporting_projection_matches_exit_runtime_claims() {
     let fixture = golden_fixture();
     let conversation_attempt = conversation_attempt_bytes(&fixture.provider_state_bytes);
