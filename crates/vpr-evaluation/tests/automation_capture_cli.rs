@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use vpr_evaluation::sha256_hex;
 
 const CANDIDATE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(1);
@@ -94,12 +95,19 @@ fn reviewed_automation_replaces_only_canonical_ci_e2e_scaffold() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    for name in ["ci-evidence.json", "e2e-evidence.json"] {
+    for (name, reference) in [
+        ("ci-evidence.json", "github-actions:ci:37191364067"),
+        ("e2e-evidence.json", "github-actions:e2e:37191364067"),
+    ] {
         let value: Value =
             serde_json::from_slice(&fs::read(root.0.join("supporting").join(name)).unwrap()).unwrap();
         assert_eq!(value["status"], "passed");
         assert_eq!(value["candidate_sha"], CANDIDATE);
         assert!(value.get("evidence_reference").is_none());
+        assert_eq!(
+            value["evidence_reference_sha256"],
+            sha256_hex(reference.as_bytes())
+        );
     }
 
     let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
