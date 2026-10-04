@@ -43,9 +43,13 @@ fn provider_state() -> Value {
     })
 }
 
-fn snapshot(session: u64) -> Value {
+const CANDIDATE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session,
         "participant_role":"owner",
@@ -88,13 +92,16 @@ fn snapshot(session: u64) -> Value {
 #[test]
 fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let dir = TempDir::new();
-    let provider = dir.file("provider.json", &provider_state());
-    let one = dir.file("one.json", &snapshot(1));
-    let two = dir.file("two.json", &snapshot(2));
+    let provider_value = provider_state();
+    let provider_state_sha256 =
+        vpr_evaluation::sha256_hex(&serde_json::to_vec(&provider_value).unwrap());
+    let provider = dir.file("provider.json", &provider_value);
+    let one = dir.file("one.json", &snapshot(1, &provider_state_sha256));
+    let two = dir.file("two.json", &snapshot(2, &provider_state_sha256));
     let output = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-session-aggregate"))
         .arg("bind")
         .arg(provider)
-        .arg("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .arg(CANDIDATE)
         .args([one, two])
         .output()
         .unwrap();
@@ -121,8 +128,11 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
 #[test]
 fn bind_mode_fails_closed_for_bad_candidate() {
     let dir = TempDir::new();
-    let provider = dir.file("provider.json", &provider_state());
-    let one = dir.file("one.json", &snapshot(1));
+    let provider_value = provider_state();
+    let provider_state_sha256 =
+        vpr_evaluation::sha256_hex(&serde_json::to_vec(&provider_value).unwrap());
+    let provider = dir.file("provider.json", &provider_value);
+    let one = dir.file("one.json", &snapshot(1, &provider_state_sha256));
     let output = Command::new(env!("CARGO_BIN_EXE_vpr-rt0-session-aggregate"))
         .arg("bind")
         .arg(provider)

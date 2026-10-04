@@ -1634,17 +1634,27 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         }
         commandSent = true;
         const voice = activeVoiceEvidence;
-        if (
-          rt0EvidenceMode
-          && voice?.requestSequence === requestSequence
-          && clientDeliverySentElapsed === null
-        ) {
-          clientDeliverySentElapsed = performance.now() - voice.startedAt;
+        const clientDeliveryElapsed =
+          voice?.requestSequence === requestSequence
+            && clientDeliverySentElapsed === null
+            ? performance.now() - voice.startedAt
+            : null;
+        if (clientDeliveryElapsed !== null) {
+          clientDeliverySentElapsed = clientDeliveryElapsed;
         }
         await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
           evidence_turn_sequence: segment.evidence_turn_sequence,
           evidence_output_sequence: segment.evidence_output_sequence,
         });
+        if (clientDeliveryElapsed !== null) {
+          const evidence = postMediaEvidence(
+            "client_delivery_sent",
+            clientDeliveryElapsed,
+            requestSequence,
+          );
+          if (rt0EvidenceMode) await evidence;
+          else void evidence.catch(() => undefined);
+        }
       })().catch(async (error: unknown) => {
         deliveryFailure = error instanceof Error ? error : new Error("CLIENT_TRANSPORT_UNAVAILABLE");
         if (commandSent) {
@@ -1675,22 +1685,17 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       voiceAtBackendComplete?.requestSequence === requestSequence
         ? performance.now() - voiceAtBackendComplete.startedAt
         : null;
+    if (backendCompleteElapsed !== null) {
+      const evidence = postMediaEvidence(
+        "backend_complete_received",
+        backendCompleteElapsed,
+        requestSequence,
+      );
+      if (rt0EvidenceMode) await evidence;
+      else void evidence.catch(() => undefined);
+    }
     if (rt0EvidenceMode) {
-      if (backendCompleteElapsed !== null) {
-        await postMediaEvidence(
-          "backend_complete_received",
-          backendCompleteElapsed,
-          requestSequence,
-        );
-      }
       await Promise.all(deliveryTasks);
-      if (clientDeliverySentElapsed !== null) {
-        await postMediaEvidence(
-          "client_delivery_sent",
-          clientDeliverySentElapsed,
-          requestSequence,
-        );
-      }
     }
     if (deliveryFailure) throw deliveryFailure;
 

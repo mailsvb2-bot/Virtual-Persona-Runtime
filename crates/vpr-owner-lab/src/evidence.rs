@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 mod av_sync_diagnostic;
+mod provenance;
 
 pub use vpr_evaluation::{
     LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
@@ -42,6 +43,8 @@ impl LabEvidenceError {
 
 #[derive(Debug, Default)]
 pub struct LabSessionEvidenceRecorder {
+    candidate_sha: String,
+    provider_state_sha256: String,
     session_sequence: Option<u64>,
     participant_role: Option<ParticipantRole>,
     sealed: bool,
@@ -548,6 +551,8 @@ impl LabSessionEvidenceRecorder {
             });
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
+            candidate_sha: self.candidate_sha.clone(),
+            provider_state_sha256: self.provider_state_sha256.clone(),
             scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
             session_sequence,
             participant_role,

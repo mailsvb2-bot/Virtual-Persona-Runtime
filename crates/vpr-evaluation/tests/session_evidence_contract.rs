@@ -7,6 +7,10 @@ use vpr_evaluation::{
     SessionUsageEvidence, aggregate_owner_lab_session_evidence,
 };
 
+const CANDIDATE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROVIDER_STATE_SHA256: &str =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 fn usage(cost: Option<u64>, charge: Option<u64>) -> SessionUsageEvidence {
     SessionUsageEvidence {
         input_units: Some(10),
@@ -50,6 +54,8 @@ fn completed(request: u64, base: u64) -> LabVoiceAttemptEvidence {
 fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot {
     LabSessionEvidenceSnapshot {
         schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
+        candidate_sha: CANDIDATE.into(),
+        provider_state_sha256: PROVIDER_STATE_SHA256.into(),
         scope: RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE.into(),
         session_sequence: session,
         participant_role: ParticipantRole::Owner,

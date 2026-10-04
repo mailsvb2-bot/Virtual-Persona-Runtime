@@ -231,7 +231,12 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     .unwrap();
 }
 
-fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Value {
+fn session_snapshot(
+    role: &str,
+    session_sequence: u64,
+    interruption: bool,
+    provider_state_sha256: &str,
+) -> Value {
     let mut media = vec![
         json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
         json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
@@ -244,7 +249,9 @@ fn session_snapshot(role: &str, session_sequence: u64, interruption: bool) -> Va
         }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.0",
+        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "candidate_sha":CANDIDATE,
+        "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
         "session_sequence":session_sequence,
         "participant_role":role,
@@ -320,8 +327,10 @@ fn seed_bound_runtime_evidence(dir: &Path, provider_digest: &str, provider_state
     )
     .unwrap();
 
-    let owner_bytes = serde_json::to_vec_pretty(&session_snapshot("owner", 1, true)).unwrap();
-    let visitor_bytes = serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false)).unwrap();
+    let owner_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("owner", 1, true, provider_digest)).unwrap();
+    let visitor_bytes =
+        serde_json::to_vec_pretty(&session_snapshot("visitor", 2, false, provider_digest)).unwrap();
     fs::write(dir.join("session-owner.json"), &owner_bytes).unwrap();
     fs::write(dir.join("session-visitor.json"), &visitor_bytes).unwrap();
     let bound = bind_owner_lab_session_evidence(

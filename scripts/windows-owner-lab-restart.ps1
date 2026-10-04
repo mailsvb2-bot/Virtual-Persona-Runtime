@@ -169,7 +169,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'git switch main failed' }
         git pull --ff-only
         if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed' }
-        cargo build -p vpr-owner-lab --bins
+        cargo build --locked -p vpr-owner-lab --bins
         if ($LASTEXITCODE -ne 0) { throw 'Owner Lab binaries build failed' }
     } finally {
         Pop-Location

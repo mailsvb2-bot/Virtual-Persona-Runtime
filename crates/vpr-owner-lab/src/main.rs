@@ -1,3 +1,4 @@
+mod evidence_provenance;
 mod http_avatar_input;
 mod http_client_control;
 mod http_evidence;
@@ -137,6 +138,8 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .unwrap_or(DEFAULT_PORT);
 
     let mut providers = ProviderBundle::from_env(false)?;
+    let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
+
     let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
         .map_err(|_| "owner-lab runtime initialization failed")?;
     if let Some(llm) = providers.llm.take() {
@@ -149,6 +152,18 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         println!("Restored reviewed Persona from persistent store.");
     }
     let voice_playback = engine.voice_playback_registry();
+    let mut evidence_recorder = LabSessionEvidenceRecorder::default();
+    if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {
+        evidence_recorder
+            .bind_provenance(&candidate_sha, &provider_state_sha256)
+            .map_err(|_| "owner-lab evidence provenance rejected")?;
+        if rt0_evidence_mode {
+            println!(
+                "RT0 evidence provenance: candidate={candidate_sha} provider_state_sha256={provider_state_sha256}"
+            );
+        }
+    }
+
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         rt0_evidence_mode,
@@ -161,7 +176,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_streams: http_voice::VoiceStreamRegistry::default(),
         voice_playback,
         session_end_requested: AtomicBool::new(false),
-        evidence: ParkingMutex::new(LabSessionEvidenceRecorder::default()),
+        evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
         csrf_token: generate_csrf_token()?,
         port,

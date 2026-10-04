@@ -95,16 +95,26 @@ Every substantive value starts failed, synthetic or missing. Do not edit the can
 
 ## 5. Capture real browser owner and distinct non-owner sessions
 
-Start Owner Lab with explicit egress permission:
+Start Owner Lab in strict RT0 evidence mode with explicit egress permission. Strict mode is mandatory for release evidence: if the exact clean Git candidate or provider-state provenance cannot be bound, Owner Lab must refuse to start rather than produce an unusable paid capture.
 
 ```bash
-cargo run -p vpr-owner-lab -- --allow-egress
+VPR_OWNER_LAB_RT0_EVIDENCE=true cargo run --locked -p vpr-owner-lab -- --allow-egress
+```
+
+On Windows, prefer the canonical launcher, which sets and verifies the same strict mode and selects the required evidence browser:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
 ```
 
 On the same candidate/provider state, collect a real owner session and a session with a
 **distinct real non-owner human**. The required live observations include Russian conversation, audible
 canonical playback, rendered video, real owner interruption, A/V-sync samples and a recoverable
 reconnect observation.
+
+Every exported release-evidence snapshot is stamped by Owner Lab with the exact clean Git candidate
+and provider-state digest captured at process start. Never hand-add or rewrite those provenance fields;
+the binder rejects missing, stale, cross-candidate or cross-provider snapshots.
 
 Terminate or revoke each session and export its exact sanitized evidence snapshot before starting
 the next session. Save the exact response bytes outside the worktree, for example:

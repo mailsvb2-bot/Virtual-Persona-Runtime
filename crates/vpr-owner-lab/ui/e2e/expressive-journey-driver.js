@@ -204,8 +204,14 @@
           && snapshot.voice_attempts?.some(
             (attempt) => attempt.status === "completed"
               && attempt.canonical_playback_confirmed === true,
+          )
+          && snapshot.media_events?.some(
+            (event) => event.kind === "backend_complete_received",
+          )
+          && snapshot.media_events?.some(
+            (event) => event.kind === "client_delivery_sent",
           ),
-        "canonical-playback",
+        "canonical-playback-and-browser-timing",
       );
       const evidence = await fetchEvidence();
       await postPhase("first-voice-complete");

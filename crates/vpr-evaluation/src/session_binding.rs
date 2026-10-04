@@ -27,6 +27,8 @@ pub enum LabSessionBindingError {
     InvalidCandidateSha,
     InvalidProviderState,
     InvalidSnapshot,
+    CandidateMismatch,
+    ProviderStateMismatch,
     DuplicateArtifact,
     AggregateInvalid,
 }
@@ -62,6 +64,7 @@ pub fn bind_owner_lab_session_evidence(
     {
         return Err(LabSessionBindingError::InvalidProviderState);
     }
+    let provider_state_sha256 = sha256_hex(provider_state_bytes);
 
     let mut artifact_digests = HashSet::new();
     let mut ordered_digests = Vec::with_capacity(snapshot_artifacts.len());
@@ -73,6 +76,12 @@ pub fn bind_owner_lab_session_evidence(
         }
         let snapshot: LabSessionEvidenceSnapshot =
             serde_json::from_slice(bytes).map_err(|_| LabSessionBindingError::InvalidSnapshot)?;
+        if snapshot.candidate_sha != exact_candidate_sha {
+            return Err(LabSessionBindingError::CandidateMismatch);
+        }
+        if snapshot.provider_state_sha256 != provider_state_sha256 {
+            return Err(LabSessionBindingError::ProviderStateMismatch);
+        }
         ordered_digests.push(digest);
         snapshots.push(snapshot);
     }
@@ -83,7 +92,7 @@ pub fn bind_owner_lab_session_evidence(
     Ok(BoundLabSessionEvidenceAggregate {
         schema_version: RT0_OWNER_LAB_SESSION_BINDING_SCHEMA.into(),
         candidate_sha: exact_candidate_sha.into(),
-        provider_state_sha256: sha256_hex(provider_state_bytes),
+        provider_state_sha256,
         snapshot_sha256: ordered_digests,
         aggregate,
     })
