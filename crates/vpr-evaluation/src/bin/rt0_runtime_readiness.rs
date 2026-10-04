@@ -2,9 +2,10 @@ use std::{env, fs, process};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundLabSessionEvidenceAggregate, CheckStatus, LabAvSyncTrackIssue, LabSessionEvidenceAggregate,
-    LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole,
-    Rt0ExitFailureCode, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    BoundLabSessionEvidenceAggregate, CheckStatus, LabAvSyncTrackIssue,
+    LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
+    LatencyDistributionMillis, ParticipantRole, Rt0ExitFailureCode,
+    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     rt0_quality_failure_codes, sha256_hex, validate_rt0_conversation_attempt_artifact,
 };
 
@@ -157,17 +158,14 @@ fn load_inputs(args: &[String]) -> Result<RuntimeInputs, &'static str> {
     let conversation_attempt_bytes =
         fs::read(&args[1]).map_err(|_| "CONVERSATION_ATTEMPT_READ_FAILED")?;
     let bound_bytes = fs::read(&args[2]).map_err(|_| "BOUND_AGGREGATE_READ_FAILED")?;
-    let bound =
-        serde_json::from_slice(&bound_bytes).map_err(|_| "BOUND_AGGREGATE_INVALID")?;
+    let bound = serde_json::from_slice(&bound_bytes).map_err(|_| "BOUND_AGGREGATE_INVALID")?;
     let snapshot_bytes = args[4..]
         .iter()
         .map(|path| fs::read(path).map_err(|_| "SESSION_SNAPSHOT_READ_FAILED"))
         .collect::<Result<Vec<_>, _>>()?;
     let snapshots = snapshot_bytes
         .iter()
-        .map(|bytes| {
-            serde_json::from_slice(bytes).map_err(|_| "SESSION_SNAPSHOT_INVALID")
-        })
+        .map(|bytes| serde_json::from_slice(bytes).map_err(|_| "SESSION_SNAPSHOT_INVALID"))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(RuntimeInputs {
         provider_state_bytes,
@@ -243,7 +241,11 @@ fn missing_runtime_evidence(
     aggregate: &LabSessionEvidenceAggregate,
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    push_missing(summary.owner_sessions == 0, "owner_session_snapshot", &mut missing);
+    push_missing(
+        summary.owner_sessions == 0,
+        "owner_session_snapshot",
+        &mut missing,
+    );
     push_missing(
         summary.visitor_sessions == 0,
         "visitor_session_snapshot",
@@ -259,7 +261,11 @@ fn missing_runtime_evidence(
         "visitor_completed_voice_attempt",
         &mut missing,
     );
-    push_missing(!aggregate.canonical_playback_proven, "canonical_playback", &mut missing);
+    push_missing(
+        !aggregate.canonical_playback_proven,
+        "canonical_playback",
+        &mut missing,
+    );
     push_missing(
         aggregate.text_first_meaningful_response.is_none(),
         "text_first_meaningful_response",
