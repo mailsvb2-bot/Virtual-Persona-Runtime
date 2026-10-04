@@ -61,7 +61,7 @@ fn exit_evidence(
         })
     };
     json!({
-        "schema_version":"rt0-exit-evidence-0.6",
+        "schema_version":"rt0-exit-evidence-0.7",
         "candidate_sha":CANDIDATE,
         "release_spec_sha256":sha256_hex(RELEASE_SPEC),
         "golden_report_sha256":sha256_hex(golden_bytes),
@@ -104,6 +104,8 @@ fn exit_evidence(
         },
         "human_evaluation":{
             "origin":"real","rubric_version":"rt0-human-v1","reviewer_count":1,
+            "owner_human_participant_verified":"passed",
+            "visitor_distinct_non_owner_human_verified":"passed",
             "dimensions":{"voice_similarity":"recorded","voice_naturalness":"recorded",
                 "appearance_plausibility":"recorded","persona_similarity":"recorded",
                 "conversation_naturalness":"recorded"},

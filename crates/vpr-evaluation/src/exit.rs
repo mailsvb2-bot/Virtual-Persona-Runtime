@@ -18,8 +18,8 @@ use crate::{
     RT0_PROVIDER_STATE_SCHEMA, sha256_hex,
 };
 
-pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.6";
-pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.6";
+pub const RT0_EXIT_EVIDENCE_SCHEMA: &str = "rt0-exit-evidence-0.7";
+pub const RT0_EXIT_REPORT_SCHEMA: &str = "rt0-exit-report-0.7";
 const RT0_REQUIRED_GOLDEN_SUITE_BYTES: &[u8] =
     include_bytes!("../../../docs/evaluation/rt0_golden_minimum.json");
 
@@ -159,6 +159,8 @@ pub struct HumanEvaluationEvidence {
     pub origin: EvidenceOrigin,
     pub rubric_version: String,
     pub reviewer_count: u32,
+    pub owner_human_participant_verified: CheckStatus,
+    pub visitor_distinct_non_owner_human_verified: CheckStatus,
     pub dimensions: HumanDimensions,
     pub usable_for_continuation: CheckStatus,
     pub artifact_sha256: String,
@@ -226,6 +228,8 @@ pub enum Rt0ExitFailureCode {
     RevocationNotVerified,
     EgressDenialNotVerified,
     HumanEvaluationNotReal,
+    OwnerHumanParticipantNotVerified,
+    VisitorDistinctNonOwnerHumanNotVerified,
     HumanEvaluationIncomplete,
     HumanEvaluationNotUsable,
     KnownLimitationsNotReviewed,

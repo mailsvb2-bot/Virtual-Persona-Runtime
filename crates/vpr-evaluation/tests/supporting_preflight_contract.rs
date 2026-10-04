@@ -101,6 +101,8 @@ impl Fixture {
                 "origin":"real",
                 "rubric_version":"rt0-human-rubric-1",
                 "reviewer_count":1,
+                "owner_human_participant_verified":"passed",
+                "visitor_distinct_non_owner_human_verified":"passed",
                 "dimensions":{
                     "voice_similarity":"recorded",
                     "voice_naturalness":"recorded",
@@ -170,6 +172,25 @@ fn exact_bound_real_supporting_bundle_is_preflight_complete_without_release_read
 #[test]
 fn failed_substantive_results_remain_valid_evidence_for_preflight() {
     let fixture = Fixture::valid();
+    assert!(
+        preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate())
+            .is_ok()
+    );
+}
+
+#[test]
+fn failed_participant_provenance_remains_valid_preflight_evidence() {
+    let mut fixture = Fixture::valid();
+    mutate(
+        &mut fixture.human,
+        &["owner_human_participant_verified"],
+        json!("failed"),
+    );
+    mutate(
+        &mut fixture.human,
+        &["visitor_distinct_non_owner_human_verified"],
+        json!("failed"),
+    );
     assert!(
         preflight_rt0_supporting_artifacts(fixture.as_preflight(), &provider_state(), &candidate())
             .is_ok()

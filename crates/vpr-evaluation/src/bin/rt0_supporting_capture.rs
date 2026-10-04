@@ -15,8 +15,8 @@ use transaction::{
     CaptureLock, LockOutcome, TransactionJournal, artifact_digests, write_artifacts_transactional,
 };
 
-const INPUT_SCHEMA: &str = "rt0-manual-supporting-observations-0.1";
-const RECEIPT_SCHEMA: &str = "rt0-manual-supporting-capture-receipt-0.1";
+const INPUT_SCHEMA: &str = "rt0-manual-supporting-observations-0.2";
+const RECEIPT_SCHEMA: &str = "rt0-manual-supporting-capture-receipt-0.2";
 const REQUIRED_ATTESTATION: &str = "reviewed_real_observations";
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +71,8 @@ struct PrivacyInput {
 struct HumanInput {
     rubric_version: String,
     reviewer_count: u32,
+    owner_human_participant_verified: CheckStatus,
+    visitor_distinct_non_owner_human_verified: CheckStatus,
     dimensions: HumanDimensions,
     usable_for_continuation: CheckStatus,
 }
@@ -275,6 +277,8 @@ fn build_artifacts(
                 "origin": "real",
                 "rubric_version": input.human_evaluation.rubric_version,
                 "reviewer_count": input.human_evaluation.reviewer_count,
+                "owner_human_participant_verified": input.human_evaluation.owner_human_participant_verified,
+                "visitor_distinct_non_owner_human_verified": input.human_evaluation.visitor_distinct_non_owner_human_verified,
                 "dimensions": input.human_evaluation.dimensions,
                 "usable_for_continuation": input.human_evaluation.usable_for_continuation,
                 "candidate_sha": candidate_sha,
@@ -351,6 +355,8 @@ mod tests {
             human_evaluation: HumanInput {
                 rubric_version: "rt0-human-0.1".into(),
                 reviewer_count: 1,
+                owner_human_participant_verified: CheckStatus::Passed,
+                visitor_distinct_non_owner_human_verified: CheckStatus::Passed,
                 dimensions: HumanDimensions {
                     voice_similarity: RecordStatus::Recorded,
                     voice_naturalness: RecordStatus::Recorded,
@@ -384,6 +390,27 @@ mod tests {
         assert_eq!(acceptance["failure_recovery_path"], "failed");
         assert_eq!(acceptance["candidate_sha"], candidate);
         assert_eq!(acceptance["provider_state_sha256"], provider);
+    }
+
+    #[test]
+    fn capture_preserves_failed_participant_provenance_without_promotion() {
+        let candidate = "a".repeat(40);
+        let provider = "b".repeat(64);
+        let mut reviewed = input();
+        reviewed
+            .human_evaluation
+            .visitor_distinct_non_owner_human_verified = CheckStatus::Failed;
+        let artifacts = build_artifacts(&reviewed, &candidate, &provider);
+        let human: Value = serde_json::from_slice(
+            &artifacts
+                .iter()
+                .find(|(name, _)| *name == "human-evaluation.json")
+                .unwrap()
+                .1,
+        )
+        .unwrap();
+        assert_eq!(human["owner_human_participant_verified"], "passed");
+        assert_eq!(human["visitor_distinct_non_owner_human_verified"], "failed");
     }
 
     #[test]

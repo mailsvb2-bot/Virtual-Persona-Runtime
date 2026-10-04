@@ -106,6 +106,12 @@ pub(crate) fn evaluate_human(
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::HumanEvaluationNotReal);
     }
+    if evidence.owner_human_participant_verified != CheckStatus::Passed {
+        failures.push(Rt0ExitFailureCode::OwnerHumanParticipantNotVerified);
+    }
+    if evidence.visitor_distinct_non_owner_human_verified != CheckStatus::Passed {
+        failures.push(Rt0ExitFailureCode::VisitorDistinctNonOwnerHumanNotVerified);
+    }
     if evidence.reviewer_count == 0
         || evidence.dimensions.voice_similarity != RecordStatus::Recorded
         || evidence.dimensions.voice_naturalness != RecordStatus::Recorded
