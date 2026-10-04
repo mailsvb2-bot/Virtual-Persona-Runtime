@@ -197,8 +197,15 @@ fn replace_artifacts(
     staged: &[PathBuf],
 ) -> Result<(), i32> {
     for (index, ((name, _), staged_path)) in artifacts.iter().zip(staged).enumerate() {
+        let target = root.join(name);
+        let expected_scaffold = &scaffold[index].1;
+        if fs::read(&target).is_err_or(|actual| actual != *expected_scaffold) {
+            restore(root, &scaffold[..index])
+                .map_err(|_| fail("AUTOMATION_CAPTURE_ROLLBACK_FAILED"))?;
+            return Err(fail("AUTOMATION_CAPTURE_CONCURRENT_MODIFICATION"));
+        }
         let bytes = fs::read(staged_path).map_err(|_| fail("AUTOMATION_CAPTURE_STAGE_FAILED"))?;
-        if overwrite_synced(&root.join(name), &bytes).is_err() {
+        if overwrite_synced(&target, &bytes).is_err() {
             restore(root, &scaffold[..=index])
                 .map_err(|_| fail("AUTOMATION_CAPTURE_ROLLBACK_FAILED"))?;
             return Err(fail("AUTOMATION_CAPTURE_WRITE_FAILED"));
