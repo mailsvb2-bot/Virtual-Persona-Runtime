@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::exit_validation::{
     validate_bound_session_aggregate, validate_rt0_conversation_attempt_artifact,
-    validate_session_quality_binding,
+    validate_session_cost_binding, validate_session_quality_binding,
 };
 use crate::live_provider::validate_live_provider_probe;
 use crate::{
@@ -48,6 +48,7 @@ pub enum Rt0ExitAssemblyError {
     SessionCandidateMismatch,
     SessionProviderStateMismatch,
     BrowserQualityMismatch,
+    RuntimeCostMismatch,
     SupportingProjectionInvalid,
 }
 
@@ -143,6 +144,8 @@ pub fn assemble_rt0_exit_evidence(
     };
     validate_session_quality_binding(&evidence, &session.aggregate)
         .map_err(|_| Rt0ExitAssemblyError::BrowserQualityMismatch)?;
+    validate_session_cost_binding(&evidence, &session.aggregate)
+        .map_err(|_| Rt0ExitAssemblyError::RuntimeCostMismatch)?;
     Ok(evidence)
 }
 
