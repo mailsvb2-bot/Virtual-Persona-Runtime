@@ -2,13 +2,23 @@ use std::{env, fs, process};
 
 use serde::Serialize;
 use vpr_evaluation::{
-    BoundLabSessionEvidenceAggregate, LabAvSyncTrackIssue, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole,
-    bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
+    BoundLabSessionEvidenceAggregate, CheckStatus, LabAvSyncTrackIssue, LabSessionEvidenceAggregate,
+    LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole,
+    Rt0ExitFailureCode, bind_owner_lab_session_evidence, derive_rt0_runtime_supporting_projection,
     rt0_quality_failure_codes, sha256_hex, validate_rt0_conversation_attempt_artifact,
 };
 
 const REPORT_SCHEMA: &str = "rt0-runtime-readiness-0.1";
+const NON_RUNTIME_REQUIREMENTS: [&str; 8] = [
+    "automated_ci_e2e",
+    "cost_review",
+    "privacy_permissions",
+    "acceptance_paths",
+    "golden_evidence",
+    "human_quality_review",
+    "participant_provenance_review",
+    "known_limitations_review",
+];
 
 #[derive(Debug, Default, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +50,38 @@ struct RuntimeMetricObservation {
     recoverable_reconnect: Option<LatencyDistributionMillis>,
 }
 
+#[derive(Debug, Default)]
+struct SnapshotSummary {
+    owner_sessions: usize,
+    visitor_sessions: usize,
+    owner_completed_voice_attempts: usize,
+    visitor_completed_voice_attempts: usize,
+    av_sync_diagnostics: AvSyncIssueCounts,
+}
+
+#[derive(Debug)]
+struct ProjectionEvaluation {
+    projection_status: CheckStatus,
+    projection_error: Option<String>,
+    quality_failures: Vec<Rt0ExitFailureCode>,
+    quality_status: CheckStatus,
+}
+
+struct RuntimeInputs {
+    provider_state_bytes: Vec<u8>,
+    conversation_attempt_bytes: Vec<u8>,
+    bound: BoundLabSessionEvidenceAggregate,
+    exact_candidate_sha: String,
+    snapshot_bytes: Vec<Vec<u8>>,
+    snapshots: Vec<LabSessionEvidenceSnapshot>,
+}
+
+impl RuntimeInputs {
+    fn snapshot_refs(&self) -> Vec<&[u8]> {
+        self.snapshot_bytes.iter().map(Vec::as_slice).collect()
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RuntimeReadinessReport {
@@ -51,21 +93,17 @@ struct RuntimeReadinessReport {
     visitor_sessions: usize,
     owner_completed_voice_attempts: usize,
     visitor_completed_voice_attempts: usize,
-    canonical_playback_proven: bool,
-    av_sync_proven: bool,
+    canonical_playback: CheckStatus,
+    av_sync: CheckStatus,
     av_sync_diagnostics: AvSyncIssueCounts,
     metrics: RuntimeMetricObservation,
     runtime_cost: RuntimeCostObservation,
     missing_runtime_evidence: Vec<&'static str>,
-    runtime_supporting_projection_ready: bool,
+    runtime_supporting_projection: CheckStatus,
     runtime_projection_error: Option<String>,
-    quality_threshold_failures: Vec<vpr_evaluation::Rt0ExitFailureCode>,
-    quality_thresholds_pass: bool,
-    manual_cost_review_required: bool,
-    privacy_acceptance_required: bool,
-    human_quality_review_required: bool,
-    participant_provenance_review_required: bool,
-    known_limitations_review_required: bool,
+    quality_threshold_failures: Vec<Rt0ExitFailureCode>,
+    quality_thresholds: CheckStatus,
+    remaining_non_runtime_requirements: Vec<&'static str>,
     release_ready_claimed: bool,
 }
 
@@ -73,13 +111,11 @@ fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match run(&args) {
         Ok((report, ready)) => {
-            match serde_json::to_string_pretty(&report) {
-                Ok(json) => println!("{json}"),
-                Err(_) => {
-                    eprintln!("{{\"ok\":false,\"code\":\"OUTPUT_FAILED\"}}");
-                    process::exit(2);
-                }
-            }
+            let Ok(json) = serde_json::to_string_pretty(&report) else {
+                eprintln!("{{\"ok\":false,\"code\":\"OUTPUT_FAILED\"}}");
+                process::exit(2);
+            };
+            println!("{json}");
             if !ready {
                 process::exit(1);
             }
@@ -92,53 +128,82 @@ fn main() {
 }
 
 fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> {
+    let inputs = load_inputs(args)?;
+    let provider_state_sha256 = validate_exact_binding(&inputs)?;
+    let summary = summarize_snapshots(&inputs.snapshots);
+    let aggregate = &inputs.bound.aggregate;
+    let missing_runtime_evidence = missing_runtime_evidence(&summary, aggregate);
+    let snapshot_refs = inputs.snapshot_refs();
+    let projection = evaluate_projection(&inputs, &snapshot_refs);
+
+    let ready = missing_runtime_evidence.is_empty()
+        && projection.projection_status == CheckStatus::Passed
+        && projection.quality_status == CheckStatus::Passed;
+    let report = build_report(
+        &inputs,
+        provider_state_sha256,
+        summary,
+        missing_runtime_evidence,
+        projection,
+    );
+    Ok((report, ready))
+}
+
+fn load_inputs(args: &[String]) -> Result<RuntimeInputs, &'static str> {
     if args.len() < 5 {
         return Err("INPUT_REQUIRED");
     }
-
     let provider_state_bytes = fs::read(&args[0]).map_err(|_| "PROVIDER_STATE_READ_FAILED")?;
     let conversation_attempt_bytes =
         fs::read(&args[1]).map_err(|_| "CONVERSATION_ATTEMPT_READ_FAILED")?;
     let bound_bytes = fs::read(&args[2]).map_err(|_| "BOUND_AGGREGATE_READ_FAILED")?;
-    let exact_candidate_sha = args[3].trim();
-    let bound: BoundLabSessionEvidenceAggregate =
+    let bound =
         serde_json::from_slice(&bound_bytes).map_err(|_| "BOUND_AGGREGATE_INVALID")?;
-
     let snapshot_bytes = args[4..]
         .iter()
         .map(|path| fs::read(path).map_err(|_| "SESSION_SNAPSHOT_READ_FAILED"))
         .collect::<Result<Vec<_>, _>>()?;
-    let snapshot_refs = snapshot_bytes.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let snapshots = snapshot_bytes
         .iter()
         .map(|bytes| {
-            serde_json::from_slice::<LabSessionEvidenceSnapshot>(bytes)
-                .map_err(|_| "SESSION_SNAPSHOT_INVALID")
+            serde_json::from_slice(bytes).map_err(|_| "SESSION_SNAPSHOT_INVALID")
         })
         .collect::<Result<Vec<_>, _>>()?;
+    Ok(RuntimeInputs {
+        provider_state_bytes,
+        conversation_attempt_bytes,
+        bound,
+        exact_candidate_sha: args[3].trim().to_string(),
+        snapshot_bytes,
+        snapshots,
+    })
+}
 
-    let provider_state_sha256 = sha256_hex(&provider_state_bytes);
+fn validate_exact_binding(inputs: &RuntimeInputs) -> Result<String, &'static str> {
+    let provider_state_sha256 = sha256_hex(&inputs.provider_state_bytes);
     validate_rt0_conversation_attempt_artifact(
-        &conversation_attempt_bytes,
-        exact_candidate_sha,
+        &inputs.conversation_attempt_bytes,
+        &inputs.exact_candidate_sha,
         &provider_state_sha256,
     )
     .map_err(|_| "CONVERSATION_ATTEMPT_INVALID")?;
 
-    let recomputed =
-        bind_owner_lab_session_evidence(&snapshot_refs, &provider_state_bytes, exact_candidate_sha)
-            .map_err(|_| "SESSION_BINDING_INVALID")?;
-    if recomputed != bound {
+    let snapshot_refs = inputs.snapshot_refs();
+    let recomputed = bind_owner_lab_session_evidence(
+        &snapshot_refs,
+        &inputs.provider_state_bytes,
+        &inputs.exact_candidate_sha,
+    )
+    .map_err(|_| "SESSION_BINDING_INVALID")?;
+    if recomputed != inputs.bound {
         return Err("BOUND_AGGREGATE_MISMATCH");
     }
+    Ok(provider_state_sha256)
+}
 
-    let mut owner_sessions = 0usize;
-    let mut visitor_sessions = 0usize;
-    let mut owner_completed_voice_attempts = 0usize;
-    let mut visitor_completed_voice_attempts = 0usize;
-    let mut av_sync_diagnostics = AvSyncIssueCounts::default();
-
-    for snapshot in &snapshots {
+fn summarize_snapshots(snapshots: &[LabSessionEvidenceSnapshot]) -> SnapshotSummary {
+    let mut summary = SnapshotSummary::default();
+    for snapshot in snapshots {
         let completed = snapshot
             .voice_attempts
             .iter()
@@ -146,92 +211,145 @@ fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> 
             .count();
         match snapshot.participant_role {
             ParticipantRole::Owner => {
-                owner_sessions += 1;
-                owner_completed_voice_attempts += completed;
+                summary.owner_sessions += 1;
+                summary.owner_completed_voice_attempts += completed;
             }
             ParticipantRole::Visitor => {
-                visitor_sessions += 1;
-                visitor_completed_voice_attempts += completed;
+                summary.visitor_sessions += 1;
+                summary.visitor_completed_voice_attempts += completed;
             }
         }
-        for diagnostic in &snapshot.av_sync_diagnostics {
-            if let Some(issue) = diagnostic.audio_issue {
-                record_av_sync_issue(&mut av_sync_diagnostics, issue);
-            }
-            if let Some(issue) = diagnostic.video_issue {
-                record_av_sync_issue(&mut av_sync_diagnostics, issue);
-            }
+        collect_av_sync_diagnostics(&mut summary.av_sync_diagnostics, snapshot);
+    }
+    summary
+}
+
+fn collect_av_sync_diagnostics(
+    counts: &mut AvSyncIssueCounts,
+    snapshot: &LabSessionEvidenceSnapshot,
+) {
+    for diagnostic in &snapshot.av_sync_diagnostics {
+        if let Some(issue) = diagnostic.audio_issue {
+            record_av_sync_issue(counts, issue);
+        }
+        if let Some(issue) = diagnostic.video_issue {
+            record_av_sync_issue(counts, issue);
         }
     }
+}
 
-    let aggregate = &bound.aggregate;
-    let mut missing_runtime_evidence = Vec::new();
-    if owner_sessions == 0 {
-        missing_runtime_evidence.push("owner_session_snapshot");
-    }
-    if visitor_sessions == 0 {
-        missing_runtime_evidence.push("visitor_session_snapshot");
-    }
-    if owner_completed_voice_attempts == 0 {
-        missing_runtime_evidence.push("owner_completed_voice_attempt");
-    }
-    if visitor_completed_voice_attempts == 0 {
-        missing_runtime_evidence.push("visitor_completed_voice_attempt");
-    }
-    if !aggregate.canonical_playback_proven {
-        missing_runtime_evidence.push("canonical_playback");
-    }
-    if aggregate.text_first_meaningful_response.is_none() {
-        missing_runtime_evidence.push("text_first_meaningful_response");
-    }
-    if aggregate.first_meaningful_audio.is_none() {
-        missing_runtime_evidence.push("first_meaningful_audio");
-    }
-    if aggregate.interruption_stop.is_none() {
-        missing_runtime_evidence.push("interruption_stop");
-    }
-    if aggregate.first_useful_video.is_none() {
-        missing_runtime_evidence.push("first_useful_video");
-    }
-    if !aggregate.av_sync_proven || aggregate.av_sync_absolute_offset.is_none() {
-        missing_runtime_evidence.push("av_sync");
-    }
-    if aggregate.recoverable_reconnect.is_none() {
-        missing_runtime_evidence.push("recoverable_reconnect");
-    }
-    if aggregate.session_duration_millis == 0 {
-        missing_runtime_evidence.push("session_duration");
-    }
-
-    let projection = derive_rt0_runtime_supporting_projection(
-        &conversation_attempt_bytes,
-        &bound,
-        &snapshot_refs,
-        &provider_state_bytes,
-        exact_candidate_sha,
+fn missing_runtime_evidence(
+    summary: &SnapshotSummary,
+    aggregate: &LabSessionEvidenceAggregate,
+) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    push_missing(summary.owner_sessions == 0, "owner_session_snapshot", &mut missing);
+    push_missing(
+        summary.visitor_sessions == 0,
+        "visitor_session_snapshot",
+        &mut missing,
     );
-    let (runtime_supporting_projection_ready, runtime_projection_error, quality_threshold_failures) =
-        match projection {
-            Ok(projection) => (true, None, rt0_quality_failure_codes(&projection.quality)),
-            Err(error) => (false, Some(format!("{error:?}")), Vec::new()),
-        };
-    let quality_thresholds_pass =
-        runtime_supporting_projection_ready && quality_threshold_failures.is_empty();
-    let runtime_cost_signal_observed = aggregate.estimated_cost_microunits.is_some()
-        || aggregate.provider_charge_microunits.is_some();
+    push_missing(
+        summary.owner_completed_voice_attempts == 0,
+        "owner_completed_voice_attempt",
+        &mut missing,
+    );
+    push_missing(
+        summary.visitor_completed_voice_attempts == 0,
+        "visitor_completed_voice_attempt",
+        &mut missing,
+    );
+    push_missing(!aggregate.canonical_playback_proven, "canonical_playback", &mut missing);
+    push_missing(
+        aggregate.text_first_meaningful_response.is_none(),
+        "text_first_meaningful_response",
+        &mut missing,
+    );
+    push_missing(
+        aggregate.first_meaningful_audio.is_none(),
+        "first_meaningful_audio",
+        &mut missing,
+    );
+    push_missing(
+        aggregate.interruption_stop.is_none(),
+        "interruption_stop",
+        &mut missing,
+    );
+    push_missing(
+        aggregate.first_useful_video.is_none(),
+        "first_useful_video",
+        &mut missing,
+    );
+    push_missing(
+        !aggregate.av_sync_proven || aggregate.av_sync_absolute_offset.is_none(),
+        "av_sync",
+        &mut missing,
+    );
+    push_missing(
+        aggregate.recoverable_reconnect.is_none(),
+        "recoverable_reconnect",
+        &mut missing,
+    );
+    push_missing(
+        aggregate.session_duration_millis == 0,
+        "session_duration",
+        &mut missing,
+    );
+    missing
+}
 
-    let report = RuntimeReadinessReport {
+fn push_missing(condition: bool, name: &'static str, missing: &mut Vec<&'static str>) {
+    if condition {
+        missing.push(name);
+    }
+}
+
+fn evaluate_projection(inputs: &RuntimeInputs, snapshot_refs: &[&[u8]]) -> ProjectionEvaluation {
+    match derive_rt0_runtime_supporting_projection(
+        &inputs.conversation_attempt_bytes,
+        &inputs.bound,
+        snapshot_refs,
+        &inputs.provider_state_bytes,
+        &inputs.exact_candidate_sha,
+    ) {
+        Ok(projection) => {
+            let quality_failures = rt0_quality_failure_codes(&projection.quality);
+            ProjectionEvaluation {
+                projection_status: CheckStatus::Passed,
+                projection_error: None,
+                quality_status: status(quality_failures.is_empty()),
+                quality_failures,
+            }
+        }
+        Err(error) => ProjectionEvaluation {
+            projection_status: CheckStatus::Failed,
+            projection_error: Some(format!("{error:?}")),
+            quality_failures: Vec::new(),
+            quality_status: CheckStatus::Failed,
+        },
+    }
+}
+
+fn build_report(
+    inputs: &RuntimeInputs,
+    provider_state_sha256: String,
+    summary: SnapshotSummary,
+    missing_runtime_evidence: Vec<&'static str>,
+    projection: ProjectionEvaluation,
+) -> RuntimeReadinessReport {
+    let aggregate = &inputs.bound.aggregate;
+    RuntimeReadinessReport {
         schema_version: REPORT_SCHEMA,
-        candidate_sha: exact_candidate_sha.to_string(),
+        candidate_sha: inputs.exact_candidate_sha.clone(),
         provider_state_sha256,
-        session_snapshot_count: snapshots.len(),
-        owner_sessions,
-        visitor_sessions,
-        owner_completed_voice_attempts,
-        visitor_completed_voice_attempts,
-        canonical_playback_proven: aggregate.canonical_playback_proven,
-        av_sync_proven: aggregate.av_sync_proven,
-        av_sync_diagnostics,
+        session_snapshot_count: inputs.snapshots.len(),
+        owner_sessions: summary.owner_sessions,
+        visitor_sessions: summary.visitor_sessions,
+        owner_completed_voice_attempts: summary.owner_completed_voice_attempts,
+        visitor_completed_voice_attempts: summary.visitor_completed_voice_attempts,
+        canonical_playback: status(aggregate.canonical_playback_proven),
+        av_sync: status(aggregate.av_sync_proven),
+        av_sync_diagnostics: summary.av_sync_diagnostics,
         metrics: RuntimeMetricObservation {
             text_first_meaningful_response: aggregate.text_first_meaningful_response,
             first_meaningful_audio: aggregate.first_meaningful_audio,
@@ -244,25 +362,25 @@ fn run(args: &[String]) -> Result<(RuntimeReadinessReport, bool), &'static str> 
             session_duration_millis: aggregate.session_duration_millis,
             estimated_cost_microunits: aggregate.estimated_cost_microunits,
             provider_charge_microunits: aggregate.provider_charge_microunits,
-            runtime_cost_signal_observed,
+            runtime_cost_signal_observed: aggregate.estimated_cost_microunits.is_some()
+                || aggregate.provider_charge_microunits.is_some(),
         },
         missing_runtime_evidence,
-        runtime_supporting_projection_ready,
-        runtime_projection_error,
-        quality_threshold_failures,
-        quality_thresholds_pass,
-        manual_cost_review_required: true,
-        privacy_acceptance_required: true,
-        human_quality_review_required: true,
-        participant_provenance_review_required: true,
-        known_limitations_review_required: true,
+        runtime_supporting_projection: projection.projection_status,
+        runtime_projection_error: projection.projection_error,
+        quality_threshold_failures: projection.quality_failures,
+        quality_thresholds: projection.quality_status,
+        remaining_non_runtime_requirements: NON_RUNTIME_REQUIREMENTS.to_vec(),
         release_ready_claimed: false,
-    };
+    }
+}
 
-    let ready = report.missing_runtime_evidence.is_empty()
-        && report.runtime_supporting_projection_ready
-        && report.quality_thresholds_pass;
-    Ok((report, ready))
+fn status(passed: bool) -> CheckStatus {
+    if passed {
+        CheckStatus::Passed
+    } else {
+        CheckStatus::Failed
+    }
 }
 
 fn record_av_sync_issue(counts: &mut AvSyncIssueCounts, issue: LabAvSyncTrackIssue) {
