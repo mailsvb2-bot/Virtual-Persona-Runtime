@@ -74,7 +74,7 @@ impl SupportingFixture {
             cost: bytes(&json!({
                 "origin":"real",
                 "estimated_cost_covered_provider_roles":["stt","llm","avatar"],"provider_charge_covered_provider_roles":[],
-                "measured_duration_millis":60000,
+                "measured_duration_millis":15000,
                 "estimated_cost_microunits":null,
                 "provider_charge_microunits":null,
                 "candidate_sha":CANDIDATE,
@@ -358,6 +358,32 @@ fn assembler_rejects_browser_quality_detached_from_bound_session() {
     assert_eq!(
         assemble_rt0_exit_evidence(fixture.inputs()),
         Err(Rt0ExitAssemblyError::BrowserQualityMismatch)
+    );
+}
+
+#[test]
+fn assembler_rejects_cost_duration_detached_from_bound_session() {
+    let mut fixture = AssemblyFixture::new();
+    let mut cost: Value = serde_json::from_slice(&fixture.supporting.cost).unwrap();
+    cost["measured_duration_millis"] = json!(14_999);
+    fixture.supporting.cost = bytes(&cost);
+
+    assert_eq!(
+        assemble_rt0_exit_evidence(fixture.inputs()),
+        Err(Rt0ExitAssemblyError::RuntimeCostMismatch)
+    );
+}
+
+#[test]
+fn assembler_rejects_cost_total_below_runtime_known_cost() {
+    let mut fixture = AssemblyFixture::new();
+    let mut cost: Value = serde_json::from_slice(&fixture.supporting.cost).unwrap();
+    cost["estimated_cost_microunits"] = json!(2);
+    fixture.supporting.cost = bytes(&cost);
+
+    assert_eq!(
+        assemble_rt0_exit_evidence(fixture.inputs()),
+        Err(Rt0ExitAssemblyError::RuntimeCostMismatch)
     );
 }
 
