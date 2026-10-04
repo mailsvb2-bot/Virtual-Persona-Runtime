@@ -62,8 +62,14 @@ fn run(args: &[String]) -> Result<(), String> {
 }
 
 fn prefill(bound: &BoundLabSessionEvidenceAggregate) -> Value {
-    let estimated_roles = runtime_cost_roles(bound.aggregate.estimated_cost_microunits);
-    let provider_charge_roles = runtime_cost_roles(bound.aggregate.provider_charge_microunits);
+    let estimated_roles = runtime_cost_roles(
+        &bound.aggregate,
+        bound.aggregate.estimated_cost_microunits,
+    );
+    let provider_charge_roles = runtime_cost_roles(
+        &bound.aggregate,
+        bound.aggregate.provider_charge_microunits,
+    );
 
     json!({
         "schema_version": OUTPUT_SCHEMA,
@@ -110,12 +116,20 @@ fn prefill(bound: &BoundLabSessionEvidenceAggregate) -> Value {
     })
 }
 
-fn runtime_cost_roles(cost: Option<u64>) -> Vec<ProviderRole> {
-    if cost.is_some() {
-        vec![ProviderRole::Stt, ProviderRole::Llm]
-    } else {
-        Vec::new()
+fn runtime_cost_roles(
+    aggregate: &vpr_evaluation::LabSessionEvidenceAggregate,
+    cost: Option<u64>,
+) -> Vec<ProviderRole> {
+    if cost.is_none() {
+        return Vec::new();
     }
+    if aggregate.completed_voice_attempts > 0 {
+        return vec![ProviderRole::Stt, ProviderRole::Llm];
+    }
+    if aggregate.completed_text_attempts > 0 {
+        return vec![ProviderRole::Llm];
+    }
+    Vec::new()
 }
 
 fn read(path: &str, label: &str) -> Result<Vec<u8>, String> {
@@ -211,6 +225,22 @@ mod tests {
         );
         assert!(value["cost"]["estimated_cost_microunits"].is_null());
         assert!(value["cost"]["provider_charge_microunits"].is_null());
+    }
+
+    #[test]
+    fn text_only_runtime_cost_never_claims_stt_coverage() {
+        let mut evidence = bound(Some(17), Some(19));
+        evidence.aggregate.completed_voice_attempts = 0;
+        evidence.aggregate.completed_text_attempts = 1;
+        let value = prefill(&evidence);
+        assert_eq!(
+            value["cost"]["estimated_cost_covered_provider_roles"],
+            json!(["llm"])
+        );
+        assert_eq!(
+            value["cost"]["provider_charge_covered_provider_roles"],
+            json!(["llm"])
+        );
     }
 
     #[test]
