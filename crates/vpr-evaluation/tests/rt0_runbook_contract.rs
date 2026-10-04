@@ -60,7 +60,6 @@ fn rt0_runbook_forbids_manual_edits_of_canonical_generated_artifacts() {
     assert!(RUNBOOK.contains("Do not edit the canonical scaffold files by hand"));
 }
 
-
 #[test]
 fn rt0_runbook_requires_strict_owner_lab_provenance_mode() {
     assert!(
