@@ -51,7 +51,7 @@ pub use exit::{
     HumanEvaluationEvidence, KnownLimitationsEvidence, LatencyDistributionMillis, ParticipantRole,
     PrivacyPermissionEvidence, QualityEvidence, RT0_EXIT_EVIDENCE_SCHEMA, RT0_EXIT_REPORT_SCHEMA,
     RecordStatus, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitFailureCode, Rt0ExitReport,
-    evaluate_rt0_exit_evidence,
+    evaluate_rt0_exit_evidence, rt0_quality_failure_codes,
 };
 pub use exit_assembly::{Rt0ExitAssemblyError, Rt0ExitAssemblyInputs, assemble_rt0_exit_evidence};
 pub use exit_context::{OwnerGoldenVerificationContext, Rt0ExitVerificationContext};
