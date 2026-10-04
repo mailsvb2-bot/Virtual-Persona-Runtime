@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 mod av_sync_diagnostic;
+mod provenance;
 
 pub use vpr_evaluation::{
     LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncEvidence, LabAvSyncEvidenceInput,
@@ -9,7 +10,7 @@ pub use vpr_evaluation::{
     LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabTextAttemptEvidence, LabTextAttemptStatus,
     LabVoiceAttemptEvidence, LabVoiceAttemptStatus, ParticipantRole,
     RT0_AV_SYNC_SAMPLES_PER_REQUEST, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, validate_candidate_sha,
+    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
 use crate::{LabTextResult, LabVoiceResult, LabVoiceSegment};
@@ -57,31 +58,6 @@ pub struct LabSessionEvidenceRecorder {
 }
 
 impl LabSessionEvidenceRecorder {
-    /// Binds all subsequently exported session evidence to one exact candidate/provider state.
-    ///
-    /// # Errors
-    /// Fails for malformed provenance or after any session has already started.
-    pub fn bind_provenance(
-        &mut self,
-        candidate_sha: &str,
-        provider_state_sha256: &str,
-    ) -> Result<(), LabEvidenceError> {
-        if self.session_sequence.is_some() {
-            return Err(LabEvidenceError::InvalidState);
-        }
-        if validate_candidate_sha(candidate_sha).is_err()
-            || provider_state_sha256.len() != 64
-            || !provider_state_sha256
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
-            return Err(LabEvidenceError::InvalidInput);
-        }
-        candidate_sha.clone_into(&mut self.candidate_sha);
-        provider_state_sha256.clone_into(&mut self.provider_state_sha256);
-        Ok(())
-    }
-
     /// Starts a fresh evidence record for one canonical Owner Lab session.
     ///
     /// # Errors
