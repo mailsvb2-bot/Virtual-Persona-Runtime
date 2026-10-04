@@ -2,7 +2,6 @@ use std::env;
 
 mod avatar_selection;
 mod provider_state;
-
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
