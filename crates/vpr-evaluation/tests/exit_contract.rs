@@ -383,6 +383,8 @@ fn passing_evidence(golden_bytes: &[u8], provider_state_bytes: &[u8]) -> Rt0Exit
             origin: EvidenceOrigin::Real,
             rubric_version: "rt0-human-contract-v1".into(),
             reviewer_count: 2,
+            owner_human_participant_verified: CheckStatus::Passed,
+            visitor_distinct_non_owner_human_verified: CheckStatus::Passed,
             dimensions: HumanDimensions {
                 voice_similarity: RecordStatus::Recorded,
                 voice_naturalness: RecordStatus::Recorded,
@@ -876,6 +878,53 @@ fn every_session_quality_metric_must_match_recomputed_session_distribution() {
             Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid)
         );
     }
+}
+
+#[test]
+fn participant_provenance_is_required_for_rt0() {
+    let fixture = golden_fixture();
+    let golden = fixture.report.clone();
+    let golden_bytes = serde_json::to_vec(&golden).unwrap();
+
+    let mut owner_unverified = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    owner_unverified
+        .human_evaluation
+        .owner_human_participant_verified = CheckStatus::Failed;
+    let report = evaluate(
+        &owner_unverified,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+    assert!(!report.ready);
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::OwnerHumanParticipantNotVerified)
+    );
+
+    let mut visitor_unverified = passing_evidence(&golden_bytes, &fixture.provider_state_bytes);
+    visitor_unverified
+        .human_evaluation
+        .visitor_distinct_non_owner_human_verified = CheckStatus::Failed;
+    let report = evaluate(
+        &visitor_unverified,
+        &golden,
+        &golden_bytes,
+        &fixture,
+        RELEASE_SPEC,
+        CANDIDATE,
+    )
+    .unwrap();
+    assert!(!report.ready);
+    assert!(
+        report
+            .failures
+            .contains(&Rt0ExitFailureCode::VisitorDistinctNonOwnerHumanNotVerified)
+    );
 }
 
 #[test]
