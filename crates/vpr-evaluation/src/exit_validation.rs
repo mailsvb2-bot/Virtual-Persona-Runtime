@@ -6,8 +6,8 @@ use crate::binding::{valid_git_sha, valid_sha256};
 use crate::{
     BoundLabSessionEvidenceAggregate, CheckStatus, ConversationEvidence, ConversationPairEvidence,
     EvidenceOrigin, LabMediaEvidenceKind, LabSessionEvidenceAggregate, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole, QualityEvidence,
-    RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
+    LabVoiceAttemptStatus, LatencyDistributionMillis, ParticipantRole, ProviderRole,
+    QualityEvidence, RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE, RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
     RT0_OWNER_LAB_SESSION_BINDING_SCHEMA, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, Rt0ExitEvidence,
     Rt0ExitEvidenceError, Rt0ExitVerificationContext, bind_owner_lab_session_evidence, sha256_hex,
 };
@@ -171,7 +171,9 @@ pub(crate) fn validate_runtime_evidence(
     if recomputed != *context.bound_session_aggregate {
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
-    validate_session_quality_binding(evidence, &recomputed.aggregate)
+    validate_session_quality_binding(evidence, &recomputed.aggregate)?;
+    validate_session_cost_binding(evidence, &recomputed.aggregate)?;
+    Ok(())
 }
 
 /// Validates that real-conversation claims are derived from the credentialed conversation receipt
@@ -433,6 +435,47 @@ pub(crate) fn validate_session_quality_binding(
         return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
     }
     Ok(())
+}
+
+pub(crate) fn validate_session_cost_binding(
+    evidence: &Rt0ExitEvidence,
+    aggregate: &LabSessionEvidenceAggregate,
+) -> Result<(), Rt0ExitEvidenceError> {
+    if evidence.cost.measured_duration_millis != aggregate.session_duration_millis {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+
+    validate_cost_lower_bound(
+        evidence.cost.estimated_cost_microunits,
+        &evidence.cost.estimated_cost_covered_provider_roles,
+        aggregate.estimated_cost_microunits,
+    )?;
+    validate_cost_lower_bound(
+        evidence.cost.provider_charge_microunits,
+        &evidence.cost.provider_charge_covered_provider_roles,
+        aggregate.provider_charge_microunits,
+    )
+}
+
+fn validate_cost_lower_bound(
+    claimed_total: Option<u64>,
+    covered_provider_roles: &[ProviderRole],
+    runtime_known_total: Option<u64>,
+) -> Result<(), Rt0ExitEvidenceError> {
+    if covers_runtime_usage_cost(covered_provider_roles)
+        && matches!(
+            (claimed_total, runtime_known_total),
+            (Some(claimed), Some(runtime)) if claimed < runtime
+        )
+    {
+        return Err(Rt0ExitEvidenceError::RuntimeEvidenceInvalid);
+    }
+    Ok(())
+}
+
+fn covers_runtime_usage_cost(roles: &[ProviderRole]) -> bool {
+    let covered: HashSet<_> = roles.iter().copied().collect();
+    covered.contains(&ProviderRole::Stt) && covered.contains(&ProviderRole::Llm)
 }
 
 pub(crate) fn validate_bound_session_aggregate(
