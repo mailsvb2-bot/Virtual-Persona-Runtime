@@ -8,7 +8,7 @@ use crate::{
     ProviderStateManifest, QualityEvidence, RT0_PROVIDER_STATE_SCHEMA, RecordStatus, sha256_hex,
 };
 
-pub const RT0_SUPPORTING_PREFLIGHT_SCHEMA: &str = "rt0-supporting-evidence-preflight-0.1";
+pub const RT0_SUPPORTING_PREFLIGHT_SCHEMA: &str = "rt0-supporting-evidence-preflight-0.2";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Rt0SupportingPreflightArtifacts<'a> {
@@ -145,6 +145,8 @@ struct HumanSupportingClaim {
     origin: EvidenceOrigin,
     rubric_version: String,
     reviewer_count: u32,
+    owner_human_participant_verified: CheckStatus,
+    visitor_distinct_non_owner_human_verified: CheckStatus,
     dimensions: HumanDimensions,
     usable_for_continuation: CheckStatus,
     candidate_sha: String,
@@ -394,7 +396,11 @@ fn validate_human(
     {
         return Err(Rt0SupportingPreflightError::IncompleteHumanReview);
     }
-    let _ = claim.usable_for_continuation;
+    let _ = (
+        claim.owner_human_participant_verified,
+        claim.visitor_distinct_non_owner_human_verified,
+        claim.usable_for_continuation,
+    );
     Ok(())
 }
 
