@@ -94,7 +94,7 @@ fn exit_evidence(
         },
         "cost":{
             "origin":"real","estimated_cost_covered_provider_roles":["stt","llm","avatar"],"provider_charge_covered_provider_roles":[],
-            "measured_duration_millis":60000,"estimated_cost_microunits":1234,
+            "measured_duration_millis":30000,"estimated_cost_microunits":1234,
             "provider_charge_microunits":null,"artifact_sha256":supporting_artifact_sha256
         },
         "privacy_permissions":{
