@@ -61,7 +61,7 @@ fn exit_evidence(
         })
     };
     json!({
-        "schema_version":"rt0-exit-evidence-0.6",
+        "schema_version":"rt0-exit-evidence-0.7",
         "candidate_sha":CANDIDATE,
         "release_spec_sha256":sha256_hex(RELEASE_SPEC),
         "golden_report_sha256":sha256_hex(golden_bytes),
