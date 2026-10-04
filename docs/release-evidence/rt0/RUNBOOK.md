@@ -179,8 +179,9 @@ conversation and quality.
 ## 9. Capture reviewed CI/E2E evidence
 
 Create a private review input outside the worktree. The references identify the exact automation
-runs reviewed for this candidate and are hashed in the capture receipt; they are not copied into the
-canonical supporting files.
+runs reviewed for this candidate. Raw references stay private; their SHA-256 digests are retained in
+the canonical CI/E2E supporting files and are also repeated in the capture receipt, so the later
+supporting-artifact digest remains bound to the reviewed automation provenance.
 
 ```json
 {
