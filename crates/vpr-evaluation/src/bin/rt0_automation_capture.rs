@@ -54,7 +54,7 @@ fn main() {
 }
 
 fn run(args: &[String]) -> Result<(), i32> {
-    let [input_path, supporting_dir, candidate_sha] = args.as_slice() else {
+    let [input_path, supporting_dir, candidate_sha] = args else {
         eprintln!(
             "usage: vpr-rt0-automation-capture <reviewed-automation.json> <supporting-dir> <exact-candidate-sha>"
         );
