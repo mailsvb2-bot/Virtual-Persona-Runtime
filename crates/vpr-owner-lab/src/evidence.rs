@@ -346,8 +346,8 @@ impl LabSessionEvidenceRecorder {
         }
     }
 
-    /// Validates one browser audio-start observation and returns the exact canonical turn that
-    /// must be reconciled before the observation may contribute playback proof.
+    /// Validates one provider playback-complete observation and returns the exact canonical turn
+    /// that must be reconciled before the observation may contribute full playback proof.
     ///
     /// # Errors
     /// Fails for stale sessions, malformed/duplicate media, unknown requests, or incomplete turns.
@@ -355,7 +355,7 @@ impl LabSessionEvidenceRecorder {
         &self,
         input: &LabMediaEvidenceInput,
     ) -> Result<(u64, u64), LabEvidenceError> {
-        if input.kind != LabMediaEvidenceKind::AudioStarted {
+        if input.kind != LabMediaEvidenceKind::PlaybackCompleted {
             return Err(LabEvidenceError::InvalidInput);
         }
         self.validate_media(input)?;
@@ -366,7 +366,7 @@ impl LabSessionEvidenceRecorder {
         )
     }
 
-    /// Atomically records a browser audio-start observation after canonical runtime playback
+    /// Atomically records provider playback completion after canonical runtime playback
     /// reconciliation succeeded for the exact completed turn.
     ///
     /// # Errors
@@ -398,8 +398,8 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser WebRTC A/V sync sample after canonical playback is proven for the
-    /// exact completed request. The reference is explicit in the serialized evidence.
+    /// Records one browser WebRTC A/V sync sample after real audio start is observed for the
+    /// exact completed request. Full playback completion is proven separately by the provider event.
     ///
     /// # Errors
     /// Fails for stale sessions, malformed/duplicate samples, unknown requests, or requests whose
@@ -421,9 +421,11 @@ impl LabSessionEvidenceRecorder {
             .voice_attempts
             .get(&input.request_sequence)
             .ok_or(LabEvidenceError::InvalidState)?;
-        if attempt.status != LabVoiceAttemptStatus::Completed
-            || !attempt.canonical_playback_confirmed
-        {
+        let audio_started = self.media_events.iter().any(|event| {
+            event.request_sequence == Some(input.request_sequence)
+                && event.kind == LabMediaEvidenceKind::AudioStarted
+        });
+        if attempt.status != LabVoiceAttemptStatus::Completed || !audio_started {
             return Err(LabEvidenceError::InvalidState);
         }
         if self
@@ -451,14 +453,13 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser-observed media-plane latency event without promoting it to canonical
-    /// playback proof. Audio-start evidence reaches `canonical_playback_proven` only through
-    /// `record_canonical_playback` after runtime reconciliation.
+    /// Records one browser-observed media-plane latency event without promoting it to full
+    /// canonical playback proof. `PlaybackCompleted` reaches the dedicated canonical path only.
     ///
     /// # Errors
     /// Fails for stale sessions, impossible event/request combinations, unknown requests, or duplicates.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
-        if input.kind == LabMediaEvidenceKind::AudioStarted {
+        if input.kind == LabMediaEvidenceKind::PlaybackCompleted {
             return Err(LabEvidenceError::InvalidState);
         }
         self.validate_media(input)?;
@@ -478,6 +479,7 @@ impl LabSessionEvidenceRecorder {
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );
         if request_required != input.request_sequence.is_some() {
@@ -536,19 +538,32 @@ impl LabSessionEvidenceRecorder {
             .values()
             .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
             .collect();
+        let interrupted_requests: std::collections::HashSet<u64> = self
+            .media_events
+            .iter()
+            .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
+            .filter_map(|event| event.request_sequence)
+            .collect();
         let canonical_playback_proven = !completed_attempts.is_empty()
             && completed_attempts
                 .iter()
-                .all(|attempt| attempt.canonical_playback_confirmed);
-        let av_sync_proven = canonical_playback_proven
+                .any(|attempt| attempt.canonical_playback_confirmed)
             && completed_attempts.iter().all(|attempt| {
-                (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
-                    self.av_sync_samples.iter().any(|sample| {
-                        sample.request_sequence == attempt.request_sequence
-                            && sample.sample_sequence == sample_sequence
-                    })
-                })
+                attempt.canonical_playback_confirmed
+                    || interrupted_requests.contains(&attempt.request_sequence)
             });
+        let av_sync_proven = canonical_playback_proven
+            && completed_attempts
+                .iter()
+                .filter(|attempt| attempt.canonical_playback_confirmed)
+                .all(|attempt| {
+                    (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
+                        self.av_sync_samples.iter().any(|sample| {
+                            sample.request_sequence == attempt.request_sequence
+                                && sample.sample_sequence == sample_sequence
+                        })
+                    })
+                });
         Ok(LabSessionEvidenceSnapshot {
             schema_version: RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA.into(),
             candidate_sha: self.candidate_sha.clone(),
