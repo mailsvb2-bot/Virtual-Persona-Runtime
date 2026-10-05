@@ -6,7 +6,7 @@ use super::{
     RT0_AV_SYNC_SAMPLES_PER_REQUEST,
 };
 
-fn validate_and_collect_av_sync(
+pub(super) fn validate_and_collect_av_sync(
     snapshot: &LabSessionEvidenceSnapshot,
     request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
     playback_requests: &HashSet<u64>,
