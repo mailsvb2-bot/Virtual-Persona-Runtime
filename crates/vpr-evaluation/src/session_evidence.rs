@@ -262,48 +262,11 @@ impl SessionAggregateAccumulator {
             .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
             .map(|attempt| attempt.request_sequence)
             .collect();
-        let playback_requests: HashSet<u64> = snapshot
-            .voice_attempts
-            .iter()
-            .filter(|attempt| attempt.canonical_playback_confirmed)
-            .map(|attempt| attempt.request_sequence)
-            .collect();
-        let audio_requests: HashSet<u64> = snapshot
-            .media_events
-            .iter()
-            .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
-            .filter_map(|event| event.request_sequence)
-            .collect();
-        let playback_completed_requests: HashSet<u64> = snapshot
-            .media_events
-            .iter()
-            .filter(|event| event.kind == LabMediaEvidenceKind::PlaybackCompleted)
-            .filter_map(|event| event.request_sequence)
-            .collect();
-        let interrupted_requests: HashSet<u64> = snapshot
-            .media_events
-            .iter()
-            .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
-            .filter_map(|event| event.request_sequence)
-            .collect();
-        if playback_requests != playback_completed_requests
-            || !playback_requests.is_subset(&audio_requests)
-            || !interrupted_requests.is_subset(&audio_requests)
-            || !playback_requests.is_disjoint(&interrupted_requests)
-        {
+        let playback = validate_playback_accounting(snapshot, &completed_requests)?;
+        if snapshot.canonical_playback_proven != playback.derived_playback {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
-        let accounted_requests: HashSet<u64> = playback_requests
-            .union(&interrupted_requests)
-            .copied()
-            .collect();
-        let derived_playback = !completed_requests.is_empty()
-            && !playback_requests.is_empty()
-            && accounted_requests == completed_requests;
-        if snapshot.canonical_playback_proven != derived_playback {
-            return Err(LabSessionAggregateError::InvalidSnapshot);
-        }
-        if derived_playback {
+        if playback.derived_playback {
             self.playback_sessions = self
                 .playback_sessions
                 .checked_add(1)
@@ -312,16 +275,17 @@ impl SessionAggregateAccumulator {
         let av_sync_requests = validate_and_collect_av_sync(
             snapshot,
             &request_status,
-            &playback_requests,
+            &playback.playback_requests,
             &mut self.av_sync,
         )?;
         validate_av_sync_diagnostics(
             snapshot,
             &request_status,
-            &audio_requests,
+            &playback.audio_requests,
             &av_sync_requests,
         )?;
-        let derived_av_sync = derived_playback && av_sync_requests == playback_requests;
+        let derived_av_sync =
+            playback.derived_playback && av_sync_requests == playback.playback_requests;
         if snapshot.av_sync_proven != derived_av_sync {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -531,6 +495,62 @@ impl SessionAggregateAccumulator {
     }
 }
 
+struct PlaybackAccounting {
+    playback_requests: HashSet<u64>,
+    audio_requests: HashSet<u64>,
+    derived_playback: bool,
+}
+
+fn validate_playback_accounting(
+    snapshot: &LabSessionEvidenceSnapshot,
+    completed_requests: &HashSet<u64>,
+) -> Result<PlaybackAccounting, LabSessionAggregateError> {
+    let playback_requests: HashSet<u64> = snapshot
+        .voice_attempts
+        .iter()
+        .filter(|attempt| attempt.canonical_playback_confirmed)
+        .map(|attempt| attempt.request_sequence)
+        .collect();
+    let audio_requests: HashSet<u64> = snapshot
+        .media_events
+        .iter()
+        .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
+        .filter_map(|event| event.request_sequence)
+        .collect();
+    let playback_completed_requests: HashSet<u64> = snapshot
+        .media_events
+        .iter()
+        .filter(|event| event.kind == LabMediaEvidenceKind::PlaybackCompleted)
+        .filter_map(|event| event.request_sequence)
+        .collect();
+    let interrupted_requests: HashSet<u64> = snapshot
+        .media_events
+        .iter()
+        .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
+        .filter_map(|event| event.request_sequence)
+        .collect();
+    if playback_requests != playback_completed_requests
+        || !playback_requests.is_subset(&audio_requests)
+        || !interrupted_requests.is_subset(&audio_requests)
+        || !playback_requests.is_disjoint(&interrupted_requests)
+    {
+        return Err(LabSessionAggregateError::InvalidSnapshot);
+    }
+
+    let accounted_requests: HashSet<u64> = playback_requests
+        .union(&interrupted_requests)
+        .copied()
+        .collect();
+    let derived_playback = !completed_requests.is_empty()
+        && !playback_requests.is_empty()
+        && accounted_requests == *completed_requests;
+    Ok(PlaybackAccounting {
+        playback_requests,
+        audio_requests,
+        derived_playback,
+    })
+}
+
 fn validate_and_collect_media(
     snapshot: &LabSessionEvidenceSnapshot,
     request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
@@ -577,11 +597,11 @@ fn validate_and_collect_media(
         }
         match event.kind {
             LabMediaEvidenceKind::AudioStarted => audio.push(event.elapsed_millis),
-            LabMediaEvidenceKind::PlaybackCompleted => {}
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
-            LabMediaEvidenceKind::BackendCompleteReceived
+            LabMediaEvidenceKind::PlaybackCompleted
+            | LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
         }
     }
