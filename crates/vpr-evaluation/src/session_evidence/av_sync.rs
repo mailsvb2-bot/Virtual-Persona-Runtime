@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    LabAvSyncReference, LabMediaEvidenceKind, LabSessionAggregateError,
-    LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, MAX_MEDIA_ELAPSED_MILLIS,
-    RT0_AV_SYNC_SAMPLES_PER_REQUEST,
+    LabAvSyncReference, LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
+    LabVoiceAttemptStatus, MAX_MEDIA_ELAPSED_MILLIS, RT0_AV_SYNC_SAMPLES_PER_REQUEST,
 };
 
 pub(super) fn validate_and_collect_av_sync(
