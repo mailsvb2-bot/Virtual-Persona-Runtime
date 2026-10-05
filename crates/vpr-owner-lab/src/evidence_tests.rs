@@ -1,5 +1,5 @@
 use super::*;
-use crate::{LabTextResult, LabVoiceSegment, LabVoiceUsage};
+use crate::{LabTextResult, LabVoiceUsage};
 
 fn text_result() -> LabTextResult {
     LabTextResult {
