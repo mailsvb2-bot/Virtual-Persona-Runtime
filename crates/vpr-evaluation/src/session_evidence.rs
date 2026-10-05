@@ -14,8 +14,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.1";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.8";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.2";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.9";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -27,6 +27,7 @@ pub enum LabMediaEvidenceKind {
     BackendCompleteReceived,
     ClientDeliverySent,
     AudioStarted,
+    PlaybackCompleted,
     InterruptionStopped,
     ReconnectRestored,
 }
@@ -270,11 +271,32 @@ impl SessionAggregateAccumulator {
             .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
             .filter_map(|event| event.request_sequence)
             .collect();
-        if playback_requests != audio_requests {
+        let playback_completed_requests: HashSet<u64> = snapshot
+            .media_events
+            .iter()
+            .filter(|event| event.kind == LabMediaEvidenceKind::PlaybackCompleted)
+            .filter_map(|event| event.request_sequence)
+            .collect();
+        let interrupted_requests: HashSet<u64> = snapshot
+            .media_events
+            .iter()
+            .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
+            .filter_map(|event| event.request_sequence)
+            .collect();
+        if playback_requests != playback_completed_requests
+            || !playback_requests.is_subset(&audio_requests)
+            || !interrupted_requests.is_subset(&audio_requests)
+            || !playback_requests.is_disjoint(&interrupted_requests)
+        {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
-        let derived_playback =
-            !completed_requests.is_empty() && playback_requests == completed_requests;
+        let accounted_requests: HashSet<u64> = playback_requests
+            .union(&interrupted_requests)
+            .copied()
+            .collect();
+        let derived_playback = !completed_requests.is_empty()
+            && !playback_requests.is_empty()
+            && accounted_requests == completed_requests;
         if snapshot.canonical_playback_proven != derived_playback {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -296,7 +318,7 @@ impl SessionAggregateAccumulator {
             &playback_requests,
             &av_sync_requests,
         )?;
-        let derived_av_sync = derived_playback && av_sync_requests == completed_requests;
+        let derived_av_sync = derived_playback && av_sync_requests == playback_requests;
         if snapshot.av_sync_proven != derived_av_sync {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -530,6 +552,7 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );
         if requires_request != event.request_sequence.is_some() {
@@ -551,6 +574,7 @@ fn validate_and_collect_media(
         }
         match event.kind {
             LabMediaEvidenceKind::AudioStarted => audio.push(event.elapsed_millis),
+            LabMediaEvidenceKind::PlaybackCompleted => {}
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
