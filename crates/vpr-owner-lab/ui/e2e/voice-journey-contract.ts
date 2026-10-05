@@ -58,11 +58,11 @@ const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
       && sample.reference === "web_rtc_estimated_playout_timestamp"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
-  expect(snapshot.voice_attempts).toMatchObject([{
+  expect(snapshot.voice_attempts[0]).toMatchObject({
     request_sequence: 1,
     canonical_playback_confirmed: true,
     status: "completed",
-  }]);
+  });
   const voice = snapshot.voice_attempts[0];
   expect(voice?.canonical_turn_sequence).toBeGreaterThan(0);
   expect(voice?.canonical_output_sequence).toBeGreaterThan(0);
@@ -87,7 +87,7 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
   };
   expect(interruptPayload).toMatchObject({
     type: "stream/interrupt",
-    videoId: "video-1",
+    videoId: "video-2",
   });
   expect(Number(interruptPayload.timestamp)).toBeGreaterThan(0);
 
@@ -107,8 +107,16 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
   expect(firstOwnerText?.first_meaningful_response_millis ?? -1).toBeLessThanOrEqual(
     firstOwnerText?.server_total_millis ?? -1,
   );
+  expect(owner.voice_attempts[1]).toMatchObject({
+    request_sequence: 2,
+    canonical_playback_confirmed: false,
+    status: "completed",
+  });
   expect(owner.media_events.some((event) =>
-    event.request_sequence === 1 && event.kind === "interruption_stopped"
+    event.request_sequence === 2 && event.kind === "interruption_stopped"
+  )).toBeTruthy();
+  expect(owner.media_events.some((event) =>
+    event.request_sequence === 1 && event.kind === "playback_completed"
   )).toBeTruthy();
   expect(owner.media_events.some((event) =>
     event.request_sequence === null
@@ -151,8 +159,8 @@ export const assertProviderRequests = async (
   const stt = requests.filter((entry) => entry.kind === "stt");
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
-  expect(stt).toHaveLength(2);
-  expect(llm).toHaveLength(6);
+  expect(stt).toHaveLength(3);
+  expect(llm).toHaveLength(7);
   expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
   expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
@@ -164,13 +172,21 @@ export const assertProviderRequests = async (
 
   const ownerTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос владельца"));
   const ownerVoiceLlm = llm.find((entry) => entry.bodyText.includes("Привет из браузера"));
+  const scopedVoiceLlms = llm.filter((entry) => entry.bodyText.includes("Что думает владелец?"));
+  const interruptedOwnerVoiceLlm = scopedVoiceLlms.find((entry) =>
+    ownerAnswers.some((answer) => entry.bodyText.includes(answer))
+  );
   const failedOwnerLlm = llm.find((entry) => entry.bodyText.includes("Спровоцируй отказ провайдера"));
   const recoveredOwnerLlm = llm.find((entry) => entry.bodyText.includes("Восстановление после отказа"));
   const visitorTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос visitor"));
-  const visitorVoiceLlm = llm.find((entry) => entry.bodyText.includes("Что думает владелец?"));
+  const visitorVoiceLlm = scopedVoiceLlms.find((entry) =>
+    entry.bodyText.includes("Visitor permissions do not expose owner-reviewed personal context")
+  );
 
   expect(ownerTextLlm).toBeDefined();
   expect(ownerVoiceLlm).toBeDefined();
+  expect(scopedVoiceLlms).toHaveLength(2);
+  expect(interruptedOwnerVoiceLlm).toBeDefined();
   expect(failedOwnerLlm).toBeDefined();
   expect(recoveredOwnerLlm).toBeDefined();
   expect(visitorTextLlm).toBeDefined();
@@ -179,6 +195,7 @@ export const assertProviderRequests = async (
   for (const ownerAnswer of ownerAnswers) {
     expect(ownerTextLlm?.bodyText).toContain(ownerAnswer);
     expect(ownerVoiceLlm?.bodyText).toContain(ownerAnswer);
+    expect(interruptedOwnerVoiceLlm?.bodyText).toContain(ownerAnswer);
     expect(failedOwnerLlm?.bodyText).toContain(ownerAnswer);
     expect(recoveredOwnerLlm?.bodyText).toContain(ownerAnswer);
     expect(visitorTextLlm?.bodyText).not.toContain(ownerAnswer);
