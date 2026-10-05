@@ -1,10 +1,12 @@
+use std::time::Instant;
+
 use serde::{Deserialize, Serialize};
 use vpr_domain::{
     ClaimId, ClaimKind, ConstitutionBoundary, DerivationKind, OwnerClaim, OwnerClaimRecord,
     PersonaId, PersonaIdentity, PersonaMode, PersonaProfile, PersonaVersion, SourceKind,
     VerificationState,
 };
-use vpr_evaluation::sha256_hex;
+use vpr_evaluation::{AvatarProbeEvidence, sha256_hex};
 use vpr_owner_lab::{LabSessionAudience, LabVoiceResult, OwnerLabEngine, OwnerLabStartRequest};
 
 use crate::PreparedLiveProof;
@@ -68,6 +70,20 @@ pub struct LiveConversationAttemptReceipt {
     pub browser_media_playback: ProofStatus,
     pub video_render: ProofStatus,
     pub human_review: ProofStatus,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct LiveConversationAttemptRun {
+    receipt: LiveConversationAttemptReceipt,
+    avatar_probe: AvatarProbeEvidence,
+}
+
+impl LiveConversationAttemptRun {
+    /// Splits sanitized conversation evidence from avatar-open timing captured by the owner session.
+    #[must_use]
+    pub fn into_parts(self) -> (LiveConversationAttemptReceipt, AvatarProbeEvidence) {
+        (self.receipt, self.avatar_probe)
+    }
 }
 pub const RT0_LIVE_CONVERSATION_PROFILE_SCHEMA: &str = "rt0-live-conversation-profile-0.1";
 
@@ -152,6 +168,28 @@ pub fn run_live_conversation_attempt(
     owner_audio: Vec<u8>,
     visitor_audio: Vec<u8>,
 ) -> Result<LiveConversationAttemptReceipt, LiveConversationAttemptError> {
+    run_live_conversation_attempt_with_avatar_probe(
+        prepared,
+        profile_input_bytes,
+        owner_audio,
+        visitor_audio,
+    )
+    .map(|run| run.receipt)
+}
+
+/// Runs the canonical owner/visitor attempt and also returns avatar-open timing from the owner session.
+///
+/// The timing is reused by the atomic candidate bundle so provider reachability does not consume
+/// a third realtime-avatar session before the visitor session starts.
+///
+/// # Errors
+/// Returns the same fail-closed errors as [`run_live_conversation_attempt`].
+pub fn run_live_conversation_attempt_with_avatar_probe(
+    prepared: PreparedLiveProof,
+    profile_input_bytes: &[u8],
+    owner_audio: Vec<u8>,
+    visitor_audio: Vec<u8>,
+) -> Result<LiveConversationAttemptRun, LiveConversationAttemptError> {
     validate_audio(&owner_audio)?;
     validate_audio(&visitor_audio)?;
     let input: LiveConversationProfileInput = serde_json::from_slice(profile_input_bytes)
@@ -178,18 +216,22 @@ pub fn run_live_conversation_attempt(
         .map_err(|_| LiveConversationAttemptError::InvalidProfile)?
         .with_voice(stt, llm);
 
+    let owner_open_started = Instant::now();
     engine
         .start(OwnerLabStartRequest { consent: true })
         .map_err(|_| LiveConversationAttemptError::OwnerSessionFailed)?;
+    let owner_open_millis = elapsed_millis(owner_open_started);
     let Ok(owner_result) = engine.voice_turn(owner_audio, |_| {}) else {
         let _ = engine.revoke();
         let _ = engine.close();
         return Err(LiveConversationAttemptError::OwnerTurnFailed);
     };
+    let owner_close_started = Instant::now();
     close_or_cleanup(
         &mut engine,
         LiveConversationAttemptError::OwnerCleanupFailed,
     )?;
+    let owner_close_millis = elapsed_millis(owner_close_started);
     engine
         .start_visitor(OwnerLabStartRequest { consent: true })
         .map_err(|_| LiveConversationAttemptError::VisitorSessionFailed)?;
@@ -203,7 +245,7 @@ pub fn run_live_conversation_attempt(
         LiveConversationAttemptError::VisitorCleanupFailed,
     )?;
 
-    Ok(LiveConversationAttemptReceipt {
+    let receipt = LiveConversationAttemptReceipt {
         schema_version: RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA.into(),
         candidate_sha: preflight.candidate_sha,
         provider_state_sha256: preflight.provider_state_sha256,
@@ -222,6 +264,13 @@ pub fn run_live_conversation_attempt(
         browser_media_playback: ProofStatus::NotProven,
         video_render: ProofStatus::NotProven,
         human_review: ProofStatus::NotProven,
+    };
+    Ok(LiveConversationAttemptRun {
+        receipt,
+        avatar_probe: AvatarProbeEvidence {
+            open_millis: owner_open_millis,
+            close_millis: owner_close_millis,
+        },
     })
 }
 
@@ -358,6 +407,10 @@ fn turn_receipt(
 fn known_sum(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     left.zip(right)
         .and_then(|(left, right)| left.checked_add(right))
+}
+
+fn elapsed_millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 fn count_chars(value: &str) -> u64 {
