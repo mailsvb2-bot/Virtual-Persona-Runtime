@@ -60,7 +60,9 @@ type MediaEvidenceKind =
   | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
-type AvSyncReference = "web_rtc_estimated_playout_timestamp";
+type AvSyncReference =
+  | "web_rtc_estimated_playout_timestamp"
+  | "html_media_element_current_time";
 type AvSyncTrackIssue =
   | "stats_unavailable"
   | "timestamp_unavailable"
@@ -658,10 +660,47 @@ const selectPlayoutTimestamp = (
   };
 };
 
+const mediaElementAvSyncFallback = (
+  diagnostic: string,
+  audioIssue: AvSyncTrackIssue | null,
+  videoIssue: AvSyncTrackIssue | null,
+): {
+  offsetMillis: number | null;
+  reference: AvSyncReference | null;
+  diagnostic: string;
+  audioIssue: AvSyncTrackIssue | null;
+  videoIssue: AvSyncTrackIssue | null;
+} => {
+  const audioTime = avatarAudio.currentTime;
+  const videoTime = video.currentTime;
+  if (
+    Number.isFinite(audioTime)
+    && Number.isFinite(videoTime)
+    && audioTime > 0
+    && videoTime > 0
+  ) {
+    return {
+      offsetMillis: Math.round(Math.abs(audioTime - videoTime) * 1_000),
+      reference: AV_SYNC_MEDIA_ELEMENT_REFERENCE,
+      diagnostic: `${diagnostic}; fallback=media-element-current-time`,
+      audioIssue: null,
+      videoIssue: null,
+    };
+  }
+  return {
+    offsetMillis: null,
+    reference: null,
+    diagnostic: `${diagnostic}; media-element-current-time unavailable`,
+    audioIssue,
+    videoIssue,
+  };
+};
+
 const readAvSyncOffsetMillis = async (
   state: AvSyncReadState,
 ): Promise<{
   offsetMillis: number | null;
+  reference: AvSyncReference | null;
   diagnostic: string;
   audioIssue: AvSyncTrackIssue | null;
   videoIssue: AvSyncTrackIssue | null;
@@ -677,12 +716,11 @@ const readAvSyncOffsetMillis = async (
     const audioStats = liveKitAudioTrack?.getRTCStatsReport;
     const videoStats = liveKitVideoTrack?.getRTCStatsReport;
     if (!audioStats || !videoStats) {
-      return {
-        offsetMillis: null,
-        diagnostic: "LiveKit track stats method unavailable",
-        audioIssue: "stats_unavailable",
-        videoIssue: "stats_unavailable",
-      };
+      return mediaElementAvSyncFallback(
+        "LiveKit track stats method unavailable",
+        "stats_unavailable",
+        "stats_unavailable",
+      );
     }
     const [audioReport, videoReport] = await Promise.all([
       audioStats.call(liveKitAudioTrack),
@@ -695,15 +733,15 @@ const readAvSyncOffsetMillis = async (
   state.audioPackets = audioSelection.packetCounts;
   state.videoPackets = videoSelection.packetCounts;
   if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
-    return {
-      offsetMillis: null,
-      diagnostic: `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
-      audioIssue: audioSelection.issue,
-      videoIssue: videoSelection.issue,
-    };
+    return mediaElementAvSyncFallback(
+      `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
+      audioSelection.issue,
+      videoSelection.issue,
+    );
   }
   return {
     offsetMillis: Math.round(Math.abs(audioSelection.timestamp - videoSelection.timestamp)),
+    reference: AV_SYNC_RTP_REFERENCE,
     diagnostic: "audio/video playout timestamps available",
     audioIssue: null,
     videoIssue: null,
@@ -725,12 +763,12 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
     const reading = await readAvSyncOffsetMillis(readState);
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
-    if (reading.offsetMillis !== null) {
+    if (reading.offsetMillis !== null && reading.reference !== null) {
       await api<{ ok: true }>("/api/evidence/av-sync", {
         session_sequence: evidenceSessionSequence,
         request_sequence: requestSequence,
         sample_sequence: sampleSequence,
-        reference: AV_SYNC_REFERENCE,
+        reference: reading.reference,
         absolute_offset_millis: reading.offsetMillis,
       });
       sampleSequence += 1;
