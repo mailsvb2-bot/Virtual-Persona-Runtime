@@ -171,6 +171,9 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     ))
     .unwrap();
     evidence["candidate_sha"] = json!(CANDIDATE);
+    // The owner fixture contains one fully played voice turn plus one completed turn that is
+    // intentionally interrupted after playback starts. Both are completed canonical turns.
+    evidence["conversations"]["owner"]["completed_turns"] = json!(2);
     evidence["release_spec_sha256"] = json!(sha256_hex(RELEASE_SPEC));
     evidence["golden_report_sha256"] = json!(sha256_hex(
         &fs::read(dir.join("bound-golden-report.json")).unwrap()
@@ -702,7 +705,7 @@ fn detached_completed_turn_claim_keeps_inventory_incomplete() {
     seed_complete_inventory(dir.path());
     let exit_path = dir.path().join("exit-evidence.json");
     let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
-    exit["conversations"]["owner"]["completed_turns"] = json!(2);
+    exit["conversations"]["owner"]["completed_turns"] = json!(3);
     let provider_digest = sha256_hex(&fs::read(dir.path().join("provider-state.json")).unwrap());
     let owner_claim = exit.pointer_mut("/conversations/owner").unwrap();
     bind_projected_claim(
