@@ -9,8 +9,8 @@ use vpr_evaluation::{
 };
 use vpr_live_proof::{
     LiveConversationAttemptReceipt, LiveProviderProbeReceipt, prepare,
-    run_live_conversation_attempt, run_provider_probe, validate_live_conversation_inputs,
-    validate_provider_probe_audio,
+    run_live_conversation_attempt_with_avatar_probe, run_provider_probe_core,
+    validate_live_conversation_inputs, validate_provider_probe_audio,
 };
 
 use super::{
@@ -122,8 +122,8 @@ pub(super) fn run(
         .map_err(emit_preflight)?;
     let provider_state_sha256 = prepared_probe.receipt().provider_state_sha256.clone();
     let provider_state = prepared_probe.receipt().provider_state.clone();
-    let probe =
-        run_provider_probe(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
+    let probe_core =
+        run_provider_probe_core(prepared_probe, probe_audio).map_err(|error| emit_probe(&error))?;
 
     let prepared_conversation =
         prepare(&snapshot.candidate, worktree_clean()?, egress_authorized())
@@ -131,9 +131,15 @@ pub(super) fn run(
     if prepared_conversation.receipt().provider_state_sha256 != provider_state_sha256 {
         return Err(emit_boundary(BoundaryError::ProviderStateChanged));
     }
-    let receipt =
-        run_live_conversation_attempt(prepared_conversation, &profile, owner_audio, visitor_audio)
-            .map_err(emit_conversation)?;
+    let conversation_run = run_live_conversation_attempt_with_avatar_probe(
+        prepared_conversation,
+        &profile,
+        owner_audio,
+        visitor_audio,
+    )
+    .map_err(emit_conversation)?;
+    let (receipt, avatar_probe) = conversation_run.into_parts();
+    let probe = probe_core.with_avatar(avatar_probe);
 
     verify_snapshot(&snapshot).map_err(emit_preflight)?;
     let bundle = serde_json::to_vec_pretty(&CandidateBundle {

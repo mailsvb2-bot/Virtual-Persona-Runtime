@@ -6,12 +6,16 @@ use vpr_evaluation::{ProviderStateManifest, sha256_hex};
 use vpr_owner_lab::ProviderBundle;
 
 pub use conversation::{
-    LiveConversationAttemptError, LiveConversationAttemptReceipt, LiveConversationClaimInput,
-    LiveConversationProfileInput, LiveConversationTurnReceipt, ProofStatus,
-    RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA, RT0_LIVE_CONVERSATION_PROFILE_SCHEMA,
-    run_live_conversation_attempt, validate_live_conversation_inputs,
+    LiveConversationAttemptError, LiveConversationAttemptReceipt, LiveConversationAttemptRun,
+    LiveConversationClaimInput, LiveConversationProfileInput, LiveConversationTurnReceipt,
+    ProofStatus, RT0_LIVE_CONVERSATION_ATTEMPT_SCHEMA, RT0_LIVE_CONVERSATION_PROFILE_SCHEMA,
+    run_live_conversation_attempt, run_live_conversation_attempt_with_avatar_probe,
+    validate_live_conversation_inputs,
 };
-pub use probe::{LiveProviderProbeError, run_provider_probe, validate_provider_probe_audio};
+pub use probe::{
+    LiveProviderProbeCoreEvidence, LiveProviderProbeError, run_provider_probe,
+    run_provider_probe_core, validate_provider_probe_audio,
+};
 pub use vpr_evaluation::{
     AvatarProbeEvidence, LiveProviderProbeReceipt, LlmProbeEvidence, ProbeUsage,
     RT0_LIVE_PROVIDER_PROBE_SCHEMA, SttProbeEvidence,

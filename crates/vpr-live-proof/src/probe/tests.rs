@@ -12,7 +12,10 @@ use vpr_integration::{
 };
 use vpr_owner_lab::{ProviderBundle, ProviderDescriptor};
 
-use super::{LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_prepared};
+use super::{
+    LiveProviderProbeError, RT0_LIVE_PROVIDER_PROBE_SCHEMA, run_provider_probe_core,
+    run_provider_probe_prepared,
+};
 use crate::{LiveProofPreflightReceipt, PreparedLiveProof, RT0_LIVE_PROOF_PREFLIGHT_SCHEMA};
 
 #[derive(Default)]
@@ -258,6 +261,20 @@ fn probe_uses_canonical_paths_and_serializes_only_sanitized_evidence() {
     assert_eq!(stats.close_calls, 1);
 }
 
+#[test]
+fn candidate_probe_core_does_not_consume_avatar_session() {
+    let stats = Arc::new(Mutex::new(AvatarStats::default()));
+    let core = run_provider_probe_core(prepared(Arc::clone(&stats)), vec![0; 3_200]).unwrap();
+    let receipt = core.with_avatar(vpr_evaluation::AvatarProbeEvidence {
+        open_millis: 12,
+        close_millis: 3,
+    });
+    assert_eq!(receipt.avatar.open_millis, 12);
+    assert_eq!(receipt.avatar.close_millis, 3);
+    let stats = stats.lock().unwrap();
+    assert_eq!(stats.create_calls, 0);
+    assert_eq!(stats.close_calls, 0);
+}
 #[test]
 fn invalid_audio_fails_before_any_provider_is_used() {
     let stats = Arc::new(Mutex::new(AvatarStats::default()));

@@ -66,6 +66,52 @@ impl LiveProviderProbeError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[doc(hidden)]
+pub struct LiveProviderProbeCoreEvidence {
+    candidate_sha: String,
+    provider_state_sha256: String,
+    input_audio_sha256: String,
+    input_audio_millis: u64,
+    stt: SttProbeEvidence,
+    llm: LlmProbeEvidence,
+}
+
+impl LiveProviderProbeCoreEvidence {
+    /// Completes provider reachability evidence with avatar timing captured by the same candidate run.
+    #[must_use]
+    pub fn with_avatar(self, avatar: AvatarProbeEvidence) -> LiveProviderProbeReceipt {
+        LiveProviderProbeReceipt {
+            schema_version: RT0_LIVE_PROVIDER_PROBE_SCHEMA.into(),
+            candidate_sha: self.candidate_sha,
+            provider_state_sha256: self.provider_state_sha256,
+            input_audio_sha256: self.input_audio_sha256,
+            input_audio_millis: self.input_audio_millis,
+            scope: "credentialed_provider_reachability_only".into(),
+            conversation_evidence: false,
+            output_delivery_proven: false,
+            stt: self.stt,
+            llm: self.llm,
+            avatar,
+        }
+    }
+}
+
+/// Runs only the STT/LLM portion of the credentialed provider probe.
+///
+/// This is used by the atomic candidate bundle so the mandatory owner conversation session can
+/// supply avatar-open evidence without consuming an additional realtime-avatar session.
+///
+/// # Errors
+/// Returns stable probe errors for input, STT, LLM, or runtime failures.
+pub fn run_provider_probe_core(
+    prepared: PreparedLiveProof,
+    pcm_s16le_mono_16khz: Vec<u8>,
+) -> Result<LiveProviderProbeCoreEvidence, LiveProviderProbeError> {
+    validate_provider_probe_audio(&pcm_s16le_mono_16khz)?;
+    let (core, _) = run_provider_probe_core_prepared(prepared, pcm_s16le_mono_16khz)?;
+    Ok(core)
+}
 /// Validates the private PCM probe input without constructing or calling providers.
 ///
 /// # Errors
@@ -102,6 +148,15 @@ pub(crate) fn run_provider_probe_prepared(
     prepared: PreparedLiveProof,
     pcm_s16le_mono_16khz: Vec<u8>,
 ) -> Result<LiveProviderProbeReceipt, LiveProviderProbeError> {
+    let (core, avatar_provider) = run_provider_probe_core_prepared(prepared, pcm_s16le_mono_16khz)?;
+    let avatar_evidence = run_avatar_probe(avatar_provider)?;
+    Ok(core.with_avatar(avatar_evidence))
+}
+
+fn run_provider_probe_core_prepared(
+    prepared: PreparedLiveProof,
+    pcm_s16le_mono_16khz: Vec<u8>,
+) -> Result<(LiveProviderProbeCoreEvidence, Box<dyn RealtimeAvatarPort>), LiveProviderProbeError> {
     let input_audio_sha256 = sha256_hex(&pcm_s16le_mono_16khz);
     let audio = AudioInput {
         pcm: pcm_s16le_mono_16khz,
@@ -179,29 +234,25 @@ pub(crate) fn run_provider_probe_prepared(
         .map_err(LiveProviderProbeError::Runtime)?;
     turn.complete().map_err(LiveProviderProbeError::Runtime)?;
 
-    let avatar_evidence = run_avatar_probe(providers.avatar)?;
-
-    Ok(LiveProviderProbeReceipt {
-        schema_version: RT0_LIVE_PROVIDER_PROBE_SCHEMA.into(),
-        candidate_sha: receipt.candidate_sha,
-        provider_state_sha256: receipt.provider_state_sha256,
-        input_audio_sha256,
-        input_audio_millis: duration,
-        scope: "credentialed_provider_reachability_only".into(),
-        conversation_evidence: false,
-        output_delivery_proven: false,
-        stt: SttProbeEvidence {
-            latency_millis: stt_millis,
-            transcript_chars,
-            usage: map_usage(&stt_usage),
+    Ok((
+        LiveProviderProbeCoreEvidence {
+            candidate_sha: receipt.candidate_sha,
+            provider_state_sha256: receipt.provider_state_sha256,
+            input_audio_sha256,
+            input_audio_millis: duration,
+            stt: SttProbeEvidence {
+                latency_millis: stt_millis,
+                transcript_chars,
+                usage: map_usage(&stt_usage),
+            },
+            llm: LlmProbeEvidence {
+                latency_millis: llm_millis,
+                output_chars,
+                usage: map_usage(&llm_usage),
+            },
         },
-        llm: LlmProbeEvidence {
-            latency_millis: llm_millis,
-            output_chars,
-            usage: map_usage(&llm_usage),
-        },
-        avatar: avatar_evidence,
-    })
+        providers.avatar,
+    ))
 }
 
 fn run_avatar_probe(
