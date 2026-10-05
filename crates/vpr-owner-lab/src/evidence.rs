@@ -377,7 +377,7 @@ impl LabSessionEvidenceRecorder {
         canonical_turn_sequence: u64,
         canonical_output_sequence: u64,
     ) -> Result<(), LabEvidenceError> {
-        if input.kind != LabMediaEvidenceKind::AudioStarted {
+        if input.kind != LabMediaEvidenceKind::PlaybackCompleted {
             return Err(LabEvidenceError::InvalidInput);
         }
         self.validate_media(input)?;
@@ -403,7 +403,7 @@ impl LabSessionEvidenceRecorder {
     ///
     /// # Errors
     /// Fails for stale sessions, malformed/duplicate samples, unknown requests, or requests whose
-    /// canonical playback has not been confirmed.
+    /// real audio start has not been observed.
     pub fn record_av_sync(
         &mut self,
         input: &LabAvSyncEvidenceInput,
