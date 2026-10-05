@@ -57,6 +57,7 @@ type MediaEvidenceKind =
   | "backend_complete_received"
   | "client_delivery_sent"
   | "audio_started"
+  | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
 type AvSyncReference = "web_rtc_estimated_playout_timestamp";
@@ -90,7 +91,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -969,10 +970,27 @@ const ownerCapture = mountOwnerCapture({
 const handleProviderClientEvent = (raw: string): void => {
   if (!raw) return;
   void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
-    .then((normalized) => {
+    .then(async (normalized) => {
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
       } else if (normalized?.kind === "playback_done") {
+        const voice = activeVoiceEvidence;
+        if (voice?.audioStarted && !voice.interrupted) {
+          try {
+            await postMediaEvidence(
+              "playback_completed",
+              performance.now() - voice.startedAt,
+              voice.requestSequence,
+            );
+          } catch (error) {
+            setStatus(
+              error instanceof Error
+                ? `Playback completion evidence: ${error.message}`
+                : "Playback completion evidence failed",
+              "error",
+            );
+          }
+        }
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
         rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
@@ -1596,6 +1614,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStartedEvidence: null,
     avSyncEvidence: null,
     responseComplete: false,
+    interrupted: false,
     speaking: false,
     silentFrames: 0,
   };
@@ -1785,6 +1804,7 @@ const speak = async (): Promise<void> => {
 
 const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   const voice = activeVoiceEvidence;
+  if (voice) voice.interrupted = true;
   if (recordEvidence && voice?.audioStarted) {
     interruptEvidenceWatch = {
       requestSequence: voice.requestSequence,
