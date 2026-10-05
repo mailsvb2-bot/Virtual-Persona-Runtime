@@ -451,7 +451,7 @@ const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
         && audioTime > 0
         && videoTime > 0) {
         return {
-            offsetMillis: Math.round(Math.abs(audioTime - videoTime) * 1000),
+            offsetMillis: Math.round(Math.abs(audioTime - videoTime) * 1_000),
             reference: AV_SYNC_MEDIA_ELEMENT_REFERENCE,
             diagnostic: `${diagnostic}; fallback=media-element-current-time`,
             audioIssue: null,
