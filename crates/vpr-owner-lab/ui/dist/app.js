@@ -736,11 +736,22 @@ const handleProviderClientEvent = (raw) => {
     if (!raw)
         return;
     void api("/api/avatar/client-event", { message: raw })
-        .then((normalized) => {
+        .then(async (normalized) => {
         if (normalized?.kind === "playback_started") {
             sessionState.setPlaybackId(normalized.playback_id);
         }
         else if (normalized?.kind === "playback_done") {
+            const voice = activeVoiceEvidence;
+            if (voice?.audioStarted && !voice.interrupted) {
+                try {
+                    await postMediaEvidence("playback_completed", performance.now() - voice.startedAt, voice.requestSequence);
+                }
+                catch (error) {
+                    setStatus(error instanceof Error
+                        ? `Playback completion evidence: ${error.message}`
+                        : "Playback completion evidence failed", "error");
+                }
+            }
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
             rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
@@ -1320,6 +1331,7 @@ const finishMicrophoneTurn = async () => {
         audioStartedEvidence: null,
         avSyncEvidence: null,
         responseComplete: false,
+        interrupted: false,
         speaking: false,
         silentFrames: 0,
     };
@@ -1505,6 +1517,8 @@ const speak = async () => {
 };
 const interruptAvatar = async (recordEvidence = true) => {
     const voice = activeVoiceEvidence;
+    if (voice)
+        voice.interrupted = true;
     if (recordEvidence && voice?.audioStarted) {
         interruptEvidenceWatch = {
             requestSequence: voice.requestSequence,
