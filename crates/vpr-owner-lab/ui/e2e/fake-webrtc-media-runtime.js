@@ -3,6 +3,7 @@
   let remoteTrackPublished = false;
   let publishRemoteAudioTrack = null;
   let beginSyntheticPlayback = null;
+  let finishSyntheticPlayback = null;
   let trackSequence = 0;
   let playbackSequence = 0;
   let activePeer = null;
@@ -240,7 +241,13 @@
       data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
     });
   };
+  finishSyntheticPlayback = () => {
+    if (!remoteSpeech) return;
+    remoteSpeech = false;
+    providerDataChannel?.onmessage?.({ data: "stream/done:{}" });
+  };
   window.__vprBeginSyntheticPlayback = () => beginSyntheticPlayback?.();
+  window.__vprFinishSyntheticPlayback = () => finishSyntheticPlayback?.();
 
   window.__vprSetPeerConnectionState = (state) => {
     if (!activePeer) throw new Error("NO_ACTIVE_PEER");
