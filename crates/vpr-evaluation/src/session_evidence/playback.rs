@@ -1,8 +1,6 @@
 use std::collections::HashSet;
 
-use super::{
-    LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
-};
+use super::{LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot};
 
 pub(super) struct PlaybackAccounting {
     pub(super) playback_requests: HashSet<u64>,
