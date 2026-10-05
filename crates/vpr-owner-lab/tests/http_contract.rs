@@ -685,12 +685,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert!(did_requests[4].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
 }
 
-fn assert_voice_playback_media_contract(
-    port: u16,
-    host: &str,
-    csrf: &str,
-    evidence_session: u64,
-) {
+fn assert_voice_playback_media_contract(port: u16, host: &str, csrf: &str, evidence_session: u64) {
     for (kind, elapsed_millis) in [("audio_started", 420), ("playback_completed", 620)] {
         let body = format!(
             r#"{{"session_sequence":{evidence_session},"request_sequence":1,"kind":"{kind}","elapsed_millis":{elapsed_millis}}}"#
