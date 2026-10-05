@@ -741,7 +741,7 @@ fn cli_rejects_rehashed_role_forgery_even_when_session_binding_is_recomputed() {
 fn cli_rejects_rehashed_detached_completed_turn_claim() {
     let paths = prepare(|_| {});
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
-    evidence["conversations"]["owner"]["completed_turns"] = json!(2);
+    evidence["conversations"]["owner"]["completed_turns"] = json!(3);
     bind_supporting_artifacts(&paths.supporting_artifacts, &mut evidence);
     fs::write(
         &paths.evidence,
