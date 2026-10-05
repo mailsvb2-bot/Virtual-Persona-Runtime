@@ -72,8 +72,8 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
             },
             LabMediaEvidence {
                 request_sequence: Some(request),
-                kind: LabMediaEvidenceKind::InterruptionStopped,
-                elapsed_millis: base / 10,
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: base + 350,
             },
             LabMediaEvidence {
                 request_sequence: None,
@@ -124,7 +124,7 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.llm_first_meaningful_response.unwrap().p95, 150);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
-    assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
+    assert_eq!(aggregate.interruption_stop, None);
     assert_eq!(aggregate.first_useful_video.unwrap().p95, 700);
     assert_eq!(aggregate.recoverable_reconnect.unwrap().p95, 800);
     assert_eq!(aggregate.estimated_cost_microunits, Some(18));
@@ -296,24 +296,38 @@ fn aggregate_requires_playback_proof_from_every_session() {
     unproven.voice_attempts[0].canonical_playback_confirmed = false;
     unproven.av_sync_proven = false;
     unproven.av_sync_samples.clear();
-    unproven.media_events.retain(|event| {
-        !matches!(
-            event.kind,
-            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
-        )
-    });
+    unproven
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
     let aggregate = aggregate_owner_lab_session_evidence(&[proven, unproven]).unwrap();
     assert!(!aggregate.canonical_playback_proven);
 }
 
 #[test]
 fn interruption_requires_observed_audio_for_the_same_request() {
-    let mut snapshot = snapshot(22, 1, 100);
-    snapshot
+    let mut interrupted = snapshot(22, 1, 100);
+    interrupted.canonical_playback_proven = false;
+    interrupted.av_sync_proven = false;
+    interrupted.av_sync_samples.clear();
+    interrupted.voice_attempts[0].canonical_playback_confirmed = false;
+    interrupted
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
+    interrupted.media_events.push(LabMediaEvidence {
+        request_sequence: Some(1),
+        kind: LabMediaEvidenceKind::InterruptionStopped,
+        elapsed_millis: 80,
+    });
+
+    let valid = aggregate_owner_lab_session_evidence(&[interrupted.clone()]).unwrap();
+    assert_eq!(valid.interruption_stop.unwrap().p95, 80);
+    assert!(!valid.canonical_playback_proven);
+
+    interrupted
         .media_events
         .retain(|event| event.kind != LabMediaEvidenceKind::AudioStarted);
     assert_eq!(
-        aggregate_owner_lab_session_evidence(&[snapshot]),
+        aggregate_owner_lab_session_evidence(&[interrupted]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)
     );
 }
