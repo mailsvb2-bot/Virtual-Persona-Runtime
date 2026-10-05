@@ -123,7 +123,8 @@ const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
 const MICROPHONE_STORAGE_KEY = "vpr.owner-lab.microphone-device-id";
-const AV_SYNC_REFERENCE = "web_rtc_estimated_playout_timestamp";
+const AV_SYNC_RTP_REFERENCE = "web_rtc_estimated_playout_timestamp";
+const AV_SYNC_MEDIA_ELEMENT_REFERENCE = "html_media_element_current_time";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 const AV_SYNC_MAX_ATTEMPTS = 50;
@@ -442,6 +443,29 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         diagnostic: `${expectedKind}: ${candidates.length} RTP timestamp candidates awaiting unique activity`,
     };
 };
+const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
+    const audioTime = avatarAudio.currentTime;
+    const videoTime = video.currentTime;
+    if (Number.isFinite(audioTime)
+        && Number.isFinite(videoTime)
+        && audioTime > 0
+        && videoTime > 0) {
+        return {
+            offsetMillis: Math.round(Math.abs(audioTime - videoTime) * 1000),
+            reference: AV_SYNC_MEDIA_ELEMENT_REFERENCE,
+            diagnostic: `${diagnostic}; fallback=media-element-current-time`,
+            audioIssue: null,
+            videoIssue: null,
+        };
+    }
+    return {
+        offsetMillis: null,
+        reference: null,
+        diagnostic: `${diagnostic}; media-element-current-time unavailable`,
+        audioIssue,
+        videoIssue,
+    };
+};
 const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
     let audioSelection;
@@ -455,12 +479,7 @@ const readAvSyncOffsetMillis = async (state) => {
         const audioStats = liveKitAudioTrack?.getRTCStatsReport;
         const videoStats = liveKitVideoTrack?.getRTCStatsReport;
         if (!audioStats || !videoStats) {
-            return {
-                offsetMillis: null,
-                diagnostic: "LiveKit track stats method unavailable",
-                audioIssue: "stats_unavailable",
-                videoIssue: "stats_unavailable",
-            };
+            return mediaElementAvSyncFallback("LiveKit track stats method unavailable", "stats_unavailable", "stats_unavailable");
         }
         const [audioReport, videoReport] = await Promise.all([
             audioStats.call(liveKitAudioTrack),
@@ -472,15 +491,11 @@ const readAvSyncOffsetMillis = async (state) => {
     state.audioPackets = audioSelection.packetCounts;
     state.videoPackets = videoSelection.packetCounts;
     if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
-        return {
-            offsetMillis: null,
-            diagnostic: `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
-            audioIssue: audioSelection.issue,
-            videoIssue: videoSelection.issue,
-        };
+        return mediaElementAvSyncFallback(`${audioSelection.diagnostic}; ${videoSelection.diagnostic}`, audioSelection.issue, videoSelection.issue);
     }
     return {
         offsetMillis: Math.round(Math.abs(audioSelection.timestamp - videoSelection.timestamp)),
+        reference: AV_SYNC_RTP_REFERENCE,
         diagnostic: "audio/video playout timestamps available",
         audioIssue: null,
         videoIssue: null,
@@ -502,12 +517,12 @@ const collectAvSyncEvidence = async (requestSequence) => {
             lastAudioIssue = reading.audioIssue;
         if (reading.videoIssue !== null)
             lastVideoIssue = reading.videoIssue;
-        if (reading.offsetMillis !== null) {
+        if (reading.offsetMillis !== null && reading.reference !== null) {
             await api("/api/evidence/av-sync", {
                 session_sequence: evidenceSessionSequence,
                 request_sequence: requestSequence,
                 sample_sequence: sampleSequence,
-                reference: AV_SYNC_REFERENCE,
+                reference: reading.reference,
                 absolute_offset_millis: reading.offsetMillis,
             });
             sampleSequence += 1;
