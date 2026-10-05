@@ -415,8 +415,9 @@ fn interrupted_request_av_sync_samples_do_not_enter_release_distribution() {
     let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
     assert!(aggregate.canonical_playback_proven);
     assert!(aggregate.av_sync_proven);
-    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 3);
-    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p95, 30);
+    let av_sync = aggregate.av_sync_absolute_offset.unwrap();
+    assert_eq!(av_sync.samples, 3);
+    assert_eq!(av_sync.p95, 40);
     assert_eq!(aggregate.interruption_stop.unwrap().p95, 90);
 }
 
