@@ -366,6 +366,61 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
 }
 
 #[test]
+fn av_sync_rejects_mixed_reference_for_one_request() {
+    let mut mixed = snapshot(44, 1, 100);
+    mixed.av_sync_samples[2].reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[mixed]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
+fn interrupted_request_av_sync_samples_do_not_enter_release_distribution() {
+    let mut input = snapshot(45, 1, 100);
+    input.voice_attempts.push(LabVoiceAttemptEvidence {
+        request_sequence: 2,
+        canonical_turn_sequence: Some(102),
+        canonical_output_sequence: Some(202),
+        canonical_playback_confirmed: false,
+        status: LabVoiceAttemptStatus::Completed,
+        failure_code: None,
+        stt_millis: Some(120),
+        llm_millis: Some(220),
+        llm_first_meaningful_millis: Some(60),
+        avatar_millis: Some(140),
+        server_total_millis: Some(370),
+        stt_usage: Some(usage(Some(2), Some(3))),
+        llm_usage: Some(usage(Some(5), Some(7))),
+    });
+    input.media_events.push(LabMediaEvidence {
+        request_sequence: Some(2),
+        kind: LabMediaEvidenceKind::AudioStarted,
+        elapsed_millis: 420,
+    });
+    input.media_events.push(LabMediaEvidence {
+        request_sequence: Some(2),
+        kind: LabMediaEvidenceKind::InterruptionStopped,
+        elapsed_millis: 90,
+    });
+    for sample_sequence in 1..=3 {
+        input.av_sync_samples.push(LabAvSyncEvidence {
+            request_sequence: 2,
+            sample_sequence,
+            reference: LabAvSyncReference::HtmlMediaElementCurrentTime,
+            absolute_offset_millis: 999,
+        });
+    }
+
+    let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
+    assert!(aggregate.canonical_playback_proven);
+    assert!(aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().samples, 3);
+    assert_eq!(aggregate.av_sync_absolute_offset.unwrap().p95, 30);
+    assert_eq!(aggregate.interruption_stop.unwrap().p95, 90);
+}
+
+#[test]
 fn development_status_tracks_current_session_schema_contracts() {
     let status = include_str!("../../../docs/release-evidence/rt0/DEVELOPMENT_STATUS.md");
     let raw = RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
