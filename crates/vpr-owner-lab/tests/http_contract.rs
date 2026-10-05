@@ -697,6 +697,31 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
         post(port, host, csrf, "/api/evidence/media", &media_body).status,
         409
     );
+    let playback_completed_body = format!(
+        r#"{{"session_sequence":{evidence_session},"request_sequence":1,"kind":"playback_completed","elapsed_millis":620}}"#
+    );
+    assert_eq!(
+        post(
+            port,
+            host,
+            csrf,
+            "/api/evidence/media",
+            &playback_completed_body,
+        )
+        .status,
+        200
+    );
+    assert_eq!(
+        post(
+            port,
+            host,
+            csrf,
+            "/api/evidence/media",
+            &playback_completed_body,
+        )
+        .status,
+        409
+    );
     let av_sync_body = format!(
         r#"{{"session_sequence":{evidence_session},"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":60}}"#
     );
@@ -765,6 +790,13 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
     );
     assert_eq!(evidence_json["voice_attempts"][0]["status"], "completed");
     assert_eq!(evidence_json["media_events"][0]["kind"], "audio_started");
+    assert!(
+        evidence_json["media_events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["kind"] == "playback_completed")
+    );
     for private in [
         "Привет",
         "Здравствуйте",
