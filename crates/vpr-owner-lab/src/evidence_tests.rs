@@ -326,4 +326,3 @@ fn session_attempt_and_media_retention_limits_fail_closed_at_exact_boundary() {
         "EVIDENCE_SESSION_CAPACITY_EXCEEDED"
     );
 }
-
