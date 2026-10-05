@@ -2,8 +2,6 @@ use super::*;
 
 use crate::{LabVoiceResult, LabVoiceSegment, LabVoiceUsage};
 
-
-
 fn voice_result() -> LabVoiceResult {
     LabVoiceResult {
         transcript: "приватный транскрипт".into(),
@@ -31,8 +29,6 @@ fn voice_result() -> LabVoiceResult {
         client_command: None,
     }
 }
-
-
 
 #[test]
 fn audio_start_does_not_prove_full_playback_before_provider_completion() {
@@ -72,7 +68,10 @@ fn audio_start_does_not_prove_full_playback_before_provider_completion() {
         .record_canonical_playback(&playback_completed, 7, 1)
         .unwrap();
     let pending = recorder.snapshot().unwrap();
-    assert_eq!(pending.voice_attempts[0].status, LabVoiceAttemptStatus::Pending);
+    assert_eq!(
+        pending.voice_attempts[0].status,
+        LabVoiceAttemptStatus::Pending
+    );
     assert!(pending.voice_attempts[0].canonical_playback_confirmed);
 
     recorder.complete_voice_request(1, &voice_result()).unwrap();
@@ -118,7 +117,9 @@ fn every_completed_voice_request_requires_its_own_runtime_playback_confirmation(
         elapsed_millis: 500,
         ..first_audio
     };
-    recorder.record_canonical_playback(&first_done, 11, 1).unwrap();
+    recorder
+        .record_canonical_playback(&first_done, 11, 1)
+        .unwrap();
     assert!(!recorder.snapshot().unwrap().canonical_playback_proven);
 
     let second_audio = LabMediaEvidenceInput {
@@ -133,7 +134,9 @@ fn every_completed_voice_request_requires_its_own_runtime_playback_confirmation(
         elapsed_millis: 520,
         ..second_audio
     };
-    recorder.record_canonical_playback(&second_done, 12, 2).unwrap();
+    recorder
+        .record_canonical_playback(&second_done, 12, 2)
+        .unwrap();
     assert!(recorder.snapshot().unwrap().canonical_playback_proven);
     assert_eq!(
         recorder.record_canonical_playback(&second_done, 12, 2),
@@ -212,7 +215,12 @@ fn intentional_interruption_is_accounted_without_faking_full_playback() {
             elapsed_millis: 80,
         })
         .unwrap();
-    assert!(!only_interrupted.snapshot().unwrap().canonical_playback_proven);
+    assert!(
+        !only_interrupted
+            .snapshot()
+            .unwrap()
+            .canonical_playback_proven
+    );
 }
 
 #[test]
@@ -418,4 +426,3 @@ fn av_sync_retention_is_mathematically_bounded_by_session_attempt_budget() {
         Err(LabEvidenceError::CapacityExceeded)
     );
 }
-
