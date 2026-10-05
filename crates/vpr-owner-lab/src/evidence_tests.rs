@@ -100,20 +100,26 @@ fn session_reset_and_snapshot_are_payload_redacted() {
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 410,
     };
-    assert_eq!(
-        recorder.record_media(&audio_started),
-        Err(LabEvidenceError::InvalidState)
-    );
+    recorder.record_media(&audio_started).unwrap();
     assert_eq!(
         recorder.prepare_canonical_playback(&audio_started),
+        Err(LabEvidenceError::InvalidInput)
+    );
+    let playback_completed = LabMediaEvidenceInput {
+        kind: LabMediaEvidenceKind::PlaybackCompleted,
+        elapsed_millis: 520,
+        ..audio_started.clone()
+    };
+    assert_eq!(
+        recorder.prepare_canonical_playback(&playback_completed),
         Ok((7, 1))
     );
     assert_eq!(
-        recorder.record_canonical_playback(&audio_started, 7, 2),
+        recorder.record_canonical_playback(&playback_completed, 7, 2),
         Err(LabEvidenceError::InvalidState)
     );
     recorder
-        .record_canonical_playback(&audio_started, 7, 1)
+        .record_canonical_playback(&playback_completed, 7, 1)
         .unwrap();
     let av_sync = LabAvSyncEvidenceInput {
         session_sequence: 3,
@@ -196,7 +202,7 @@ fn text_attempts_fail_closed_and_keep_payloads_out_of_evidence() {
 }
 
 #[test]
-fn first_stream_segment_can_prove_playback_before_llm_completion() {
+fn audio_start_does_not_prove_full_playback_before_provider_completion() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(7, ParticipantRole::Owner).unwrap();
     recorder.begin_voice_request(1).unwrap();
@@ -213,18 +219,27 @@ fn first_stream_segment_can_prove_playback_before_llm_completion() {
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 120,
     };
+    recorder.record_media(&audio_started).unwrap();
     assert_eq!(
         recorder.prepare_canonical_playback(&audio_started),
+        Err(LabEvidenceError::InvalidInput)
+    );
+    assert!(!recorder.snapshot().unwrap().voice_attempts[0].canonical_playback_confirmed);
+
+    let playback_completed = LabMediaEvidenceInput {
+        kind: LabMediaEvidenceKind::PlaybackCompleted,
+        elapsed_millis: 600,
+        ..audio_started
+    };
+    assert_eq!(
+        recorder.prepare_canonical_playback(&playback_completed),
         Ok((7, 1))
     );
     recorder
-        .record_canonical_playback(&audio_started, 7, 1)
+        .record_canonical_playback(&playback_completed, 7, 1)
         .unwrap();
     let pending = recorder.snapshot().unwrap();
-    assert_eq!(
-        pending.voice_attempts[0].status,
-        LabVoiceAttemptStatus::Pending
-    );
+    assert_eq!(pending.voice_attempts[0].status, LabVoiceAttemptStatus::Pending);
     assert!(pending.voice_attempts[0].canonical_playback_confirmed);
 
     recorder.complete_voice_request(1, &voice_result()).unwrap();
@@ -258,31 +273,117 @@ fn every_completed_voice_request_requires_its_own_runtime_playback_confirmation(
         result.evidence_output_sequence = request;
         recorder.complete_voice_request(request, &result).unwrap();
     }
-    let first = LabMediaEvidenceInput {
+    let first_audio = LabMediaEvidenceInput {
         session_sequence: 8,
         request_sequence: Some(1),
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 100,
     };
-    recorder.record_canonical_playback(&first, 11, 1).unwrap();
+    recorder.record_media(&first_audio).unwrap();
+    let first_done = LabMediaEvidenceInput {
+        kind: LabMediaEvidenceKind::PlaybackCompleted,
+        elapsed_millis: 500,
+        ..first_audio
+    };
+    recorder.record_canonical_playback(&first_done, 11, 1).unwrap();
     assert!(!recorder.snapshot().unwrap().canonical_playback_proven);
 
-    let second = LabMediaEvidenceInput {
+    let second_audio = LabMediaEvidenceInput {
         session_sequence: 8,
         request_sequence: Some(2),
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 120,
     };
-    recorder.record_canonical_playback(&second, 12, 2).unwrap();
+    recorder.record_media(&second_audio).unwrap();
+    let second_done = LabMediaEvidenceInput {
+        kind: LabMediaEvidenceKind::PlaybackCompleted,
+        elapsed_millis: 520,
+        ..second_audio
+    };
+    recorder.record_canonical_playback(&second_done, 12, 2).unwrap();
     assert!(recorder.snapshot().unwrap().canonical_playback_proven);
     assert_eq!(
-        recorder.record_canonical_playback(&second, 12, 2),
+        recorder.record_canonical_playback(&second_done, 12, 2),
         Err(LabEvidenceError::DuplicateEvidence)
     );
 }
 
 #[test]
-fn av_sync_requires_completed_canonical_playback_for_the_same_request() {
+fn intentional_interruption_is_accounted_without_faking_full_playback() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(11, ParticipantRole::Owner).unwrap();
+
+    for request in [1_u64, 2] {
+        recorder.begin_voice_request(request).unwrap();
+        let mut result = voice_result();
+        result.evidence_turn_sequence = request + 20;
+        result.evidence_output_sequence = request;
+        recorder.complete_voice_request(request, &result).unwrap();
+        recorder
+            .record_media(&LabMediaEvidenceInput {
+                session_sequence: 11,
+                request_sequence: Some(request),
+                kind: LabMediaEvidenceKind::AudioStarted,
+                elapsed_millis: 100 + request,
+            })
+            .unwrap();
+    }
+
+    recorder
+        .record_canonical_playback(
+            &LabMediaEvidenceInput {
+                session_sequence: 11,
+                request_sequence: Some(1),
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: 500,
+            },
+            21,
+            1,
+        )
+        .unwrap();
+    recorder
+        .record_media(&LabMediaEvidenceInput {
+            session_sequence: 11,
+            request_sequence: Some(2),
+            kind: LabMediaEvidenceKind::InterruptionStopped,
+            elapsed_millis: 90,
+        })
+        .unwrap();
+
+    let snapshot = recorder.snapshot().unwrap();
+    assert!(snapshot.canonical_playback_proven);
+    assert!(snapshot.voice_attempts[0].canonical_playback_confirmed);
+    assert!(!snapshot.voice_attempts[1].canonical_playback_confirmed);
+
+    let mut only_interrupted = LabSessionEvidenceRecorder::default();
+    only_interrupted
+        .begin_session(12, ParticipantRole::Owner)
+        .unwrap();
+    only_interrupted.begin_voice_request(1).unwrap();
+    only_interrupted
+        .complete_voice_request(1, &voice_result())
+        .unwrap();
+    only_interrupted
+        .record_media(&LabMediaEvidenceInput {
+            session_sequence: 12,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 100,
+        })
+        .unwrap();
+    only_interrupted
+        .record_media(&LabMediaEvidenceInput {
+            session_sequence: 12,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::InterruptionStopped,
+            elapsed_millis: 80,
+        })
+        .unwrap();
+    assert!(!only_interrupted.snapshot().unwrap().canonical_playback_proven);
+}
+
+#[test]
+fn av_sync_requires_completed_request_and_real_audio_start() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(12, ParticipantRole::Owner).unwrap();
     recorder.begin_voice_request(1).unwrap();
@@ -308,9 +409,7 @@ fn av_sync_requires_completed_canonical_playback_for_the_same_request() {
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 100,
     };
-    recorder
-        .record_canonical_playback(&audio_started, 7, 1)
-        .unwrap();
+    recorder.record_media(&audio_started).unwrap();
     recorder.record_av_sync(&sample).unwrap();
     assert!(!recorder.snapshot().unwrap().av_sync_proven);
     for sample_sequence in 2..=RT0_AV_SYNC_SAMPLES_PER_REQUEST {
@@ -321,6 +420,18 @@ fn av_sync_requires_completed_canonical_playback_for_the_same_request() {
             })
             .unwrap();
     }
+    assert!(!recorder.snapshot().unwrap().av_sync_proven);
+    recorder
+        .record_canonical_playback(
+            &LabMediaEvidenceInput {
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: 500,
+                ..audio_started
+            },
+            7,
+            1,
+        )
+        .unwrap();
     assert!(recorder.snapshot().unwrap().av_sync_proven);
     assert_eq!(
         recorder.record_av_sync(&LabAvSyncEvidenceInput {
@@ -379,9 +490,7 @@ fn av_sync_diagnostic_is_request_scoped_and_cannot_coexist_with_complete_proof()
         kind: LabMediaEvidenceKind::AudioStarted,
         elapsed_millis: 400,
     };
-    recorder
-        .record_canonical_playback(&audio_started, 7, 1)
-        .unwrap();
+    recorder.record_media(&audio_started).unwrap();
 
     let diagnostic = LabAvSyncDiagnosticInput {
         session_sequence: 18,
@@ -417,11 +526,17 @@ fn av_sync_diagnostic_is_request_scoped_and_cannot_coexist_with_complete_proof()
     proven.begin_session(19, ParticipantRole::Owner).unwrap();
     proven.begin_voice_request(1).unwrap();
     proven.complete_voice_request(1, &voice_result()).unwrap();
+    let proven_audio = LabMediaEvidenceInput {
+        session_sequence: 19,
+        ..audio_started
+    };
+    proven.record_media(&proven_audio).unwrap();
     proven
         .record_canonical_playback(
             &LabMediaEvidenceInput {
-                session_sequence: 19,
-                ..audio_started
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: 700,
+                ..proven_audio
             },
             7,
             1,
@@ -555,13 +670,19 @@ fn av_sync_retention_is_mathematically_bounded_by_session_attempt_budget() {
         recorder
             .complete_voice_request(request_sequence, &result)
             .unwrap();
+        let audio_started = LabMediaEvidenceInput {
+            session_sequence: 22,
+            request_sequence: Some(request_sequence),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 1,
+        };
+        recorder.record_media(&audio_started).unwrap();
         recorder
             .record_canonical_playback(
                 &LabMediaEvidenceInput {
-                    session_sequence: 22,
-                    request_sequence: Some(request_sequence),
-                    kind: LabMediaEvidenceKind::AudioStarted,
-                    elapsed_millis: 1,
+                    kind: LabMediaEvidenceKind::PlaybackCompleted,
+                    elapsed_millis: 2,
+                    ..audio_started
                 },
                 request_sequence,
                 request_sequence,
