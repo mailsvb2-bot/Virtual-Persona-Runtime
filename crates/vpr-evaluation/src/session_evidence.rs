@@ -45,6 +45,7 @@ pub struct LabMediaEvidenceInput {
 #[serde(rename_all = "snake_case")]
 pub enum LabAvSyncReference {
     WebRtcEstimatedPlayoutTimestamp,
+    HtmlMediaElementCurrentTime,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -593,6 +594,7 @@ fn validate_and_collect_av_sync(
 ) -> Result<HashSet<u64>, LabSessionAggregateError> {
     let mut unique = HashSet::new();
     let mut sequences_by_request: BTreeMap<u64, HashSet<u32>> = BTreeMap::new();
+    let mut reference_by_request: BTreeMap<u64, LabAvSyncReference> = BTreeMap::new();
     for sample in &snapshot.av_sync_samples {
         if sample.request_sequence == 0
             || !(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).contains(&sample.sample_sequence)
@@ -601,6 +603,12 @@ fn validate_and_collect_av_sync(
                 != Some(&LabVoiceAttemptStatus::Completed)
             || !playback_requests.contains(&sample.request_sequence)
             || !unique.insert((sample.request_sequence, sample.sample_sequence))
+        {
+            return Err(LabSessionAggregateError::InvalidMediaEvidence);
+        }
+        if reference_by_request
+            .insert(sample.request_sequence, sample.reference)
+            .is_some_and(|reference| reference != sample.reference)
         {
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
         }
