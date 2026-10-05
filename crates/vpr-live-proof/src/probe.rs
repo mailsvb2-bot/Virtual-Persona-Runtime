@@ -148,8 +148,7 @@ pub(crate) fn run_provider_probe_prepared(
     prepared: PreparedLiveProof,
     pcm_s16le_mono_16khz: Vec<u8>,
 ) -> Result<LiveProviderProbeReceipt, LiveProviderProbeError> {
-    let (core, avatar_provider) =
-        run_provider_probe_core_prepared(prepared, pcm_s16le_mono_16khz)?;
+    let (core, avatar_provider) = run_provider_probe_core_prepared(prepared, pcm_s16le_mono_16khz)?;
     let avatar_evidence = run_avatar_probe(avatar_provider)?;
     Ok(core.with_avatar(avatar_evidence))
 }
