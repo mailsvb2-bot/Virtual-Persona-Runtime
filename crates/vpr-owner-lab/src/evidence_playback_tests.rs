@@ -296,6 +296,17 @@ fn av_sync_diagnostic_is_request_scoped_and_cannot_coexist_with_complete_proof()
         elapsed_millis: 400,
     };
     recorder.record_media(&audio_started).unwrap();
+    recorder
+        .record_canonical_playback(
+            &LabMediaEvidenceInput {
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: 650,
+                ..audio_started.clone()
+            },
+            7,
+            1,
+        )
+        .unwrap();
 
     let diagnostic = LabAvSyncDiagnosticInput {
         session_sequence: 18,
