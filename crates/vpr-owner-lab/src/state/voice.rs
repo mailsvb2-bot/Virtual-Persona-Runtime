@@ -102,10 +102,11 @@ impl OwnerLabEngine {
 
     /// Runs one realtime microphone turn using the canonical pull-based LLM stream.
     ///
-    /// Generated text is converted into bounded natural phrase segments while the provider is
-    /// still generating. Each phrase receives its own runtime-issued output-delivery handle before
-    /// the opaque browser/provider command is emitted. The same turn cancellation authority covers
-    /// STT, the open LLM stream, every avatar segment and the remaining generation tail.
+    /// Server-delivered avatar transports may emit bounded natural phrase segments while the
+    /// provider is still generating. Browser-controlled LiveKit text transports receive one
+    /// complete bounded reply per turn so provider-side queued playback cannot stall after an
+    /// introductory fragment. Every delivery still receives a runtime-issued output handle and
+    /// shares the same turn cancellation authority across STT, LLM, avatar output and generation.
     ///
     /// # Errors
     /// Fails closed for malformed audio, unavailable pull streaming, authority/cancellation
