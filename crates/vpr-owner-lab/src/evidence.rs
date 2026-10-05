@@ -592,3 +592,7 @@ fn elapsed_millis(started: Instant) -> u64 {
 #[cfg(test)]
 #[path = "evidence_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "evidence_playback_tests.rs"]
+mod playback_tests;
