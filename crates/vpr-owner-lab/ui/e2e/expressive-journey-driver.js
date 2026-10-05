@@ -91,6 +91,9 @@
       () => voice.disabled,
       "rt0-evidence-blocks-next-turn-during-playback",
     );
+    // Let the browser observe real remote audio first. The Playwright route deliberately
+    // delays the audio_started POST, so playback_done still races ahead of persistence.
+    await sleep(50);
     playbackDone();
 
     await waitFor(
