@@ -36,7 +36,7 @@ pub struct LabAvSyncDiagnostic {
 pub(super) fn validate_av_sync_diagnostics(
     snapshot: &LabSessionEvidenceSnapshot,
     request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
-    playback_requests: &HashSet<u64>,
+    audio_requests: &HashSet<u64>,
     proven_requests: &HashSet<u64>,
 ) -> Result<(), LabSessionAggregateError> {
     let mut unique = HashSet::new();
@@ -46,7 +46,7 @@ pub(super) fn validate_av_sync_diagnostics(
             || diagnostic.audio_issue.is_none() && diagnostic.video_issue.is_none()
             || request_status.get(&diagnostic.request_sequence)
                 != Some(&LabVoiceAttemptStatus::Completed)
-            || !playback_requests.contains(&diagnostic.request_sequence)
+            || !audio_requests.contains(&diagnostic.request_sequence)
             || proven_requests.contains(&diagnostic.request_sequence)
             || !unique.insert(diagnostic.request_sequence)
         {
