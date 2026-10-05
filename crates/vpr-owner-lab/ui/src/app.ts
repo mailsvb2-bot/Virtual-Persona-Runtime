@@ -93,7 +93,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -806,6 +806,24 @@ const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null 
   return voice.avSyncEvidence;
 };
 
+const ensurePlaybackCompletionEvidence = (
+  voice: ActiveVoiceEvidence,
+): Promise<void> | null => {
+  if (!voice.providerPlaybackDone || !voice.audioStarted || voice.interrupted) return null;
+  if (!voice.playbackCompletionEvidence) {
+    voice.playbackCompletionEvidence = (async () => {
+      if (voice.audioStartedEvidence) await voice.audioStartedEvidence;
+      await postMediaEvidence(
+        "playback_completed",
+        performance.now() - voice.startedAt,
+        voice.requestSequence,
+      );
+      await refreshSessionEvidence();
+    })();
+  }
+  return voice.playbackCompletionEvidence;
+};
+
 const rms = (samples: Float32Array): number => {
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
@@ -857,7 +875,12 @@ const monitorRemoteAudio = (): void => {
           if (avSyncEvidence) await avSyncEvidence;
         });
         voice.audioStartedEvidence = audioStartedEvidence;
-        void audioStartedEvidence.catch(() => undefined);
+        void audioStartedEvidence
+          .then(() => {
+            const completion = ensurePlaybackCompletionEvidence(voice);
+            if (completion) void completion.catch(() => undefined);
+          })
+          .catch(() => undefined);
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -1014,20 +1037,20 @@ const handleProviderClientEvent = (raw: string): void => {
         sessionState.setPlaybackId(normalized.playback_id);
       } else if (normalized?.kind === "playback_done") {
         const voice = activeVoiceEvidence;
-        if (voice?.audioStarted && !voice.interrupted) {
-          try {
-            await postMediaEvidence(
-              "playback_completed",
-              performance.now() - voice.startedAt,
-              voice.requestSequence,
-            );
-          } catch (error) {
-            setStatus(
-              error instanceof Error
-                ? `Playback completion evidence: ${error.message}`
-                : "Playback completion evidence failed",
-              "error",
-            );
+        if (voice) {
+          voice.providerPlaybackDone = true;
+          const completion = ensurePlaybackCompletionEvidence(voice);
+          if (completion) {
+            try {
+              await completion;
+            } catch (error) {
+              setStatus(
+                error instanceof Error
+                  ? `Playback completion evidence: ${error.message}`
+                  : "Playback completion evidence failed",
+                "error",
+              );
+            }
           }
         }
         sessionState.setPlaybackId(null);
@@ -1652,6 +1675,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStartedElapsed: null,
     audioStartedEvidence: null,
     avSyncEvidence: null,
+    playbackCompletionEvidence: null,
+    providerPlaybackDone: false,
     responseComplete: false,
     interrupted: false,
     speaking: false,
