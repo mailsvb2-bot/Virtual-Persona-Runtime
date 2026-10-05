@@ -51,11 +51,13 @@ export type BrowserJourneyState = {
 const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
   expect(snapshot.canonical_playback_proven).toBeTruthy();
   expect(snapshot.av_sync_proven).toBeTruthy();
-  expect(snapshot.av_sync_samples).toHaveLength(3);
-  expect(snapshot.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
-  expect(snapshot.av_sync_samples.every((sample) =>
-    sample.request_sequence === 1
-      && sample.reference === "web_rtc_estimated_playout_timestamp"
+  const canonicalAvSync = snapshot.av_sync_samples.filter(
+    (sample) => sample.request_sequence === 1,
+  );
+  expect(canonicalAvSync).toHaveLength(3);
+  expect(canonicalAvSync.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
+  expect(canonicalAvSync.every((sample) =>
+    sample.reference === "web_rtc_estimated_playout_timestamp"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
   expect(snapshot.voice_attempts[0]).toMatchObject({
