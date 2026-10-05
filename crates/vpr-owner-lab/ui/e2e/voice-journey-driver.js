@@ -84,6 +84,12 @@
     voice.click();
     await waitForStatus(`Ответ: ${expectedReply}`);
     await waitFor(() => !byId("interrupt").disabled, "playback-started");
+    await waitForEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 1 && event.kind === "audio_started",
+      ),
+      "first-audio-before-playback-complete",
+    );
     finishPlayback();
     await waitForEvidence(
       (snapshot) =>
