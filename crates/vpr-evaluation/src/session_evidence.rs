@@ -28,6 +28,9 @@ const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 #[serde(rename_all = "snake_case")]
 pub enum LabMediaEvidenceKind {
     VideoReady,
+    BackendStartReady,
+    TransportConnected,
+    EndToEndVideoReady,
     BackendCompleteReceived,
     ClientDeliverySent,
     AudioStarted,
@@ -214,6 +217,9 @@ struct SessionAggregateAccumulator {
     audio: Vec<u64>,
     interruption: Vec<u64>,
     video: Vec<u64>,
+    backend_start: Vec<u64>,
+    transport_connected: Vec<u64>,
+    end_to_end_video: Vec<u64>,
     reconnect: Vec<u64>,
     estimated_cost: Option<u64>,
     provider_charge: Option<u64>,
@@ -256,6 +262,9 @@ impl SessionAggregateAccumulator {
             &mut self.audio,
             &mut self.interruption,
             &mut self.video,
+            &mut self.backend_start,
+            &mut self.transport_connected,
+            &mut self.end_to_end_video,
             &mut self.reconnect,
         )?;
         let completed_requests: HashSet<u64> = snapshot
@@ -490,6 +499,9 @@ impl SessionAggregateAccumulator {
             first_meaningful_audio: distribution(self.audio)?,
             interruption_stop: distribution(self.interruption)?,
             first_useful_video: distribution(self.video)?,
+            backend_start_ready: distribution(self.backend_start)?,
+            transport_connected: distribution(self.transport_connected)?,
+            end_to_end_first_useful_video: distribution(self.end_to_end_video)?,
             recoverable_reconnect: distribution(self.reconnect)?,
             estimated_cost_microunits: self.estimated_cost,
             provider_charge_microunits: self.provider_charge,
@@ -503,6 +515,9 @@ fn validate_and_collect_media(
     audio: &mut Vec<u64>,
     interruption: &mut Vec<u64>,
     video: &mut Vec<u64>,
+    backend_start: &mut Vec<u64>,
+    transport_connected: &mut Vec<u64>,
+    end_to_end_video: &mut Vec<u64>,
     reconnect: &mut Vec<u64>,
 ) -> Result<(), LabSessionAggregateError> {
     let mut unique = HashSet::new();
@@ -545,6 +560,9 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::AudioStarted => audio.push(event.elapsed_millis),
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
+            LabMediaEvidenceKind::BackendStartReady => backend_start.push(event.elapsed_millis),
+            LabMediaEvidenceKind::TransportConnected => transport_connected.push(event.elapsed_millis),
+            LabMediaEvidenceKind::EndToEndVideoReady => end_to_end_video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
             LabMediaEvidenceKind::PlaybackCompleted
             | LabMediaEvidenceKind::BackendCompleteReceived
