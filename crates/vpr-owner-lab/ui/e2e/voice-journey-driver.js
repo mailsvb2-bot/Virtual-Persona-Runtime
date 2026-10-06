@@ -121,6 +121,12 @@
     await waitForStatus(`Ответ: ${expectedReply}`);
     const interrupt = byId("interrupt");
     await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
+    await waitForEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 2 && event.kind === "audio_started",
+      ),
+      "interrupt-audio-started",
+    );
     interrupt.click();
     await waitForEvidence(
       (snapshot) => snapshot.media_events?.some(
