@@ -41,7 +41,7 @@ fn snapshot(
     provider_state_sha256: &str,
 ) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":candidate_sha,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
@@ -77,6 +77,7 @@ fn snapshot(
         }],
         "media_events":[
             {"request_sequence":request,"kind":"audio_started","elapsed_millis":elapsed},
+            {"request_sequence":request,"kind":"playback_completed","elapsed_millis":elapsed + 50},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":elapsed + 100}
         ],
         "av_sync_samples":[]
