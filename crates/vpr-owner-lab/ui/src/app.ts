@@ -93,7 +93,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -300,6 +300,7 @@ const AV_SYNC_MEDIA_ELEMENT_REFERENCE: AvSyncReference = "html_media_element_cur
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 const AV_SYNC_MAX_ATTEMPTS = 50;
+const UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS = 3_000;
 
 const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): void => {
   statusNode.textContent = text;
@@ -862,6 +863,7 @@ const monitorRemoteAudio = (): void => {
     if (voice && level > speechThreshold) {
       voice.speaking = true;
       voice.silentFrames = 0;
+      voice.playbackSilenceStartedAt = null;
       if (!voice.audioStarted) {
         voice.audioStarted = true;
         voice.audioStartedElapsed = performance.now() - voice.startedAt;
@@ -884,7 +886,35 @@ const monitorRemoteAudio = (): void => {
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
-      if (voice.silentFrames >= 6) voice.speaking = false;
+      if (voice.silentFrames >= 6) {
+        voice.speaking = false;
+        voice.playbackSilenceStartedAt = performance.now();
+      }
+    }
+    if (
+      voice
+      && rt0EvidenceMode
+      && rt0PlaybackPending
+      && voice.responseComplete
+      && voice.audioStarted
+      && !voice.providerPlaybackDone
+      && !voice.interrupted
+      && !voice.speaking
+      && voice.playbackSilenceStartedAt !== null
+      && !voice.playbackRecoveryTriggered
+      && performance.now() - voice.playbackSilenceStartedAt
+        >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS
+    ) {
+      voice.playbackRecoveryTriggered = true;
+      void interruptAvatar(false).then((recovered) => {
+        if (recovered) {
+          setStatus(
+            "D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
+              + "следующий turn разблокирован, но playback_completed не засчитан.",
+            "error",
+          );
+        }
+      });
     }
     if (interruptEvidenceWatch) {
       const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
@@ -1039,6 +1069,7 @@ const handleProviderClientEvent = (raw: string): void => {
         const voice = activeVoiceEvidence;
         if (voice) {
           voice.providerPlaybackDone = true;
+          voice.playbackSilenceStartedAt = null;
           const completion = ensurePlaybackCompletionEvidence(voice);
           if (completion) {
             try {
@@ -1681,6 +1712,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     interrupted: false,
     speaking: false,
     silentFrames: 0,
+    playbackSilenceStartedAt: null,
+    playbackRecoveryTriggered: false,
   };
 
   let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;
