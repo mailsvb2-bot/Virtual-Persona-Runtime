@@ -54,6 +54,9 @@ type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
 type MediaEvidenceKind =
   | "video_ready"
+  | "backend_start_ready"
+  | "transport_connected"
+  | "end_to_end_video_ready"
   | "backend_complete_received"
   | "client_delivery_sent"
   | "audio_started"
@@ -278,6 +281,7 @@ let evidenceSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
+let connectJourneyStartedAt = 0;
 let videoEvidencePosted = false;
 let reconnectStartedAt: number | null = null;
 let remoteMediaStream: MediaStream | null = null;
@@ -956,7 +960,14 @@ const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void>
 const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
-  void postMediaEvidence("video_ready", performance.now() - connectEvidenceStartedAt)
+  const now = performance.now();
+  const writes = [
+    postMediaEvidence("video_ready", now - connectEvidenceStartedAt),
+  ];
+  if (connectJourneyStartedAt > 0) {
+    writes.push(postMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt));
+  }
+  void Promise.all(writes)
     .then(() => syncStatus())
     .catch(() => undefined);
 };
@@ -1367,6 +1378,7 @@ const connectAvatar = async (): Promise<void> => {
   }
   connectButton.disabled = true;
   connectEvidenceStartedAt = 0;
+  connectJourneyStartedAt = performance.now();
   resetTelemetry();
   videoEvidencePosted = false;
   reconnectStartedAt = null;
@@ -1384,6 +1396,10 @@ const connectAvatar = async (): Promise<void> => {
     // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
     connectEvidenceStartedAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
+    await postMediaEvidence(
+      "backend_start_ready",
+      connectEvidenceStartedAt - connectJourneyStartedAt,
+    );
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
 
@@ -1401,6 +1417,10 @@ const connectAvatar = async (): Promise<void> => {
     } else {
       await connectLiveKitTransport(start.transport);
     }
+    await postMediaEvidence(
+      "transport_connected",
+      performance.now() - connectJourneyStartedAt,
+    );
 
     ensureMicrophoneDeviceMonitoring();
     await refreshMicrophoneDevices(storedMicrophoneDeviceId());
