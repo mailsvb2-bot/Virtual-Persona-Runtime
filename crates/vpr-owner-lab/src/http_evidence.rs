@@ -202,7 +202,7 @@ pub fn record_media(
     recorder: &Mutex<LabSessionEvidenceRecorder>,
     input: &LabMediaEvidenceInput,
 ) -> Result<(), MediaRecordError> {
-    if input.kind == LabMediaEvidenceKind::AudioStarted {
+    if input.kind == LabMediaEvidenceKind::PlaybackCompleted {
         let (canonical_turn_sequence, canonical_output_sequence) = recorder
             .lock()
             .prepare_canonical_playback(input)
@@ -214,18 +214,20 @@ pub fn record_media(
             .lock()
             .record_canonical_playback(input, canonical_turn_sequence, canonical_output_sequence)
             .map_err(MediaRecordError::Evidence)?;
+        return Ok(());
+    }
+
+    recorder
+        .lock()
+        .record_media(input)
+        .map_err(MediaRecordError::Evidence)?;
+    if input.kind == LabMediaEvidenceKind::AudioStarted {
         engine
             .lock()
             .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
             .mark_voice_ready_from_media()
             .map_err(MediaRecordError::Lab)?;
-        return Ok(());
-    }
-    recorder
-        .lock()
-        .record_media(input)
-        .map_err(MediaRecordError::Evidence)?;
-    if input.kind == LabMediaEvidenceKind::VideoReady {
+    } else if input.kind == LabMediaEvidenceKind::VideoReady {
         engine
             .lock()
             .map_err(|_| MediaRecordError::Lab(LabError::Internal))?

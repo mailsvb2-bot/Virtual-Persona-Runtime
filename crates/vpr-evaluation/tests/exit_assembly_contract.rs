@@ -42,7 +42,7 @@ impl SupportingFixture {
                 "russian":"passed",
                 "voice":"passed",
                 "video":"passed",
-                "completed_turns":1,
+                "completed_turns":2,
                 "interruption_exercised":"passed",
                 "candidate_sha":CANDIDATE,
                 "provider_state_sha256":provider_state_sha256
@@ -71,7 +71,7 @@ impl SupportingFixture {
             quality: bytes(&json!({
                 "origin":"real",
                 "text_first_meaningful_response":text_distribution,
-                "first_meaningful_audio":{"samples":1,"p50":500,"p95":500},
+                "first_meaningful_audio":{"samples":2,"p50":500,"p95":500},
                 "interruption_stop":{"samples":1,"p50":250,"p95":250},
                 "first_useful_video":{"samples":1,"p50":700,"p95":700},
                 "av_sync_absolute_offset":{"samples":3,"p50":60,"p95":120},
@@ -261,7 +261,7 @@ fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
 
 fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
     let snapshot = bytes(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":sha256_hex(provider_state),
         "scope":"browser_observed_media_plane_only",
@@ -285,35 +285,64 @@ fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
                 "provider_charge_microunits":null
             }
         }],
-        "voice_attempts":[{
-            "request_sequence":1,
-            "canonical_turn_sequence":11,
-            "canonical_output_sequence":21,
-            "canonical_playback_confirmed":true,
-            "status":"completed",
-            "failure_code":null,
-            "stt_millis":100,
-            "llm_millis":120,
-            "llm_first_meaningful_millis":80,
-            "avatar_millis":150,
-            "server_total_millis":370,
-            "stt_usage":{
-                "input_units":1,
-                "output_units":0,
-                "estimated_cost_microunits":1,
-                "provider_charge_microunits":null
+        "voice_attempts":[
+            {
+                "request_sequence":1,
+                "canonical_turn_sequence":11,
+                "canonical_output_sequence":21,
+                "canonical_playback_confirmed":true,
+                "status":"completed",
+                "failure_code":null,
+                "stt_millis":100,
+                "llm_millis":120,
+                "llm_first_meaningful_millis":80,
+                "avatar_millis":150,
+                "server_total_millis":370,
+                "stt_usage":{
+                    "input_units":1,
+                    "output_units":0,
+                    "estimated_cost_microunits":1,
+                    "provider_charge_microunits":null
+                },
+                "llm_usage":{
+                    "input_units":1,
+                    "output_units":1,
+                    "estimated_cost_microunits":1,
+                    "provider_charge_microunits":null
+                }
             },
-            "llm_usage":{
-                "input_units":1,
-                "output_units":1,
-                "estimated_cost_microunits":1,
-                "provider_charge_microunits":null
+            {
+                "request_sequence":2,
+                "canonical_turn_sequence":12,
+                "canonical_output_sequence":22,
+                "canonical_playback_confirmed":false,
+                "status":"completed",
+                "failure_code":null,
+                "stt_millis":100,
+                "llm_millis":120,
+                "llm_first_meaningful_millis":80,
+                "avatar_millis":150,
+                "server_total_millis":370,
+                "stt_usage":{
+                    "input_units":1,
+                    "output_units":0,
+                    "estimated_cost_microunits":1,
+                    "provider_charge_microunits":null
+                },
+                "llm_usage":{
+                    "input_units":1,
+                    "output_units":1,
+                    "estimated_cost_microunits":1,
+                    "provider_charge_microunits":null
+                }
             }
-        }],
+        ],
         "media_events":[
             {"request_sequence":1,"kind":"audio_started","elapsed_millis":500},
+            {"request_sequence":1,"kind":"playback_completed","elapsed_millis":650},
+            {"request_sequence":2,"kind":"audio_started","elapsed_millis":500},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":700},
-            {"request_sequence":1,"kind":"interruption_stopped","elapsed_millis":250},
+            {"request_sequence":2,"kind":"interruption_stopped","elapsed_millis":250},
             {"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":800}
         ],
         "av_sync_samples":[

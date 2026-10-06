@@ -69,7 +69,7 @@ fn conversation(role: ParticipantRole) -> ConversationEvidence {
         russian: CheckStatus::Passed,
         voice: CheckStatus::Passed,
         video: CheckStatus::Passed,
-        completed_turns: 1,
+        completed_turns: if role == ParticipantRole::Owner { 2 } else { 1 },
         interruption_exercised: if role == ParticipantRole::Owner {
             CheckStatus::Passed
         } else {
@@ -165,26 +165,57 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
+fn voice_attempt(
+    request_sequence: u64,
+    canonical_turn_sequence: u64,
+    canonical_output_sequence: u64,
+    canonical_playback_confirmed: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "request_sequence":request_sequence,
+        "canonical_turn_sequence":canonical_turn_sequence,
+        "canonical_output_sequence":canonical_output_sequence,
+        "canonical_playback_confirmed":canonical_playback_confirmed,
+        "status":"completed",
+        "failure_code":null,
+        "stt_millis":100,
+        "llm_millis":120,
+        "llm_first_meaningful_millis":80,
+        "avatar_millis":150,
+        "server_total_millis":370,
+        "stt_usage":{
+            "input_units":1,"output_units":0,
+            "estimated_cost_microunits":1,"provider_charge_microunits":null
+        },
+        "llm_usage":{
+            "input_units":1,"output_units":1,
+            "estimated_cost_microunits":1,"provider_charge_microunits":null
+        }
+    })
+}
+
 fn session_snapshot_bytes_with_av_sync(
     role: ParticipantRole,
     session_sequence: u64,
     offsets: [u64; 3],
     provider_state_bytes: &[u8],
 ) -> Vec<u8> {
-    let interruption = if role == ParticipantRole::Owner {
-        vec![serde_json::json!({
-            "request_sequence":1,
-            "kind":"interruption_stopped",
-            "elapsed_millis":250
-        })]
-    } else {
-        Vec::new()
-    };
+    let mut voice_attempts = vec![voice_attempt(
+        1,
+        10 + session_sequence,
+        20 + session_sequence,
+        true,
+    )];
     let mut media_events = vec![
         serde_json::json!({
             "request_sequence":1,
             "kind":"audio_started",
             "elapsed_millis":500
+        }),
+        serde_json::json!({
+            "request_sequence":1,
+            "kind":"playback_completed",
+            "elapsed_millis":650
         }),
         serde_json::json!({
             "request_sequence":null,
@@ -197,9 +228,26 @@ fn session_snapshot_bytes_with_av_sync(
             "elapsed_millis":800
         }),
     ];
-    media_events.extend(interruption);
+    if role == ParticipantRole::Owner {
+        voice_attempts.push(voice_attempt(
+            2,
+            30 + session_sequence,
+            40 + session_sequence,
+            false,
+        ));
+        media_events.push(serde_json::json!({
+            "request_sequence":2,
+            "kind":"audio_started",
+            "elapsed_millis":500
+        }));
+        media_events.push(serde_json::json!({
+            "request_sequence":2,
+            "kind":"interruption_stopped",
+            "elapsed_millis":250
+        }));
+    }
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":sha256_hex(provider_state_bytes),
         "scope":"browser_observed_media_plane_only",
@@ -221,27 +269,7 @@ fn session_snapshot_bytes_with_av_sync(
                 "estimated_cost_microunits":1,"provider_charge_microunits":null
             }
         }],
-        "voice_attempts":[{
-            "request_sequence":1,
-            "canonical_turn_sequence":10 + session_sequence,
-            "canonical_output_sequence":20 + session_sequence,
-            "canonical_playback_confirmed":true,
-            "status":"completed",
-            "failure_code":null,
-            "stt_millis":100,
-            "llm_millis":120,
-            "llm_first_meaningful_millis":80,
-            "avatar_millis":150,
-            "server_total_millis":370,
-            "stt_usage":{
-                "input_units":1,"output_units":0,
-                "estimated_cost_microunits":1,"provider_charge_microunits":null
-            },
-            "llm_usage":{
-                "input_units":1,"output_units":1,
-                "estimated_cost_microunits":1,"provider_charge_microunits":null
-            }
-        }],
+        "voice_attempts":voice_attempts,
         "media_events":media_events,
         "av_sync_samples":[
             {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":offsets[0]},
@@ -319,7 +347,7 @@ fn passing_quality_evidence() -> QualityEvidence {
             p95: 2_500,
         },
         first_meaningful_audio: LatencyDistributionMillis {
-            samples: 2,
+            samples: 3,
             p50: 500,
             p95: 500,
         },

@@ -685,18 +685,24 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     assert!(did_requests[4].starts_with("DELETE /agents/agent-voice/streams/stream-voice "));
 }
 
+fn assert_voice_playback_media_contract(port: u16, host: &str, csrf: &str, evidence_session: u64) {
+    for (kind, elapsed_millis) in [("audio_started", 420), ("playback_completed", 620)] {
+        let body = format!(
+            r#"{{"session_sequence":{evidence_session},"request_sequence":1,"kind":"{kind}","elapsed_millis":{elapsed_millis}}}"#
+        );
+        assert_eq!(
+            post(port, host, csrf, "/api/evidence/media", &body).status,
+            200
+        );
+        assert_eq!(
+            post(port, host, csrf, "/api/evidence/media", &body).status,
+            409
+        );
+    }
+}
+
 fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_session: u64) {
-    let media_body = format!(
-        r#"{{"session_sequence":{evidence_session},"request_sequence":1,"kind":"audio_started","elapsed_millis":420}}"#
-    );
-    assert_eq!(
-        post(port, host, csrf, "/api/evidence/media", &media_body).status,
-        200
-    );
-    assert_eq!(
-        post(port, host, csrf, "/api/evidence/media", &media_body).status,
-        409
-    );
+    assert_voice_playback_media_contract(port, host, csrf, evidence_session);
     let av_sync_body = format!(
         r#"{{"session_sequence":{evidence_session},"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":60}}"#
     );
@@ -765,6 +771,13 @@ fn assert_session_evidence_contract(port: u16, host: &str, csrf: &str, evidence_
     );
     assert_eq!(evidence_json["voice_attempts"][0]["status"], "completed");
     assert_eq!(evidence_json["media_events"][0]["kind"], "audio_started");
+    assert!(
+        evidence_json["media_events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["kind"] == "playback_completed")
+    );
     for private in [
         "Привет",
         "Здравствуйте",

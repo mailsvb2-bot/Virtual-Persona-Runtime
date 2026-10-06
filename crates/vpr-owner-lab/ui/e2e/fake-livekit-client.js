@@ -108,6 +108,13 @@
     attach(element) {
       element.style.width = "4096px";
       element.style.height = "4096px";
+      if (window.__vprForceMediaElementAvSync === true) {
+        const currentTime = this.kind === "audio" ? 10 : 10.06;
+        Object.defineProperty(element, "currentTime", {
+          configurable: true,
+          get: () => currentTime,
+        });
+      }
       return element;
     }
     async getRTCStatsReport() {
@@ -125,7 +132,9 @@
             kind: this.kind,
             codecId: `${this.kind}-codec`,
             packetsReceived: 7,
-            estimatedPlayoutTimestamp: timestamp + 4000,
+            ...(window.__vprForceMediaElementAvSync === true
+              ? {}
+              : { estimatedPlayoutTimestamp: timestamp + 4000 }),
           },
         ],
         [
@@ -135,7 +144,9 @@
             kind: this.kind,
             codecId: `${this.kind}-codec`,
             packetsReceived: 20 + this.statsPoll * 5,
-            estimatedPlayoutTimestamp: timestamp,
+            ...(window.__vprForceMediaElementAvSync === true
+              ? {}
+              : { estimatedPlayoutTimestamp: timestamp }),
           },
         ],
       ];
@@ -149,7 +160,9 @@
               kind: "video",
               codecId: "video-rtx-codec",
               packetsReceived: 100,
-              estimatedPlayoutTimestamp: 9999,
+              ...(window.__vprForceMediaElementAvSync === true
+                ? {}
+                : { estimatedPlayoutTimestamp: 9999 }),
             },
           ],
         );

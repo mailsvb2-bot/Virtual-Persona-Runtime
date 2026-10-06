@@ -159,6 +159,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }
   };
 
+  await page.addInitScript(() => {
+    (window as typeof window & { __vprForceMediaElementAvSync?: boolean })
+      .__vprForceMediaElementAvSync = true;
+  });
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
@@ -208,7 +212,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(evidence?.av_sync_samples).toHaveLength(3);
   expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(evidence?.av_sync_samples.every((sample) =>
-    sample.reference === "web_rtc_estimated_playout_timestamp"
+    sample.reference === "html_media_element_current_time"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
   expect(evidence?.voice_attempts.some((attempt) =>
@@ -216,6 +220,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBeTruthy();
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
@@ -234,10 +239,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak.length).toBeGreaterThan(1);
-  const speakPayloads = speak.map((command) => JSON.parse(command.text ?? "{}"));
-  expect(speakPayloads.every((payload) => payload.script?.should_queue_speaks === true)).toBeTruthy();
-  expect(speakPayloads.map((payload) => payload.script?.input).join(" ")).toBe(
+  expect(speak).toHaveLength(1);
+  const speakPayload = JSON.parse(speak[0]?.text ?? "{}");
+  expect(speakPayload.script?.should_queue_speaks).toBe(true);
+  expect(speakPayload.script?.input).toBe(
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
   expect(commands.some((command) => command.topic === "did.interrupt")).toBeTruthy();

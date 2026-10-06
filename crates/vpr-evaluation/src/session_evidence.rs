@@ -2,9 +2,13 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+mod av_sync;
+use av_sync::validate_and_collect_av_sync;
 mod av_sync_diagnostic;
 use av_sync_diagnostic::validate_av_sync_diagnostics;
 pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
+mod playback;
+use playback::validate_playback_accounting;
 mod snapshot_header;
 use snapshot_header::validate_snapshot_header;
 
@@ -14,8 +18,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.1";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.8";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.2";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.9";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -27,6 +31,7 @@ pub enum LabMediaEvidenceKind {
     BackendCompleteReceived,
     ClientDeliverySent,
     AudioStarted,
+    PlaybackCompleted,
     InterruptionStopped,
     ReconnectRestored,
 }
@@ -44,6 +49,7 @@ pub struct LabMediaEvidenceInput {
 #[serde(rename_all = "snake_case")]
 pub enum LabAvSyncReference {
     WebRtcEstimatedPlayoutTimestamp,
+    HtmlMediaElementCurrentTime,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -258,27 +264,11 @@ impl SessionAggregateAccumulator {
             .filter(|attempt| attempt.status == LabVoiceAttemptStatus::Completed)
             .map(|attempt| attempt.request_sequence)
             .collect();
-        let playback_requests: HashSet<u64> = snapshot
-            .voice_attempts
-            .iter()
-            .filter(|attempt| attempt.canonical_playback_confirmed)
-            .map(|attempt| attempt.request_sequence)
-            .collect();
-        let audio_requests: HashSet<u64> = snapshot
-            .media_events
-            .iter()
-            .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
-            .filter_map(|event| event.request_sequence)
-            .collect();
-        if playback_requests != audio_requests {
+        let playback = validate_playback_accounting(snapshot, &completed_requests)?;
+        if snapshot.canonical_playback_proven != playback.derived_playback {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
-        let derived_playback =
-            !completed_requests.is_empty() && playback_requests == completed_requests;
-        if snapshot.canonical_playback_proven != derived_playback {
-            return Err(LabSessionAggregateError::InvalidSnapshot);
-        }
-        if derived_playback {
+        if playback.derived_playback {
             self.playback_sessions = self
                 .playback_sessions
                 .checked_add(1)
@@ -287,16 +277,17 @@ impl SessionAggregateAccumulator {
         let av_sync_requests = validate_and_collect_av_sync(
             snapshot,
             &request_status,
-            &playback_requests,
+            &playback.playback_requests,
             &mut self.av_sync,
         )?;
         validate_av_sync_diagnostics(
             snapshot,
             &request_status,
-            &playback_requests,
+            &playback.audio_requests,
             &av_sync_requests,
         )?;
-        let derived_av_sync = derived_playback && av_sync_requests == completed_requests;
+        let derived_av_sync =
+            playback.derived_playback && av_sync_requests == playback.playback_requests;
         if snapshot.av_sync_proven != derived_av_sync {
             return Err(LabSessionAggregateError::InvalidSnapshot);
         }
@@ -530,6 +521,7 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );
         if requires_request != event.request_sequence.is_some() {
@@ -554,43 +546,10 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
             LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
             LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
-            LabMediaEvidenceKind::BackendCompleteReceived
+            LabMediaEvidenceKind::PlaybackCompleted
+            | LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
         }
     }
     Ok(())
-}
-
-fn validate_and_collect_av_sync(
-    snapshot: &LabSessionEvidenceSnapshot,
-    request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
-    playback_requests: &HashSet<u64>,
-    offsets: &mut Vec<u64>,
-) -> Result<HashSet<u64>, LabSessionAggregateError> {
-    let mut unique = HashSet::new();
-    let mut sequences_by_request: BTreeMap<u64, HashSet<u32>> = BTreeMap::new();
-    for sample in &snapshot.av_sync_samples {
-        if sample.request_sequence == 0
-            || !(1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).contains(&sample.sample_sequence)
-            || sample.absolute_offset_millis > MAX_MEDIA_ELAPSED_MILLIS
-            || request_status.get(&sample.request_sequence)
-                != Some(&LabVoiceAttemptStatus::Completed)
-            || !playback_requests.contains(&sample.request_sequence)
-            || !unique.insert((sample.request_sequence, sample.sample_sequence))
-        {
-            return Err(LabSessionAggregateError::InvalidMediaEvidence);
-        }
-        sequences_by_request
-            .entry(sample.request_sequence)
-            .or_default()
-            .insert(sample.sample_sequence);
-        offsets.push(sample.absolute_offset_millis);
-    }
-    let required_samples = usize::try_from(RT0_AV_SYNC_SAMPLES_PER_REQUEST)
-        .map_err(|_| LabSessionAggregateError::Overflow)?;
-    Ok(sequences_by_request
-        .into_iter()
-        .filter(|(_, sequences)| sequences.len() == required_samples)
-        .map(|(request, _)| request)
-        .collect())
 }

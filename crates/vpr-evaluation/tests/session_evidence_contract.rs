@@ -72,8 +72,8 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
             },
             LabMediaEvidence {
                 request_sequence: Some(request),
-                kind: LabMediaEvidenceKind::InterruptionStopped,
-                elapsed_millis: base / 10,
+                kind: LabMediaEvidenceKind::PlaybackCompleted,
+                elapsed_millis: base + 350,
             },
             LabMediaEvidence {
                 request_sequence: None,
@@ -124,7 +124,7 @@ fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     assert_eq!(aggregate.llm_first_meaningful_response.unwrap().p95, 150);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p50, 400);
     assert_eq!(aggregate.first_meaningful_audio.unwrap().p95, 600);
-    assert_eq!(aggregate.interruption_stop.unwrap().p95, 30);
+    assert_eq!(aggregate.interruption_stop, None);
     assert_eq!(aggregate.first_useful_video.unwrap().p95, 700);
     assert_eq!(aggregate.recoverable_reconnect.unwrap().p95, 800);
     assert_eq!(aggregate.estimated_cost_microunits, Some(18));
@@ -296,24 +296,38 @@ fn aggregate_requires_playback_proof_from_every_session() {
     unproven.voice_attempts[0].canonical_playback_confirmed = false;
     unproven.av_sync_proven = false;
     unproven.av_sync_samples.clear();
-    unproven.media_events.retain(|event| {
-        !matches!(
-            event.kind,
-            LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::InterruptionStopped
-        )
-    });
+    unproven
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
     let aggregate = aggregate_owner_lab_session_evidence(&[proven, unproven]).unwrap();
     assert!(!aggregate.canonical_playback_proven);
 }
 
 #[test]
 fn interruption_requires_observed_audio_for_the_same_request() {
-    let mut snapshot = snapshot(22, 1, 100);
-    snapshot
+    let mut interrupted = snapshot(22, 1, 100);
+    interrupted.canonical_playback_proven = false;
+    interrupted.av_sync_proven = false;
+    interrupted.av_sync_samples.clear();
+    interrupted.voice_attempts[0].canonical_playback_confirmed = false;
+    interrupted
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
+    interrupted.media_events.push(LabMediaEvidence {
+        request_sequence: Some(1),
+        kind: LabMediaEvidenceKind::InterruptionStopped,
+        elapsed_millis: 80,
+    });
+
+    let valid = aggregate_owner_lab_session_evidence(&[interrupted.clone()]).unwrap();
+    assert_eq!(valid.interruption_stop.unwrap().p95, 80);
+    assert!(!valid.canonical_playback_proven);
+
+    interrupted
         .media_events
         .retain(|event| event.kind != LabMediaEvidenceKind::AudioStarted);
     assert_eq!(
-        aggregate_owner_lab_session_evidence(&[snapshot]),
+        aggregate_owner_lab_session_evidence(&[interrupted]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)
     );
 }
@@ -349,6 +363,62 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
         aggregate_owner_lab_session_evidence(&[cross_request]),
         Err(LabSessionAggregateError::InvalidMediaEvidence)
     );
+}
+
+#[test]
+fn av_sync_rejects_mixed_reference_for_one_request() {
+    let mut mixed = snapshot(44, 1, 100);
+    mixed.av_sync_samples[2].reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[mixed]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
+fn interrupted_request_av_sync_samples_do_not_enter_release_distribution() {
+    let mut input = snapshot(45, 1, 100);
+    input.voice_attempts.push(LabVoiceAttemptEvidence {
+        request_sequence: 2,
+        canonical_turn_sequence: Some(102),
+        canonical_output_sequence: Some(202),
+        canonical_playback_confirmed: false,
+        status: LabVoiceAttemptStatus::Completed,
+        failure_code: None,
+        stt_millis: Some(120),
+        llm_millis: Some(220),
+        llm_first_meaningful_millis: Some(60),
+        avatar_millis: Some(140),
+        server_total_millis: Some(370),
+        stt_usage: Some(usage(Some(2), Some(3))),
+        llm_usage: Some(usage(Some(5), Some(7))),
+    });
+    input.media_events.push(LabMediaEvidence {
+        request_sequence: Some(2),
+        kind: LabMediaEvidenceKind::AudioStarted,
+        elapsed_millis: 420,
+    });
+    input.media_events.push(LabMediaEvidence {
+        request_sequence: Some(2),
+        kind: LabMediaEvidenceKind::InterruptionStopped,
+        elapsed_millis: 90,
+    });
+    for sample_sequence in 1..=3 {
+        input.av_sync_samples.push(LabAvSyncEvidence {
+            request_sequence: 2,
+            sample_sequence,
+            reference: LabAvSyncReference::HtmlMediaElementCurrentTime,
+            absolute_offset_millis: 999,
+        });
+    }
+
+    let aggregate = aggregate_owner_lab_session_evidence(&[input]).unwrap();
+    assert!(aggregate.canonical_playback_proven);
+    assert!(aggregate.av_sync_proven);
+    let av_sync = aggregate.av_sync_absolute_offset.unwrap();
+    assert_eq!(av_sync.samples, 3);
+    assert_eq!(av_sync.p95, 40);
+    assert_eq!(aggregate.interruption_stop.unwrap().p95, 90);
 }
 
 #[test]

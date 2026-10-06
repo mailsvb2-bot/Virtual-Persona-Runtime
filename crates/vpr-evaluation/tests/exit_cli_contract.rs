@@ -57,7 +57,7 @@ fn exit_evidence(
     let conversation = |role: &str, interruption: &str| {
         json!({
             "origin":"real","role":role,"russian":"passed","voice":"passed","video":"passed",
-            "completed_turns":1,"interruption_exercised":interruption,"artifact_sha256":supporting_artifact_sha256
+            "completed_turns":if role == "owner" { 2 } else { 1 },"interruption_exercised":interruption,"artifact_sha256":supporting_artifact_sha256
         })
     };
     json!({
@@ -85,7 +85,7 @@ fn exit_evidence(
         "quality":{
             "origin":"real",
             "text_first_meaningful_response":distribution(900,2400),
-            "first_meaningful_audio":{"samples":2,"p50":500,"p95":500},
+            "first_meaningful_audio":{"samples":3,"p50":500,"p95":500},
             "interruption_stop":{"samples":1,"p50":250,"p95":250},
             "first_useful_video":{"samples":2,"p50":700,"p95":700},
             "av_sync_absolute_offset":{"samples":6,"p50":50,"p95":110},
@@ -283,20 +283,56 @@ fn session_snapshot(
     interruption: bool,
     provider_state_sha256: &str,
 ) -> Value {
+    let mut voice_attempts = vec![json!({
+        "request_sequence":1,
+        "canonical_turn_sequence":10 + session_sequence,
+        "canonical_output_sequence":20 + session_sequence,
+        "canonical_playback_confirmed":true,
+        "status":"completed",
+        "failure_code":null,
+        "stt_millis":100,
+        "llm_millis":120,
+        "llm_first_meaningful_millis":80,
+        "avatar_millis":150,
+        "server_total_millis":370,
+        "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+        "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+    })];
     let mut media_events = vec![
         json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
+        json!({"request_sequence":1,"kind":"playback_completed","elapsed_millis":650}),
         json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
         json!({"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":800}),
     ];
     if interruption {
+        voice_attempts.push(json!({
+            "request_sequence":2,
+            "canonical_turn_sequence":30 + session_sequence,
+            "canonical_output_sequence":40 + session_sequence,
+            "canonical_playback_confirmed":false,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":100,
+            "llm_millis":120,
+            "llm_first_meaningful_millis":80,
+            "avatar_millis":150,
+            "server_total_millis":370,
+            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+        }));
         media_events.push(json!({
-            "request_sequence":1,
+            "request_sequence":2,
+            "kind":"audio_started",
+            "elapsed_millis":500
+        }));
+        media_events.push(json!({
+            "request_sequence":2,
             "kind":"interruption_stopped",
             "elapsed_millis":250
         }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
@@ -315,21 +351,7 @@ fn session_snapshot(
             "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
             "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
         }],
-        "voice_attempts":[{
-            "request_sequence":1,
-            "canonical_turn_sequence":10 + session_sequence,
-            "canonical_output_sequence":20 + session_sequence,
-            "canonical_playback_confirmed":true,
-            "status":"completed",
-            "failure_code":null,
-            "stt_millis":100,
-            "llm_millis":120,
-            "llm_first_meaningful_millis":80,
-            "avatar_millis":150,
-            "server_total_millis":370,
-            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
-            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
-        }],
+        "voice_attempts":voice_attempts,
         "media_events":media_events,
         "av_sync_samples":[
             {"request_sequence":1,"sample_sequence":1,"reference":"web_rtc_estimated_playout_timestamp","absolute_offset_millis":40},
@@ -719,7 +741,7 @@ fn cli_rejects_rehashed_role_forgery_even_when_session_binding_is_recomputed() {
 fn cli_rejects_rehashed_detached_completed_turn_claim() {
     let paths = prepare(|_| {});
     let mut evidence: Value = serde_json::from_slice(&fs::read(&paths.evidence).unwrap()).unwrap();
-    evidence["conversations"]["owner"]["completed_turns"] = json!(2);
+    evidence["conversations"]["owner"]["completed_turns"] = json!(3);
     bind_supporting_artifacts(&paths.supporting_artifacts, &mut evidence);
     fs::write(
         &paths.evidence,

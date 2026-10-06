@@ -49,7 +49,7 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
@@ -85,6 +85,7 @@ fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
         }],
         "media_events":[
             {"request_sequence":1,"kind":"audio_started","elapsed_millis":400},
+            {"request_sequence":1,"kind":"playback_completed","elapsed_millis":450},
             {"request_sequence":null,"kind":"video_ready","elapsed_millis":500}
         ],
         "av_sync_samples":[]

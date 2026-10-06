@@ -65,7 +65,6 @@
       throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
     }
     const initialSpeakCount = commands().filter((command) => command.topic === "did.speak").length;
-    const spokenParts = [];
 
     await waitFor(() => !voice.disabled, "voice-enabled");
     voice.click();
@@ -75,45 +74,37 @@
     );
     voice.click();
 
-    while (spokenParts.join(" ") !== reply) {
-      const expectedCount = initialSpeakCount + spokenParts.length + 1;
-      await waitFor(
-        () => commands().filter((command) => command.topic === "did.speak").length >= expectedCount,
-        "did-speak-command",
-      );
-      const speakCommands = commands().filter((command) => command.topic === "did.speak");
-      const current = speakCommands[expectedCount - 1];
-      const payload = JSON.parse(current?.text ?? "{}");
-      const input = payload?.script?.input;
-      if (typeof input !== "string" || input.trim() === "") {
-        throw new Error("EXPRESSIVE_SPOKEN_REPLY_MISMATCH");
-      }
-      if (payload?.script?.should_queue_speaks !== true) {
-        throw new Error("EXPRESSIVE_SPEAK_QUEUE_FLAG_MISSING");
-      }
-      spokenParts.push(input.trim());
-      const spoken = spokenParts.join(" ");
-      if (!reply.startsWith(spoken)) {
-        throw new Error("EXPRESSIVE_SPOKEN_REPLY_MISMATCH");
-      }
-
-      await waitFor(
-        () => voice.disabled,
-        "rt0-evidence-blocks-next-turn-during-playback",
-      );
-      playbackDone();
-
-      if (spoken !== reply) {
-        await waitFor(
-          () => voice.disabled,
-          "rt0-evidence-remains-blocked-between-streamed-phrases",
-        );
-      }
+    await waitFor(
+      () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,
+      "single-complete-did-speak-command",
+    );
+    const speakCommands = commands().filter((command) => command.topic === "did.speak");
+    const payload = JSON.parse(speakCommands[initialSpeakCount]?.text ?? "{}");
+    if (payload?.script?.input !== reply) {
+      throw new Error("EXPRESSIVE_COMPLETE_REPLY_MISMATCH");
     }
+    if (payload?.script?.should_queue_speaks !== true) {
+      throw new Error("EXPRESSIVE_SPEAK_QUEUE_FLAG_MISSING");
+    }
+
+    await waitFor(
+      () => voice.disabled,
+      "rt0-evidence-blocks-next-turn-during-playback",
+    );
+    // Let the browser observe real remote audio first. The Playwright route deliberately
+    // delays the audio_started POST, so playback_done still races ahead of persistence.
+    await sleep(50);
+    playbackDone();
 
     await waitFor(
       () => statusText().includes(`Вы: ${transcript}`) && statusText().includes(`Ответ: ${reply}`),
       "voice-response-complete",
+    );
+    await waitEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 1 && event.kind === "playback_completed",
+      ),
+      "provider-playback-completed",
     );
     await waitFor(
       () => element("readiness-voice", HTMLElement).textContent === "Готов",
@@ -123,7 +114,7 @@
       () => !voice.disabled,
       "rt0-evidence-unblocks-next-turn-after-final-playback",
     );
-    return spokenParts.length;
+    return initialSpeakCount + 1;
   };
 
   const run = async () => {

@@ -776,15 +776,18 @@ for required_evidence_boundary in (
     if required_evidence_boundary not in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
 for required_shared_evidence in (
-    "rt0-owner-lab-session-evidence-1.1",
+    "rt0-owner-lab-session-evidence-1.2",
     "candidate_sha",
     "provider_state_sha256",
-    "rt0-owner-lab-session-aggregate-0.8",
+    "rt0-owner-lab-session-aggregate-0.9",
     "aggregate_owner_lab_session_evidence",
     "llm_first_meaningful_response",
     "canonical_playback_proven",
     "canonical_output_sequence",
     "canonical_playback_confirmed",
+    "PlaybackCompleted",
+    "AudioStarted",
+    "HtmlMediaElementCurrentTime",
     "av_sync_proven",
 ):
     if required_shared_evidence not in evaluation_session_evidence:
@@ -813,7 +816,11 @@ for required_media_endpoint in (
 if "X-VPR-Evidence-Request" not in owner_lab_http_evidence:
     raise SystemExit("Owner Lab HTTP evidence correlation header must remain isolated in http_evidence.rs")
 if "acknowledge_voice_playback" not in owner_lab_http_evidence:
-    raise SystemExit("Owner Lab HTTP evidence must reconcile browser audio to canonical runtime playback")
+    raise SystemExit("Owner Lab HTTP evidence must reconcile provider playback completion to canonical runtime playback")
+if "LabMediaEvidenceKind::PlaybackCompleted" not in owner_lab_http_evidence:
+    raise SystemExit("Owner Lab full playback proof must use a dedicated provider-completion event")
+if "LabMediaEvidenceKind::AudioStarted" not in owner_lab_http_evidence:
+    raise SystemExit("Owner Lab first-audio timing must remain distinct from full playback proof")
 owner_lab_voice = (owner_lab_src / "state" / "voice.rs").read_text(encoding="utf-8")
 owner_lab_voice_playback = (
     owner_lab_src / "state" / "voice_playback.rs"

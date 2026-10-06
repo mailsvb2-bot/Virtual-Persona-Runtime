@@ -57,9 +57,12 @@ type MediaEvidenceKind =
   | "backend_complete_received"
   | "client_delivery_sent"
   | "audio_started"
+  | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
-type AvSyncReference = "web_rtc_estimated_playout_timestamp";
+type AvSyncReference =
+  | "web_rtc_estimated_playout_timestamp"
+  | "html_media_element_current_time";
 type AvSyncTrackIssue =
   | "stats_unavailable"
   | "timestamp_unavailable"
@@ -90,7 +93,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; responseComplete: boolean; speaking: boolean; silentFrames: number };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -292,7 +295,8 @@ const MAX_VOICE_SAMPLES = 480_000;
 const VOICE_UPLOAD_CHUNK_BYTES = 3_200;
 const AUTO_STOP_MILLIS = 29_500;
 const MICROPHONE_STORAGE_KEY = "vpr.owner-lab.microphone-device-id";
-const AV_SYNC_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
+const AV_SYNC_RTP_REFERENCE: AvSyncReference = "web_rtc_estimated_playout_timestamp";
+const AV_SYNC_MEDIA_ELEMENT_REFERENCE: AvSyncReference = "html_media_element_current_time";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 const AV_SYNC_MAX_ATTEMPTS = 50;
@@ -657,10 +661,47 @@ const selectPlayoutTimestamp = (
   };
 };
 
+const mediaElementAvSyncFallback = (
+  diagnostic: string,
+  audioIssue: AvSyncTrackIssue | null,
+  videoIssue: AvSyncTrackIssue | null,
+): {
+  offsetMillis: number | null;
+  reference: AvSyncReference | null;
+  diagnostic: string;
+  audioIssue: AvSyncTrackIssue | null;
+  videoIssue: AvSyncTrackIssue | null;
+} => {
+  const audioTime = avatarAudio.currentTime;
+  const videoTime = video.currentTime;
+  if (
+    Number.isFinite(audioTime)
+    && Number.isFinite(videoTime)
+    && audioTime > 0
+    && videoTime > 0
+  ) {
+    return {
+      offsetMillis: Math.round(Math.abs(audioTime - videoTime) * 1_000),
+      reference: AV_SYNC_MEDIA_ELEMENT_REFERENCE,
+      diagnostic: `${diagnostic}; fallback=media-element-current-time`,
+      audioIssue: null,
+      videoIssue: null,
+    };
+  }
+  return {
+    offsetMillis: null,
+    reference: null,
+    diagnostic: `${diagnostic}; media-element-current-time unavailable`,
+    audioIssue,
+    videoIssue,
+  };
+};
+
 const readAvSyncOffsetMillis = async (
   state: AvSyncReadState,
 ): Promise<{
   offsetMillis: number | null;
+  reference: AvSyncReference | null;
   diagnostic: string;
   audioIssue: AvSyncTrackIssue | null;
   videoIssue: AvSyncTrackIssue | null;
@@ -676,12 +717,11 @@ const readAvSyncOffsetMillis = async (
     const audioStats = liveKitAudioTrack?.getRTCStatsReport;
     const videoStats = liveKitVideoTrack?.getRTCStatsReport;
     if (!audioStats || !videoStats) {
-      return {
-        offsetMillis: null,
-        diagnostic: "LiveKit track stats method unavailable",
-        audioIssue: "stats_unavailable",
-        videoIssue: "stats_unavailable",
-      };
+      return mediaElementAvSyncFallback(
+        "LiveKit track stats method unavailable",
+        "stats_unavailable",
+        "stats_unavailable",
+      );
     }
     const [audioReport, videoReport] = await Promise.all([
       audioStats.call(liveKitAudioTrack),
@@ -694,15 +734,15 @@ const readAvSyncOffsetMillis = async (
   state.audioPackets = audioSelection.packetCounts;
   state.videoPackets = videoSelection.packetCounts;
   if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
-    return {
-      offsetMillis: null,
-      diagnostic: `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
-      audioIssue: audioSelection.issue,
-      videoIssue: videoSelection.issue,
-    };
+    return mediaElementAvSyncFallback(
+      `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
+      audioSelection.issue,
+      videoSelection.issue,
+    );
   }
   return {
     offsetMillis: Math.round(Math.abs(audioSelection.timestamp - videoSelection.timestamp)),
+    reference: AV_SYNC_RTP_REFERENCE,
     diagnostic: "audio/video playout timestamps available",
     audioIssue: null,
     videoIssue: null,
@@ -724,12 +764,12 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
     const reading = await readAvSyncOffsetMillis(readState);
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
-    if (reading.offsetMillis !== null) {
+    if (reading.offsetMillis !== null && reading.reference !== null) {
       await api<{ ok: true }>("/api/evidence/av-sync", {
         session_sequence: evidenceSessionSequence,
         request_sequence: requestSequence,
         sample_sequence: sampleSequence,
-        reference: AV_SYNC_REFERENCE,
+        reference: reading.reference,
         absolute_offset_millis: reading.offsetMillis,
       });
       sampleSequence += 1;
@@ -764,6 +804,24 @@ const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null 
     voice.avSyncEvidence = collection;
   }
   return voice.avSyncEvidence;
+};
+
+const ensurePlaybackCompletionEvidence = (
+  voice: ActiveVoiceEvidence,
+): Promise<void> | null => {
+  if (!voice.providerPlaybackDone || !voice.audioStarted || voice.interrupted) return null;
+  if (!voice.playbackCompletionEvidence) {
+    voice.playbackCompletionEvidence = (async () => {
+      if (voice.audioStartedEvidence) await voice.audioStartedEvidence;
+      await postMediaEvidence(
+        "playback_completed",
+        performance.now() - voice.startedAt,
+        voice.requestSequence,
+      );
+      await refreshSessionEvidence();
+    })();
+  }
+  return voice.playbackCompletionEvidence;
 };
 
 const rms = (samples: Float32Array): number => {
@@ -817,7 +875,12 @@ const monitorRemoteAudio = (): void => {
           if (avSyncEvidence) await avSyncEvidence;
         });
         voice.audioStartedEvidence = audioStartedEvidence;
-        void audioStartedEvidence.catch(() => undefined);
+        void audioStartedEvidence
+          .then(() => {
+            const completion = ensurePlaybackCompletionEvidence(voice);
+            if (completion) void completion.catch(() => undefined);
+          })
+          .catch(() => undefined);
       }
     } else if (voice?.speaking) {
       voice.silentFrames += 1;
@@ -969,10 +1032,27 @@ const ownerCapture = mountOwnerCapture({
 const handleProviderClientEvent = (raw: string): void => {
   if (!raw) return;
   void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
-    .then((normalized) => {
+    .then(async (normalized) => {
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
       } else if (normalized?.kind === "playback_done") {
+        const voice = activeVoiceEvidence;
+        if (voice) {
+          voice.providerPlaybackDone = true;
+          const completion = ensurePlaybackCompletionEvidence(voice);
+          if (completion) {
+            try {
+              await completion;
+            } catch (error) {
+              setStatus(
+                error instanceof Error
+                  ? `Playback completion evidence: ${error.message}`
+                  : "Playback completion evidence failed",
+                "error",
+              );
+            }
+          }
+        }
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
         rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
@@ -1595,7 +1675,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStartedElapsed: null,
     audioStartedEvidence: null,
     avSyncEvidence: null,
+    playbackCompletionEvidence: null,
+    providerPlaybackDone: false,
     responseComplete: false,
+    interrupted: false,
     speaking: false,
     silentFrames: 0,
   };
@@ -1785,6 +1868,7 @@ const speak = async (): Promise<void> => {
 
 const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   const voice = activeVoiceEvidence;
+  if (voice) voice.interrupted = true;
   if (recordEvidence && voice?.audioStarted) {
     interruptEvidenceWatch = {
       requestSequence: voice.requestSequence,

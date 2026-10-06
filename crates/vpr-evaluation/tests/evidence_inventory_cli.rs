@@ -171,6 +171,9 @@ fn seed_exit_and_supporting(dir: &Path, provider_digest: &str) {
     ))
     .unwrap();
     evidence["candidate_sha"] = json!(CANDIDATE);
+    // The owner fixture contains one fully played voice turn plus one completed turn that is
+    // intentionally interrupted after playback starts. Both are completed canonical turns.
+    evidence["conversations"]["owner"]["completed_turns"] = json!(2);
     evidence["release_spec_sha256"] = json!(sha256_hex(RELEASE_SPEC));
     evidence["golden_report_sha256"] = json!(sha256_hex(
         &fs::read(dir.join("bound-golden-report.json")).unwrap()
@@ -239,17 +242,53 @@ fn session_snapshot(
 ) -> Value {
     let mut media = vec![
         json!({"request_sequence":1,"kind":"audio_started","elapsed_millis":500}),
+        json!({"request_sequence":1,"kind":"playback_completed","elapsed_millis":650}),
         json!({"request_sequence":null,"kind":"video_ready","elapsed_millis":700}),
     ];
+    let mut voice_attempts = vec![json!({
+        "request_sequence":1,
+        "canonical_turn_sequence":10 + session_sequence,
+        "canonical_output_sequence":20 + session_sequence,
+        "canonical_playback_confirmed":true,
+        "status":"completed",
+        "failure_code":null,
+        "stt_millis":100,
+        "llm_millis":120,
+        "llm_first_meaningful_millis":80,
+        "avatar_millis":150,
+        "server_total_millis":370,
+        "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+        "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+    })];
     if interruption {
         media.push(json!({
-            "request_sequence":1,
+            "request_sequence":2,
+            "kind":"audio_started",
+            "elapsed_millis":520
+        }));
+        media.push(json!({
+            "request_sequence":2,
             "kind":"interruption_stopped",
             "elapsed_millis":250
         }));
+        voice_attempts.push(json!({
+            "request_sequence":2,
+            "canonical_turn_sequence":30 + session_sequence,
+            "canonical_output_sequence":40 + session_sequence,
+            "canonical_playback_confirmed":false,
+            "status":"completed",
+            "failure_code":null,
+            "stt_millis":110,
+            "llm_millis":130,
+            "llm_first_meaningful_millis":85,
+            "avatar_millis":160,
+            "server_total_millis":400,
+            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
+            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
+        }));
     }
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.1",
+        "schema_version":"rt0-owner-lab-session-evidence-1.2",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
@@ -268,21 +307,7 @@ fn session_snapshot(
             "server_total_millis":if role == "owner" { 1_000 } else { 2_500 },
             "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
         }],
-        "voice_attempts":[{
-            "request_sequence":1,
-            "canonical_turn_sequence":10 + session_sequence,
-            "canonical_output_sequence":20 + session_sequence,
-            "canonical_playback_confirmed":true,
-            "status":"completed",
-            "failure_code":null,
-            "stt_millis":100,
-            "llm_millis":120,
-            "llm_first_meaningful_millis":80,
-            "avatar_millis":150,
-            "server_total_millis":370,
-            "stt_usage":{"input_units":1,"output_units":0,"estimated_cost_microunits":1,"provider_charge_microunits":null},
-            "llm_usage":{"input_units":1,"output_units":1,"estimated_cost_microunits":1,"provider_charge_microunits":null}
-        }],
+        "voice_attempts":voice_attempts,
         "media_events":media,
         "av_sync_samples":[]
     })
@@ -680,7 +705,7 @@ fn detached_completed_turn_claim_keeps_inventory_incomplete() {
     seed_complete_inventory(dir.path());
     let exit_path = dir.path().join("exit-evidence.json");
     let mut exit: Value = serde_json::from_slice(&fs::read(&exit_path).unwrap()).unwrap();
-    exit["conversations"]["owner"]["completed_turns"] = json!(2);
+    exit["conversations"]["owner"]["completed_turns"] = json!(3);
     let provider_digest = sha256_hex(&fs::read(dir.path().join("provider-state.json")).unwrap());
     let owner_claim = exit.pointer_mut("/conversations/owner").unwrap();
     bind_projected_claim(

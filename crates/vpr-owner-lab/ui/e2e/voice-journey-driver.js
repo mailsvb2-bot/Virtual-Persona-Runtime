@@ -67,6 +67,10 @@
 
   const recordVoiceTurn = async (expectedReply) => {
     const voice = byId("voice");
+    const finishPlayback = window.__vprFinishSyntheticPlayback;
+    if (typeof finishPlayback !== "function") {
+      throw new Error("VOICE_JOURNEY_PLAYBACK_COMPLETION_CONTROL_MISSING");
+    }
     await waitFor(() => !voice.disabled, "voice-enabled");
     voice.click();
     await waitFor(
@@ -79,14 +83,64 @@
     );
     voice.click();
     await waitForStatus(`Ответ: ${expectedReply}`);
+    await waitFor(() => !byId("interrupt").disabled, "playback-started");
+    await waitForEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 1 && event.kind === "audio_started",
+      ),
+      "first-audio-before-playback-complete",
+    );
+    finishPlayback();
     await waitForEvidence(
       (snapshot) =>
         snapshot.canonical_playback_proven === true
         && snapshot.av_sync_proven === true
         && snapshot.voice_attempts?.some(
           (attempt) => attempt.status === "completed" && attempt.canonical_playback_confirmed === true,
+        )
+        && snapshot.media_events?.some(
+          (event) => event.kind === "playback_completed",
         ),
       "canonical-playback",
+    );
+  };
+
+  const recordInterruptedVoiceTurn = async (expectedReply) => {
+    const voice = byId("voice");
+    await waitFor(() => !voice.disabled, "interrupt-turn-voice-enabled");
+    voice.click();
+    await waitFor(
+      () => voice.textContent === "Остановить и отправить",
+      "interrupt-turn-recording",
+    );
+    await waitFor(
+      () => (byId("microphone-level-text").textContent ?? "").includes("RMS"),
+      "interrupt-turn-microphone-sample",
+    );
+    voice.click();
+    await waitForStatus(`Ответ: ${expectedReply}`);
+    const beginPlayback = window.__vprBeginSyntheticPlayback;
+    if (typeof beginPlayback !== "function") {
+      throw new Error("VOICE_JOURNEY_PLAYBACK_START_CONTROL_MISSING");
+    }
+    // The deterministic fixture owns provider playback timing. Explicitly start the
+    // second playback here so interruption evidence never depends on a polling race
+    // between the final voice-event batch and the synthetic provider notification.
+    beginPlayback();
+    const interrupt = byId("interrupt");
+    await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
+    await waitForEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 2 && event.kind === "audio_started",
+      ),
+      "interrupt-audio-started",
+    );
+    interrupt.click();
+    await waitForEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 2 && event.kind === "interruption_stopped",
+      ),
+      "interruption-stopped",
     );
   };
 
@@ -112,13 +166,7 @@
     await recordVoiceTurn("Голосовой ответ владельцу");
     await checkpoint("owner-playback-proven");
 
-    const interrupt = byId("interrupt");
-    await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
-    interrupt.click();
-    await waitForEvidence(
-      (snapshot) => snapshot.media_events?.some((event) => event.kind === "interruption_stopped"),
-      "interruption-stopped",
-    );
+    await recordInterruptedVoiceTurn("В visitor scope нет подтверждённых данных владельца");
     await checkpoint("owner-interrupt-proven");
 
     const setPeerState = window.__vprSetPeerConnectionState;
