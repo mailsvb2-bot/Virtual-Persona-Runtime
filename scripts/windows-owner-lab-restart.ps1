@@ -135,8 +135,9 @@ function Resolve-Rt0EvidenceBrowser {
     $firefox = $candidates | Select-Object -First 1
     if (-not $firefox) {
         throw @"
-RT0 exact-candidate A/V-sync evidence requires a browser that exposes
-RTCInboundRtpStreamStats.estimatedPlayoutTimestamp. Install Firefox 142 or newer, then rerun:
+RT0 exact-candidate A/V-sync evidence uses Firefox 142 or newer as the canonical evidence browser.
+A/V sync prefers RTCInboundRtpStreamStats.estimatedPlayoutTimestamp and may use the explicit
+HTML media-element currentTime fallback when RTP playout timestamps are unavailable. Install Firefox 142 or newer, then rerun:
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
 The Owner Lab backend was not opened in a non-evidence browser.
 "@
@@ -146,7 +147,7 @@ The Owner Lab backend was not opened in a non-evidence browser.
     $majorText = ($version -split '\.')[0]
     $major = 0
     if (-not [int]::TryParse($majorText, [ref]$major) -or $major -lt 142) {
-        throw "RT0 exact-candidate A/V-sync evidence requires Firefox 142 or newer; found Firefox $version at $firefox"
+        throw "RT0 exact-candidate evidence requires the canonical Firefox 142+ browser; found Firefox $version at $firefox"
     }
 
     Write-Host "RT0 evidence browser: Firefox $version ($firefox)"
