@@ -165,17 +165,17 @@ fn conversation_attempt_bytes(provider_state_bytes: &[u8]) -> Vec<u8> {
     .unwrap()
 }
 
-fn session_snapshot_bytes_with_av_sync(
-    role: ParticipantRole,
-    session_sequence: u64,
-    offsets: [u64; 3],
-    provider_state_bytes: &[u8],
-) -> Vec<u8> {
-    let mut voice_attempts = vec![serde_json::json!({
-        "request_sequence":1,
-        "canonical_turn_sequence":10 + session_sequence,
-        "canonical_output_sequence":20 + session_sequence,
-        "canonical_playback_confirmed":true,
+fn voice_attempt(
+    request_sequence: u64,
+    canonical_turn_sequence: u64,
+    canonical_output_sequence: u64,
+    canonical_playback_confirmed: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "request_sequence":request_sequence,
+        "canonical_turn_sequence":canonical_turn_sequence,
+        "canonical_output_sequence":canonical_output_sequence,
+        "canonical_playback_confirmed":canonical_playback_confirmed,
         "status":"completed",
         "failure_code":null,
         "stt_millis":100,
@@ -191,7 +191,21 @@ fn session_snapshot_bytes_with_av_sync(
             "input_units":1,"output_units":1,
             "estimated_cost_microunits":1,"provider_charge_microunits":null
         }
-    })];
+    })
+}
+
+fn session_snapshot_bytes_with_av_sync(
+    role: ParticipantRole,
+    session_sequence: u64,
+    offsets: [u64; 3],
+    provider_state_bytes: &[u8],
+) -> Vec<u8> {
+    let mut voice_attempts = vec![voice_attempt(
+        1,
+        10 + session_sequence,
+        20 + session_sequence,
+        true,
+    )];
     let mut media_events = vec![
         serde_json::json!({
             "request_sequence":1,
@@ -215,27 +229,12 @@ fn session_snapshot_bytes_with_av_sync(
         }),
     ];
     if role == ParticipantRole::Owner {
-        voice_attempts.push(serde_json::json!({
-            "request_sequence":2,
-            "canonical_turn_sequence":30 + session_sequence,
-            "canonical_output_sequence":40 + session_sequence,
-            "canonical_playback_confirmed":false,
-            "status":"completed",
-            "failure_code":null,
-            "stt_millis":100,
-            "llm_millis":120,
-            "llm_first_meaningful_millis":80,
-            "avatar_millis":150,
-            "server_total_millis":370,
-            "stt_usage":{
-                "input_units":1,"output_units":0,
-                "estimated_cost_microunits":1,"provider_charge_microunits":null
-            },
-            "llm_usage":{
-                "input_units":1,"output_units":1,
-                "estimated_cost_microunits":1,"provider_charge_microunits":null
-            }
-        }));
+        voice_attempts.push(voice_attempt(
+            2,
+            30 + session_sequence,
+            40 + session_sequence,
+            false,
+        ));
         media_events.push(serde_json::json!({
             "request_sequence":2,
             "kind":"audio_started",
