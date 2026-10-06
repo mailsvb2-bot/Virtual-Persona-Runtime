@@ -106,6 +106,7 @@ let evidenceSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
+let connectJourneyStartedAt = 0;
 let videoEvidencePosted = false;
 let reconnectStartedAt = null;
 let remoteMediaStream = null;
@@ -698,7 +699,14 @@ const recordFirstVideoFrame = () => {
     if (videoEvidencePosted || connectEvidenceStartedAt === 0)
         return;
     videoEvidencePosted = true;
-    void postMediaEvidence("video_ready", performance.now() - connectEvidenceStartedAt)
+    const now = performance.now();
+    const writes = [
+        postMediaEvidence("video_ready", now - connectEvidenceStartedAt),
+    ];
+    if (connectJourneyStartedAt > 0) {
+        writes.push(postMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt));
+    }
+    void Promise.all(writes)
         .then(() => syncStatus())
         .catch(() => undefined);
 };
@@ -1074,6 +1082,7 @@ const connectAvatar = async () => {
     }
     connectButton.disabled = true;
     connectEvidenceStartedAt = 0;
+    connectJourneyStartedAt = performance.now();
     resetTelemetry();
     videoEvidencePosted = false;
     reconnectStartedAt = null;
@@ -1088,6 +1097,7 @@ const connectAvatar = async () => {
         backendSessionStarted = true;
         connectEvidenceStartedAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
+        await postMediaEvidence("backend_start_ready", connectEvidenceStartedAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
         const startedStatus = await syncStatus();
@@ -1102,6 +1112,7 @@ const connectAvatar = async () => {
         else {
             await connectLiveKitTransport(start.transport);
         }
+        await postMediaEvidence("transport_connected", performance.now() - connectJourneyStartedAt);
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
