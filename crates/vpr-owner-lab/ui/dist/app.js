@@ -128,6 +128,7 @@ const AV_SYNC_MEDIA_ELEMENT_REFERENCE = "html_media_element_current_time";
 const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 const AV_SYNC_MAX_ATTEMPTS = 50;
+const UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS = 3_000;
 const setStatus = (text, state = "idle") => {
     statusNode.textContent = text;
     statusNode.dataset.state = state;
@@ -613,6 +614,7 @@ const monitorRemoteAudio = () => {
         if (voice && level > speechThreshold) {
             voice.speaking = true;
             voice.silentFrames = 0;
+            voice.playbackSilenceStartedAt = null;
             if (!voice.audioStarted) {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
@@ -634,8 +636,30 @@ const monitorRemoteAudio = () => {
         }
         else if (voice?.speaking) {
             voice.silentFrames += 1;
-            if (voice.silentFrames >= 6)
+            if (voice.silentFrames >= 6) {
                 voice.speaking = false;
+                voice.playbackSilenceStartedAt = performance.now();
+            }
+        }
+        if (voice
+            && rt0EvidenceMode
+            && rt0PlaybackPending
+            && voice.responseComplete
+            && voice.audioStarted
+            && !voice.providerPlaybackDone
+            && !voice.interrupted
+            && !voice.speaking
+            && voice.playbackSilenceStartedAt !== null
+            && !voice.playbackRecoveryTriggered
+            && performance.now() - voice.playbackSilenceStartedAt
+                >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS) {
+            voice.playbackRecoveryTriggered = true;
+            void interruptAvatar(false).then((recovered) => {
+                if (recovered) {
+                    setStatus("D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
+                        + "следующий turn разблокирован, но playback_completed не засчитан.", "error");
+                }
+            });
         }
         if (interruptEvidenceWatch) {
             const silenceThreshold = Math.max(0.008, baselineRms * 1.8 + 0.002);
@@ -778,6 +802,7 @@ const handleProviderClientEvent = (raw) => {
             const voice = activeVoiceEvidence;
             if (voice) {
                 voice.providerPlaybackDone = true;
+                voice.playbackSilenceStartedAt = null;
                 const completion = ensurePlaybackCompletionEvidence(voice);
                 if (completion) {
                     try {
@@ -1374,6 +1399,8 @@ const finishMicrophoneTurn = async () => {
         interrupted: false,
         speaking: false,
         silentFrames: 0,
+        playbackSilenceStartedAt: null,
+        playbackRecoveryTriggered: false,
     };
     let terminalStatus = null;
     try {
