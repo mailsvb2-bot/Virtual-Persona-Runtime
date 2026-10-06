@@ -119,6 +119,14 @@
     );
     voice.click();
     await waitForStatus(`Ответ: ${expectedReply}`);
+    const beginPlayback = window.__vprBeginSyntheticPlayback;
+    if (typeof beginPlayback !== "function") {
+      throw new Error("VOICE_JOURNEY_PLAYBACK_START_CONTROL_MISSING");
+    }
+    // The deterministic fixture owns provider playback timing. Explicitly start the
+    // second playback here so interruption evidence never depends on a polling race
+    // between the final voice-event batch and the synthetic provider notification.
+    beginPlayback();
     const interrupt = byId("interrupt");
     await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
     await waitForEvidence(
