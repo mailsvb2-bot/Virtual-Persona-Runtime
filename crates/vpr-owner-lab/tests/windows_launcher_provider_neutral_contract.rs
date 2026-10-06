@@ -47,7 +47,6 @@ fn windows_launcher_clears_avatar_environment_before_probe_and_process_launch() 
     );
 }
 
-
 #[test]
 fn windows_launcher_documents_canonical_av_sync_fallback() {
     assert!(
