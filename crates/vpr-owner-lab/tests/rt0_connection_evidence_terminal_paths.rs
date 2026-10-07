@@ -1,18 +1,49 @@
 const APP: &str = include_str!("../ui/src/app.ts");
 
+fn function_slice(start_marker: &str, end_marker: &str) -> &'static str {
+    let start = APP
+        .find(start_marker)
+        .unwrap_or_else(|| panic!("missing function marker: {start_marker}"));
+    let remainder = &APP[start..];
+    let end = remainder
+        .find(end_marker)
+        .unwrap_or_else(|| panic!("missing next function marker: {end_marker}"));
+    &remainder[..end]
+}
+
+fn assert_flush_before_close(label: &str, body: &str) {
+    let flush = body
+        .find("await tryFlushConnectionMediaEvidence()")
+        .unwrap_or_else(|| panic!("{label}: missing connection-evidence flush"));
+    let close = body
+        .find("await api<{ ok: true }>(\"/api/session/close\", {})")
+        .unwrap_or_else(|| panic!("{label}: missing canonical backend close"));
+    assert!(
+        flush < close,
+        "{label}: connection evidence must be drained before the backend seals the session"
+    );
+}
+
 #[test]
 fn automatic_terminal_paths_flush_connection_evidence_before_close() {
-    assert!(
-        APP.contains("const connectionEvidenceError = await tryFlushConnectionMediaEvidence();"),
-        "automatic LiveKit disconnect must attempt connection-evidence flush before sealing the session"
+    let unexpected_disconnect = function_slice(
+        "const handleUnexpectedLiveKitDisconnect = async",
+        "const connectWebRtcTransport = async",
     );
+    assert_flush_before_close("unexpected LiveKit disconnect", unexpected_disconnect);
     assert!(
-        APP.contains("const connectionEvidenceError = await tryFlushConnectionMediaEvidence();"),
-        "connect failure cleanup must attempt connection-evidence flush before sealing the session"
+        unexpected_disconnect.contains("connection evidence incomplete:"),
+        "unexpected disconnect must surface incomplete connection evidence"
     );
+
+    let connect_failure = function_slice(
+        "const connectAvatar = async",
+        "const resetMicrophoneUpload =",
+    );
+    assert_flush_before_close("connect failure cleanup", connect_failure);
     assert!(
-        APP.contains("connection evidence incomplete:"),
-        "automatic terminal paths must surface incomplete connection evidence instead of silently omitting it"
+        connect_failure.contains("connection evidence incomplete:"),
+        "connect failure cleanup must surface incomplete connection evidence"
     );
 }
 
@@ -27,7 +58,7 @@ fn revoke_is_never_blocked_by_connection_evidence_failure() {
         "revocation must not be blocked by telemetry failure"
     );
     assert!(
-        APP.contains("await api<{ ok: true }>(`/api/session/${kind}`, {});"),
+        APP.contains("await api<{ ok: true }>(\`/api/session/\${kind}\`, {});"),
         "revoke must still reach the canonical session endpoint"
     );
 }
