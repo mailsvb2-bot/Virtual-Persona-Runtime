@@ -74,6 +74,13 @@ const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
   expect(snapshot.media_events.some((event) =>
     event.request_sequence === 1 && event.kind === "audio_started"
   )).toBeTruthy();
+  expect(snapshot.media_events.some((event) =>
+    event.request_sequence === 1 && event.kind === "provider_playback_done_received"
+  )).toBeTruthy();
+  expect(snapshot.media_events.some((event) =>
+    event.request_sequence === 1
+      && ["provider_event_parse_failed", "playback_recovery_triggered"].includes(event.kind)
+  )).toBeFalsy();
 };
 
 export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void => {
