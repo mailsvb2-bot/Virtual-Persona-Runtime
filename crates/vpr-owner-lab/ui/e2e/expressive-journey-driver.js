@@ -65,6 +65,7 @@
       throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
     }
     const initialSpeakCount = commands().filter((command) => command.topic === "did.speak").length;
+    const normalize = (value) => String(value).replace(/\s+/g, " ").trim();
 
     await waitFor(() => !voice.disabled, "voice-enabled");
     voice.click();
@@ -74,27 +75,40 @@
     );
     voice.click();
 
-    await waitFor(
-      () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,
-      "single-complete-did-speak-command",
-    );
-    const speakCommands = commands().filter((command) => command.topic === "did.speak");
-    const payload = JSON.parse(speakCommands[initialSpeakCount]?.text ?? "{}");
-    if (payload?.script?.input !== reply) {
-      throw new Error("EXPRESSIVE_COMPLETE_REPLY_MISMATCH");
-    }
-    if (payload?.script?.should_queue_speaks !== true) {
-      throw new Error("EXPRESSIVE_SPEAK_QUEUE_FLAG_MISSING");
+    const spokenParts = [];
+    while (normalize(spokenParts.join(" ")) !== normalize(reply)) {
+      if (spokenParts.length >= 8) {
+        throw new Error("EXPRESSIVE_STREAMING_SEGMENT_LIMIT_EXCEEDED");
+      }
+      const targetCount = initialSpeakCount + spokenParts.length + 1;
+      await waitFor(
+        () => commands().filter((command) => command.topic === "did.speak").length >= targetCount,
+        `streamed-did-speak-${spokenParts.length + 1}`,
+      );
+      const speakCommands = commands().filter((command) => command.topic === "did.speak");
+      const payload = JSON.parse(speakCommands[targetCount - 1]?.text ?? "{}");
+      const input = payload?.script?.input;
+      if (typeof input !== "string" || input.trim().length === 0) {
+        throw new Error("EXPRESSIVE_STREAMING_SEGMENT_MISSING");
+      }
+      if (payload?.script?.should_queue_speaks !== true) {
+        throw new Error("EXPRESSIVE_SPEAK_QUEUE_FLAG_MISSING");
+      }
+      spokenParts.push(input);
+
+      await waitFor(
+        () => voice.disabled,
+        "rt0-evidence-blocks-next-turn-during-playback",
+      );
+      // Each queued phrase must finish before the scheduler releases the next did.speak.
+      // The delayed audio_started route deliberately keeps the provider-done race covered.
+      await sleep(50);
+      playbackDone();
     }
 
-    await waitFor(
-      () => voice.disabled,
-      "rt0-evidence-blocks-next-turn-during-playback",
-    );
-    // Let the browser observe real remote audio first. The Playwright route deliberately
-    // delays the audio_started POST, so playback_done still races ahead of persistence.
-    await sleep(50);
-    playbackDone();
+    if (spokenParts.length < 2) {
+      throw new Error("EXPRESSIVE_REPLY_WAS_NOT_STREAMED_BEFORE_LLM_COMPLETION");
+    }
 
     await waitFor(
       () => statusText().includes(`Вы: ${transcript}`) && statusText().includes(`Ответ: ${reply}`),
@@ -114,7 +128,7 @@
       () => !voice.disabled,
       "rt0-evidence-unblocks-next-turn-after-final-playback",
     );
-    return initialSpeakCount + 1;
+    return initialSpeakCount + spokenParts.length;
   };
 
   const run = async () => {
