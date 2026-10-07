@@ -856,10 +856,13 @@ const handleProviderClientEvent = (raw) => {
             const voice = activeVoiceEvidence;
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
-            rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
             if (voice) {
                 voice.providerPlaybackDoneCount += 1;
                 await maybeFinalizeProviderPlayback(voice);
+                syncRt0PlaybackPending(voice);
+            }
+            else if (rt0EvidenceMode) {
+                rt0PlaybackPending = false;
             }
         }
         else if (normalized === null) {
@@ -896,17 +899,27 @@ const dispatchClientCommand = async (command) => {
     await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
 const voiceCommandScheduler = new PlaybackAwareCommandScheduler(dispatchClientCommand);
+const syncRt0PlaybackPending = (voice) => {
+    if (!rt0EvidenceMode)
+        return;
+    rt0PlaybackPending = voice !== null
+        && !voice.interrupted
+        && !voice.providerPlaybackDone
+        && voice.providerPlaybackExpectedCount > 0
+        && voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount;
+};
 const maybeFinalizeProviderPlayback = async (voice) => {
     if (voice.providerPlaybackDone
         || voice.interrupted
         || !voice.responseComplete
-        || voice.providerCommandsSent === 0
-        || voice.providerPlaybackDoneCount < voice.providerCommandsSent
+        || voice.providerPlaybackExpectedCount === 0
+        || voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount
         || voiceCommandScheduler.hasPendingPlayback) {
         return;
     }
     voice.providerPlaybackDone = true;
     voice.playbackSilenceStartedAt = null;
+    syncRt0PlaybackPending(voice);
     if (!voice.providerPlaybackDoneEvidencePosted) {
         voice.providerPlaybackDoneEvidencePosted = true;
         await postMediaEvidence("provider_playback_done_received", performance.now() - voice.startedAt, voice.requestSequence);
@@ -1518,7 +1531,7 @@ const finishMicrophoneTurn = async () => {
         providerDataReceived: false,
         providerIgnoredEventPosted: false,
         providerParseFailurePosted: false,
-        providerCommandsSent: 0,
+        providerPlaybackExpectedCount: 0,
         providerPlaybackDoneCount: 0,
         providerPlaybackDoneEvidencePosted: false,
         providerPlaybackDone: false,
@@ -1541,29 +1554,26 @@ const finishMicrophoneTurn = async () => {
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
+            const voiceForSegment = activeVoiceEvidence;
+            if (voiceForSegment?.requestSequence === requestSequence) {
+                voiceForSegment.providerPlaybackExpectedCount += 1;
+                syncRt0PlaybackPending(voiceForSegment);
+                updateControls();
+            }
             const command = segment.client_command;
             if (!command)
                 return;
             let commandSent = false;
             const dispatch = voiceCommandScheduler.dispatch(command);
-            if (rt0EvidenceMode) {
-                rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-                updateControls();
-            }
             const task = (async () => {
                 const sent = await dispatch;
                 if (!sent) {
-                    if (rt0EvidenceMode) {
-                        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-                        updateControls();
-                    }
+                    syncRt0PlaybackPending(activeVoiceEvidence);
+                    updateControls();
                     return;
                 }
                 commandSent = true;
                 const voice = activeVoiceEvidence;
-                if (voice?.requestSequence === requestSequence) {
-                    voice.providerCommandsSent += 1;
-                }
                 const clientDeliveryElapsed = voice?.requestSequence === requestSequence
                     && clientDeliverySentElapsed === null
                     ? performance.now() - voice.startedAt
