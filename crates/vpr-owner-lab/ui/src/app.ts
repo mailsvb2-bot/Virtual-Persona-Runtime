@@ -289,6 +289,8 @@ let videoEvidencePosted = false;
 let videoTrackReceivedEvidencePosted = false;
 let videoAttachedEvidencePosted = false;
 let reconnectStartedAt: number | null = null;
+let connectionEvidenceTail: Promise<void> = Promise.resolve();
+let connectionEvidenceFailure: Error | null = null;
 let remoteMediaStream: MediaStream | null = null;
 let remoteEvidenceAudioContext: AudioContext | null = null;
 let remoteAudioSource: MediaStreamAudioSourceNode | null = null;
@@ -539,7 +541,7 @@ const refreshSessionEvidence = async (): Promise<void> => {
   }
 };
 
-const postMediaEvidence = async (
+const recordMediaEvidence = async (
   kind: MediaEvidenceKind,
   elapsedMillis: number,
   requestSequence: number | null = null,
@@ -551,7 +553,35 @@ const postMediaEvidence = async (
     kind,
     elapsed_millis: Math.max(0, Math.round(elapsedMillis)),
   });
+};
+
+const postMediaEvidence = async (
+  kind: MediaEvidenceKind,
+  elapsedMillis: number,
+  requestSequence: number | null = null,
+): Promise<void> => {
+  await recordMediaEvidence(kind, elapsedMillis, requestSequence);
   await refreshSessionEvidence();
+};
+
+const queueConnectionMediaEvidence = (
+  kind: MediaEvidenceKind,
+  elapsedMillis: number,
+): void => {
+  connectionEvidenceTail = connectionEvidenceTail.then(async () => {
+    try {
+      await recordMediaEvidence(kind, elapsedMillis);
+    } catch (error) {
+      connectionEvidenceFailure ??= error instanceof Error
+        ? error
+        : new Error("CONNECTION_EVIDENCE_WRITE_FAILED");
+    }
+  });
+};
+
+const flushConnectionMediaEvidence = async (): Promise<void> => {
+  await connectionEvidenceTail;
+  if (connectionEvidenceFailure) throw connectionEvidenceFailure;
 };
 
 const selectPlayoutTimestamp = (
@@ -966,13 +996,11 @@ const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
   const now = performance.now();
-  const writes = [
-    postMediaEvidence("video_ready", now - connectEvidenceStartedAt),
-  ];
+  queueConnectionMediaEvidence("video_ready", now - connectEvidenceStartedAt);
   if (connectJourneyStartedAt > 0) {
-    writes.push(postMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt));
+    queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
   }
-  void Promise.all(writes)
+  void connectionEvidenceTail
     .then(() => syncStatus())
     .catch(() => undefined);
 };
@@ -1136,18 +1164,18 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     liveKitVideoTrack = track;
     if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
       videoTrackReceivedEvidencePosted = true;
-      void postMediaEvidence(
+      queueConnectionMediaEvidence(
         "remote_video_track_received",
         performance.now() - connectJourneyStartedAt,
-      ).catch(() => undefined);
+      );
     }
     track.attach(video);
     if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
       videoAttachedEvidencePosted = true;
-      void postMediaEvidence(
+      queueConnectionMediaEvidence(
         "remote_video_attached",
         performance.now() - connectJourneyStartedAt,
-      ).catch(() => undefined);
+      );
     }
     sessionState.setRealtimeReadiness({ video: true });
     stage?.classList.add("has-video");
@@ -1417,6 +1445,8 @@ const connectAvatar = async (): Promise<void> => {
   videoTrackReceivedEvidencePosted = false;
   videoAttachedEvidencePosted = false;
   reconnectStartedAt = null;
+  connectionEvidenceTail = Promise.resolve();
+  connectionEvidenceFailure = null;
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
@@ -1431,7 +1461,7 @@ const connectAvatar = async (): Promise<void> => {
     // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
     connectEvidenceStartedAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
-    await postMediaEvidence(
+    queueConnectionMediaEvidence(
       "backend_start_ready",
       connectEvidenceStartedAt - connectJourneyStartedAt,
     );
@@ -1447,7 +1477,7 @@ const connectAvatar = async (): Promise<void> => {
       throw new Error("SESSION_START_STATE_MISMATCH");
     }
 
-    await postMediaEvidence(
+    queueConnectionMediaEvidence(
       "transport_connect_started",
       performance.now() - connectJourneyStartedAt,
     );
@@ -1456,7 +1486,7 @@ const connectAvatar = async (): Promise<void> => {
     } else {
       await connectLiveKitTransport(start.transport);
     }
-    await postMediaEvidence(
+    queueConnectionMediaEvidence(
       "transport_connected",
       performance.now() - connectJourneyStartedAt,
     );
@@ -2014,6 +2044,19 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
+  if (rt0EvidenceMode) {
+    try {
+      await flushConnectionMediaEvidence();
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? `Connection evidence flush: ${error.message}`
+          : "Connection evidence flush failed",
+        "error",
+      );
+      return;
+    }
+  }
   if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
