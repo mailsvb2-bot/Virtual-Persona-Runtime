@@ -728,6 +728,15 @@ const mediaElementAvSyncFallback = (
   audioIssue: AvSyncTrackIssue | null;
   videoIssue: AvSyncTrackIssue | null;
 } => {
+  if (rt0EvidenceMode) {
+    return {
+      offsetMillis: null,
+      reference: null,
+      diagnostic: `${diagnostic}; strict-rt0=rtp-playout-timestamp-only`,
+      audioIssue,
+      videoIssue,
+    };
+  }
   const audioTime = avatarAudio.currentTime;
   const videoTime = video.currentTime;
   if (
