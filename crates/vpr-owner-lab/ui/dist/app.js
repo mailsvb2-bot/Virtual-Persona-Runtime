@@ -365,6 +365,15 @@ const flushConnectionMediaEvidence = async () => {
     if (connectionEvidenceFailure)
         throw connectionEvidenceFailure;
 };
+const tryFlushConnectionMediaEvidence = async () => {
+    try {
+        await flushConnectionMediaEvidence();
+        return null;
+    }
+    catch (error) {
+        return error instanceof Error ? error : new Error("CONNECTION_EVIDENCE_FLUSH_FAILED");
+    }
+};
 const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     const packetCounts = new Map();
     if (!stats) {
@@ -966,18 +975,24 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
+    const connectionEvidenceError = rt0EvidenceMode
+        ? await tryFlushConnectionMediaEvidence()
+        : null;
+    const evidenceWarning = connectionEvidenceError
+        ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+        : "";
     try {
         await api("/api/session/close", {});
         await syncStatus();
         await refreshSessionEvidence();
         try {
             await downloadSessionEvidence();
-            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`, "error");
+            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
         }
         catch (exportError) {
             setStatus(exportError instanceof Error
-                ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
-                : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`, "error");
+                ? `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export: ${exportError.message}`
+                : `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export failed`, "error");
         }
     }
     catch (error) {
@@ -1167,6 +1182,12 @@ const connectAvatar = async () => {
     }
     catch (error) {
         const messageText = error instanceof Error ? error.message : "Ошибка подключения";
+        const connectionEvidenceError = rt0EvidenceMode
+            ? await tryFlushConnectionMediaEvidence()
+            : null;
+        const evidenceWarning = connectionEvidenceError
+            ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+            : "";
         closePeerTransport();
         if (backendSessionStarted || backendSessionPresent()) {
             try {
@@ -1177,12 +1198,12 @@ const connectAvatar = async () => {
             catch (cleanupError) {
                 await syncStatus().catch(() => undefined);
                 const cleanupText = cleanupError instanceof Error ? cleanupError.message : "cleanup failed";
-                setStatus(`${messageText}; cleanup: ${cleanupText}`, "error");
+                setStatus(`${messageText}${evidenceWarning}; cleanup: ${cleanupText}`, "error");
                 updateControls();
                 return;
             }
         }
-        setStatus(messageText, "error");
+        setStatus(`${messageText}${evidenceWarning}`, "error");
         updateControls();
     }
 };
@@ -1690,16 +1711,12 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
 };
 const endSession = async (kind) => {
-    if (rt0EvidenceMode) {
-        try {
-            await flushConnectionMediaEvidence();
-        }
-        catch (error) {
-            setStatus(error instanceof Error
-                ? `Connection evidence flush: ${error.message}`
-                : "Connection evidence flush failed", "error");
-            return;
-        }
+    const connectionEvidenceError = rt0EvidenceMode
+        ? await tryFlushConnectionMediaEvidence()
+        : null;
+    if (connectionEvidenceError && kind === "close") {
+        setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
+        return;
     }
     if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
@@ -1711,7 +1728,9 @@ const endSession = async (kind) => {
         await syncStatus();
         await refreshSessionEvidence();
         if (kind === "revoke") {
-            setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
+            setStatus(connectionEvidenceError
+                ? `Доступ отозван. Connection evidence incomplete: ${connectionEvidenceError.message}`
+                : "Доступ отозван. Сессию можно закрыть.", connectionEvidenceError ? "error" : "idle");
         }
         else {
             try {
