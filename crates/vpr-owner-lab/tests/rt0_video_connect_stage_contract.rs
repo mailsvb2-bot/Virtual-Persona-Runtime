@@ -17,7 +17,9 @@ fn owner_lab_records_detailed_video_connection_stages() {
     }
 
     assert!(
-        APP.contains("queueConnectionMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)"),
+        APP.contains(
+            "queueConnectionMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)"
+        ),
         "canonical prepared-media video timer must remain separate"
     );
     assert!(
