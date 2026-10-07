@@ -10,6 +10,7 @@ fn strict_rt0_recovers_from_missing_provider_playback_done_without_promoting_evi
         "!voice.interrupted",
         "voice.playbackSilenceStartedAt !== null",
         "voice.playbackRecoveryTriggered = true",
+        "\"playback_recovery_triggered\"",
         "interruptAvatar(false)",
         "playback_completed не засчитан",
     ] {
@@ -39,6 +40,14 @@ fn provider_playback_done_remains_the_only_success_path_for_completion_evidence(
     assert!(
         APP.contains("normalized?.kind === \"playback_done\""),
         "provider completion event handler must remain present"
+    );
+    assert!(
+        APP.contains("\"provider_data_received\""),
+        "LiveKit data receipt must be observable without storing provider payloads"
+    );
+    assert!(
+        APP.contains("\"provider_playback_done_received\""),
+        "normalized provider completion must be separately observable"
     );
     assert!(
         APP.contains("voice.providerPlaybackDone = true"),
