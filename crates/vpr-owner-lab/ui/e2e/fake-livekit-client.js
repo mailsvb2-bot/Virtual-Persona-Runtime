@@ -132,7 +132,7 @@
             kind: this.kind,
             codecId: `${this.kind}-codec`,
             packetsReceived: 7,
-            ...(window.__vprForceMediaElementAvSync === true
+            ...(window.__vprForceMediaElementAvSync === true || this.statsPoll < 3
               ? {}
               : { estimatedPlayoutTimestamp: timestamp + 4000 }),
           },
@@ -144,7 +144,7 @@
             kind: this.kind,
             codecId: `${this.kind}-codec`,
             packetsReceived: 20 + this.statsPoll * 5,
-            ...(window.__vprForceMediaElementAvSync === true
+            ...(window.__vprForceMediaElementAvSync === true || this.statsPoll < 3
               ? {}
               : { estimatedPlayoutTimestamp: timestamp }),
           },
