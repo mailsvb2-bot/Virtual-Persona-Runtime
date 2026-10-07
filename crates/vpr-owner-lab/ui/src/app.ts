@@ -580,7 +580,11 @@ const queueConnectionMediaEvidence = (
 };
 
 const flushConnectionMediaEvidence = async (): Promise<void> => {
-  await connectionEvidenceTail;
+  while (true) {
+    const observedTail = connectionEvidenceTail;
+    await observedTail;
+    if (observedTail === connectionEvidenceTail) break;
+  }
   if (connectionEvidenceFailure) throw connectionEvidenceFailure;
 };
 
@@ -1281,9 +1285,7 @@ const handleUnexpectedLiveKitDisconnect = async (
   clearRealtimeMedia();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
-  const connectionEvidenceError = rt0EvidenceMode
-    ? await tryFlushConnectionMediaEvidence()
-    : null;
+  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
   const evidenceWarning = connectionEvidenceError
     ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
     : "";
@@ -1519,9 +1521,7 @@ const connectAvatar = async (): Promise<void> => {
     showEvidence({ transport: start.transport.kind, capabilities: [...capabilities] });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Ошибка подключения";
-    const connectionEvidenceError = rt0EvidenceMode
-      ? await tryFlushConnectionMediaEvidence()
-      : null;
+    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
     const evidenceWarning = connectionEvidenceError
       ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
       : "";
@@ -2065,10 +2065,8 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
-  const connectionEvidenceError = rt0EvidenceMode
-    ? await tryFlushConnectionMediaEvidence()
-    : null;
-  if (connectionEvidenceError && kind === "close") {
+  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
     setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
     return;
   }
