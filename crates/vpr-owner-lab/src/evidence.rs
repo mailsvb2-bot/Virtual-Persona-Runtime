@@ -454,6 +454,7 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Records browser media latency without promoting it to canonical playback proof.
+    /// # Errors
     /// Fails for stale, malformed, unknown-request, duplicate, or over-capacity evidence.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
         if input.kind == LabMediaEvidenceKind::PlaybackCompleted {
