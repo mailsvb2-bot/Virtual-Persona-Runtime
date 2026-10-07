@@ -102,7 +102,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerCommandsSent: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -1132,33 +1132,13 @@ const handleProviderClientEvent = (raw: string): void => {
         sessionState.setPlaybackId(normalized.playback_id);
       } else if (normalized?.kind === "playback_done") {
         const voice = activeVoiceEvidence;
-        if (voice) {
-          if (!voice.providerPlaybackDone) {
-            void postMediaEvidence(
-              "provider_playback_done_received",
-              performance.now() - voice.startedAt,
-              voice.requestSequence,
-            ).catch(() => undefined);
-          }
-          voice.providerPlaybackDone = true;
-          voice.playbackSilenceStartedAt = null;
-          const completion = ensurePlaybackCompletionEvidence(voice);
-          if (completion) {
-            try {
-              await completion;
-            } catch (error) {
-              setStatus(
-                error instanceof Error
-                  ? `Playback completion evidence: ${error.message}`
-                  : "Playback completion evidence failed",
-                "error",
-              );
-            }
-          }
-        }
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
         rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
+        if (voice) {
+          voice.providerPlaybackDoneCount += 1;
+          await maybeFinalizeProviderPlayback(voice);
+        }
       }
       updateControls();
     })
@@ -1186,6 +1166,32 @@ const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
 const voiceCommandScheduler = new PlaybackAwareCommandScheduler<ClientCommand>(
   dispatchClientCommand,
 );
+
+const maybeFinalizeProviderPlayback = async (voice: ActiveVoiceEvidence): Promise<void> => {
+  if (
+    voice.providerPlaybackDone
+    || voice.interrupted
+    || !voice.responseComplete
+    || voice.providerCommandsSent === 0
+    || voice.providerPlaybackDoneCount < voice.providerCommandsSent
+    || voiceCommandScheduler.hasPendingPlayback
+  ) {
+    return;
+  }
+
+  voice.providerPlaybackDone = true;
+  voice.playbackSilenceStartedAt = null;
+  if (!voice.providerPlaybackDoneEvidencePosted) {
+    voice.providerPlaybackDoneEvidencePosted = true;
+    await postMediaEvidence(
+      "provider_playback_done_received",
+      performance.now() - voice.startedAt,
+      voice.requestSequence,
+    );
+  }
+  const completion = ensurePlaybackCompletionEvidence(voice);
+  if (completion) await completion;
+};
 
 const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
@@ -1842,6 +1848,9 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     avSyncEvidence: null,
     playbackCompletionEvidence: null,
     providerDataReceived: false,
+    providerCommandsSent: 0,
+    providerPlaybackDoneCount: 0,
+    providerPlaybackDoneEvidencePosted: false,
     providerPlaybackDone: false,
     responseComplete: false,
     interrupted: false,
@@ -1885,6 +1894,9 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         }
         commandSent = true;
         const voice = activeVoiceEvidence;
+        if (voice?.requestSequence === requestSequence) {
+          voice.providerCommandsSent += 1;
+        }
         const clientDeliveryElapsed =
           voice?.requestSequence === requestSequence
             && clientDeliverySentElapsed === null
@@ -1953,6 +1965,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
+      await maybeFinalizeProviderPlayback(voice);
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
       }
