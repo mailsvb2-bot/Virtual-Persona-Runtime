@@ -366,6 +366,18 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
 }
 
 #[test]
+fn release_av_sync_rejects_html_media_clock_even_when_samples_are_consistent() {
+    let mut html = snapshot(43, 1, 100);
+    for sample in &mut html.av_sync_samples {
+        sample.reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
+    }
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[html]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
 fn av_sync_rejects_mixed_reference_for_one_request() {
     let mut mixed = snapshot(44, 1, 100);
     mixed.av_sync_samples[2].reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
