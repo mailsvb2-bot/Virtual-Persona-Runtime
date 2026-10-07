@@ -242,10 +242,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak).toHaveLength(1);
-  const speakPayload = JSON.parse(speak[0]?.text ?? "{}");
-  expect(speakPayload.script?.should_queue_speaks).toBe(true);
-  expect(speakPayload.script?.input).toBe(
+  expect(speak.length).toBeGreaterThanOrEqual(2);
+  const streamedReply = speak.map((command) => {
+    const payload = JSON.parse(command.text ?? "{}");
+    expect(payload.script?.should_queue_speaks).toBe(true);
+    return String(payload.script?.input ?? "");
+  }).join(" ").replace(/\s+/g, " ").trim();
+  expect(streamedReply).toBe(
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
   expect(commands.some((command) => command.topic === "did.interrupt")).toBeTruthy();
