@@ -453,11 +453,8 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser-observed media-plane latency event without promoting it to full
-    /// canonical playback proof. `PlaybackCompleted` reaches the dedicated canonical path only.
-    ///
-    /// # Errors
-    /// Fails for stale sessions, impossible event/request combinations, unknown requests, or duplicates.
+    /// Records browser media latency without promoting it to canonical playback proof.
+    /// Fails for stale, malformed, unknown-request, duplicate, or over-capacity evidence.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
         if input.kind == LabMediaEvidenceKind::PlaybackCompleted {
             return Err(LabEvidenceError::InvalidState);
