@@ -587,9 +587,7 @@ impl LabSessionEvidenceRecorder {
 }
 
 fn elapsed_millis(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis())
-        .unwrap_or(u64::MAX)
-        .max(1)
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX).max(1)
 }
 
 #[cfg(test)]
