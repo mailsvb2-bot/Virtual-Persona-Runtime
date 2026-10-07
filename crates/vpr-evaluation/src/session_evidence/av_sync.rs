@@ -42,6 +42,9 @@ pub(super) fn validate_and_collect_av_sync(
             .or_default()
             .insert(sample.sample_sequence);
         if playback_requests.contains(&sample.request_sequence) {
+            if sample.reference != LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp {
+                return Err(LabSessionAggregateError::InvalidMediaEvidence);
+            }
             offsets.push(sample.absolute_offset_millis);
         }
     }
