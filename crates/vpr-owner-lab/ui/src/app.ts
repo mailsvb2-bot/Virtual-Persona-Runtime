@@ -65,6 +65,8 @@ type MediaEvidenceKind =
   | "client_delivery_sent"
   | "audio_started"
   | "provider_data_received"
+  | "provider_event_ignored"
+  | "provider_event_parse_failed"
   | "provider_playback_done_received"
   | "playback_recovery_triggered"
   | "playback_completed"
@@ -103,7 +105,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerCommandsSent: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerParseFailurePosted: boolean; providerCommandsSent: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -1149,10 +1151,30 @@ const handleProviderClientEvent = (raw: string): void => {
           voice.providerPlaybackDoneCount += 1;
           await maybeFinalizeProviderPlayback(voice);
         }
+      } else if (normalized === null) {
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerIgnoredEventPosted) {
+          voice.providerIgnoredEventPosted = true;
+          await postMediaEvidence(
+            "provider_event_ignored",
+            performance.now() - voice.startedAt,
+            voice.requestSequence,
+          );
+        }
       }
       updateControls();
     })
-    .catch(() => undefined);
+    .catch(async () => {
+      const voice = activeVoiceEvidence;
+      if (voice && !voice.providerParseFailurePosted) {
+        voice.providerParseFailurePosted = true;
+        await postMediaEvidence(
+          "provider_event_parse_failed",
+          performance.now() - voice.startedAt,
+          voice.requestSequence,
+        ).catch(() => undefined);
+      }
+    });
 };
 
 const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
@@ -1867,6 +1889,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     avSyncEvidence: null,
     playbackCompletionEvidence: null,
     providerDataReceived: false,
+    providerIgnoredEventPosted: false,
+    providerParseFailurePosted: false,
     providerCommandsSent: 0,
     providerPlaybackDoneCount: 0,
     providerPlaybackDoneEvidencePosted: false,
