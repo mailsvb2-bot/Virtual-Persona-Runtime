@@ -559,7 +559,7 @@ fn validate_and_collect_media(
                 accumulator.end_to_end_video.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::ReconnectRestored => {
-                accumulator.reconnect.push(event.elapsed_millis)
+                accumulator.reconnect.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::PlaybackCompleted
             | LabMediaEvidenceKind::BackendCompleteReceived
