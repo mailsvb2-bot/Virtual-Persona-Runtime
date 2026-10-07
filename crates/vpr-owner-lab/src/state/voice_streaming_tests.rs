@@ -425,6 +425,7 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
 #[test]
 fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
     let (mut engine, stats, release_tail) = client_text_streaming_voice_engine();
+    let playback = engine.voice_playback_registry();
     let (segment_tx, segment_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
@@ -443,6 +444,12 @@ fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
     assert!(first.evidence_output_sequence > 0);
     let first_command = first.client_command.expect("first LiveKit command");
     assert_eq!(first_command.payload, "Первая фраза.");
+    playback
+        .acknowledge_voice_delivery_sent(
+            first.evidence_turn_sequence,
+            first.evidence_output_sequence,
+        )
+        .unwrap();
     assert!(matches!(
         result_rx.try_recv(),
         Err(mpsc::TryRecvError::Empty)
@@ -454,6 +461,18 @@ fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
     assert!(second.evidence_output_sequence > first.evidence_output_sequence);
     let second_command = second.client_command.expect("second LiveKit command");
     assert_eq!(second_command.payload, "Вторая фраза.");
+    playback
+        .acknowledge_voice_delivery_sent(
+            second.evidence_turn_sequence,
+            second.evidence_output_sequence,
+        )
+        .unwrap();
+    playback
+        .acknowledge_voice_playback_complete(
+            first.evidence_turn_sequence,
+            first.evidence_output_sequence,
+        )
+        .unwrap();
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 2);
 
     let result = result_rx
