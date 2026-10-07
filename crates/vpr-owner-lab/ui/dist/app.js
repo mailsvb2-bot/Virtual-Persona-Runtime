@@ -1717,12 +1717,28 @@ const interruptAvatar = async (recordEvidence = true) => {
         && sessionState.realtime.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
+    const fastProviderStop = clientReady && preparedInterrupt
+        ? dispatchClientCommand(preparedInterrupt)
+        : null;
     try {
-        if (voiceRequestInFlight) {
-            await api("/api/avatar/interrupt", {});
+        const canonicalStop = voiceRequestInFlight
+            ? api("/api/avatar/interrupt", {})
+            : null;
+        if (fastProviderStop) {
+            await fastProviderStop;
+            if (canonicalStop)
+                await canonicalStop;
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
         }
+        if (canonicalStop)
+            await canonicalStop;
         if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,
