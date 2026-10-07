@@ -1335,17 +1335,17 @@ const connectWebRtcTransport = async (
     if (event.track.kind === "video") {
       if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
         videoTrackReceivedEvidencePosted = true;
-        void postMediaEvidence(
+        queueConnectionMediaEvidence(
           "remote_video_track_received",
           performance.now() - connectJourneyStartedAt,
-        ).catch(() => undefined);
+        );
       }
       if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
         videoAttachedEvidencePosted = true;
-        void postMediaEvidence(
+        queueConnectionMediaEvidence(
           "remote_video_attached",
           performance.now() - connectJourneyStartedAt,
-        ).catch(() => undefined);
+        );
       }
       sessionState.setRealtimeReadiness({ video: true });
       stage?.classList.add("has-video");
