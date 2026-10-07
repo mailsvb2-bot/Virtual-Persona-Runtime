@@ -5,9 +5,7 @@ use super::{
     LabVoiceAttemptStatus, SessionAggregateAccumulator,
 };
 
-const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
-
-fn validate_and_collect_media(
+pub(super) fn validate_and_collect_media(
     snapshot: &LabSessionEvidenceSnapshot,
     request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
     accumulator: &mut SessionAggregateAccumulator,
