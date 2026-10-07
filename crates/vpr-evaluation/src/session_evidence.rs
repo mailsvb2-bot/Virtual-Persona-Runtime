@@ -259,17 +259,7 @@ impl SessionAggregateAccumulator {
             }
             self.consume_attempt(attempt)?;
         }
-        validate_and_collect_media(
-            snapshot,
-            &request_status,
-            &mut self.audio,
-            &mut self.interruption,
-            &mut self.video,
-            &mut self.backend_start,
-            &mut self.transport_connected,
-            &mut self.end_to_end_video,
-            &mut self.reconnect,
-        )?;
+        validate_and_collect_media(snapshot, &request_status, self)?;
         let completed_requests: HashSet<u64> = snapshot
             .voice_attempts
             .iter()
@@ -515,13 +505,7 @@ impl SessionAggregateAccumulator {
 fn validate_and_collect_media(
     snapshot: &LabSessionEvidenceSnapshot,
     request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
-    audio: &mut Vec<u64>,
-    interruption: &mut Vec<u64>,
-    video: &mut Vec<u64>,
-    backend_start: &mut Vec<u64>,
-    transport_connected: &mut Vec<u64>,
-    end_to_end_video: &mut Vec<u64>,
-    reconnect: &mut Vec<u64>,
+    accumulator: &mut SessionAggregateAccumulator,
 ) -> Result<(), LabSessionAggregateError> {
     let mut unique = HashSet::new();
     let audio_requests: HashSet<u64> = snapshot
@@ -560,13 +544,21 @@ fn validate_and_collect_media(
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
         }
         match event.kind {
-            LabMediaEvidenceKind::AudioStarted => audio.push(event.elapsed_millis),
-            LabMediaEvidenceKind::InterruptionStopped => interruption.push(event.elapsed_millis),
-            LabMediaEvidenceKind::VideoReady => video.push(event.elapsed_millis),
-            LabMediaEvidenceKind::BackendStartReady => backend_start.push(event.elapsed_millis),
-            LabMediaEvidenceKind::TransportConnected => transport_connected.push(event.elapsed_millis),
-            LabMediaEvidenceKind::EndToEndVideoReady => end_to_end_video.push(event.elapsed_millis),
-            LabMediaEvidenceKind::ReconnectRestored => reconnect.push(event.elapsed_millis),
+            LabMediaEvidenceKind::AudioStarted => accumulator.audio.push(event.elapsed_millis),
+            LabMediaEvidenceKind::InterruptionStopped => {
+                accumulator.interruption.push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::VideoReady => accumulator.video.push(event.elapsed_millis),
+            LabMediaEvidenceKind::BackendStartReady => {
+                accumulator.backend_start.push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::TransportConnected => {
+                accumulator.transport_connected.push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::EndToEndVideoReady => {
+                accumulator.end_to_end_video.push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::ReconnectRestored => accumulator.reconnect.push(event.elapsed_millis),
             LabMediaEvidenceKind::PlaybackCompleted
             | LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
