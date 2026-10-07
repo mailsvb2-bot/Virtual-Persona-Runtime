@@ -361,7 +361,12 @@ const queueConnectionMediaEvidence = (kind, elapsedMillis) => {
     });
 };
 const flushConnectionMediaEvidence = async () => {
-    await connectionEvidenceTail;
+    while (true) {
+        const observedTail = connectionEvidenceTail;
+        await observedTail;
+        if (observedTail === connectionEvidenceTail)
+            break;
+    }
     if (connectionEvidenceFailure)
         throw connectionEvidenceFailure;
 };
@@ -975,9 +980,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
-    const connectionEvidenceError = rt0EvidenceMode
-        ? await tryFlushConnectionMediaEvidence()
-        : null;
+    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
     const evidenceWarning = connectionEvidenceError
         ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
         : "";
@@ -1711,9 +1714,7 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
 };
 const endSession = async (kind) => {
-    const connectionEvidenceError = rt0EvidenceMode
-        ? await tryFlushConnectionMediaEvidence()
-        : null;
+    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
     if (connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
         return;
