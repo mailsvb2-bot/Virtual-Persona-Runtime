@@ -67,7 +67,6 @@ fn provider_playback_done_remains_the_only_success_path_for_completion_evidence(
     );
 }
 
-
 #[test]
 fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
     for marker in [
@@ -82,7 +81,6 @@ fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
         );
     }
 }
-
 
 #[test]
 fn prepared_livekit_interrupt_bypasses_http_roundtrip_on_the_media_stop_path() {
