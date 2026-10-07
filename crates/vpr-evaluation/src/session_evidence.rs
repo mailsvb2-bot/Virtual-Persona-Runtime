@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 mod av_sync;
 use av_sync::validate_and_collect_av_sync;
+mod media;
+use media::validate_and_collect_media;
 mod av_sync_diagnostic;
 use av_sync_diagnostic::validate_av_sync_diagnostics;
 pub use av_sync_diagnostic::{LabAvSyncDiagnostic, LabAvSyncDiagnosticInput, LabAvSyncTrackIssue};
@@ -22,7 +24,6 @@ pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-e
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-1.1";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
-const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -515,90 +516,4 @@ impl SessionAggregateAccumulator {
             provider_charge_microunits: self.provider_charge,
         })
     }
-}
-
-fn validate_and_collect_media(
-    snapshot: &LabSessionEvidenceSnapshot,
-    request_status: &BTreeMap<u64, LabVoiceAttemptStatus>,
-    accumulator: &mut SessionAggregateAccumulator,
-) -> Result<(), LabSessionAggregateError> {
-    let mut unique = HashSet::new();
-    let audio_requests: HashSet<u64> = snapshot
-        .media_events
-        .iter()
-        .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted)
-        .filter_map(|event| event.request_sequence)
-        .collect();
-    for event in &snapshot.media_events {
-        if event.elapsed_millis > MAX_MEDIA_ELAPSED_MILLIS {
-            return Err(LabSessionAggregateError::InvalidMediaEvidence);
-        }
-        let requires_request = matches!(
-            event.kind,
-            LabMediaEvidenceKind::BackendCompleteReceived
-                | LabMediaEvidenceKind::ClientDeliverySent
-                | LabMediaEvidenceKind::AudioStarted
-                | LabMediaEvidenceKind::ProviderDataReceived
-                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
-                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
-                | LabMediaEvidenceKind::PlaybackCompleted
-                | LabMediaEvidenceKind::InterruptionStopped
-        );
-        if requires_request != event.request_sequence.is_some() {
-            return Err(LabSessionAggregateError::InvalidMediaEvidence);
-        }
-        if let Some(request) = event.request_sequence {
-            if request_status.get(&request) != Some(&LabVoiceAttemptStatus::Completed) {
-                return Err(LabSessionAggregateError::InvalidMediaEvidence);
-            }
-            if event.kind == LabMediaEvidenceKind::InterruptionStopped
-                && !audio_requests.contains(&request)
-            {
-                return Err(LabSessionAggregateError::InvalidMediaEvidence);
-            }
-        }
-        let key = (event.request_sequence, event.kind);
-        if event.kind != LabMediaEvidenceKind::ReconnectRestored && !unique.insert(key) {
-            return Err(LabSessionAggregateError::InvalidMediaEvidence);
-        }
-        match event.kind {
-            LabMediaEvidenceKind::AudioStarted => accumulator.audio.push(event.elapsed_millis),
-            LabMediaEvidenceKind::InterruptionStopped => {
-                accumulator.interruption.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::VideoReady => accumulator.video.push(event.elapsed_millis),
-            LabMediaEvidenceKind::BackendStartReady => {
-                accumulator.backend_start.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::TransportConnectStarted => {
-                accumulator
-                    .transport_connect_started
-                    .push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::TransportConnected => {
-                accumulator.transport_connected.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::RemoteVideoTrackReceived => {
-                accumulator
-                    .remote_video_track_received
-                    .push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::RemoteVideoAttached => {
-                accumulator.remote_video_attached.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::EndToEndVideoReady => {
-                accumulator.end_to_end_video.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::ReconnectRestored => {
-                accumulator.reconnect.push(event.elapsed_millis);
-            }
-            LabMediaEvidenceKind::PlaybackCompleted
-            | LabMediaEvidenceKind::ProviderDataReceived
-            | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
-            | LabMediaEvidenceKind::PlaybackRecoveryTriggered
-            | LabMediaEvidenceKind::BackendCompleteReceived
-            | LabMediaEvidenceKind::ClientDeliverySent => {}
-        }
-    }
-    Ok(())
 }
