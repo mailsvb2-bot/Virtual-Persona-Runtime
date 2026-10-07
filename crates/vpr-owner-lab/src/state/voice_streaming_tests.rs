@@ -135,6 +135,23 @@ impl RealtimeAvatarPort for StreamingAvatar {
         })
     }
 
+    fn prepare_client_interrupt(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _playback_id: Option<&str>,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
+        if !self.client_text || cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        Ok(RealtimeAvatarClientCommand {
+            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
+                topic: "test.interrupt".into(),
+            },
+            payload: "{}".into(),
+        })
+    }
+
     fn close_session(&self, _session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         Ok(())
     }
