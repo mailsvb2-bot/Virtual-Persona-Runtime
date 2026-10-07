@@ -63,6 +63,9 @@ type MediaEvidenceKind =
   | "backend_complete_received"
   | "client_delivery_sent"
   | "audio_started"
+  | "provider_data_received"
+  | "provider_playback_done_received"
+  | "playback_recovery_triggered"
   | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
@@ -99,7 +102,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -958,6 +961,11 @@ const monitorRemoteAudio = (): void => {
         >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS
     ) {
       voice.playbackRecoveryTriggered = true;
+      void postMediaEvidence(
+        "playback_recovery_triggered",
+        performance.now() - voice.startedAt,
+        voice.requestSequence,
+      ).catch(() => undefined);
       void interruptAvatar(false).then((recovered) => {
         if (recovered) {
           setStatus(
@@ -1125,6 +1133,13 @@ const handleProviderClientEvent = (raw: string): void => {
       } else if (normalized?.kind === "playback_done") {
         const voice = activeVoiceEvidence;
         if (voice) {
+          if (!voice.providerPlaybackDone) {
+            void postMediaEvidence(
+              "provider_playback_done_received",
+              performance.now() - voice.startedAt,
+              voice.requestSequence,
+            ).catch(() => undefined);
+          }
           voice.providerPlaybackDone = true;
           voice.playbackSilenceStartedAt = null;
           const completion = ensurePlaybackCompletionEvidence(voice);
@@ -1428,6 +1443,15 @@ const connectLiveKitTransport = async (
   room.on(sdk.RoomEvent.DataReceived, (...args: unknown[]) => {
     const payload = args[0];
     if (!(payload instanceof Uint8Array)) return;
+    const voice = activeVoiceEvidence;
+    if (voice && !voice.providerDataReceived) {
+      voice.providerDataReceived = true;
+      void postMediaEvidence(
+        "provider_data_received",
+        performance.now() - voice.startedAt,
+        voice.requestSequence,
+      ).catch(() => undefined);
+    }
     handleProviderClientEvent(new TextDecoder().decode(payload));
   });
   room.on(sdk.RoomEvent.Reconnecting, () => {
@@ -1817,6 +1841,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     audioStartedEvidence: null,
     avSyncEvidence: null,
     playbackCompletionEvidence: null,
+    providerDataReceived: false,
     providerPlaybackDone: false,
     responseComplete: false,
     interrupted: false,
