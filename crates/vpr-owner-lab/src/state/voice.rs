@@ -396,7 +396,7 @@ impl OwnerLabEngine {
             client_command: None,
         })
     }
-
+}
 
 impl OwnerLabEngine {
     /// Reconciles a browser-confirmed client-transport send with one exact canonical segment.
