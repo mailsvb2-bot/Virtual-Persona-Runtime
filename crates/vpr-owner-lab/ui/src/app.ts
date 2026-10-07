@@ -1503,14 +1503,13 @@ const connectAvatar = async (): Promise<void> => {
     const audience = audienceSelect.value as SessionAudience;
     const start = await api<StartResponse>("/api/avatar/start", { consent: true, audience });
     backendSessionStarted = true;
-    // QualityContract measures first useful video for an already prepared avatar after the
-    // provider media path is available. Exclude provider session creation/preparation itself:
-    // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
-    connectEvidenceStartedAt = performance.now();
+    // Preserve backend/session preparation as its own end-to-end stage. The QualityContract
+    // first-useful-video clock starts only after the realtime transport itself is connected.
+    const backendReadyAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
     queueConnectionMediaEvidence(
       "backend_start_ready",
-      connectEvidenceStartedAt - connectJourneyStartedAt,
+      backendReadyAt - connectJourneyStartedAt,
     );
     capabilities = new Set(start.capabilities);
     activeClientControl = start.client_control;
@@ -1533,10 +1532,20 @@ const connectAvatar = async (): Promise<void> => {
     } else {
       await connectLiveKitTransport(start.transport);
     }
+    connectEvidenceStartedAt = performance.now();
     queueConnectionMediaEvidence(
       "transport_connected",
-      performance.now() - connectJourneyStartedAt,
+      connectEvidenceStartedAt - connectJourneyStartedAt,
     );
+    // A first frame can race ahead of the connect() promise. Re-observe after the transport
+    // readiness boundary so video_ready measures prepared-avatar render time, not connection setup.
+    if (!videoEvidencePosted) {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        recordFirstVideoFrame();
+      } else if (!requestVideoFrame(video, recordFirstVideoFrame)) {
+        video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+      }
+    }
 
     ensureMicrophoneDeviceMonitoring();
     await refreshMicrophoneDevices(storedMicrophoneDeviceId());
