@@ -479,6 +479,9 @@ impl LabSessionEvidenceRecorder {
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::ProviderDataReceived
+                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
+                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
                 | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );
