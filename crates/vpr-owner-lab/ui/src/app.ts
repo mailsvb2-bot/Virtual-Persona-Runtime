@@ -584,6 +584,15 @@ const flushConnectionMediaEvidence = async (): Promise<void> => {
   if (connectionEvidenceFailure) throw connectionEvidenceFailure;
 };
 
+const tryFlushConnectionMediaEvidence = async (): Promise<Error | null> => {
+  try {
+    await flushConnectionMediaEvidence();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error : new Error("CONNECTION_EVIDENCE_FLUSH_FAILED");
+  }
+};
+
 const selectPlayoutTimestamp = (
   stats: RTCStatsReport | undefined,
   expectedKind: "audio" | "video",
@@ -1272,6 +1281,12 @@ const handleUnexpectedLiveKitDisconnect = async (
   clearRealtimeMedia();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
+  const connectionEvidenceError = rt0EvidenceMode
+    ? await tryFlushConnectionMediaEvidence()
+    : null;
+  const evidenceWarning = connectionEvidenceError
+    ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+    : "";
   try {
     await api<{ ok: true }>("/api/session/close", {});
     await syncStatus();
@@ -1279,14 +1294,14 @@ const handleUnexpectedLiveKitDisconnect = async (
     try {
       await downloadSessionEvidence();
       setStatus(
-        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`,
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`,
         "error",
       );
     } catch (exportError) {
       setStatus(
         exportError instanceof Error
-          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
-          : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`,
+          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export: ${exportError.message}`
+          : `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export failed`,
         "error",
       );
     }
@@ -1504,6 +1519,12 @@ const connectAvatar = async (): Promise<void> => {
     showEvidence({ transport: start.transport.kind, capabilities: [...capabilities] });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Ошибка подключения";
+    const connectionEvidenceError = rt0EvidenceMode
+      ? await tryFlushConnectionMediaEvidence()
+      : null;
+    const evidenceWarning = connectionEvidenceError
+      ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+      : "";
     closePeerTransport();
     if (backendSessionStarted || backendSessionPresent()) {
       try {
@@ -1513,12 +1534,12 @@ const connectAvatar = async (): Promise<void> => {
       } catch (cleanupError) {
         await syncStatus().catch(() => undefined);
         const cleanupText = cleanupError instanceof Error ? cleanupError.message : "cleanup failed";
-        setStatus(`${messageText}; cleanup: ${cleanupText}`, "error");
+        setStatus(`${messageText}${evidenceWarning}; cleanup: ${cleanupText}`, "error");
         updateControls();
         return;
       }
     }
-    setStatus(messageText, "error");
+    setStatus(`${messageText}${evidenceWarning}`, "error");
     updateControls();
   }
 };
@@ -2044,18 +2065,12 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
-  if (rt0EvidenceMode) {
-    try {
-      await flushConnectionMediaEvidence();
-    } catch (error) {
-      setStatus(
-        error instanceof Error
-          ? `Connection evidence flush: ${error.message}`
-          : "Connection evidence flush failed",
-        "error",
-      );
-      return;
-    }
+  const connectionEvidenceError = rt0EvidenceMode
+    ? await tryFlushConnectionMediaEvidence()
+    : null;
+  if (connectionEvidenceError && kind === "close") {
+    setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
+    return;
   }
   if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
@@ -2067,7 +2082,12 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     await syncStatus();
     await refreshSessionEvidence();
     if (kind === "revoke") {
-      setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
+      setStatus(
+        connectionEvidenceError
+          ? `Доступ отозван. Connection evidence incomplete: ${connectionEvidenceError.message}`
+          : "Доступ отозван. Сессию можно закрыть.",
+        connectionEvidenceError ? "error" : "idle",
+      );
     } else {
       try {
         await downloadSessionEvidence();
