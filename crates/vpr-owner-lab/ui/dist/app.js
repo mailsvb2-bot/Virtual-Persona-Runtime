@@ -862,9 +862,22 @@ const handleProviderClientEvent = (raw) => {
                 await maybeFinalizeProviderPlayback(voice);
             }
         }
+        else if (normalized === null) {
+            const voice = activeVoiceEvidence;
+            if (voice && !voice.providerIgnoredEventPosted) {
+                voice.providerIgnoredEventPosted = true;
+                await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence);
+            }
+        }
         updateControls();
     })
-        .catch(() => undefined);
+        .catch(async () => {
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerParseFailurePosted) {
+            voice.providerParseFailurePosted = true;
+            await postMediaEvidence("provider_event_parse_failed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+        }
+    });
 };
 const dispatchClientCommand = async (command) => {
     if (command.route.kind === "web_rtc_data_channel") {
@@ -1503,6 +1516,8 @@ const finishMicrophoneTurn = async () => {
         avSyncEvidence: null,
         playbackCompletionEvidence: null,
         providerDataReceived: false,
+        providerIgnoredEventPosted: false,
+        providerParseFailurePosted: false,
         providerCommandsSent: 0,
         providerPlaybackDoneCount: 0,
         providerPlaybackDoneEvidencePosted: false,
