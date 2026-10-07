@@ -41,7 +41,7 @@ fn snapshot(
     provider_state_sha256: &str,
 ) -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.2",
+        "schema_version":"rt0-owner-lab-session-evidence-1.3",
         "candidate_sha":candidate_sha,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",

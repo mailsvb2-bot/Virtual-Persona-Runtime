@@ -247,7 +247,7 @@ fn session_snapshot_bytes_with_av_sync(
         }));
     }
     serde_json::to_vec(&serde_json::json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.2",
+        "schema_version":"rt0-owner-lab-session-evidence-1.3",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":sha256_hex(provider_state_bytes),
         "scope":"browser_observed_media_plane_only",

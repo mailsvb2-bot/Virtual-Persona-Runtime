@@ -18,8 +18,8 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.2";
-pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-0.9";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.3";
+pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-1.0";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
 const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
@@ -29,7 +29,10 @@ const MAX_MEDIA_ELAPSED_MILLIS: u64 = 300_000;
 pub enum LabMediaEvidenceKind {
     VideoReady,
     BackendStartReady,
+    TransportConnectStarted,
     TransportConnected,
+    RemoteVideoTrackReceived,
+    RemoteVideoAttached,
     EndToEndVideoReady,
     BackendCompleteReceived,
     ClientDeliverySent,
@@ -152,7 +155,10 @@ pub struct LabSessionEvidenceAggregate {
     pub interruption_stop: Option<LatencyDistributionMillis>,
     pub first_useful_video: Option<LatencyDistributionMillis>,
     pub backend_start_ready: Option<LatencyDistributionMillis>,
+    pub transport_connect_started: Option<LatencyDistributionMillis>,
     pub transport_connected: Option<LatencyDistributionMillis>,
+    pub remote_video_track_received: Option<LatencyDistributionMillis>,
+    pub remote_video_attached: Option<LatencyDistributionMillis>,
     pub end_to_end_first_useful_video: Option<LatencyDistributionMillis>,
     pub recoverable_reconnect: Option<LatencyDistributionMillis>,
     pub estimated_cost_microunits: Option<u64>,
@@ -221,7 +227,10 @@ struct SessionAggregateAccumulator {
     interruption: Vec<u64>,
     video: Vec<u64>,
     backend_start: Vec<u64>,
+    transport_connect_started: Vec<u64>,
     transport_connected: Vec<u64>,
+    remote_video_track_received: Vec<u64>,
+    remote_video_attached: Vec<u64>,
     end_to_end_video: Vec<u64>,
     reconnect: Vec<u64>,
     estimated_cost: Option<u64>,
@@ -493,7 +502,10 @@ impl SessionAggregateAccumulator {
             interruption_stop: distribution(self.interruption)?,
             first_useful_video: distribution(self.video)?,
             backend_start_ready: distribution(self.backend_start)?,
+            transport_connect_started: distribution(self.transport_connect_started)?,
             transport_connected: distribution(self.transport_connected)?,
+            remote_video_track_received: distribution(self.remote_video_track_received)?,
+            remote_video_attached: distribution(self.remote_video_attached)?,
             end_to_end_first_useful_video: distribution(self.end_to_end_video)?,
             recoverable_reconnect: distribution(self.reconnect)?,
             estimated_cost_microunits: self.estimated_cost,
@@ -552,8 +564,21 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::BackendStartReady => {
                 accumulator.backend_start.push(event.elapsed_millis);
             }
+            LabMediaEvidenceKind::TransportConnectStarted => {
+                accumulator
+                    .transport_connect_started
+                    .push(event.elapsed_millis);
+            }
             LabMediaEvidenceKind::TransportConnected => {
                 accumulator.transport_connected.push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::RemoteVideoTrackReceived => {
+                accumulator
+                    .remote_video_track_received
+                    .push(event.elapsed_millis);
+            }
+            LabMediaEvidenceKind::RemoteVideoAttached => {
+                accumulator.remote_video_attached.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::EndToEndVideoReady => {
                 accumulator.end_to_end_video.push(event.elapsed_millis);

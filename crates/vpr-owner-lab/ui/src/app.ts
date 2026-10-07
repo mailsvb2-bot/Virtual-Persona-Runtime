@@ -55,7 +55,10 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind =
   | "video_ready"
   | "backend_start_ready"
+  | "transport_connect_started"
   | "transport_connected"
+  | "remote_video_track_received"
+  | "remote_video_attached"
   | "end_to_end_video_ready"
   | "backend_complete_received"
   | "client_delivery_sent"
@@ -283,7 +286,11 @@ let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
 let connectJourneyStartedAt = 0;
 let videoEvidencePosted = false;
+let videoTrackReceivedEvidencePosted = false;
+let videoAttachedEvidencePosted = false;
 let reconnectStartedAt: number | null = null;
+let connectionEvidenceTail: Promise<void> = Promise.resolve();
+let connectionEvidenceFailure: Error | null = null;
 let remoteMediaStream: MediaStream | null = null;
 let remoteEvidenceAudioContext: AudioContext | null = null;
 let remoteAudioSource: MediaStreamAudioSourceNode | null = null;
@@ -534,7 +541,7 @@ const refreshSessionEvidence = async (): Promise<void> => {
   }
 };
 
-const postMediaEvidence = async (
+const recordMediaEvidence = async (
   kind: MediaEvidenceKind,
   elapsedMillis: number,
   requestSequence: number | null = null,
@@ -546,7 +553,48 @@ const postMediaEvidence = async (
     kind,
     elapsed_millis: Math.max(0, Math.round(elapsedMillis)),
   });
+};
+
+const postMediaEvidence = async (
+  kind: MediaEvidenceKind,
+  elapsedMillis: number,
+  requestSequence: number | null = null,
+): Promise<void> => {
+  await recordMediaEvidence(kind, elapsedMillis, requestSequence);
   await refreshSessionEvidence();
+};
+
+const queueConnectionMediaEvidence = (
+  kind: MediaEvidenceKind,
+  elapsedMillis: number,
+): void => {
+  connectionEvidenceTail = connectionEvidenceTail.then(async () => {
+    try {
+      await recordMediaEvidence(kind, elapsedMillis);
+    } catch (error) {
+      connectionEvidenceFailure ??= error instanceof Error
+        ? error
+        : new Error("CONNECTION_EVIDENCE_WRITE_FAILED");
+    }
+  });
+};
+
+const flushConnectionMediaEvidence = async (): Promise<void> => {
+  while (true) {
+    const observedTail = connectionEvidenceTail;
+    await observedTail;
+    if (observedTail === connectionEvidenceTail) break;
+  }
+  if (connectionEvidenceFailure) throw connectionEvidenceFailure;
+};
+
+const tryFlushConnectionMediaEvidence = async (): Promise<Error | null> => {
+  try {
+    await flushConnectionMediaEvidence();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error : new Error("CONNECTION_EVIDENCE_FLUSH_FAILED");
+  }
 };
 
 const selectPlayoutTimestamp = (
@@ -961,13 +1009,11 @@ const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
   const now = performance.now();
-  const writes = [
-    postMediaEvidence("video_ready", now - connectEvidenceStartedAt),
-  ];
+  queueConnectionMediaEvidence("video_ready", now - connectEvidenceStartedAt);
   if (connectJourneyStartedAt > 0) {
-    writes.push(postMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt));
+    queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
   }
-  void Promise.all(writes)
+  void connectionEvidenceTail
     .then(() => syncStatus())
     .catch(() => undefined);
 };
@@ -1129,7 +1175,21 @@ const voiceCommandScheduler = new PlaybackAwareCommandScheduler<ClientCommand>(
 const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
     liveKitVideoTrack = track;
+    if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
+      videoTrackReceivedEvidencePosted = true;
+      queueConnectionMediaEvidence(
+        "remote_video_track_received",
+        performance.now() - connectJourneyStartedAt,
+      );
+    }
     track.attach(video);
+    if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
+      videoAttachedEvidencePosted = true;
+      queueConnectionMediaEvidence(
+        "remote_video_attached",
+        performance.now() - connectJourneyStartedAt,
+      );
+    }
     sessionState.setRealtimeReadiness({ video: true });
     stage?.classList.add("has-video");
     if (!requestVideoFrame(video, recordFirstVideoFrame)) {
@@ -1225,6 +1285,10 @@ const handleUnexpectedLiveKitDisconnect = async (
   clearRealtimeMedia();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
+  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  const evidenceWarning = connectionEvidenceError
+    ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+    : "";
   try {
     await api<{ ok: true }>("/api/session/close", {});
     await syncStatus();
@@ -1232,14 +1296,14 @@ const handleUnexpectedLiveKitDisconnect = async (
     try {
       await downloadSessionEvidence();
       setStatus(
-        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён. Подключитесь снова.`,
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`,
         "error",
       );
     } catch (exportError) {
       setStatus(
         exportError instanceof Error
-          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
-          : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`,
+          ? `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export: ${exportError.message}`
+          : `LiveKit отключен${reasonSuffix}. Сессия закрыта${evidenceWarning}; evidence export failed`,
         "error",
       );
     }
@@ -1286,6 +1350,20 @@ const connectWebRtcTransport = async (
     }
     setMediaSrcObject(video, remoteMediaStream);
     if (event.track.kind === "video") {
+      if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
+        videoTrackReceivedEvidencePosted = true;
+        queueConnectionMediaEvidence(
+          "remote_video_track_received",
+          performance.now() - connectJourneyStartedAt,
+        );
+      }
+      if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
+        videoAttachedEvidencePosted = true;
+        queueConnectionMediaEvidence(
+          "remote_video_attached",
+          performance.now() - connectJourneyStartedAt,
+        );
+      }
       sessionState.setRealtimeReadiness({ video: true });
       stage?.classList.add("has-video");
       if (!requestVideoFrame(video, recordFirstVideoFrame)) {
@@ -1381,7 +1459,11 @@ const connectAvatar = async (): Promise<void> => {
   connectJourneyStartedAt = performance.now();
   resetTelemetry();
   videoEvidencePosted = false;
+  videoTrackReceivedEvidencePosted = false;
+  videoAttachedEvidencePosted = false;
   reconnectStartedAt = null;
+  connectionEvidenceTail = Promise.resolve();
+  connectionEvidenceFailure = null;
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
@@ -1396,7 +1478,7 @@ const connectAvatar = async (): Promise<void> => {
     // the clock starts only once the backend has returned the negotiated WebRTC/LiveKit path.
     connectEvidenceStartedAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
-    await postMediaEvidence(
+    queueConnectionMediaEvidence(
       "backend_start_ready",
       connectEvidenceStartedAt - connectJourneyStartedAt,
     );
@@ -1412,12 +1494,16 @@ const connectAvatar = async (): Promise<void> => {
       throw new Error("SESSION_START_STATE_MISMATCH");
     }
 
+    queueConnectionMediaEvidence(
+      "transport_connect_started",
+      performance.now() - connectJourneyStartedAt,
+    );
     if (start.transport.kind === "web_rtc") {
       await connectWebRtcTransport(start.transport, start.client_control);
     } else {
       await connectLiveKitTransport(start.transport);
     }
-    await postMediaEvidence(
+    queueConnectionMediaEvidence(
       "transport_connected",
       performance.now() - connectJourneyStartedAt,
     );
@@ -1435,6 +1521,10 @@ const connectAvatar = async (): Promise<void> => {
     showEvidence({ transport: start.transport.kind, capabilities: [...capabilities] });
   } catch (error) {
     const messageText = error instanceof Error ? error.message : "Ошибка подключения";
+    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+    const evidenceWarning = connectionEvidenceError
+      ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
+      : "";
     closePeerTransport();
     if (backendSessionStarted || backendSessionPresent()) {
       try {
@@ -1444,12 +1534,12 @@ const connectAvatar = async (): Promise<void> => {
       } catch (cleanupError) {
         await syncStatus().catch(() => undefined);
         const cleanupText = cleanupError instanceof Error ? cleanupError.message : "cleanup failed";
-        setStatus(`${messageText}; cleanup: ${cleanupText}`, "error");
+        setStatus(`${messageText}${evidenceWarning}; cleanup: ${cleanupText}`, "error");
         updateControls();
         return;
       }
     }
-    setStatus(messageText, "error");
+    setStatus(`${messageText}${evidenceWarning}`, "error");
     updateControls();
   }
 };
@@ -1975,6 +2065,11 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
+  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
+    setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
+    return;
+  }
   if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
@@ -1985,7 +2080,12 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     await syncStatus();
     await refreshSessionEvidence();
     if (kind === "revoke") {
-      setStatus("Доступ отозван. Сессию можно закрыть.", "idle");
+      setStatus(
+        connectionEvidenceError
+          ? `Доступ отозван. Connection evidence incomplete: ${connectionEvidenceError.message}`
+          : "Доступ отозван. Сессию можно закрыть.",
+        connectionEvidenceError ? "error" : "idle",
+      );
     } else {
       try {
         await downloadSessionEvidence();

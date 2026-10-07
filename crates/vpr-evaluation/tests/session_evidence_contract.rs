@@ -454,3 +454,19 @@ fn development_status_tracks_current_session_schema_contracts() {
         "evaluation guide must name the current bound aggregate schema"
     );
 }
+
+#[test]
+fn expanded_connection_evidence_uses_new_wire_versions() {
+    assert_eq!(
+        RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+        "rt0-owner-lab-session-evidence-1.3"
+    );
+    assert_eq!(
+        RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
+        "rt0-owner-lab-session-aggregate-1.0"
+    );
+    assert_eq!(
+        RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+        "rt0-owner-lab-session-aggregate-binding-0.7"
+    );
+}
