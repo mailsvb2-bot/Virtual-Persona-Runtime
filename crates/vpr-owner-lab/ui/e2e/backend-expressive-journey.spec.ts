@@ -220,7 +220,14 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "provider_data_received")).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_playback_done_received",
+  )).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "playback_recovery_triggered",
+  )).toBeFalsy();
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
