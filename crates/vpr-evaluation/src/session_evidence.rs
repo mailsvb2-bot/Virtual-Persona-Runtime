@@ -37,6 +37,9 @@ pub enum LabMediaEvidenceKind {
     BackendCompleteReceived,
     ClientDeliverySent,
     AudioStarted,
+    ProviderDataReceived,
+    ProviderPlaybackDoneReceived,
+    PlaybackRecoveryTriggered,
     PlaybackCompleted,
     InterruptionStopped,
     ReconnectRestored,
@@ -535,6 +538,9 @@ fn validate_and_collect_media(
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::ProviderDataReceived
+                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
+                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
                 | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );
@@ -587,6 +593,9 @@ fn validate_and_collect_media(
                 accumulator.reconnect.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::PlaybackCompleted
+            | LabMediaEvidenceKind::ProviderDataReceived
+            | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
+            | LabMediaEvidenceKind::PlaybackRecoveryTriggered
             | LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
         }
