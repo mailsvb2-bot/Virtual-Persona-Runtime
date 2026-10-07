@@ -565,13 +565,17 @@ fn validate_and_collect_media(
                 accumulator.backend_start.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::TransportConnectStarted => {
-                accumulator.transport_connect_started.push(event.elapsed_millis);
+                accumulator
+                    .transport_connect_started
+                    .push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::TransportConnected => {
                 accumulator.transport_connected.push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::RemoteVideoTrackReceived => {
-                accumulator.remote_video_track_received.push(event.elapsed_millis);
+                accumulator
+                    .remote_video_track_received
+                    .push(event.elapsed_millis);
             }
             LabMediaEvidenceKind::RemoteVideoAttached => {
                 accumulator.remote_video_attached.push(event.elapsed_millis);
