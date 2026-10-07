@@ -40,6 +40,8 @@ pub enum LabMediaEvidenceKind {
     ClientDeliverySent,
     AudioStarted,
     ProviderDataReceived,
+    ProviderEventIgnored,
+    ProviderEventParseFailed,
     ProviderPlaybackDoneReceived,
     PlaybackRecoveryTriggered,
     PlaybackCompleted,
