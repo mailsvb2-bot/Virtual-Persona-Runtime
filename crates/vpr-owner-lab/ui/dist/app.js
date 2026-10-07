@@ -1715,7 +1715,7 @@ const interruptAvatar = async (recordEvidence = true) => {
 };
 const endSession = async (kind) => {
     const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
-    if (connectionEvidenceError && kind === "close") {
+    if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
         return;
     }
