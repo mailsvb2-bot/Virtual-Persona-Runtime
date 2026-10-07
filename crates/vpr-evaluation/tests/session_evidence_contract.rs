@@ -465,4 +465,8 @@ fn expanded_connection_evidence_uses_new_wire_versions() {
         RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
         "rt0-owner-lab-session-aggregate-1.0"
     );
+    assert_eq!(
+        RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
+        "rt0-owner-lab-session-aggregate-binding-0.7"
+    );
 }
