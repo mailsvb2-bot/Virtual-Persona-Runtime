@@ -693,6 +693,7 @@ const monitorRemoteAudio = () => {
             && performance.now() - voice.playbackSilenceStartedAt
                 >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS) {
             voice.playbackRecoveryTriggered = true;
+            void postMediaEvidence("playback_recovery_triggered", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void interruptAvatar(false).then((recovered) => {
                 if (recovered) {
                     setStatus("D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
@@ -845,6 +846,9 @@ const handleProviderClientEvent = (raw) => {
         else if (normalized?.kind === "playback_done") {
             const voice = activeVoiceEvidence;
             if (voice) {
+                if (!voice.providerPlaybackDone) {
+                    void postMediaEvidence("provider_playback_done_received", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+                }
                 voice.providerPlaybackDone = true;
                 voice.playbackSilenceStartedAt = null;
                 const completion = ensurePlaybackCompletionEvidence(voice);
@@ -1111,6 +1115,11 @@ const connectLiveKitTransport = async (transport) => {
         const payload = args[0];
         if (!(payload instanceof Uint8Array))
             return;
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerDataReceived) {
+            voice.providerDataReceived = true;
+            void postMediaEvidence("provider_data_received", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+        }
         handleProviderClientEvent(new TextDecoder().decode(payload));
     });
     room.on(sdk.RoomEvent.Reconnecting, () => {
@@ -1470,6 +1479,7 @@ const finishMicrophoneTurn = async () => {
         audioStartedEvidence: null,
         avSyncEvidence: null,
         playbackCompletionEvidence: null,
+        providerDataReceived: false,
         providerPlaybackDone: false,
         responseComplete: false,
         interrupted: false,
