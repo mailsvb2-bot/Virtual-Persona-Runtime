@@ -55,7 +55,10 @@ type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sd
 type MediaEvidenceKind =
   | "video_ready"
   | "backend_start_ready"
+  | "transport_connect_started"
   | "transport_connected"
+  | "remote_video_track_received"
+  | "remote_video_attached"
   | "end_to_end_video_ready"
   | "backend_complete_received"
   | "client_delivery_sent"
@@ -283,6 +286,8 @@ let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
 let connectJourneyStartedAt = 0;
 let videoEvidencePosted = false;
+let videoTrackReceivedEvidencePosted = false;
+let videoAttachedEvidencePosted = false;
 let reconnectStartedAt: number | null = null;
 let remoteMediaStream: MediaStream | null = null;
 let remoteEvidenceAudioContext: AudioContext | null = null;
@@ -1129,7 +1134,21 @@ const voiceCommandScheduler = new PlaybackAwareCommandScheduler<ClientCommand>(
 const attachLiveKitTrack = (track: LiveKitTrack): void => {
   if (track.kind === "video") {
     liveKitVideoTrack = track;
+    if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
+      videoTrackReceivedEvidencePosted = true;
+      void postMediaEvidence(
+        "remote_video_track_received",
+        performance.now() - connectJourneyStartedAt,
+      ).catch(() => undefined);
+    }
     track.attach(video);
+    if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
+      videoAttachedEvidencePosted = true;
+      void postMediaEvidence(
+        "remote_video_attached",
+        performance.now() - connectJourneyStartedAt,
+      ).catch(() => undefined);
+    }
     sessionState.setRealtimeReadiness({ video: true });
     stage?.classList.add("has-video");
     if (!requestVideoFrame(video, recordFirstVideoFrame)) {
@@ -1286,6 +1305,20 @@ const connectWebRtcTransport = async (
     }
     setMediaSrcObject(video, remoteMediaStream);
     if (event.track.kind === "video") {
+      if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
+        videoTrackReceivedEvidencePosted = true;
+        void postMediaEvidence(
+          "remote_video_track_received",
+          performance.now() - connectJourneyStartedAt,
+        ).catch(() => undefined);
+      }
+      if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
+        videoAttachedEvidencePosted = true;
+        void postMediaEvidence(
+          "remote_video_attached",
+          performance.now() - connectJourneyStartedAt,
+        ).catch(() => undefined);
+      }
       sessionState.setRealtimeReadiness({ video: true });
       stage?.classList.add("has-video");
       if (!requestVideoFrame(video, recordFirstVideoFrame)) {
@@ -1381,6 +1414,8 @@ const connectAvatar = async (): Promise<void> => {
   connectJourneyStartedAt = performance.now();
   resetTelemetry();
   videoEvidencePosted = false;
+  videoTrackReceivedEvidencePosted = false;
+  videoAttachedEvidencePosted = false;
   reconnectStartedAt = null;
   evidenceSessionSequence = 0;
   nextTextRequestSequence = 0;
@@ -1412,6 +1447,10 @@ const connectAvatar = async (): Promise<void> => {
       throw new Error("SESSION_START_STATE_MISMATCH");
     }
 
+    await postMediaEvidence(
+      "transport_connect_started",
+      performance.now() - connectJourneyStartedAt,
+    );
     if (start.transport.kind === "web_rtc") {
       await connectWebRtcTransport(start.transport, start.client_control);
     } else {
