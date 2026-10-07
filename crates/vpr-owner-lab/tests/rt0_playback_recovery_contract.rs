@@ -74,3 +74,33 @@ fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
         );
     }
 }
+
+
+#[test]
+fn prepared_livekit_interrupt_bypasses_http_roundtrip_on_the_media_stop_path() {
+    let interrupt = APP
+        .split("const interruptAvatar = async")
+        .nth(1)
+        .expect("interruptAvatar must exist");
+    for marker in [
+        "activeClientControl?.prepared_interrupt",
+        "const fastProviderStop",
+        "dispatchClientCommand(preparedInterrupt)",
+        "const canonicalStop",
+    ] {
+        assert!(
+            interrupt.contains(marker),
+            "immediate provider STOP contract is missing marker: {marker}"
+        );
+    }
+    let dispatch = interrupt
+        .find("dispatchClientCommand(preparedInterrupt)")
+        .expect("prepared STOP dispatch must exist");
+    let canonical = interrupt
+        .find("const canonicalStop")
+        .expect("canonical cancellation must remain present");
+    assert!(
+        dispatch < canonical,
+        "provider media STOP must be dispatched before waiting on canonical cancellation"
+    );
+}
