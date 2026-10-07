@@ -46,6 +46,14 @@ fn provider_playback_done_remains_the_only_success_path_for_completion_evidence(
         "LiveKit data receipt must be observable without storing provider payloads"
     );
     assert!(
+        APP.contains("\"provider_event_ignored\""),
+        "ignored provider packets must be distinguishable from a missing data path"
+    );
+    assert!(
+        APP.contains("\"provider_event_parse_failed\""),
+        "rejected provider packets must be distinguishable from ignored packets"
+    );
+    assert!(
         APP.contains("\"provider_playback_done_received\""),
         "normalized provider completion must be separately observable"
     );
