@@ -233,10 +233,11 @@
   };
 
   beginSyntheticPlayback = () => {
-    if (remoteSpeech) return;
     publishRemoteAudioTrack?.();
-    remoteSpeech = true;
-    playbackSequence += 1;
+    if (!remoteSpeech) {
+      remoteSpeech = true;
+      playbackSequence += 1;
+    }
     providerDataChannel?.onmessage?.({
       data: `stream/started:${JSON.stringify({ metadata: { videoId: `video-${playbackSequence}` } })}`,
     });
