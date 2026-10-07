@@ -111,6 +111,8 @@ let videoEvidencePosted = false;
 let videoTrackReceivedEvidencePosted = false;
 let videoAttachedEvidencePosted = false;
 let reconnectStartedAt = null;
+let connectionEvidenceTail = Promise.resolve();
+let connectionEvidenceFailure = null;
 let remoteMediaStream = null;
 let remoteEvidenceAudioContext = null;
 let remoteAudioSource = null;
@@ -332,7 +334,7 @@ const refreshSessionEvidence = async () => {
     catch {
     }
 };
-const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) => {
+const recordMediaEvidence = async (kind, elapsedMillis, requestSequence = null) => {
     if (evidenceSessionSequence === 0)
         return;
     await api("/api/evidence/media", {
@@ -341,7 +343,27 @@ const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) =>
         kind,
         elapsed_millis: Math.max(0, Math.round(elapsedMillis)),
     });
+};
+const postMediaEvidence = async (kind, elapsedMillis, requestSequence = null) => {
+    await recordMediaEvidence(kind, elapsedMillis, requestSequence);
     await refreshSessionEvidence();
+};
+const queueConnectionMediaEvidence = (kind, elapsedMillis) => {
+    connectionEvidenceTail = connectionEvidenceTail.then(async () => {
+        try {
+            await recordMediaEvidence(kind, elapsedMillis);
+        }
+        catch (error) {
+            connectionEvidenceFailure ??= error instanceof Error
+                ? error
+                : new Error("CONNECTION_EVIDENCE_WRITE_FAILED");
+        }
+    });
+};
+const flushConnectionMediaEvidence = async () => {
+    await connectionEvidenceTail;
+    if (connectionEvidenceFailure)
+        throw connectionEvidenceFailure;
 };
 const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     const packetCounts = new Map();
@@ -702,13 +724,11 @@ const recordFirstVideoFrame = () => {
         return;
     videoEvidencePosted = true;
     const now = performance.now();
-    const writes = [
-        postMediaEvidence("video_ready", now - connectEvidenceStartedAt),
-    ];
+    queueConnectionMediaEvidence("video_ready", now - connectEvidenceStartedAt);
     if (connectJourneyStartedAt > 0) {
-        writes.push(postMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt));
+        queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
     }
-    void Promise.all(writes)
+    void connectionEvidenceTail
         .then(() => syncStatus())
         .catch(() => undefined);
 };
@@ -855,12 +875,12 @@ const attachLiveKitTrack = (track) => {
         liveKitVideoTrack = track;
         if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
             videoTrackReceivedEvidencePosted = true;
-            void postMediaEvidence("remote_video_track_received", performance.now() - connectJourneyStartedAt).catch(() => undefined);
+            queueConnectionMediaEvidence("remote_video_track_received", performance.now() - connectJourneyStartedAt);
         }
         track.attach(video);
         if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
             videoAttachedEvidencePosted = true;
-            void postMediaEvidence("remote_video_attached", performance.now() - connectJourneyStartedAt).catch(() => undefined);
+            queueConnectionMediaEvidence("remote_video_attached", performance.now() - connectJourneyStartedAt);
         }
         sessionState.setRealtimeReadiness({ video: true });
         stage?.classList.add("has-video");
@@ -998,11 +1018,11 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         if (event.track.kind === "video") {
             if (!videoTrackReceivedEvidencePosted && connectJourneyStartedAt > 0) {
                 videoTrackReceivedEvidencePosted = true;
-                void postMediaEvidence("remote_video_track_received", performance.now() - connectJourneyStartedAt).catch(() => undefined);
+                queueConnectionMediaEvidence("remote_video_track_received", performance.now() - connectJourneyStartedAt);
             }
             if (!videoAttachedEvidencePosted && connectJourneyStartedAt > 0) {
                 videoAttachedEvidencePosted = true;
-                void postMediaEvidence("remote_video_attached", performance.now() - connectJourneyStartedAt).catch(() => undefined);
+                queueConnectionMediaEvidence("remote_video_attached", performance.now() - connectJourneyStartedAt);
             }
             sessionState.setRealtimeReadiness({ video: true });
             stage?.classList.add("has-video");
@@ -1106,6 +1126,8 @@ const connectAvatar = async () => {
     videoTrackReceivedEvidencePosted = false;
     videoAttachedEvidencePosted = false;
     reconnectStartedAt = null;
+    connectionEvidenceTail = Promise.resolve();
+    connectionEvidenceFailure = null;
     evidenceSessionSequence = 0;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
@@ -1117,7 +1139,7 @@ const connectAvatar = async () => {
         backendSessionStarted = true;
         connectEvidenceStartedAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
-        await postMediaEvidence("backend_start_ready", connectEvidenceStartedAt - connectJourneyStartedAt);
+        queueConnectionMediaEvidence("backend_start_ready", connectEvidenceStartedAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
         const startedStatus = await syncStatus();
@@ -1126,14 +1148,14 @@ const connectAvatar = async () => {
             || startedStatus.session_audience !== audience) {
             throw new Error("SESSION_START_STATE_MISMATCH");
         }
-        await postMediaEvidence("transport_connect_started", performance.now() - connectJourneyStartedAt);
+        queueConnectionMediaEvidence("transport_connect_started", performance.now() - connectJourneyStartedAt);
         if (start.transport.kind === "web_rtc") {
             await connectWebRtcTransport(start.transport, start.client_control);
         }
         else {
             await connectLiveKitTransport(start.transport);
         }
-        await postMediaEvidence("transport_connected", performance.now() - connectJourneyStartedAt);
+        queueConnectionMediaEvidence("transport_connected", performance.now() - connectJourneyStartedAt);
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
@@ -1668,6 +1690,17 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
 };
 const endSession = async (kind) => {
+    if (rt0EvidenceMode) {
+        try {
+            await flushConnectionMediaEvidence();
+        }
+        catch (error) {
+            setStatus(error instanceof Error
+                ? `Connection evidence flush: ${error.message}`
+                : "Connection evidence flush failed", "error");
+            return;
+        }
+    }
     if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
