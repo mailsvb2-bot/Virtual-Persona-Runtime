@@ -27,6 +27,8 @@ pub(super) fn validate_and_collect_media(
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
                 | LabMediaEvidenceKind::ProviderDataReceived
+                | LabMediaEvidenceKind::ProviderEventIgnored
+                | LabMediaEvidenceKind::ProviderEventParseFailed
                 | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
                 | LabMediaEvidenceKind::PlaybackRecoveryTriggered
                 | LabMediaEvidenceKind::PlaybackCompleted
@@ -82,6 +84,8 @@ pub(super) fn validate_and_collect_media(
             }
             LabMediaEvidenceKind::PlaybackCompleted
             | LabMediaEvidenceKind::ProviderDataReceived
+            | LabMediaEvidenceKind::ProviderEventIgnored
+            | LabMediaEvidenceKind::ProviderEventParseFailed
             | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
             | LabMediaEvidenceKind::PlaybackRecoveryTriggered
             | LabMediaEvidenceKind::BackendCompleteReceived
