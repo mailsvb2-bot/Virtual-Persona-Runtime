@@ -484,6 +484,15 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     };
 };
 const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
+    if (rt0EvidenceMode) {
+        return {
+            offsetMillis: null,
+            reference: null,
+            diagnostic: `${diagnostic}; strict-rt0=rtp-playout-timestamp-only`,
+            audioIssue,
+            videoIssue,
+        };
+    }
     const audioTime = avatarAudio.currentTime;
     const videoTime = video.currentTime;
     if (Number.isFinite(audioTime)
@@ -845,27 +854,13 @@ const handleProviderClientEvent = (raw) => {
         }
         else if (normalized?.kind === "playback_done") {
             const voice = activeVoiceEvidence;
-            if (voice) {
-                if (!voice.providerPlaybackDone) {
-                    void postMediaEvidence("provider_playback_done_received", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
-                }
-                voice.providerPlaybackDone = true;
-                voice.playbackSilenceStartedAt = null;
-                const completion = ensurePlaybackCompletionEvidence(voice);
-                if (completion) {
-                    try {
-                        await completion;
-                    }
-                    catch (error) {
-                        setStatus(error instanceof Error
-                            ? `Playback completion evidence: ${error.message}`
-                            : "Playback completion evidence failed", "error");
-                    }
-                }
-            }
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
             rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
+            if (voice) {
+                voice.providerPlaybackDoneCount += 1;
+                await maybeFinalizeProviderPlayback(voice);
+            }
         }
         updateControls();
     })
@@ -888,6 +883,25 @@ const dispatchClientCommand = async (command) => {
     await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
 const voiceCommandScheduler = new PlaybackAwareCommandScheduler(dispatchClientCommand);
+const maybeFinalizeProviderPlayback = async (voice) => {
+    if (voice.providerPlaybackDone
+        || voice.interrupted
+        || !voice.responseComplete
+        || voice.providerCommandsSent === 0
+        || voice.providerPlaybackDoneCount < voice.providerCommandsSent
+        || voiceCommandScheduler.hasPendingPlayback) {
+        return;
+    }
+    voice.providerPlaybackDone = true;
+    voice.playbackSilenceStartedAt = null;
+    if (!voice.providerPlaybackDoneEvidencePosted) {
+        voice.providerPlaybackDoneEvidencePosted = true;
+        await postMediaEvidence("provider_playback_done_received", performance.now() - voice.startedAt, voice.requestSequence);
+    }
+    const completion = ensurePlaybackCompletionEvidence(voice);
+    if (completion)
+        await completion;
+};
 const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
@@ -1164,9 +1178,9 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         backendSessionStarted = true;
-        connectEvidenceStartedAt = performance.now();
+        const backendReadyAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
-        queueConnectionMediaEvidence("backend_start_ready", connectEvidenceStartedAt - connectJourneyStartedAt);
+        queueConnectionMediaEvidence("backend_start_ready", backendReadyAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
         const startedStatus = await syncStatus();
@@ -1182,7 +1196,16 @@ const connectAvatar = async () => {
         else {
             await connectLiveKitTransport(start.transport);
         }
-        queueConnectionMediaEvidence("transport_connected", performance.now() - connectJourneyStartedAt);
+        connectEvidenceStartedAt = performance.now();
+        queueConnectionMediaEvidence("transport_connected", connectEvidenceStartedAt - connectJourneyStartedAt);
+        if (!videoEvidencePosted) {
+            if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                recordFirstVideoFrame();
+            }
+            else if (!requestVideoFrame(video, recordFirstVideoFrame)) {
+                video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+            }
+        }
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
@@ -1480,6 +1503,9 @@ const finishMicrophoneTurn = async () => {
         avSyncEvidence: null,
         playbackCompletionEvidence: null,
         providerDataReceived: false,
+        providerCommandsSent: 0,
+        providerPlaybackDoneCount: 0,
+        providerPlaybackDoneEvidencePosted: false,
         providerPlaybackDone: false,
         responseComplete: false,
         interrupted: false,
@@ -1520,6 +1546,9 @@ const finishMicrophoneTurn = async () => {
                 }
                 commandSent = true;
                 const voice = activeVoiceEvidence;
+                if (voice?.requestSequence === requestSequence) {
+                    voice.providerCommandsSent += 1;
+                }
                 const clientDeliveryElapsed = voice?.requestSequence === requestSequence
                     && clientDeliverySentElapsed === null
                     ? performance.now() - voice.startedAt
@@ -1583,6 +1612,7 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
+            await maybeFinalizeProviderPlayback(voice);
             if (voice.audioStartedEvidence) {
                 await voice.audioStartedEvidence;
             }
