@@ -17,8 +17,16 @@ fn owner_lab_records_detailed_video_connection_stages() {
     }
 
     assert!(
-        APP.contains("postMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)"),
+        APP.contains("queueConnectionMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)"),
         "canonical prepared-media video timer must remain separate"
+    );
+    assert!(
+        !APP.contains("await postMediaEvidence(\n      \"transport_connect_started\""),
+        "connection telemetry must not block transport startup"
+    );
+    assert!(
+        APP.contains("await flushConnectionMediaEvidence();"),
+        "queued connection telemetry must flush before RT0 session closure"
     );
 }
 
