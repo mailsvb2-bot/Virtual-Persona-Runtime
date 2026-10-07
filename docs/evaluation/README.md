@@ -360,7 +360,7 @@ Even a `0` from this experimental checker does not by itself promote `release.rt
 
 ## Owner Lab session-evidence aggregation and binding
 
-`vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-1.3` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: canonical text first meaningful response, STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, reconnect restoration, and request-scoped A/V sync absolute offset from either WebRTC estimated playout timestamps or the explicitly tagged HTML media-element current-time fallback when the provider/browser path does not expose the WebRTC timestamp. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
+`vpr-rt0-session-aggregate` consumes one or more sanitized `rt0-owner-lab-session-evidence-1.3` JSON snapshots and deterministically derives the latency distributions that those snapshots can actually support: canonical text first meaningful response, STT, LLM, avatar-submit, server-total, browser-observed first audio, interruption stop, first rendered video, reconnect restoration, and request-scoped A/V sync absolute offset. Strict RT0 browser evidence uses only WebRTC estimated playout timestamps; HTML media-element current-time remains a non-release diagnostic path and cannot promote RT0 readiness when RTP playout timestamps are unavailable. It also sums estimated/provider cost only when every completed provider stage contains that cost field; partial cost never becomes a fake complete total.
 
 The legacy aggregation mode remains available:
 
