@@ -58,7 +58,7 @@ fn revoke_is_never_blocked_by_connection_evidence_failure() {
         "revocation must not be blocked by telemetry failure"
     );
     assert!(
-        APP.contains(r#"await api<{ ok: true }>(`/api/session/${kind}`, {});"#),
+        APP.contains(r"await api<{ ok: true }>(`/api/session/${kind}`, {});"),
         "revoke must still reach the canonical session endpoint"
     );
 }
