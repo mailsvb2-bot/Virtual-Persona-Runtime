@@ -45,6 +45,7 @@ type ClientControl = {
   interrupt: boolean;
   interrupt_requires_playback_id: boolean;
   text_input: boolean;
+  prepared_interrupt: ClientCommand | null;
 };
 type ClientEvent =
   | { kind: "playback_started"; playback_id: string }
@@ -2084,14 +2085,35 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     && sessionState.realtime.control
     && activeClientControl?.interrupt === true
     && playbackReady;
+  const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
+
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
+
+  // For transports with a payload-free session-scoped stop command (currently D-ID Expressive
+  // over LiveKit), dispatch STOP immediately. Canonical turn cancellation still runs, but it
+  // cannot sit in front of the user-visible media stop on the critical latency path.
+  const fastProviderStop = clientReady && preparedInterrupt
+    ? dispatchClientCommand(preparedInterrupt)
+    : null;
+
   try {
-    if (voiceRequestInFlight) {
-      // Cancel the canonical turn first. This stops the provider stream and releases the runtime
-      // engine lock before a provider-specific browser interrupt command is prepared.
-      await api<{ ok: true }>("/api/avatar/interrupt", {});
+    const canonicalStop = voiceRequestInFlight
+      ? api<{ ok: true }>("/api/avatar/interrupt", {})
+      : null;
+
+    if (fastProviderStop) {
+      await fastProviderStop;
+      if (canonicalStop) await canonicalStop;
+      rt0PlaybackPending = false;
+      sessionState.setPlaybackId(null);
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
     }
+
+    if (canonicalStop) await canonicalStop;
+
     if (clientReady) {
       const command = await api<ClientCommand>("/api/avatar/client-interrupt", {
         playback_id: playbackId,
