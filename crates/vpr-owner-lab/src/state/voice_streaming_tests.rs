@@ -423,7 +423,7 @@ fn streaming_voice_emits_first_phrase_before_llm_tail_completes() {
 }
 
 #[test]
-fn livekit_client_text_delivers_one_complete_reply_after_generation_finishes() {
+fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
     let (mut engine, stats, release_tail) = client_text_streaming_voice_engine();
     let (segment_tx, segment_rx) = mpsc::channel();
     let (result_tx, result_rx) = mpsc::channel();
@@ -439,22 +439,22 @@ fn livekit_client_text_delivers_one_complete_reply_after_generation_finishes() {
         result_tx.send(result).unwrap();
     });
 
+    let first = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(first.evidence_output_sequence > 0);
+    let first_command = first.client_command.expect("first LiveKit command");
+    assert_eq!(first_command.payload, "Первая фраза.");
     assert!(matches!(
-        segment_rx.recv_timeout(Duration::from_millis(100)),
-        Err(mpsc::RecvTimeoutError::Timeout)
+        result_rx.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
     ));
-    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
 
     release_tail.store(true, Ordering::SeqCst);
-    let only = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert!(only.evidence_output_sequence > 0);
-    let command = only.client_command.expect("LiveKit command");
-    assert_eq!(command.payload, "Первая фраза. Вторая фраза.");
-    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 1);
-    assert!(matches!(
-        segment_rx.recv_timeout(Duration::from_millis(100)),
-        Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected)
-    ));
+    let second = segment_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(second.evidence_output_sequence > first.evidence_output_sequence);
+    let second_command = second.client_command.expect("second LiveKit command");
+    assert_eq!(second_command.payload, "Вторая фраза.");
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 2);
 
     let result = result_rx
         .recv_timeout(Duration::from_secs(1))
