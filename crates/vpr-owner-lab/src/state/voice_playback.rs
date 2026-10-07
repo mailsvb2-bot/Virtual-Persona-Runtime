@@ -93,7 +93,7 @@ impl LabVoicePlaybackRegistry {
     ///
     /// The first output sequence remains the immutable request binding used by sanitized evidence,
     /// while every runtime-issued segment for the same canonical turn is promoted to Played.
-    /// This is required for phrase-streamed LiveKit turns: a turn is not canonically complete
+    /// This is required for phrase-streamed `LiveKit` turns: a turn is not canonically complete
     /// while any queued segment is merely prepared or sent.
     ///
     /// # Errors
