@@ -159,10 +159,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }
   };
 
-  await page.addInitScript(() => {
-    (window as typeof window & { __vprForceMediaElementAvSync?: boolean })
-      .__vprForceMediaElementAvSync = true;
-  });
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
@@ -212,7 +208,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(evidence?.av_sync_samples).toHaveLength(3);
   expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(evidence?.av_sync_samples.every((sample) =>
-    sample.reference === "html_media_element_current_time"
+    sample.reference === "web_rtc_estimated_playout_timestamp"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
   expect(evidence?.voice_attempts.some((attempt) =>
