@@ -58,3 +58,19 @@ fn provider_playback_done_remains_the_only_success_path_for_completion_evidence(
         "provider acknowledgement must remain the playback-completion evidence path"
     );
 }
+
+
+#[test]
+fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
+    for marker in [
+        "if (rt0EvidenceMode)",
+        "strict-rt0=rtp-playout-timestamp-only",
+        "reference: null",
+        "web_rtc_estimated_playout_timestamp",
+    ] {
+        assert!(
+            APP.contains(marker),
+            "strict RT0 A/V-sync fail-closed contract is missing marker: {marker}"
+        );
+    }
+}
