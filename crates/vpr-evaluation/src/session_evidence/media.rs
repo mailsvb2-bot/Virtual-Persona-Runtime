@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use super::{
     LabMediaEvidenceKind, LabSessionAggregateError, LabSessionEvidenceSnapshot,
-    LabVoiceAttemptStatus, SessionAggregateAccumulator, MAX_MEDIA_ELAPSED_MILLIS,
+    LabVoiceAttemptStatus, MAX_MEDIA_ELAPSED_MILLIS, SessionAggregateAccumulator,
 };
 
 pub(super) fn validate_and_collect_media(
