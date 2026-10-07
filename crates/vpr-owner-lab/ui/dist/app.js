@@ -1185,9 +1185,7 @@ const connectAvatar = async () => {
     }
     catch (error) {
         const messageText = error instanceof Error ? error.message : "Ошибка подключения";
-        const connectionEvidenceError = rt0EvidenceMode
-            ? await tryFlushConnectionMediaEvidence()
-            : null;
+        const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
         const evidenceWarning = connectionEvidenceError
             ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
             : "";
