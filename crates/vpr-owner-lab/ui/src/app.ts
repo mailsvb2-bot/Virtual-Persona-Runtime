@@ -105,7 +105,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerParseFailurePosted: boolean; providerCommandsSent: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -1146,10 +1146,12 @@ const handleProviderClientEvent = (raw: string): void => {
         const voice = activeVoiceEvidence;
         sessionState.setPlaybackId(null);
         voiceCommandScheduler.playbackDone();
-        rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
         if (voice) {
           voice.providerPlaybackDoneCount += 1;
           await maybeFinalizeProviderPlayback(voice);
+          syncRt0PlaybackPending(voice);
+        } else if (rt0EvidenceMode) {
+          rt0PlaybackPending = false;
         }
       } else if (normalized === null) {
         const voice = activeVoiceEvidence;
@@ -1199,13 +1201,22 @@ const voiceCommandScheduler = new PlaybackAwareCommandScheduler<ClientCommand>(
   dispatchClientCommand,
 );
 
+const syncRt0PlaybackPending = (voice: ActiveVoiceEvidence | null): void => {
+  if (!rt0EvidenceMode) return;
+  rt0PlaybackPending = voice !== null
+    && !voice.interrupted
+    && !voice.providerPlaybackDone
+    && voice.providerPlaybackExpectedCount > 0
+    && voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount;
+};
+
 const maybeFinalizeProviderPlayback = async (voice: ActiveVoiceEvidence): Promise<void> => {
   if (
     voice.providerPlaybackDone
     || voice.interrupted
     || !voice.responseComplete
-    || voice.providerCommandsSent === 0
-    || voice.providerPlaybackDoneCount < voice.providerCommandsSent
+    || voice.providerPlaybackExpectedCount === 0
+    || voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount
     || voiceCommandScheduler.hasPendingPlayback
   ) {
     return;
@@ -1213,6 +1224,7 @@ const maybeFinalizeProviderPlayback = async (voice: ActiveVoiceEvidence): Promis
 
   voice.providerPlaybackDone = true;
   voice.playbackSilenceStartedAt = null;
+  syncRt0PlaybackPending(voice);
   if (!voice.providerPlaybackDoneEvidencePosted) {
     voice.providerPlaybackDoneEvidencePosted = true;
     await postMediaEvidence(
@@ -1891,7 +1903,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     providerDataReceived: false,
     providerIgnoredEventPosted: false,
     providerParseFailurePosted: false,
-    providerCommandsSent: 0,
+    providerPlaybackExpectedCount: 0,
     providerPlaybackDoneCount: 0,
     providerPlaybackDoneEvidencePosted: false,
     providerPlaybackDone: false,
@@ -1918,28 +1930,25 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const deliveryTasks: Promise<void>[] = [];
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
+      const voiceForSegment = activeVoiceEvidence;
+      if (voiceForSegment?.requestSequence === requestSequence) {
+        voiceForSegment.providerPlaybackExpectedCount += 1;
+        syncRt0PlaybackPending(voiceForSegment);
+        updateControls();
+      }
       const command = segment.client_command;
       if (!command) return;
       let commandSent = false;
       const dispatch = voiceCommandScheduler.dispatch(command);
-      if (rt0EvidenceMode) {
-        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-        updateControls();
-      }
       const task = (async () => {
         const sent = await dispatch;
         if (!sent) {
-          if (rt0EvidenceMode) {
-            rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-            updateControls();
-          }
+          syncRt0PlaybackPending(activeVoiceEvidence);
+          updateControls();
           return;
         }
         commandSent = true;
         const voice = activeVoiceEvidence;
-        if (voice?.requestSequence === requestSequence) {
-          voice.providerCommandsSent += 1;
-        }
         const clientDeliveryElapsed =
           voice?.requestSequence === requestSequence
             && clientDeliverySentElapsed === null
