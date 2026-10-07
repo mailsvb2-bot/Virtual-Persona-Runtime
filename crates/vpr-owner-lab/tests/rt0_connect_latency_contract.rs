@@ -8,7 +8,7 @@ fn owner_lab_records_user_to_avatar_connection_stages_without_redefining_video_r
         "\"backend_start_ready\"",
         "\"transport_connected\"",
         "\"end_to_end_video_ready\"",
-        "postMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)",
+        "queueConnectionMediaEvidence(\"video_ready\", now - connectEvidenceStartedAt)",
     ] {
         assert!(
             APP.contains(marker),
