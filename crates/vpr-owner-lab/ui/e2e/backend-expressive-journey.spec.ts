@@ -237,6 +237,17 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
   expect(evidence?.media_events.some(
     (event) => event.kind === "provider_informational_event",
   )).toBeTruthy();
+  for (const category of [
+    "provider_unknown_chat_event",
+    "provider_unknown_video_event",
+    "provider_unknown_tool_event",
+    "provider_unknown_other_event",
+  ]) {
+    expect(evidence?.media_events.some((event) => event.kind === category)).toBeTruthy();
+  }
+  // D-ID's arbitrary subject and payload never become evidence text.
+  expect(JSON.stringify(evidence)).not.toContain("PRIVATE_MEDIA_DIAGNOSTIC_MUST_NOT_LEAK");
+  expect(JSON.stringify(evidence)).not.toContain("new-private-event");
   expect(evidence?.media_events.some(
     (event) => event.kind === "provider_playback_done_received",
   )).toBe(false);
