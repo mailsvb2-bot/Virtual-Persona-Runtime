@@ -202,6 +202,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
         release_voice_busy(state);
         return response;
     }
+    *state.replay_source.lock() = None;
     let request_sequence = match http_evidence::request_sequence(request) {
         Ok(sequence) => sequence,
         Err(error) => {
@@ -351,6 +352,7 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         release_voice_busy(state);
         return response;
     }
+    *state.replay_source.lock() = None;
     let request_sequence = match http_evidence::request_sequence(request) {
         Ok(sequence) => sequence,
         Err(error) => {
