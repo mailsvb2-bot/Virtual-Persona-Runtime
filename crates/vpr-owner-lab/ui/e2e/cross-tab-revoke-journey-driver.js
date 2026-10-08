@@ -71,12 +71,49 @@
       if (ended.session_state !== "closed" || ended.avatar_open !== false) {
         throw new Error("UNSAFE_TERMINAL_STATE");
       }
+      const previousSession = (await backend("/api/evidence/session")).session_sequence;
+      await waitFor(() => !get("connect").disabled, "new-session-available");
+      get("connect").click();
+      await waitFor(
+        () => statusText().includes("LiveKit согласован"),
+        "second-session-connected",
+      );
+      const currentSession = (await backend("/api/evidence/session")).session_sequence;
+      if (!Number.isSafeInteger(previousSession)
+          || !Number.isSafeInteger(currentSession)
+          || currentSession <= previousSession) {
+        throw new Error("CANONICAL_SESSION_SEQUENCE_DID_NOT_ADVANCE");
+      }
+      // The delayed unload/close of an earlier tab must not terminate this
+      // freshly connected user session. This is tested through real HTTP.
+      const csrf = (await backend("/api/bootstrap")).csrf_token;
+      const staleClose = await fetch("/api/session/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrf },
+        body: JSON.stringify({ expected_session_sequence: previousSession }),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (staleClose.status !== 409) {
+        throw new Error("STALE_TAB_CLOSE_NOT_REJECTED:" + staleClose.status);
+      }
+      const stillActive = await backend("/api/status");
+      if (stillActive.session_state !== "active" || stillActive.avatar_open !== true) {
+        throw new Error("STALE_TAB_CLOSE_KILLED_NEW_SESSION");
+      }
+      close.click();
+      await waitFor(
+        () => statusText().includes("Сессия закрыта. Evidence snapshot сохранён."),
+        "second-session-evidence-exported",
+      );
       await writeReport({
         status: "ok",
         session: "closed",
         cross_tab_fenced: true,
         no_late_speech: true,
         evidence_exported: true,
+        stale_tab_close_denied: true,
+        subsequent_session_survived: true,
       });
     } catch (error) {
       const terminal = await backend("/api/status").catch(() => null);
