@@ -139,7 +139,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
-
     let mut providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
 
@@ -186,7 +185,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         csrf_token: generate_csrf_token()?,
         port,
     });
-
     let address = format!("127.0.0.1:{port}");
     let server = Arc::new(Server::http(&address)?);
     println!("VPR Owner Lab: http://{address}");
@@ -386,7 +384,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
                     let sequence = bundle.evidence_session_sequence;
-                    state.active_session_sequence.store(sequence, Ordering::Release);
+                    state
+                        .active_session_sequence
+                        .store(sequence, Ordering::Release);
                     state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
