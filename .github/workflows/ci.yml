@@ -154,6 +154,7 @@ jobs:
           generated_status="$(git status --porcelain --untracked-files=all -- dist/)"
           if [ -n "$generated_status" ]; then
             printf '%s\n' "$generated_status"
+            git diff -- dist/
             exit 1
           fi
       - name: Install Chromium
