@@ -66,3 +66,23 @@ fn windows_launcher_documents_strict_rtp_av_sync_contract() {
         "Windows RT0 launcher must not advertise an invalid HTML release fallback"
     );
 }
+
+#[test]
+fn strict_rt0_launcher_preserves_the_frozen_candidate() {
+    assert!(
+        WINDOWS_LAUNCHER.contains("if ($Rt0Evidence) {\n    Push-Location $repoRoot"),
+        "strict RT0 mode must validate the current checkout before restarting"
+    );
+    assert!(
+        WINDOWS_LAUNCHER.contains("git status --porcelain --untracked-files=all"),
+        "strict RT0 mode must reject dirty candidates"
+    );
+    assert!(
+        WINDOWS_LAUNCHER.contains("if (-not $Rt0Evidence) {\n            git switch main"),
+        "normal launch may update main, but strict RT0 must not switch branches"
+    );
+    assert!(
+        WINDOWS_LAUNCHER.contains("git pull --ff-only"),
+        "normal launcher must retain its existing update behavior"
+    );
+}
