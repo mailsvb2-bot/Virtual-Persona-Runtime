@@ -28,6 +28,7 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
+type ResumedSpeech = { client_command: ClientCommand; evidence_turn_sequence: number; evidence_output_sequence: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type VoiceStartAck = { ok: true; request_sequence: number };
 type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
@@ -2327,10 +2328,28 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
   }
   resumeAnswerButton.disabled = true;
   try {
-    await dispatchClientCommand({
-      route: { kind: "live_kit_text_topic", topic: "did.speak" },
-      payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+    if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
+    // The Rust runtime authorizes EACH playback replay under the current epoch.
+    // The browser sends no text to the backend: suffix selection uses the original
+    // canonical response retained only in per-session server memory.
+    const prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
+      request_sequence: resumeSourceRequest,
+      sentence_index: index,
     });
+    await syncStatus();
+    if (sessionState.backend.session_state !== "active") {
+      throw new Error("INVALID_STATE_TRANSITION");
+    }
+    await dispatchClientCommand(prepared.client_command);
+    try {
+      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+        evidence_turn_sequence: prepared.evidence_turn_sequence,
+        evidence_output_sequence: prepared.evidence_output_sequence,
+      });
+    } catch (error) {
+      await interruptAvatar(false);
+      throw error;
+    }
     resumeFromIndex = index;
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
