@@ -442,13 +442,11 @@ fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result
             pending_byte = Some(buffer[read - 1]);
         }
     }
-
     if total_bytes == 0 || pending_byte.is_some() {
         return Err(LabError::InvalidInput);
     }
     Ok(())
 }
-
 fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVoiceInput) {
     let worker_state = Arc::clone(state);
     thread::spawn(move || {
@@ -477,7 +475,6 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
         finish_voice_stream(&worker_state, request_sequence, result);
     });
 }
-
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
     match error {
         LabEvidenceError::InvalidInput => LabError::InvalidInput,
