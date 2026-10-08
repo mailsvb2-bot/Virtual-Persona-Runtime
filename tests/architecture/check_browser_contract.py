@@ -558,10 +558,17 @@ for required in (
     'let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;',
     "textRequestInFlight = false;",
     "voiceRequestInFlight = false;",
-    "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);",
+    'if (terminalStatus && sessionState.backend.session_state === "active") {',
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab turn completion must publish terminal status after unlocking controls: {required}")
+if app.count('if (terminalStatus && sessionState.backend.session_state === "active") {') < 2:
+    raise SystemExit(
+        "Owner Lab text and voice must both publish terminal status only while canonical session is active"
+    )
+if "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);" in app:
+    raise SystemExit("Owner Lab late completion must not overwrite a revoked/closed session")
+
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
