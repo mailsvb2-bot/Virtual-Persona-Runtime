@@ -1,5 +1,15 @@
 (() => {
   const mailbox = "/__journey/report/expressive";
+  const sessionRequestOrder = [];
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url ?? "";
+    const method = (init?.method ?? (typeof input === "object" ? input?.method : undefined) ?? "GET").toUpperCase();
+    if (method === "POST" && /^\\/api\\/session\\/(revoke|close)$/.test(new URL(url, location.href).pathname)) {
+      sessionRequestOrder.push(new URL(url, location.href).pathname);
+    }
+    return nativeFetch(input, init);
+  };
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const waitFor = async (predicate, phase, timeout = 25_000) => {
     const started = performance.now();
@@ -60,6 +70,12 @@
       if (runtime?.avatar_open !== false) {
         throw new Error("REMOTE_AVATAR_RESOURCE_NOT_CLOSED");
       }
+      const revokeIndex = sessionRequestOrder.indexOf("/api/session/revoke");
+      const closeIndex = sessionRequestOrder.indexOf("/api/session/close");
+      if (revokeIndex < 0 || closeIndex <= revokeIndex) {
+        throw new Error("CANONICAL_REVOKE_DID_NOT_PRECEDE_EVIDENCE_CLOSE:"
+          + JSON.stringify(sessionRequestOrder));
+      }
       if (!voice.disabled || !get("resume-answer-row").hidden) {
         throw new Error("POST_DISCONNECT_MEDIA_EGRESS_CONTROLS_OPEN");
       }
@@ -73,6 +89,7 @@
         provider_resource_closed: true,
         browser_transport_closed: true,
         no_late_speak: true,
+        revoke_before_close: true,
       });
     } catch (error) {
       const runtime = await backendState().catch(() => null);
