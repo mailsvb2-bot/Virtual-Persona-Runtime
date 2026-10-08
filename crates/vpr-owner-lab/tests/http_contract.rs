@@ -887,6 +887,26 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
     );
     let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
     assert_cancelled_voice_events(&voice_events);
+    // Neither an interruption confirmation nor a fresh provider speech command
+    // can be prepared after the backend has revoked the canonical session.
+    let confirm_body = format!(r#"{{"request_sequence":{request_sequence}}}"#);
+    let confirm = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/confirm-interruption",
+        &confirm_body,
+    );
+    assert_eq!(confirm.status, 409, "{}", confirm.body);
+    let resume_body = format!(r#"{{"request_sequence":{request_sequence},"sentence_index":0}}"#);
+    let resume = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/resume-answer",
+        &resume_body,
+    );
+    assert_eq!(resume.status, 409, "{}", resume.body);
     assert_eq!(
         post(port, &host, &csrf, "/api/session/close", "{}").status,
         200

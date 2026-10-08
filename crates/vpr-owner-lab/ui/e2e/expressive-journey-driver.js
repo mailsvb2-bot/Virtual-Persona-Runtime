@@ -262,6 +262,15 @@
       resumeSelect.value = "1";
       const resumeButton = element("resume-answer", HTMLButtonElement);
       const interruptsBeforeReplay = commands().filter((command) => command.topic === "did.interrupt").length;
+      // The first backend preparation is intentionally denied. No D-ID command
+      // is allowed to escape; the same authorized reply may be retried.
+      resumeButton.click();
+      await waitStatus("INVALID_STATE_TRANSITION");
+      await waitFor(() => !resumeButton.disabled, "resume-control-recovers-after-server-denial");
+      if (resumeRow.hidden || commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
+        throw new Error("EXPRESSIVE_RESUME_DENIAL_LEAKED_PROVIDER_EGRESS");
+      }
+      await postPhase("resume-denied-no-egress");
       resumeButton.click();
       await waitFor(
         () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,

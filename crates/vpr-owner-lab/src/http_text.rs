@@ -24,6 +24,7 @@ pub(super) fn text_turn_response(
     let _busy =
         http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
     reject_if_session_ending(state)?;
+    *state.replay_source.lock() = None;
     let request_sequence = http_evidence::request_sequence(request)
         .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
     let body = parse_json::<SpeakBody>(request)?;

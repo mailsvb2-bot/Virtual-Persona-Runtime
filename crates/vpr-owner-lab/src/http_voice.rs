@@ -202,6 +202,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
         release_voice_busy(state);
         return response;
     }
+    *state.replay_source.lock() = None;
     let request_sequence = match http_evidence::request_sequence(request) {
         Ok(sequence) => sequence,
         Err(error) => {
@@ -351,6 +352,7 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         release_voice_busy(state);
         return response;
     }
+    *state.replay_source.lock() = None;
     let request_sequence = match http_evidence::request_sequence(request) {
         Ok(sequence) => sequence,
         Err(error) => {
@@ -440,13 +442,11 @@ fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result
             pending_byte = Some(buffer[read - 1]);
         }
     }
-
     if total_bytes == 0 || pending_byte.is_some() {
         return Err(LabError::InvalidInput);
     }
     Ok(())
 }
-
 fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVoiceInput) {
     let worker_state = Arc::clone(state);
     thread::spawn(move || {
@@ -475,7 +475,6 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
         finish_voice_stream(&worker_state, request_sequence, result);
     });
 }
-
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
     match error {
         LabEvidenceError::InvalidInput => LabError::InvalidInput,
@@ -553,15 +552,24 @@ fn finish_voice_stream(
     request_sequence: u64,
     result: Result<LabVoiceResult, LabError>,
 ) {
+    *state.replay_source.lock() = None;
     let event = match result {
         Ok(value) => match state
             .evidence
             .lock()
             .complete_voice_request(request_sequence, &value)
         {
-            Ok(()) => VoiceStreamEvent::Complete {
-                result: Box::new(value),
-            },
+            Ok(()) => {
+                super::http_client_control::retain_completed_reply(
+                    &state.replay_source,
+                    &state.session_end_requested,
+                    request_sequence,
+                    &value.reply,
+                );
+                VoiceStreamEvent::Complete {
+                    result: Box::new(value),
+                }
+            }
             Err(error) => VoiceStreamEvent::Failed {
                 code: error.code().to_owned(),
             },
@@ -580,9 +588,7 @@ fn finish_voice_stream(
             }
         }
     };
-    // A terminal stream event is a public lifecycle boundary. Release the single-turn
-    // busy/cancel gate before making that terminal state observable so a client that
-    // immediately starts the next text/voice turn cannot race the worker's RAII drop.
+    // Release the turn gate before publishing terminal state to prevent a new-turn race.
     release_voice_busy(state);
     state.voice_streams.finish(request_sequence, event);
 }

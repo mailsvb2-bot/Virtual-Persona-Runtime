@@ -28,6 +28,7 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
+type ResumedSpeech = { client_command: ClientCommand; evidence_turn_sequence: number; evidence_output_sequence: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type VoiceStartAck = { ok: true; request_sequence: number };
 type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
@@ -2307,12 +2308,28 @@ const interruptAndOfferResume = async (): Promise<void> => {
   const interrupted = await interruptAvatar();
   resumedSpeechStartedAt = null;
   if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-    offerInterruptedAnswer(sentences, elapsed, offset);
-    setStatus(
-      "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-        + "Точное слово остановки D-ID не сообщает.",
-      "ready",
-    );
+    try {
+      if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
+      // Stop dispatch already succeeded. Confirm that interrupted state against
+      // the server-held original request before exposing replay to the owner.
+      // This is NOT proof that the provider finished audible playback.
+      await api<{ ok: true }>("/api/avatar/confirm-interruption", {
+        request_sequence: resumeSourceRequest,
+      });
+      offerInterruptedAnswer(sentences, elapsed, offset);
+      setStatus(
+        "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+          + "Точное слово остановки D-ID не сообщает.",
+        "ready",
+      );
+    } catch (error) {
+      clearInterruptedAnswer();
+      setStatus(
+        error instanceof Error ? `Продолжение недоступно: ${error.message}`
+          : "Продолжение не подтверждено сервером.",
+        "error",
+      );
+    }
   } else {
     clearInterruptedAnswer();
     if (interrupted) {
@@ -2334,10 +2351,24 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     return;
   }
   resumeAnswerButton.disabled = true;
+  let prepared: ResumedSpeech | null = null;
   try {
-    await dispatchClientCommand({
-      route: { kind: "live_kit_text_topic", topic: "did.speak" },
-      payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+    if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
+    // The Rust runtime authorizes EACH playback replay under the current epoch.
+    // The browser sends no text to the backend: suffix selection uses the original
+    // canonical response retained only in per-session server memory.
+    prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
+      request_sequence: resumeSourceRequest,
+      sentence_index: index,
+    });
+    await syncStatus();
+    if (sessionState.backend.session_state !== "active") {
+      throw new Error("INVALID_STATE_TRANSITION");
+    }
+    await dispatchClientCommand(prepared.client_command);
+    await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+      evidence_turn_sequence: prepared.evidence_turn_sequence,
+      evidence_output_sequence: prepared.evidence_output_sequence,
     });
     resumeFromIndex = index;
     resumedSpeechStartedAt = performance.now();
@@ -2349,13 +2380,28 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       "ready",
     );
   } catch (error) {
+    // Provider transport may have accepted a command before throwing.
+    // Any failure after preparation therefore requires fail-closed revoke.
+    if (prepared !== null) {
+      closePeerTransport();
+      try {
+        await api<{ ok: true }>("/api/session/revoke", {});
+        await syncStatus();
+      } catch (revokeError) {
+        setStatus(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`, "error");
+        updateControls();
+        return;
+      }
+    }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
   }
   updateControls();
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
-  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  // Revoke first: browser egress must stop before any network/evidence await.
+  if (kind === "revoke") closePeerTransport();
+  const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
   if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
     setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
     return;
@@ -2364,7 +2410,7 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
   }
-  closePeerTransport();
+  if (kind === "close") closePeerTransport();
   try {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
     await syncStatus();

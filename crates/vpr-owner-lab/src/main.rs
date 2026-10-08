@@ -67,6 +67,7 @@ struct AppState {
     voice_inputs: http_voice::VoiceInputRegistry,
     voice_streams: http_voice::VoiceStreamRegistry,
     voice_playback: LabVoicePlaybackRegistry,
+    replay_source: ParkingMutex<Option<http_client_control::AuthorizedReply>>,
     session_end_requested: AtomicBool,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -176,6 +177,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_inputs: http_voice::VoiceInputRegistry::default(),
         voice_streams: http_voice::VoiceStreamRegistry::default(),
         voice_playback,
+        replay_source: ParkingMutex::new(None),
         session_end_requested: AtomicBool::new(false),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -360,6 +362,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         .and_then(|()| reject_if_session_ending(state))
         .and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
+                // Keep the canonical lock order with resume/correction:
+                // replay_source -> engine. This prevents start/replay lock inversion.
+                let mut replay_source = state.replay_source.lock();
                 with_engine_result(state, |engine| {
                     let start_request = OwnerLabStartRequest {
                         consent: body.consent,
@@ -373,6 +378,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                             ),
                             _ => return Err(LabError::InvalidInput),
                         };
+                    // A new session/participant must never inherit a previous
+                    // session's authorized speech-replay cache.
+                    *replay_source = None;
                     state
                         .evidence
                         .lock()

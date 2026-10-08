@@ -1912,9 +1912,21 @@ const interruptAndOfferResume = async () => {
     const interrupted = await interruptAvatar();
     resumedSpeechStartedAt = null;
     if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-        offerInterruptedAnswer(sentences, elapsed, offset);
-        setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-            + "Точное слово остановки D-ID не сообщает.", "ready");
+        try {
+            if (resumeSourceRequest === null)
+                throw new Error("RESUME_SOURCE_UNAVAILABLE");
+            await api("/api/avatar/confirm-interruption", {
+                request_sequence: resumeSourceRequest,
+            });
+            offerInterruptedAnswer(sentences, elapsed, offset);
+            setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+                + "Точное слово остановки D-ID не сообщает.", "ready");
+        }
+        catch (error) {
+            clearInterruptedAnswer();
+            setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
+                : "Продолжение не подтверждено сервером.", "error");
+        }
     }
     else {
         clearInterruptedAnswer();
@@ -1936,10 +1948,22 @@ const resumeInterruptedAnswer = async () => {
         return;
     }
     resumeAnswerButton.disabled = true;
+    let prepared = null;
     try {
-        await dispatchClientCommand({
-            route: { kind: "live_kit_text_topic", topic: "did.speak" },
-            payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+        if (resumeSourceRequest === null)
+            throw new Error("RESUME_SOURCE_UNAVAILABLE");
+        prepared = await api("/api/avatar/resume-answer", {
+            request_sequence: resumeSourceRequest,
+            sentence_index: index,
+        });
+        await syncStatus();
+        if (sessionState.backend.session_state !== "active") {
+            throw new Error("INVALID_STATE_TRANSITION");
+        }
+        await dispatchClientCommand(prepared.client_command);
+        await api("/api/avatar/client-delivery-sent", {
+            evidence_turn_sequence: prepared.evidence_turn_sequence,
+            evidence_output_sequence: prepared.evidence_output_sequence,
         });
         resumeFromIndex = index;
         resumedSpeechStartedAt = performance.now();
@@ -1949,12 +1973,26 @@ const resumeInterruptedAnswer = async () => {
             + "Это повторная отправка текста, а не подтверждение полного playback.", "ready");
     }
     catch (error) {
+        if (prepared !== null) {
+            closePeerTransport();
+            try {
+                await api("/api/session/revoke", {});
+                await syncStatus();
+            }
+            catch (revokeError) {
+                setStatus(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`, "error");
+                updateControls();
+                return;
+            }
+        }
         setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
     }
     updateControls();
 };
 const endSession = async (kind) => {
-    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+    if (kind === "revoke")
+        closePeerTransport();
+    const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
     if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
         return;
@@ -1963,7 +2001,8 @@ const endSession = async (kind) => {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
-    closePeerTransport();
+    if (kind === "close")
+        closePeerTransport();
     try {
         await api(`/api/session/${kind}`, {});
         await syncStatus();

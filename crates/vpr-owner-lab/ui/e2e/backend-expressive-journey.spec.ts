@@ -182,6 +182,23 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
     }
     await route.continue();
   });
+  let authorizedReplayPreparations = 0;
+  let rejectedReplayOnce = false;
+  await page.route("**/api/avatar/resume-answer", async (route) => {
+    if (route.request().method() === "POST") {
+      authorizedReplayPreparations += 1;
+      if (!rejectedReplayOnce) {
+        rejectedReplayOnce = true;
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: '{"ok":false,"code":"INVALID_STATE_TRANSITION"}',
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
   await page.goto("/");
 
   await expect.poll(async () => {
@@ -277,6 +294,8 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
+  expect(rejectedReplayOnce).toBe(true);
+  expect(authorizedReplayPreparations).toBe(2);
   expect(speak.length).toBeGreaterThanOrEqual(3);
   const replayed = JSON.parse(speak.at(-1)?.text ?? "{}");
   expect(replayed.script?.input).toBe("Третья фраза.");
@@ -354,4 +373,20 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
       && entry.path === "/v2/agents/voice-e2e-expressive-agent/sessions"
   )).toBeTruthy();
   expect(avatarRequests.some((entry) => entry.path.includes("/streams"))).toBeFalsy();
+
+  // The same stale request can no longer prepare a speak after disconnect.
+  const denied = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(denied.status()).toBe(409);
+  const invalid = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 999,
+  });
+  expect(invalid.status()).toBe(409);
+  const providerAfterDeny = await request.get(`${providerUrl}/__state`);
+  expect(providerAfterDeny.ok()).toBeTruthy();
+  const afterRequests = (await providerAfterDeny.json() as { requests: unknown[] }).requests;
+  expect(afterRequests).toHaveLength(requests.length);
 });
