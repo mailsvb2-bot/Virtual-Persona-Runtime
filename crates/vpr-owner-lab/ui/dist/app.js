@@ -108,6 +108,10 @@ let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
+const sessionEgressFence = typeof BroadcastChannel === "undefined"
+    ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
+let locallyFencedSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
@@ -825,6 +829,11 @@ const syncStatus = () => {
         .then(async () => {
         const status = await api("/api/status");
         sessionState.applyBackend(status);
+        if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
+            broadcastSessionEgressFence();
+            closePeerTransport();
+        }
         renderModalityReadiness(status.modality_readiness);
         updateControls();
         showEvidence(status);
@@ -956,6 +965,10 @@ const handleProviderClientEvent = (raw) => {
     });
 };
 const dispatchClientCommand = async (command) => {
+    if (evidenceSessionSequence > 0
+        && locallyFencedSessionSequence === evidenceSessionSequence) {
+        throw new Error("SESSION_EGRESS_FENCED");
+    }
     if (command.route.kind === "web_rtc_data_channel") {
         const channel = providerDataChannel;
         if (!channel
@@ -1088,6 +1101,28 @@ const closePeerTransport = () => {
     pendingIce = [];
     capabilities.clear();
 };
+const broadcastSessionEgressFence = () => {
+    if (evidenceSessionSequence <= 0)
+        return;
+    locallyFencedSessionSequence = evidenceSessionSequence;
+    sessionEgressFence?.postMessage({
+        kind: "session-egress-revoked",
+        evidence_session_sequence: evidenceSessionSequence,
+    });
+};
+sessionEgressFence?.addEventListener("message", (event) => {
+    const signal = event.data;
+    if (!signal || signal.kind !== "session-egress-revoked"
+        || typeof signal.evidence_session_sequence !== "number"
+        || !Number.isSafeInteger(signal.evidence_session_sequence)
+        || signal.evidence_session_sequence !== evidenceSessionSequence
+        || evidenceSessionSequence <= 0)
+        return;
+    locallyFencedSessionSequence = evidenceSessionSequence;
+    closePeerTransport();
+    setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
+    updateControls();
+});
 const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
@@ -1278,6 +1313,7 @@ const connectAvatar = async () => {
         backendSessionStarted = true;
         const backendReadyAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
+        locallyFencedSessionSequence = 0;
         queueConnectionMediaEvidence("backend_start_ready", backendReadyAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
@@ -2022,8 +2058,8 @@ const resumeInterruptedAnswer = async () => {
     updateControls();
 };
 const endSession = async (kind) => {
-    if (kind === "revoke")
-        closePeerTransport();
+    broadcastSessionEgressFence();
+    closePeerTransport();
     const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
     if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
@@ -2033,8 +2069,6 @@ const endSession = async (kind) => {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
-    if (kind === "close")
-        closePeerTransport();
     try {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
@@ -2067,6 +2101,8 @@ const endSession = async (kind) => {
 const closeBackendOnUnload = () => {
     if (!backendSessionPresent() || !csrfToken)
         return;
+    broadcastSessionEgressFence();
+    closePeerTransport();
     void runtimeFetch("/api/session/close", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
@@ -2075,7 +2111,6 @@ const closeBackendOnUnload = () => {
         cache: "no-store",
         keepalive: true,
     }).catch(() => undefined);
-    closePeerTransport();
 };
 audienceSelect.addEventListener("change", () => {
     if (audienceSelect.value === "visitor" && !ownerCaptureReviewed) {
