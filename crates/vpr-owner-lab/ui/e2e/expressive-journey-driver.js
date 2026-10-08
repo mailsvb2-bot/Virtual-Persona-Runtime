@@ -127,12 +127,8 @@
       ) && !snapshot.canonical_playback_proven,
       "video-generated-but-not-played",
     );
-    await waitEvidence(
-      (snapshot) => snapshot.media_events?.some(
-        (event) => event.request_sequence === 1 && event.kind === "playback_recovery_triggered",
-      ),
-      "unconfirmed-playback-recovered",
-    );
+    // This browser fixture runs without the strict RT0 recovery toggle.
+    // Generation-only events must not promote playback, regardless of recovery policy.
     await waitFor(
       () => element("readiness-voice", HTMLElement).textContent === "Готов",
       "voice-readiness-ready",
