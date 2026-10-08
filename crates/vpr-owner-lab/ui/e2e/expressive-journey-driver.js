@@ -282,7 +282,11 @@
       if (resumed.script?.input !== "Третья фраза." || resumed.script?.should_queue_speaks !== true) {
         throw new Error("EXPRESSIVE_RESUME_GENERATED_NEW_OR_WRONG_ANSWER");
       }
-      if (!resumeRow.hidden || interruptsBeforeReplay < 1) {
+      // Provider sendText may accept the command before the canonical
+      // /api/avatar/client-delivery-sent receipt reaches the backend. Do not
+      // mistake that normal ordering for a permanently visible Resume control.
+      await waitFor(() => resumeRow.hidden, "resume-ack-hidden");
+      if (interruptsBeforeReplay < 1) {
         throw new Error("EXPRESSIVE_RESUME_UI_OR_INTERRUPT_INVALID");
       }
       await postPhase("same-answer-resume-complete");
