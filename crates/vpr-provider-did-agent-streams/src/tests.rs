@@ -532,12 +532,25 @@ fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     // Unknown provider subjects are classified without returning any raw subject
     // or the untrusted content that may contain private owner/provider data.
     for (subject, expected) in [
-        ("chat/new-event", RealtimeAvatarClientEvent::UnknownChatEvent),
-        ("stream-video/new-event", RealtimeAvatarClientEvent::UnknownVideoEvent),
-        ("tool-call/new-event", RealtimeAvatarClientEvent::UnknownToolEvent),
-        ("unknown/event", RealtimeAvatarClientEvent::UnknownOtherEvent),
+        (
+            "chat/new-event",
+            RealtimeAvatarClientEvent::UnknownChatEvent,
+        ),
+        (
+            "stream-video/new-event",
+            RealtimeAvatarClientEvent::UnknownVideoEvent,
+        ),
+        (
+            "tool-call/new-event",
+            RealtimeAvatarClientEvent::UnknownToolEvent,
+        ),
+        (
+            "unknown/event",
+            RealtimeAvatarClientEvent::UnknownOtherEvent,
+        ),
     ] {
-        let message = serde_json::json!({"subject":subject,"content":"PRIVATE_UNTRUSTED_PAYLOAD"}).to_string();
+        let message = serde_json::json!({"subject":subject,"content":"PRIVATE_UNTRUSTED_PAYLOAD"})
+            .to_string();
         let classified = provider.parse_client_event(&live, &message).unwrap();
         assert_eq!(classified, Some(expected));
         assert!(!format!("{classified:?}").contains("PRIVATE_UNTRUSTED_PAYLOAD"));
