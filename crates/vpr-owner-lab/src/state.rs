@@ -385,11 +385,13 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
-    /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
+    /// Withdraws runtime authority without waiting for an in-flight voice worker
+    /// or an unreliable remote-provider close. Teardown must call this BEFORE
+    /// waiting for quiescence: a timed-out stream must not leave the session active.
     ///
     /// # Errors
-    /// Returns a stable runtime/provider reason while preserving retryable cleanup state.
-    pub fn revoke(&mut self) -> Result<(), LabError> {
+    /// Returns a stable state/runtime error; does not perform provider I/O.
+    pub fn revoke_authority(&mut self) -> Result<(), LabError> {
         let session = self.session.as_mut().ok_or(LabError::InvalidState)?;
         match session.state() {
             RealtimeSessionState::Active => session.revoke().map_err(LabError::Runtime)?,
@@ -399,6 +401,15 @@ impl OwnerLabEngine {
             | RealtimeSessionState::Closed => return Err(LabError::InvalidState),
         }
         self.cancel_avatar_preparation();
+        Ok(())
+    }
+
+    /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
+    ///
+    /// # Errors
+    /// Returns a stable runtime/provider reason while preserving retryable cleanup state.
+    pub fn revoke(&mut self) -> Result<(), LabError> {
+        self.revoke_authority()?;
         self.close_avatar_resource()
     }
 
