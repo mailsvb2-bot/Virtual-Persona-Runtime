@@ -1092,11 +1092,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
     const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
-    liveKitRoom = null;
-    clearInterruptedAnswer();
-    stopMicrophoneCapture();
-    stopRemoteEvidence();
-    clearRealtimeMedia();
+    closePeerTransport();
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
@@ -2003,15 +1999,23 @@ const resumeInterruptedAnswer = async () => {
     catch (error) {
         if (prepared !== null) {
             closePeerTransport();
+            let cleanupFailed = false;
             try {
                 await api("/api/session/revoke", {});
-                await syncStatus();
             }
-            catch (revokeError) {
-                setStatus(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`, "error");
-                updateControls();
-                return;
+            catch {
+                cleanupFailed = true;
             }
+            await syncStatus().catch(() => undefined);
+            const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+            const cause = error instanceof Error ? error.message : "RESUME_DELIVERY_UNCONFIRMED";
+            setStatus(!canonicalRevoked
+                ? `RESUME_DELIVERY_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+                : cleanupFailed
+                    ? `RESUME_DELIVERY_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+                    : `RESUME_DELIVERY_UNCONFIRMED_SESSION_REVOKED: ${cause}`, "error");
+            updateControls();
+            return;
         }
         setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
     }
