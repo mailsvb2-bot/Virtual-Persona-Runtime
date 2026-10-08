@@ -1909,9 +1909,24 @@ const interruptAndOfferResume = async () => {
     const interrupted = await interruptAvatar();
     resumedSpeechStartedAt = null;
     if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-        offerInterruptedAnswer(sentences, elapsed, offset);
-        setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-            + "Точное слово остановки D-ID не сообщает.", "ready");
+        try {
+            if (resumeSourceRequest === null)
+                throw new Error("RESUME_SOURCE_UNAVAILABLE");
+            // Stop dispatch already succeeded. Confirm that interrupted state against
+            // the server-held original request before exposing replay to the owner.
+            // This is NOT proof that the provider finished audible playback.
+            await api("/api/avatar/confirm-interruption", {
+                request_sequence: resumeSourceRequest,
+            });
+            offerInterruptedAnswer(sentences, elapsed, offset);
+            setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+                + "Точное слово остановки D-ID не сообщает.", "ready");
+        }
+        catch (error) {
+            clearInterruptedAnswer();
+            setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
+                : "Продолжение не подтверждено сервером.", "error");
+        }
     }
     else {
         clearInterruptedAnswer();
