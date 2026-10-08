@@ -41,6 +41,11 @@ pub enum LabMediaEvidenceKind {
     AudioStarted,
     ProviderDataReceived,
     ProviderEventIgnored,
+    /// D-ID LiveKit events report generation status, not browser playback completion.
+    ProviderVideoGenerationStarted,
+    ProviderVideoGenerationDone,
+    ProviderVideoGenerationFailed,
+    ProviderInformationalEvent,
     ProviderEventParseFailed,
     ProviderPlaybackDoneReceived,
     PlaybackRecoveryTriggered,
