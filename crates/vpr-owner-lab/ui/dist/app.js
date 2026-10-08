@@ -1934,10 +1934,27 @@ const resumeInterruptedAnswer = async () => {
     }
     resumeAnswerButton.disabled = true;
     try {
-        await dispatchClientCommand({
-            route: { kind: "live_kit_text_topic", topic: "did.speak" },
-            payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+        if (resumeSourceRequest === null)
+            throw new Error("RESUME_SOURCE_UNAVAILABLE");
+        const prepared = await api("/api/avatar/resume-answer", {
+            request_sequence: resumeSourceRequest,
+            sentence_index: index,
         });
+        await syncStatus();
+        if (sessionState.backend.session_state !== "active") {
+            throw new Error("INVALID_STATE_TRANSITION");
+        }
+        await dispatchClientCommand(prepared.client_command);
+        try {
+            await api("/api/avatar/client-delivery-sent", {
+                evidence_turn_sequence: prepared.evidence_turn_sequence,
+                evidence_output_sequence: prepared.evidence_output_sequence,
+            });
+        }
+        catch (error) {
+            await interruptAvatar(false);
+            throw error;
+        }
         resumeFromIndex = index;
         resumedSpeechStartedAt = performance.now();
         providerPlaybackInFlight = true;
