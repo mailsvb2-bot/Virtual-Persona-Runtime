@@ -43,7 +43,14 @@
         "voice-recording",
       );
       voice.click();
-      await waitFor(() => !interrupt.disabled, "interrupt-enabled");
+      // A canonical in-flight STT/LLM turn can enable Interrupt even before a
+      // single D-ID speak was sent. Require actual client/provider speech first,
+      // otherwise we would test voice cancellation instead of failed STOP.
+      await waitFor(() =>
+        (window.__vprLiveKitCommands ?? []).some((command) => command.topic === "did.speak")
+        && window.__vprExpressiveRemoteSpeech === true
+        && !interrupt.disabled,
+      "actual-provider-speech-before-stop-failure");
       // A real D-ID STOP could reject while the remote media stream keeps
       // playing. The browser must disconnect BEFORE invoking REST revoke.
       window.__vprExpressiveFailNextInterrupt = true;
@@ -67,9 +74,24 @@
       }
       await sendReport({ status: "ok", session: "revoked", stop_failed: true });
     } catch (error) {
+      const state = await fetch("/api/status", { cache: "no-store" })
+        .then((response) => response.ok ? response.json() : null)
+        .catch(() => null);
+      const commands = window.__vprLiveKitCommands ?? [];
+      const diagnosis = {
+        display: statusText().slice(0, 150),
+        session: state?.session_state ?? "unavailable",
+        sentSpeak: commands.filter((command) => command.topic === "did.speak").length,
+        sentStop: commands.filter((command) => command.topic === "did.interrupt").length,
+        stopFailurePending: window.__vprExpressiveFailNextInterrupt === true,
+        disconnectedRooms: window.__vprExpressiveRoomDisconnectCount ?? 0,
+        voiceDisabled: element("voice").disabled,
+        interruptDisabled: element("interrupt").disabled,
+      };
       await sendReport({
         status: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: (error instanceof Error ? error.message : String(error))
+          + "@state:" + JSON.stringify(diagnosis),
       }).catch(() => undefined);
     }
   };
