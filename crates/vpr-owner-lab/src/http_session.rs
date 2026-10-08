@@ -50,21 +50,14 @@ fn end_session(
     close: bool,
     expected_session_sequence: Option<u64>,
 ) -> Result<HttpResponse, HttpResponse> {
-    // Serialize conditional teardown with new-session startup using the same
-    // replay_source -> engine lock order. A stale tab may NEVER terminate a
-    // different (newer) session, even when its unload keepalive arrives late.
+    // The initial identity check must NOT wait on the engine mutex: a voice
+    // worker can hold it during LLM streaming, and STOP must preempt that work.
+    // Session Start publishes this atomic sequence under the replay-source
+    // lock, so comparing and fencing here cannot target a newer session.
     {
         let mut replay = state.replay_source.lock();
-        let engine = state
-            .engine
-            .lock()
-            .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-        if expected_session_sequence.is_some_and(|sequence| {
-            sequence == 0 || engine.current_session_sequence() != Some(sequence)
-        }) {
-            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
-        }
-        if !matches!(engine.status().session_state.as_str(), "active" | "revoked") {
+        let current = state.active_session_sequence.load(Ordering::Acquire);
+        if current == 0 || expected_session_sequence.is_some_and(|id| id == 0 || id != current) {
             return Err(error_response(409, "INVALID_STATE_TRANSITION"));
         }
         state.session_end_requested.store(true, Ordering::Release);
@@ -79,9 +72,14 @@ fn end_session(
             .engine
             .lock()
             .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-        engine
-            .revoke_authority()
-            .map_err(|error| lab_error_response(&error))?;
+        if let Err(error) = engine.revoke_authority() {
+            // Idempotent stale unload after terminal closure must not poison
+            // the next session's start gate.
+            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
+                state.session_end_requested.store(false, Ordering::Release);
+            }
+            return Err(lab_error_response(&error));
+        }
         // An in-flight voice stream is not a reason to leave D-ID's remote
         // session running. Try remote cleanup under already-revoked authority,
         // BEFORE the bounded quiescence wait (which can return 504).
