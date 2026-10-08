@@ -159,6 +159,23 @@ if ($Rt0Evidence -and -not $NoBrowser) {
     $evidenceBrowser = Resolve-Rt0EvidenceBrowser
 }
 
+if ($Rt0Evidence) {
+    Push-Location $repoRoot
+    try {
+        $candidate = (git rev-parse HEAD).Trim()
+        if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[0-9a-f]{40}$') {
+            throw 'RT0 evidence requires a valid exact Git candidate'
+        }
+        $dirty = @(git status --porcelain --untracked-files=all)
+        if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) {
+            throw 'RT0 evidence requires a clean worktree; no listener was stopped'
+        }
+        Write-Host "Frozen RT0 candidate: $candidate (no Git switch or pull)"
+    } finally {
+        Pop-Location
+    }
+}
+
 Assert-SafeToRestart
 Stop-PortListener
 
@@ -166,10 +183,12 @@ try {
 
     Push-Location $repoRoot
     try {
-        git switch main
-        if ($LASTEXITCODE -ne 0) { throw 'git switch main failed' }
-        git pull --ff-only
-        if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed' }
+        if (-not $Rt0Evidence) {
+            git switch main
+            if ($LASTEXITCODE -ne 0) { throw 'git switch main failed' }
+            git pull --ff-only
+            if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed' }
+        }
         cargo build --locked -p vpr-owner-lab --bins
         if ($LASTEXITCODE -ne 0) { throw 'Owner Lab binaries build failed' }
     } finally {
