@@ -241,6 +241,9 @@
         throw new Error("EXPRESSIVE_INITIAL_SPEAK_COUNT_MISMATCH");
       }
 
+      const interrupt = element("interrupt", HTMLButtonElement);
+      await waitFor(() => interrupt.disabled, "interrupt-disabled-while-idle");
+
       voice.click();
       await waitFor(
         () => (voice.textContent ?? "").includes("Остановить и отправить"),
@@ -248,8 +251,7 @@
       );
       voice.click();
 
-      const interrupt = element("interrupt", HTMLButtonElement);
-      await waitFor(() => !interrupt.disabled, "interrupt-enabled");
+      await waitFor(() => !interrupt.disabled, "interrupt-enabled-during-voice-turn");
       if (commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
         throw new Error("EXPRESSIVE_INTERRUPTED_TURN_SPOKE_TOO_EARLY");
       }
