@@ -1457,6 +1457,7 @@ const broadcastSessionEgressFence = (): void => {
 sessionEgressFence?.addEventListener("message", (event: MessageEvent) => {
   const signal = event.data as { kind?: unknown; evidence_session_sequence?: unknown } | null;
   if (!signal || signal.kind !== "session-egress-revoked"
+      || typeof signal.evidence_session_sequence !== "number"
       || !Number.isSafeInteger(signal.evidence_session_sequence)
       || signal.evidence_session_sequence !== evidenceSessionSequence
       || evidenceSessionSequence <= 0) return;
