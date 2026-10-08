@@ -251,13 +251,22 @@
       }
 
       const interrupt = element("interrupt", HTMLButtonElement);
-      await waitFor(() => interrupt.disabled, "interrupt-disabled-while-idle");
+      // Generation-only messages leave D-ID playback unconfirmed. The owner must
+      // retain interrupt control, and starting the next turn must stop stale audio.
+      await waitFor(() => !interrupt.disabled, "interrupt-available-with-unconfirmed-playback");
+      const interruptCountBeforeNextTurn = commands().filter(
+        (command) => command.topic === "did.interrupt",
+      ).length;
 
       voice.click();
       await waitFor(
         () => (voice.textContent ?? "").includes("Остановить и отправить"),
         "second-recording-started",
       );
+      if (commands().filter((command) => command.topic === "did.interrupt").length
+          <= interruptCountBeforeNextTurn) {
+        throw new Error("EXPRESSIVE_NEXT_TURN_DID_NOT_STOP_UNCONFIRMED_PLAYBACK");
+      }
       voice.click();
 
       await waitFor(() => !interrupt.disabled, "interrupt-enabled-during-voice-turn");
