@@ -590,9 +590,7 @@ fn finish_voice_stream(
             }
         }
     };
-    // A terminal stream event is a public lifecycle boundary. Release the single-turn
-    // busy/cancel gate before making that terminal state observable so a client that
-    // immediately starts the next text/voice turn cannot race the worker's RAII drop.
+    // Release the turn gate before publishing terminal state to prevent a new-turn race.
     release_voice_busy(state);
     state.voice_streams.finish(request_sequence, event);
 }
