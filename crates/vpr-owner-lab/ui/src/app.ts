@@ -1,5 +1,6 @@
 import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
+import { authorizedSpeakText, replayTextFrom, resumeSentences, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import {
@@ -234,6 +235,9 @@ const message = byId<HTMLTextAreaElement>("message");
 const connectButton = byId<HTMLButtonElement>("connect");
 const speakButton = byId<HTMLButtonElement>("speak");
 const interruptButton = byId<HTMLButtonElement>("interrupt");
+const resumeAnswerRow = byId<HTMLElement>("resume-answer-row");
+const resumeAnswerButton = byId<HTMLButtonElement>("resume-answer");
+const resumeAnswerFrom = byId<HTMLSelectElement>("resume-answer-from");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
@@ -311,6 +315,12 @@ let remoteSilentGain: GainNode | null = null;
 let remoteEvidenceFrame: number | null = null;
 let baselineRms = 0.002;
 let activeVoiceEvidence: ActiveVoiceEvidence | null = null;
+let resumeSourceRequest: number | null = null;
+const authorizedDeliveredParts = new Map<number, string>();
+let completedAuthorizedReply: string | null = null;
+let interruptedAnswerSentences: string[] = [];
+let resumeFromIndex = 0;
+let resumedSpeechStartedAt: number | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 let avSyncCollectionPending = false;
 let pendingAvSyncEvidence: Promise<void> | null = null;
@@ -324,6 +334,33 @@ const AV_SYNC_SAMPLE_COUNT = 3;
 const AV_SYNC_SAMPLE_INTERVAL_MILLIS = 100;
 const AV_SYNC_MAX_ATTEMPTS = 50;
 const UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS = 3_000;
+
+const clearInterruptedAnswer = (): void => {
+  resumeSourceRequest = null;
+  authorizedDeliveredParts.clear();
+  completedAuthorizedReply = null;
+  interruptedAnswerSentences = [];
+  resumeFromIndex = 0;
+  resumedSpeechStartedAt = null;
+  resumeAnswerFrom.replaceChildren();
+  resumeAnswerRow.hidden = true;
+  resumeAnswerButton.disabled = true;
+};
+
+const offerInterruptedAnswer = (sentences: string[], elapsedMillis: number, offset = 0): void => {
+  if (sentences.length === 0 || offset >= sentences.length) return;
+  interruptedAnswerSentences = sentences;
+  resumeAnswerFrom.replaceChildren();
+  sentences.forEach((sentence, index) => {
+    const preview = sentence.length > 110 ? `${sentence.slice(0, 107)}…` : sentence;
+    resumeAnswerFrom.add(new Option(`${index + 1}. ${preview}`, String(index)));
+  });
+  resumeFromIndex = Math.min(sentences.length - 1,
+    offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
+  resumeAnswerFrom.value = String(resumeFromIndex);
+  resumeAnswerRow.hidden = false;
+  resumeAnswerButton.disabled = false;
+};
 
 const setStatus = (text: string, state: "idle" | "ready" | "error" = "idle"): void => {
   statusNode.textContent = text;
@@ -1127,6 +1164,8 @@ const updateControls = (): void => {
   const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
   speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
   interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
+  resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
+    || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
   voiceButton.disabled = recording
     ? false
     : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
@@ -1352,6 +1391,7 @@ const clearRealtimeMedia = (): void => {
 };
 
 const closePeerTransport = (): void => {
+  clearInterruptedAnswer();
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
   rt0PlaybackPending = false;
@@ -1379,6 +1419,7 @@ const handleUnexpectedLiveKitDisconnect = async (
   if (liveKitRoom !== room) return;
   const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
   liveKitRoom = null;
+  clearInterruptedAnswer();
   stopMicrophoneCapture();
   stopRemoteEvidence();
   clearRealtimeMedia();
@@ -1920,6 +1961,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     return;
   }
 
+  clearInterruptedAnswer();
+  resumeSourceRequest = requestSequence;
   voiceRequestInFlight = true;
   const attemptedRequestSequence = requestSequence;
   const deliveryGeneration = ++voiceDeliveryGeneration;
@@ -2013,6 +2056,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
           evidence_turn_sequence: segment.evidence_turn_sequence,
           evidence_output_sequence: segment.evidence_output_sequence,
         });
+        if (nativeLiveKitQueue && resumeSourceRequest === requestSequence
+            && authorizedDeliveredParts.size < 32) {
+          const part = authorizedSpeakText(command as { route: { kind: "live_kit_text_topic"; topic: string }; payload: string });
+          if (part) authorizedDeliveredParts.set(segment.evidence_output_sequence, part);
+        }
         if (clientDeliveryElapsed !== null) {
           const evidence = postMediaEvidence(
             "client_delivery_sent",
@@ -2069,6 +2117,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
+      if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+        completedAuthorizedReply = result.reply.trim();
       await maybeFinalizeProviderPlayback(voice);
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
@@ -2111,6 +2161,7 @@ const toggleVoice = async (): Promise<void> => {
       if (rt0EvidenceMode && rt0PlaybackPending) {
         throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
       }
+      clearInterruptedAnswer();
       if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
         await interruptAvatar();
       }
@@ -2126,6 +2177,7 @@ const toggleVoice = async (): Promise<void> => {
 const speak = async (): Promise<void> => {
   const text = message.value.trim();
   if (!text) return;
+  clearInterruptedAnswer();
   if (rt0EvidenceMode && rt0PlaybackPending) {
     setStatus("RT0 evidence: дождитесь окончания текущего playback или нажмите «Прервать».", "error");
     return;
@@ -2228,6 +2280,72 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   }
 };
 
+const interruptAndOfferResume = async (): Promise<void> => {
+  const voice = activeVoiceEvidence;
+  const replaying = resumedSpeechStartedAt !== null;
+  const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
+    replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
+      && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null)
+  );
+  const sentences = replaying
+    ? interruptedAnswerSentences
+    : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
+  const elapsed = replaying
+    ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
+    : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
+      ? 0
+      : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+  const offset = replaying ? resumeFromIndex : 0;
+  const interrupted = await interruptAvatar();
+  resumedSpeechStartedAt = null;
+  if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
+    offerInterruptedAnswer(sentences, elapsed, offset);
+    setStatus(
+      "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+        + "Точное слово остановки D-ID не сообщает.",
+      "ready",
+    );
+  } else {
+    clearInterruptedAnswer();
+    if (interrupted) {
+      setStatus("Ответ остановлен. Продолжение недоступно: исходный ответ ещё не сформирован полностью.", "idle");
+    }
+  }
+  updateControls();
+};
+
+const resumeInterruptedAnswer = async (): Promise<void> => {
+  if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
+      || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
+    return;
+  }
+  const index = Number(resumeAnswerFrom.value);
+  const text = replayTextFrom(interruptedAnswerSentences, index);
+  if (!text) {
+    setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
+    return;
+  }
+  resumeAnswerButton.disabled = true;
+  try {
+    await dispatchClientCommand({
+      route: { kind: "live_kit_text_topic", topic: "did.speak" },
+      payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+    });
+    resumeFromIndex = index;
+    resumedSpeechStartedAt = performance.now();
+    providerPlaybackInFlight = true;
+    resumeAnswerRow.hidden = true;
+    setStatus(
+      "Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
+        + "Это повторная отправка текста, а не подтверждение полного playback.",
+      "ready",
+    );
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
+  }
+  updateControls();
+};
+
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
   const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
   if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
@@ -2300,7 +2418,8 @@ audienceSelect.addEventListener("change", () => {
 });
 connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
-interruptButton.addEventListener("click", () => void interruptAvatar());
+interruptButton.addEventListener("click", () => void interruptAndOfferResume());
+resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());

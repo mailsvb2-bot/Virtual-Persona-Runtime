@@ -41,6 +41,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ht
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
+const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
 const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js");
@@ -226,6 +227,9 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
+        "/interrupted-answer.js" => {
+            static_response(INTERRUPTED_ANSWER_JS, "text/javascript; charset=utf-8")
+        }
         "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8"),
         "/voice-command-scheduler.js" => {
             static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")

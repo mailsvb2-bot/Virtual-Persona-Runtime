@@ -266,8 +266,11 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak.length).toBeGreaterThanOrEqual(2);
-  const streamedReply = speak.map((command) => {
+  expect(speak.length).toBeGreaterThanOrEqual(3);
+  const replayed = JSON.parse(speak.at(-1)?.text ?? "{}");
+  expect(replayed.script?.input).toBe("Третья фраза.");
+  expect(replayed.script?.should_queue_speaks).toBe(true);
+  const streamedReply = speak.slice(0, -1).map((command) => {
     const payload = JSON.parse(command.text ?? "{}");
     expect(payload.script?.should_queue_speaks).toBe(true);
     return String(payload.script?.input ?? "");
