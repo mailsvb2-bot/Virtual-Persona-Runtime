@@ -159,63 +159,11 @@ if ($Rt0Evidence -and -not $NoBrowser) {
     $evidenceBrowser = Resolve-Rt0EvidenceBrowser
 }
 
-# The strict RT0 evidence launcher must never change its exact Git candidate.
-# Validate before stopping any existing listener to fail closed without disruption.
 if ($Rt0Evidence) {
     Push-Location $repoRoot
     try {
         $candidate = (git rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[0-9a-f]{40}
-        if ($LASTEXITCODE -ne 0) { throw 'Owner Lab binaries build failed' }
-    } finally {
-        Pop-Location
-    }
-
-    $exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
-    $credentialsExe = Join-Path $repoRoot 'target\debug\vpr-provider-credentials.exe'
-    if (-not (Test-Path -LiteralPath $exe)) {
-        throw "Owner Lab executable was not produced: $exe"
-    }
-    if (-not (Test-Path -LiteralPath $credentialsExe)) {
-        throw "Provider credential diagnostic was not produced: $credentialsExe"
-    }
-
-    Clear-ProviderEnvironmentOverrides
-    & $credentialsExe probe-avatar
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Avatar provider preflight failed; Owner Lab was not started'
-    }
-
-    $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
-    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && set `"VPR_OWNER_LAB_RT0_EVIDENCE=$rt0EvidenceValue`" && `"$exe`" --allow-egress"
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
-    Wait-LabUp
-
-    $listenerPid = Assert-ExpectedListener -ExpectedExe $exe
-    $bootstrap = Get-Bootstrap
-    $status = Get-LabStatus
-    if (-not $bootstrap.egress_enabled -or -not $status.egress_enabled) {
-        throw 'New Owner Lab started, but backend egress is still disabled'
-    }
-    if ($Rt0Evidence -and -not $bootstrap.rt0_evidence_mode) {
-        throw 'RT0 evidence launcher requested strict mode, but backend did not acknowledge it'
-    }
-    if ($status.conversation_readiness -ne 'text_and_voice') {
-        throw "Provider profile is incomplete: conversation_readiness=$($status.conversation_readiness)"
-    }
-
-    $status = Get-LabStatus
-    Write-Host "Owner Lab ready: pid=$listenerPid port=$Port egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
-    if (-not $NoBrowser) {
-        if ($Rt0Evidence) {
-            Start-Process -FilePath $evidenceBrowser -ArgumentList '-new-window', $baseUrl | Out-Null
-        } else {
-            Start-Process $baseUrl
-        }
-    }
-} catch {
-    throw
-}) {
+        if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[0-9a-f]{40}$') {
             throw 'RT0 evidence requires a valid exact Git candidate'
         }
         $dirty = @(git status --porcelain --untracked-files=all)
