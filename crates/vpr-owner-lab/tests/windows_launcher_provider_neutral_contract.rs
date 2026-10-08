@@ -48,20 +48,21 @@ fn windows_launcher_clears_avatar_environment_before_probe_and_process_launch() 
 }
 
 #[test]
-fn windows_launcher_documents_canonical_av_sync_fallback() {
+fn windows_launcher_documents_strict_rtp_av_sync_contract() {
     assert!(
-        WINDOWS_LAUNCHER
-            .contains("A/V sync prefers RTCInboundRtpStreamStats.estimatedPlayoutTimestamp"),
-        "Windows RT0 launcher must describe RTP playout timing as the preferred A/V reference"
-    );
-    assert!(
-        WINDOWS_LAUNCHER.contains("HTML media-element currentTime fallback"),
-        "Windows RT0 launcher must document the canonical HTML media-element A/V fallback"
-    );
-    assert!(
-        !WINDOWS_LAUNCHER.contains(
-            "requires a browser that exposes\nRTCInboundRtpStreamStats.estimatedPlayoutTimestamp"
+        WINDOWS_LAUNCHER.contains(
+            "Strict RT0 A/V-sync evidence requires RTCInboundRtpStreamStats.estimatedPlayoutTimestamp."
         ),
-        "Windows RT0 launcher must not claim RTP playout timestamps are the only valid A/V evidence path"
+        "Windows RT0 launcher must require RTP playout timestamps for strict release evidence"
+    );
+    assert!(
+        WINDOWS_LAUNCHER.contains(
+            "HTML media-element currentTime is diagnostic-only and cannot qualify release evidence."
+        ),
+        "Windows RT0 launcher must reject HTML media clocks as release-quality A/V evidence"
+    );
+    assert!(
+        !WINDOWS_LAUNCHER.contains("HTML media-element currentTime fallback"),
+        "Windows RT0 launcher must not advertise an invalid HTML release fallback"
     );
 }
