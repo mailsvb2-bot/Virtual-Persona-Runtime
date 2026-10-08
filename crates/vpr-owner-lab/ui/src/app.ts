@@ -2276,6 +2276,74 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   }
 };
 
+const interruptAndOfferResume = async (): Promise<void> => {
+  const voice = activeVoiceEvidence;
+  const replaying = resumedSpeechStartedAt !== null;
+  const eligible = backendSessionPresent() && !!liveKitRoom && (
+    replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
+      && resumeSourceRequest === voice.requestSequence)
+  );
+  const sentences = replaying
+    ? interruptedAnswerSentences
+    : resumeSentences([...authorizedDeliveredParts.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([, value]) => value));
+  const elapsed = replaying
+    ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
+    : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
+      ? 0
+      : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+  const offset = replaying ? resumeFromIndex : 0;
+  const interrupted = await interruptAvatar();
+  resumedSpeechStartedAt = null;
+  if (interrupted && eligible && sentences.length > 0 && backendSessionPresent()) {
+    offerInterruptedAnswer(sentences, elapsed, offset);
+    setStatus(
+      "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+        + "Точное слово остановки D-ID не сообщает.",
+      "ready",
+    );
+  } else {
+    clearInterruptedAnswer();
+    if (interrupted) {
+      setStatus("Ответ остановлен. Продолжение недоступно: исходный ответ ещё не сформирован полностью.", "idle");
+    }
+  }
+  updateControls();
+};
+
+const resumeInterruptedAnswer = async (): Promise<void> => {
+  if (resumeAnswerRow.hidden || !backendSessionPresent() || !liveKitRoom
+      || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
+    return;
+  }
+  const index = Number(resumeAnswerFrom.value);
+  const text = replayTextFrom(interruptedAnswerSentences, index);
+  if (!text) {
+    setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
+    return;
+  }
+  resumeAnswerButton.disabled = true;
+  try {
+    await dispatchClientCommand({
+      route: { kind: "live_kit_text_topic", topic: "did.speak" },
+      payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+    });
+    resumeFromIndex = index;
+    resumedSpeechStartedAt = performance.now();
+    providerPlaybackInFlight = true;
+    resumeAnswerRow.hidden = true;
+    setStatus(
+      "Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
+        + "Это повторная отправка текста, а не подтверждение полного playback.",
+      "ready",
+    );
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
+  }
+  updateControls();
+};
+
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
   const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
   if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
