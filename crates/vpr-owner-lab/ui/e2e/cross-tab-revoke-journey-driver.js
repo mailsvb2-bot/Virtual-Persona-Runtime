@@ -42,7 +42,6 @@
           && window.__vprExpressiveRemoteSpeech === true,
         "spoken-output-published",
       );
-      const before = window.__vprLiveKitCommands.filter((c) => c.topic === "did.speak").length;
       // Controller now opens a genuinely separate same-origin tab only after
       // this checkpoint, so the new tab must discover the EXISTING active
       // canonical session without starting a second one.
@@ -55,9 +54,14 @@
       if (!voice.disabled || !get("resume-answer-row").hidden) {
         throw new Error("CROSS_TAB_MEDIA_CONTROLS_STILL_OPEN");
       }
+      // Commands accepted BEFORE the second tab's revoke click are expected:
+      // the voice backend can deliver several segments while the browser tab
+      // is opening. Count only commands after the transport is fenced.
+      const afterFence = window.__vprLiveKitCommands
+        .filter((c) => c.topic === "did.speak").length;
       await waitFor(async () => (await backend("/api/status")).session_state === "revoked", "revoked");
       await sleep(250);
-      if (window.__vprLiveKitCommands.filter((c) => c.topic === "did.speak").length !== before) {
+      if (window.__vprLiveKitCommands.filter((c) => c.topic === "did.speak").length !== afterFence) {
         throw new Error("SPEECH_AFTER_OTHER_TAB_REVOCATION");
       }
       const close = get("close");
