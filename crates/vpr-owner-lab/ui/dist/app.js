@@ -978,7 +978,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
         liveKitAudioTrack = null;
         sessionState.setRealtimeReadiness({ audio: false });
         setStatus("Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…", "error");
-        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
+        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
             void interruptAvatar();
         }
     }
@@ -1702,7 +1702,7 @@ const toggleVoice = async () => {
             if (rt0EvidenceMode && rt0PlaybackPending) {
                 throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
             }
-            if (voiceCommandScheduler.hasActivePlayback) {
+            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
                 await interruptAvatar();
             }
             await startMicrophone();
