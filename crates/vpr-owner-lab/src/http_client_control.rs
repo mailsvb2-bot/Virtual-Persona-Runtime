@@ -61,7 +61,10 @@ fn authorized_sentence_suffix(reply: &str, sentence_index: usize) -> Option<Stri
             }
         }
         if normalized[end..].is_empty()
-            || normalized[end..].chars().next().is_some_and(char::is_whitespace)
+            || normalized[end..]
+                .chars()
+                .next()
+                .is_some_and(char::is_whitespace)
         {
             let sentence = normalized[start..end].trim();
             if !sentence.is_empty() {
@@ -87,16 +90,16 @@ pub(super) fn route_post(
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     match path {
-        "/api/avatar/resume-answer" => Some(
-            parse_json::<ResumeAnswerBody>(request).and_then(|body| {
+        "/api/avatar/resume-answer" => {
+            Some(parse_json::<ResumeAnswerBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
                 if state.voice_busy.load(Ordering::Acquire) {
                     return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
                 }
                 let mut source = state.replay_source.lock();
-                let reply = source.as_mut().ok_or_else(|| {
-                    super::error_response(409, "INVALID_STATE_TRANSITION")
-                })?;
+                let reply = source
+                    .as_mut()
+                    .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
                 if reply.request_sequence != body.request_sequence
                     || reply.resume_count >= MAX_RESUMES_PER_REPLY
                 {
@@ -114,8 +117,8 @@ pub(super) fn route_post(
                 })?;
                 reply.resume_count += 1;
                 Ok(result)
-            }),
-        ),
+            }))
+        }
         "/api/avatar/client-event" => {
             Some(parse_json::<ClientEventBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
