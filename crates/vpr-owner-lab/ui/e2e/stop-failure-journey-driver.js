@@ -56,7 +56,8 @@
       window.__vprExpressiveFailNextInterrupt = true;
       interrupt.click();
       await waitFor(
-        () => statusText().includes("PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED"),
+        () => statusText().includes("PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED")
+          || statusText().includes("PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING"),
         "stop-failed-and-revoked",
       );
       if (window.__vprExpressiveFailNextInterrupt !== false) {
@@ -66,13 +67,23 @@
         throw new Error("LIVEKIT_PUBLISH_TOKEN_NOT_DISCONNECTED");
       }
       const response = await fetch("/api/status", { cache: "no-store" });
-      if (!response.ok || (await response.json()).session_state !== "revoked") {
+      const runtime = response.ok ? await response.json() : null;
+      if (!runtime || runtime.session_state !== "revoked") {
         throw new Error("CANONICAL_REVOKE_NOT_COMMITTED");
+      }
+      if (runtime.avatar_open !== false) {
+        throw new Error("REMOTE_AVATAR_RESOURCE_STILL_OPEN");
       }
       if (!element("resume-answer-row").hidden || !voice.disabled) {
         throw new Error("REVOKED_SESSION_STILL_OFFERS_MEDIA_EGRESS");
       }
-      await sendReport({ status: "ok", session: "revoked", stop_failed: true });
+      await sendReport({
+        status: "ok",
+        session: "revoked",
+        provider_resource_closed: true,
+        stop_failed: true,
+        stream_cleanup_pending: statusText().includes("CLEANUP_PENDING"),
+      });
     } catch (error) {
       const state = await fetch("/api/status", { cache: "no-store" })
         .then((response) => response.ok ? response.json() : null)
