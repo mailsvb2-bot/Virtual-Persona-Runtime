@@ -56,6 +56,10 @@ pub enum LabClientEvent {
     VideoGenerationDone,
     VideoGenerationFailed,
     Informational,
+    UnknownChatEvent,
+    UnknownVideoEvent,
+    UnknownToolEvent,
+    UnknownOtherEvent,
 }
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
@@ -114,6 +118,10 @@ impl OwnerLabEngine {
                 LabClientEvent::VideoGenerationFailed
             }
             RealtimeAvatarClientEvent::Informational => LabClientEvent::Informational,
+            RealtimeAvatarClientEvent::UnknownChatEvent => LabClientEvent::UnknownChatEvent,
+            RealtimeAvatarClientEvent::UnknownVideoEvent => LabClientEvent::UnknownVideoEvent,
+            RealtimeAvatarClientEvent::UnknownToolEvent => LabClientEvent::UnknownToolEvent,
+            RealtimeAvatarClientEvent::UnknownOtherEvent => LabClientEvent::UnknownOtherEvent,
         }))
     }
 
