@@ -1114,6 +1114,11 @@ const closePeerTransport = () => {
     pendingIce = [];
     capabilities.clear();
 };
+const sessionEndRequest = () => {
+    const sequence = evidenceSessionSequence > 0
+        ? evidenceSessionSequence : observedBackendSessionSequence;
+    return sequence > 0 ? { expected_session_sequence: sequence } : {};
+};
 const broadcastSessionEgressFence = () => {
     const sequence = evidenceSessionSequence > 0
         ? evidenceSessionSequence : observedBackendSessionSequence;
@@ -1152,7 +1157,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
         ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
         : "";
     try {
-        await api("/api/session/close", {});
+        await api("/api/session/close", sessionEndRequest());
         await syncStatus();
         await refreshSessionEvidence();
         try {
@@ -1375,7 +1380,7 @@ const connectAvatar = async () => {
         closePeerTransport();
         if (backendSessionStarted || backendSessionPresent()) {
             try {
-                await api("/api/session/close", {});
+                await api("/api/session/close", sessionEndRequest());
                 backendSessionStarted = false;
                 await syncStatus();
             }
@@ -1957,7 +1962,7 @@ const interruptAvatar = async (recordEvidence = true) => {
         closePeerTransport();
         let cleanupFailed = false;
         try {
-            await api("/api/session/revoke", {});
+            await api("/api/session/revoke", sessionEndRequest());
         }
         catch {
             cleanupFailed = true;
@@ -2056,7 +2061,7 @@ const resumeInterruptedAnswer = async () => {
             closePeerTransport();
             let cleanupFailed = false;
             try {
-                await api("/api/session/revoke", {});
+                await api("/api/session/revoke", sessionEndRequest());
             }
             catch {
                 cleanupFailed = true;
@@ -2089,7 +2094,7 @@ const endSession = async (kind) => {
         await pendingAvSyncEvidence.catch(() => undefined);
     }
     try {
-        await api(`/api/session/${kind}`, {});
+        await api(`/api/session/${kind}`, sessionEndRequest());
         await syncStatus();
         await refreshSessionEvidence();
         if (kind === "revoke") {
@@ -2120,12 +2125,14 @@ const endSession = async (kind) => {
 const closeBackendOnUnload = () => {
     if (!backendSessionPresent() || !csrfToken)
         return;
+    if (!sessionEndRequest().expected_session_sequence)
+        return;
     broadcastSessionEgressFence();
     closePeerTransport();
     void runtimeFetch("/api/session/close", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
-        body: "{}",
+        body: JSON.stringify(sessionEndRequest()),
         credentials: "same-origin",
         cache: "no-store",
         keepalive: true,
