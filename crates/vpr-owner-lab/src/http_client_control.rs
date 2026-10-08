@@ -1,4 +1,6 @@
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use parking_lot::Mutex as ParkingMutex;
 
 use serde::Deserialize;
 use tiny_http::Request;
@@ -28,6 +30,30 @@ pub(super) struct AuthorizedReply {
     pub request_sequence: u64,
     pub reply: String,
     pub resume_count: u8,
+}
+
+/// Publish a completed canonical reply only while its session is still live.
+/// Session teardown sets the atomic termination intent before clearing this
+/// cache, so a late STT/LLM completion must not resurrect replay authority.
+pub(super) fn retain_completed_reply(
+    source: &ParkingMutex<Option<AuthorizedReply>>,
+    session_end_requested: &AtomicBool,
+    request_sequence: u64,
+    reply: &str,
+) {
+    let mut cached = source.lock();
+    if session_end_requested.load(Ordering::Acquire)
+        || reply.trim().is_empty()
+        || reply.len() > 16_000
+    {
+        *cached = None;
+        return;
+    }
+    *cached = Some(AuthorizedReply {
+        request_sequence,
+        reply: reply.to_owned(),
+        resume_count: 0,
+    });
 }
 
 #[derive(Deserialize)]
@@ -199,5 +225,35 @@ mod resume_tests {
             authorized_sentence_suffix("Первое! Второе? Третье...", 2).as_deref(),
             Some("Третье...")
         );
+    }
+
+    #[test]
+    fn late_stream_completion_cannot_restore_reply_after_revoke() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use parking_lot::Mutex;
+
+        let source = Mutex::new(None);
+        let ending = AtomicBool::new(false);
+        super::retain_completed_reply(&source, &ending, 1, "Первый ответ.");
+        assert_eq!(source.lock().as_ref().map(|item| item.request_sequence), Some(1));
+
+        ending.store(true, Ordering::Release);
+        *source.lock() = None;
+        super::retain_completed_reply(&source, &ending, 1, "Поздний ответ.");
+        assert!(source.lock().is_none(), "late completion must not revive revoked replay");
+    }
+
+    #[test]
+    fn no_replay_source_for_empty_or_oversized_reply() {
+        use std::sync::atomic::AtomicBool;
+        use parking_lot::Mutex;
+
+        let source = Mutex::new(None);
+        let ending = AtomicBool::new(false);
+        super::retain_completed_reply(&source, &ending, 10, "Текущий ответ.");
+        super::retain_completed_reply(&source, &ending, 10, "   ");
+        assert!(source.lock().is_none());
+        super::retain_completed_reply(&source, &ending, 10, &"x".repeat(16_001));
+        assert!(source.lock().is_none());
     }
 }
