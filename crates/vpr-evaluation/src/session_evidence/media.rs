@@ -28,6 +28,10 @@ pub(super) fn validate_and_collect_media(
                 | LabMediaEvidenceKind::AudioStarted
                 | LabMediaEvidenceKind::ProviderDataReceived
                 | LabMediaEvidenceKind::ProviderEventIgnored
+                | LabMediaEvidenceKind::ProviderUnknownChatEvent
+                | LabMediaEvidenceKind::ProviderUnknownVideoEvent
+                | LabMediaEvidenceKind::ProviderUnknownToolEvent
+                | LabMediaEvidenceKind::ProviderUnknownOtherEvent
                 | LabMediaEvidenceKind::ProviderVideoGenerationStarted
                 | LabMediaEvidenceKind::ProviderVideoGenerationDone
                 | LabMediaEvidenceKind::ProviderVideoGenerationFailed
@@ -89,6 +93,10 @@ pub(super) fn validate_and_collect_media(
             LabMediaEvidenceKind::PlaybackCompleted
             | LabMediaEvidenceKind::ProviderDataReceived
             | LabMediaEvidenceKind::ProviderEventIgnored
+            | LabMediaEvidenceKind::ProviderUnknownChatEvent
+            | LabMediaEvidenceKind::ProviderUnknownVideoEvent
+            | LabMediaEvidenceKind::ProviderUnknownToolEvent
+            | LabMediaEvidenceKind::ProviderUnknownOtherEvent
             | LabMediaEvidenceKind::ProviderVideoGenerationStarted
             | LabMediaEvidenceKind::ProviderVideoGenerationDone
             | LabMediaEvidenceKind::ProviderVideoGenerationFailed
