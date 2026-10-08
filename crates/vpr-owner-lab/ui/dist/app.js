@@ -1958,8 +1958,6 @@ const resumeInterruptedAnswer = async () => {
             + "Это повторная отправка текста, а не подтверждение полного playback.", "ready");
     }
     catch (error) {
-        // Provider transport may have accepted a command before throwing.
-        // Any failure after preparation therefore requires fail-closed revoke.
         if (prepared !== null) {
             closePeerTransport();
             try {
@@ -1977,8 +1975,8 @@ const resumeInterruptedAnswer = async () => {
     updateControls();
 };
 const endSession = async (kind) => {
-    // Revoke first: browser egress must stop before any network/evidence await.
-    if (kind === "revoke") closePeerTransport();
+    if (kind === "revoke")
+        closePeerTransport();
     const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
     if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
@@ -1988,7 +1986,8 @@ const endSession = async (kind) => {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
-    if (kind === "close") closePeerTransport();
+    if (kind === "close")
+        closePeerTransport();
     try {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
