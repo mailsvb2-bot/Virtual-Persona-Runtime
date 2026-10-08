@@ -303,6 +303,12 @@ let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+// This fence is a same-origin, same-browser fast path, NOT a provider-atomic
+// substitute for a backend-owned LiveKit sender and receiver-only token.
+const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
+const sessionEgressFence = typeof BroadcastChannel === "undefined"
+  ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
+let locallyFencedSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
@@ -1123,6 +1129,11 @@ const syncStatus = (): Promise<LabStatus> => {
     .then(async () => {
       const status = await api<LabStatus>("/api/status");
       sessionState.applyBackend(status);
+      if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
+          && locallyFencedSessionSequence !== evidenceSessionSequence) {
+        broadcastSessionEgressFence();
+        closePeerTransport();
+      }
       renderModalityReadiness(status.modality_readiness);
       updateControls();
       showEvidence(status);
@@ -1267,6 +1278,10 @@ const handleProviderClientEvent = (raw: string): void => {
 };
 
 const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
+  if (evidenceSessionSequence > 0
+      && locallyFencedSessionSequence === evidenceSessionSequence) {
+    throw new Error("SESSION_EGRESS_FENCED");
+  }
   if (command.route.kind === "web_rtc_data_channel") {
     const channel = providerDataChannel;
     if (
@@ -1426,6 +1441,30 @@ const closePeerTransport = (): void => {
   pendingIce = [];
   capabilities.clear();
 };
+
+const broadcastSessionEgressFence = (): void => {
+  if (evidenceSessionSequence <= 0) return;
+  locallyFencedSessionSequence = evidenceSessionSequence;
+  sessionEgressFence?.postMessage({
+    kind: "session-egress-revoked",
+    evidence_session_sequence: evidenceSessionSequence,
+  });
+};
+
+// A revoke in a second same-origin tab must close this tab's publisher
+// without awaiting fetch(), vendor STOP, an evidence flush or server cleanup.
+// The backend remains the authority; this is a best-effort latency hardening.
+sessionEgressFence?.addEventListener("message", (event: MessageEvent) => {
+  const signal = event.data as { kind?: unknown; evidence_session_sequence?: unknown } | null;
+  if (!signal || signal.kind !== "session-egress-revoked"
+      || !Number.isSafeInteger(signal.evidence_session_sequence)
+      || signal.evidence_session_sequence !== evidenceSessionSequence
+      || evidenceSessionSequence <= 0) return;
+  locallyFencedSessionSequence = evidenceSessionSequence;
+  closePeerTransport();
+  setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
+  updateControls();
+});
 
 const handleUnexpectedLiveKitDisconnect = async (
   room: LiveKitRoom,
@@ -1640,6 +1679,7 @@ const connectAvatar = async (): Promise<void> => {
     // first-useful-video clock starts only after the realtime transport itself is connected.
     const backendReadyAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
+    locallyFencedSessionSequence = 0;
     queueConnectionMediaEvidence(
       "backend_start_ready",
       backendReadyAt - connectJourneyStartedAt,
@@ -2461,8 +2501,10 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
-  // Revoke first: browser egress must stop before any network/evidence await.
-  if (kind === "revoke") closePeerTransport();
+  // Tell every same-origin tab to fence its publisher BEFORE any await.
+  // Stop media on Close as well: waiting for evidence must not prolong speech.
+  broadcastSessionEgressFence();
+  closePeerTransport();
   const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
   if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
     setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
@@ -2472,7 +2514,6 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
   }
-  if (kind === "close") closePeerTransport();
   try {
     await api<{ ok: true }>(`/api/session/${kind}`, {});
     await syncStatus();
@@ -2507,6 +2548,8 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
 
 const closeBackendOnUnload = (): void => {
   if (!backendSessionPresent() || !csrfToken) return;
+  broadcastSessionEgressFence();
+  closePeerTransport();
   void runtimeFetch("/api/session/close", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
@@ -2515,7 +2558,6 @@ const closeBackendOnUnload = (): void => {
     cache: "no-store",
     keepalive: true,
   }).catch(() => undefined);
-  closePeerTransport();
 };
 
 audienceSelect.addEventListener("change", () => {
