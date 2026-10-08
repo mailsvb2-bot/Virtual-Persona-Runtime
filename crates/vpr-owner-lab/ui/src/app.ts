@@ -945,7 +945,6 @@ const monitorRemoteAudio = (): void => {
           voice.audioStartedElapsed,
           voice.requestSequence,
         ).then(async () => {
-          // UI status refresh is best-effort: RTP evidence must still be collected if it fails.
           await syncStatus().catch(() => undefined);
           const avSyncEvidence = ensureAvSyncEvidence(voice);
           if (avSyncEvidence) await avSyncEvidence;
