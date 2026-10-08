@@ -31,7 +31,7 @@ for the new candidate/provider state.
 Evidence must live outside the Git worktree.
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-evidence-prepare -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-evidence-prepare -- \
   /secure/evidence/rt0-candidate
 ```
 
@@ -45,7 +45,7 @@ workspace without manufacturing provider, browser, Golden, cost, privacy or huma
 Validate private inputs and provider configuration without spending provider calls.
 
 ```bash
-cargo run -p vpr-live-proof -- doctor \
+cargo run --locked -p vpr-live-proof -- doctor \
   /secure/input/probe.raw \
   /secure/input/reviewed-profile.json \
   /secure/input/owner.raw \
@@ -60,7 +60,7 @@ Prefer the single-file candidate capture so provider state cannot drift between 
 probe and owner/visitor attempt.
 
 ```bash
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate-bundle \
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- candidate-bundle \
   /secure/input/probe.raw \
   /secure/input/reviewed-profile.json \
   /secure/input/owner.raw \
@@ -71,7 +71,7 @@ VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate-bundle
 Project the canonical downstream artifacts while still on the same exact candidate:
 
 ```bash
-cargo run -p vpr-live-proof -- candidate-bundle-extract \
+cargo run --locked -p vpr-live-proof -- candidate-bundle-extract \
   /secure/evidence/rt0-candidate/candidate-bundle.json \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/provider-probe.json \
@@ -85,7 +85,7 @@ quality or release readiness.
 ## 4. Create the non-promoting supporting scaffold
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-supporting-scaffold -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-supporting-scaffold -- \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/provider-state.json \
   "$CANDIDATE"
@@ -98,7 +98,7 @@ Every substantive value starts failed, synthetic or missing. Do not edit the can
 Start Owner Lab in strict RT0 evidence mode with explicit egress permission. Strict mode is mandatory for release evidence: if the exact clean Git candidate or provider-state provenance cannot be bound, Owner Lab must refuse to start rather than produce an unusable paid capture.
 
 ```bash
-VPR_OWNER_LAB_RT0_EVIDENCE=true cargo run --locked -p vpr-owner-lab -- --allow-egress
+VPR_OWNER_LAB_RT0_EVIDENCE=true cargo run --locked --locked -p vpr-owner-lab -- --allow-egress
 ```
 
 On Windows, prefer the canonical launcher, which sets and verifies the same strict mode and selects the required evidence browser:
@@ -132,7 +132,7 @@ is separately reviewed in the human-evaluation evidence.
 Use the exact provider-state bytes and candidate SHA:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-session-aggregate -- \
   bind \
   /secure/evidence/rt0-candidate/provider-state.json \
   "$CANDIDATE" \
@@ -147,7 +147,7 @@ command exits successfully; never preserve a truncated file from a failed comman
 ## 7. Run runtime-readiness diagnostics before another paid run
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/conversation-attempt.json \
   /secure/evidence/rt0-candidate/bound-session-aggregate.json \
@@ -172,7 +172,7 @@ continue.
 Only after readiness exit `0`:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-runtime-supporting -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-runtime-supporting -- \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/conversation-attempt.json \
@@ -211,7 +211,7 @@ supporting-artifact digest remains bound to the reviewed automation provenance.
 Then replace only the untouched CI/E2E scaffold entries:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-automation-capture -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-automation-capture -- \
   /secure/input/rt0-reviewed-automation.json \
   /secure/evidence/rt0-candidate/supporting \
   "$CANDIDATE"
@@ -225,7 +225,7 @@ reviewed and successful. Failed automation may be recorded as failed; capture do
 Generate the private review input from runtime-authoritative facts:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-supporting-input-prefill -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-supporting-input-prefill -- \
   /secure/input/rt0-reviewed-observations.json \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/bound-session-aggregate.json \
@@ -243,7 +243,7 @@ attestation to `reviewed_real_observations` only after that review.
 Then capture the reviewed manual evidence:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-supporting-capture -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-supporting-capture -- \
   /secure/input/rt0-reviewed-observations.json \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/provider-state.json \
@@ -256,7 +256,7 @@ human. Those are explicit reviewer attestations.
 ## 11. Preflight all supporting evidence
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-supporting-preflight -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-supporting-preflight -- \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/provider-state.json \
   "$CANDIDATE"
@@ -271,7 +271,7 @@ stdout to a temporary external file and publish it as
 `/secure/evidence/rt0-candidate/bound-golden-report.json` only after exit `0`:
 
 ```bash
-cargo run -p vpr-evaluation -- \
+cargo run --locked -p vpr-evaluation -- \
   docs/evaluation/rt0_golden_minimum.json \
   /secure/evidence/rt0-candidate/private-golden-evidence.json \
   /secure/evidence/rt0-candidate/release-spec.md \
@@ -282,7 +282,7 @@ cargo run -p vpr-evaluation -- \
 Generate the private owner-specific report:
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-owner-golden -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-owner-golden -- \
   /secure/evidence/rt0-candidate/owner-golden-suite.json \
   /secure/evidence/rt0-candidate/owner-golden-evidence.json \
   /secure/evidence/rt0-candidate/release-spec.md \
@@ -297,7 +297,7 @@ release evidence.
 ## 13. Assemble the exact exit manifest
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-exit-assemble -- \
   /secure/evidence/rt0-candidate/supporting \
   /secure/evidence/rt0-candidate/bound-golden-report.json \
   /secure/evidence/rt0-candidate/owner-golden-suite.json \
@@ -318,7 +318,7 @@ and refuses overwrite.
 ## 14. Require a complete inventory
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
   /secure/evidence/rt0-candidate \
   "$CANDIDATE"
 ```
@@ -328,7 +328,7 @@ cargo run -p vpr-evaluation --bin vpr-rt0-evidence-inventory -- \
 ## 15. Run the final RT0 exit gate
 
 ```bash
-cargo run -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-exit-evidence -- \
   /secure/evidence/rt0-candidate/exit-evidence.json \
   /secure/evidence/rt0-candidate/bound-golden-report.json \
   /secure/evidence/rt0-candidate/private-golden-evidence.json \
