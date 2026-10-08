@@ -1210,9 +1210,15 @@ const handleProviderClientEvent = (raw: string): void => {
         voiceCommandScheduler.playbackDone();
         if (voice) {
           voice.providerPlaybackDoneCount += 1;
-          await maybeFinalizeProviderPlayback(voice);
+          // The authoritative playback receipt must update local controls before
+          // awaiting potentially slow media-evidence storage. Otherwise a new
+          // microphone click races the stale providerPlaybackInFlight flag and
+          // mistakenly revokes an already finished WebRTC session.
+          const completion = maybeFinalizeProviderPlayback(voice);
           syncRt0PlaybackPending(voice);
           providerPlaybackInFlight = !voice.interrupted && !voice.providerPlaybackDone;
+          updateControls();
+          await completion;
         } else {
           providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
           if (rt0EvidenceMode) rt0PlaybackPending = false;
