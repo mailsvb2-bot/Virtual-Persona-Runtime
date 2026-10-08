@@ -222,7 +222,7 @@ const renderTelemetry = (snapshot) => {
     }
     metricPlayback.textContent = snapshot.canonical_playback_proven
         ? "подтверждён"
-        : voice ? "ожидание" : "—";
+        : voice && snapshot.media_events.some((event) => event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered") ? "не подтверждён" : voice ? "ожидание" : "—";
     const usages = [
         ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
         ...snapshot.voice_attempts.flatMap((attempt) => [attempt.stt_usage, attempt.llm_usage]),
@@ -562,7 +562,15 @@ const collectAvSyncEvidence = async (requestSequence) => {
     let lastVideoIssue = "stats_unavailable";
     while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
         attempts += 1;
-        const reading = await readAvSyncOffsetMillis(readState);
+        let reading;
+        try {
+            reading = await readAvSyncOffsetMillis(readState);
+        }
+        catch {
+            lastAudioIssue = "stats_unavailable";
+            lastVideoIssue = "stats_unavailable";
+            break;
+        }
         if (reading.audioIssue !== null)
             lastAudioIssue = reading.audioIssue;
         if (reading.videoIssue !== null)
@@ -668,7 +676,7 @@ const monitorRemoteAudio = () => {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
                 const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence).then(async () => {
-                    await syncStatus();
+                    await syncStatus().catch(() => undefined);
                     const avSyncEvidence = ensureAvSyncEvidence(voice);
                     if (avSyncEvidence)
                         await avSyncEvidence;
@@ -871,11 +879,28 @@ const handleProviderClientEvent = (raw) => {
                     rt0PlaybackPending = false;
             }
         }
+        else if (normalized) {
+            const voice = activeVoiceEvidence;
+            if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
+                const kind = normalized.kind === "video_generation_started"
+                    ? "provider_video_generation_started"
+                    : normalized.kind === "video_generation_done"
+                        ? "provider_video_generation_done"
+                        : normalized.kind === "video_generation_failed"
+                            ? "provider_video_generation_failed"
+                            : "provider_informational_event";
+                const saved = await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence)
+                    .then(() => true, () => false);
+                if (saved)
+                    voice.providerEventKindsPosted.add(normalized.kind);
+            }
+        }
         else if (normalized === null) {
             const voice = activeVoiceEvidence;
             if (voice && !voice.providerIgnoredEventPosted) {
-                voice.providerIgnoredEventPosted = true;
-                await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence);
+                const saved = await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence).then(() => true, () => false);
+                if (saved)
+                    voice.providerIgnoredEventPosted = true;
             }
         }
         updateControls();
@@ -1537,6 +1562,7 @@ const finishMicrophoneTurn = async () => {
         playbackCompletionEvidence: null,
         providerDataReceived: false,
         providerIgnoredEventPosted: false,
+        providerEventKindsPosted: new Set(),
         providerParseFailurePosted: false,
         providerPlaybackExpectedCount: 0,
         providerPlaybackDoneCount: 0,

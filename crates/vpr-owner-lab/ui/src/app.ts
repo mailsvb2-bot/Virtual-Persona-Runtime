@@ -49,7 +49,8 @@ type ClientControl = {
 };
 type ClientEvent =
   | { kind: "playback_started"; playback_id: string }
-  | { kind: "playback_done" };
+  | { kind: "playback_done" }
+  | { kind: "video_generation_started" | "video_generation_done" | "video_generation_failed" | "informational" };
 type StartResponse = { evidence_session_sequence: number; transport: RealtimeTransport; capabilities: string[]; client_control: ClientControl | null };
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
@@ -66,6 +67,10 @@ type MediaEvidenceKind =
   | "audio_started"
   | "provider_data_received"
   | "provider_event_ignored"
+  | "provider_video_generation_started"
+  | "provider_video_generation_done"
+  | "provider_video_generation_failed"
+  | "provider_informational_event"
   | "provider_event_parse_failed"
   | "provider_playback_done_received"
   | "playback_recovery_triggered"
@@ -105,7 +110,7 @@ type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -427,7 +432,9 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
   }
   metricPlayback.textContent = snapshot.canonical_playback_proven
     ? "подтверждён"
-    : voice ? "ожидание" : "—";
+    : voice && snapshot.media_events.some((event) =>
+      event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered"
+    ) ? "не подтверждён" : voice ? "ожидание" : "—";
 
   const usages: Array<UsageEvidence | null> = [
     ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
@@ -830,7 +837,14 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
 
   while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
     attempts += 1;
-    const reading = await readAvSyncOffsetMillis(readState);
+    let reading: Awaited<ReturnType<typeof readAvSyncOffsetMillis>>;
+    try {
+      reading = await readAvSyncOffsetMillis(readState);
+    } catch {
+      lastAudioIssue = "stats_unavailable";
+      lastVideoIssue = "stats_unavailable";
+      break;
+    }
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
     if (reading.offsetMillis !== null && reading.reference !== null) {
@@ -940,7 +954,7 @@ const monitorRemoteAudio = (): void => {
           voice.audioStartedElapsed,
           voice.requestSequence,
         ).then(async () => {
-          await syncStatus();
+          await syncStatus().catch(() => undefined);
           const avSyncEvidence = ensureAvSyncEvidence(voice);
           if (avSyncEvidence) await avSyncEvidence;
         });
@@ -1158,15 +1172,29 @@ const handleProviderClientEvent = (raw: string): void => {
           providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
           if (rt0EvidenceMode) rt0PlaybackPending = false;
         }
+      } else if (normalized) {
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
+          const kind: MediaEvidenceKind = normalized.kind === "video_generation_started"
+            ? "provider_video_generation_started"
+            : normalized.kind === "video_generation_done"
+              ? "provider_video_generation_done"
+              : normalized.kind === "video_generation_failed"
+                ? "provider_video_generation_failed"
+                : "provider_informational_event";
+          const saved = await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence)
+            .then(() => true, () => false);
+          if (saved) voice.providerEventKindsPosted.add(normalized.kind);
+        }
       } else if (normalized === null) {
         const voice = activeVoiceEvidence;
         if (voice && !voice.providerIgnoredEventPosted) {
-          voice.providerIgnoredEventPosted = true;
-          await postMediaEvidence(
+          const saved = await postMediaEvidence(
             "provider_event_ignored",
             performance.now() - voice.startedAt,
             voice.requestSequence,
-          );
+          ).then(() => true, () => false);
+          if (saved) voice.providerIgnoredEventPosted = true;
         }
       }
       updateControls();
@@ -1908,6 +1936,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     playbackCompletionEvidence: null,
     providerDataReceived: false,
     providerIgnoredEventPosted: false,
+    providerEventKindsPosted: new Set(),
     providerParseFailurePosted: false,
     providerPlaybackExpectedCount: 0,
     providerPlaybackDoneCount: 0,

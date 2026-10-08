@@ -471,7 +471,7 @@ fn development_status_tracks_current_session_schema_contracts() {
 fn expanded_connection_evidence_uses_new_wire_versions() {
     assert_eq!(
         RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
-        "rt0-owner-lab-session-evidence-1.4"
+        "rt0-owner-lab-session-evidence-1.5"
     );
     assert_eq!(
         RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,

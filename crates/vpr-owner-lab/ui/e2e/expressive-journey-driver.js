@@ -60,8 +60,8 @@
 
   const recordStreamingVoiceTurn = async (transcript, reply) => {
     const voice = element("voice", HTMLButtonElement);
-    const playbackDone = window.__vprExpressivePlaybackDone;
-    if (typeof playbackDone !== "function") {
+    const generationDone = window.__vprExpressiveGenerationDone;
+    if (typeof generationDone !== "function") {
       throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
     }
     const initialSpeakCount = commands().filter((command) => command.topic === "did.speak").length;
@@ -110,11 +110,10 @@
       throw new Error("EXPRESSIVE_REPLY_WAS_NOT_STREAMED_BEFORE_LLM_COMPLETION");
     }
 
-    // Simulate provider acknowledgements only AFTER the entire native queue
-    // was received. One completion per delivered segment keeps release-evidence
-    // accounting strict while catching the original first-word stall.
+    // Report provider VIDEO GENERATION completion after the native queue was sent.
+    // It must never count as verified playback completion.
     for (let index = 0; index < spokenParts.length; index += 1) {
-      playbackDone();
+      generationDone();
       await sleep(50);
     }
 
@@ -124,10 +123,12 @@
     );
     await waitEvidence(
       (snapshot) => snapshot.media_events?.some(
-        (event) => event.request_sequence === 1 && event.kind === "playback_completed",
-      ),
-      "provider-playback-completed",
+        (event) => event.request_sequence === 1 && event.kind === "provider_video_generation_done",
+      ) && !snapshot.canonical_playback_proven,
+      "video-generated-but-not-played",
     );
+    // This browser fixture runs without the strict RT0 recovery toggle.
+    // Generation-only events must not promote playback, regardless of recovery policy.
     await waitFor(
       () => element("readiness-voice", HTMLElement).textContent === "Готов",
       "voice-readiness-ready",
@@ -212,11 +213,11 @@
       );
 
       await waitEvidence(
-        (snapshot) => snapshot.canonical_playback_proven === true
-          && snapshot.av_sync_proven === true
+        (snapshot) => snapshot.canonical_playback_proven === false
+          && snapshot.av_sync_proven === false
           && snapshot.voice_attempts?.some(
             (attempt) => attempt.status === "completed"
-              && attempt.canonical_playback_confirmed === true,
+              && attempt.canonical_playback_confirmed === false,
           )
           && snapshot.media_events?.some(
             (event) => event.kind === "backend_complete_received",
@@ -224,7 +225,7 @@
           && snapshot.media_events?.some(
             (event) => event.kind === "client_delivery_sent",
           ),
-        "canonical-playback-and-browser-timing",
+        "video-generation-not-falsely-promoted-to-playback",
       );
       const evidence = await fetchEvidence();
       await postPhase("first-voice-complete");
@@ -250,13 +251,22 @@
       }
 
       const interrupt = element("interrupt", HTMLButtonElement);
-      await waitFor(() => interrupt.disabled, "interrupt-disabled-while-idle");
+      // Generation-only messages leave D-ID playback unconfirmed. The owner must
+      // retain interrupt control, and starting the next turn must stop stale audio.
+      await waitFor(() => !interrupt.disabled, "interrupt-available-with-unconfirmed-playback");
+      const interruptCountBeforeNextTurn = commands().filter(
+        (command) => command.topic === "did.interrupt",
+      ).length;
 
       voice.click();
       await waitFor(
         () => (voice.textContent ?? "").includes("Остановить и отправить"),
         "second-recording-started",
       );
+      if (commands().filter((command) => command.topic === "did.interrupt").length
+          <= interruptCountBeforeNextTurn) {
+        throw new Error("EXPRESSIVE_NEXT_TURN_DID_NOT_STOP_UNCONFIRMED_PLAYBACK");
+      }
       voice.click();
 
       await waitFor(() => !interrupt.disabled, "interrupt-enabled-during-voice-turn");

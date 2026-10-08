@@ -208,12 +208,14 @@
         this.videoTrack = track;
         this.emit(roomEvents.TrackSubscribed, track);
       };
-      window.__vprExpressivePlaybackDone = () => {
+      window.__vprExpressiveGenerationDone = () => {
         window.__vprExpressiveRemoteSpeech = false;
-        this.emit(
-          roomEvents.DataReceived,
-          new TextEncoder().encode(JSON.stringify({ subject: "stream-video/done" })),
-        );
+        for (const subject of ["chat/answer", "stream-video/started", "stream-video/done"]) {
+          this.emit(
+            roomEvents.DataReceived,
+            new TextEncoder().encode(JSON.stringify({ subject, content: "untrusted mock content" })),
+          );
+        }
       };
     }
 
