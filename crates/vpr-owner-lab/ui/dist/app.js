@@ -1912,9 +1912,6 @@ const interruptAndOfferResume = async () => {
         try {
             if (resumeSourceRequest === null)
                 throw new Error("RESUME_SOURCE_UNAVAILABLE");
-            // Stop dispatch already succeeded. Confirm that interrupted state against
-            // the server-held original request before exposing replay to the owner.
-            // This is NOT proof that the provider finished audible playback.
             await api("/api/avatar/confirm-interruption", {
                 request_sequence: resumeSourceRequest,
             });
