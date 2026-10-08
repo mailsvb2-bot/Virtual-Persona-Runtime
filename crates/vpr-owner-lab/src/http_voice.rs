@@ -561,14 +561,17 @@ fn finish_voice_stream(
         {
             Ok(()) => {
                 if !value.reply.trim().is_empty() && value.reply.len() <= 16_000 {
-                    *state.replay_source.lock() = Some(super::http_client_control::AuthorizedReply {
-                        request_sequence,
-                        reply: value.reply.clone(),
-                        resume_count: 0,
-                    });
+                    *state.replay_source.lock() =
+                        Some(super::http_client_control::AuthorizedReply {
+                            request_sequence,
+                            reply: value.reply.clone(),
+                            resume_count: 0,
+                        });
                 }
-                VoiceStreamEvent::Complete { result: Box::new(value) }
-            },
+                VoiceStreamEvent::Complete {
+                    result: Box::new(value),
+                }
+            }
             Err(error) => VoiceStreamEvent::Failed {
                 code: error.code().to_owned(),
             },
