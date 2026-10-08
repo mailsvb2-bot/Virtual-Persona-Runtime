@@ -362,6 +362,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         .and_then(|()| reject_if_session_ending(state))
         .and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
+                // Keep the canonical lock order with resume/correction:
+                // replay_source -> engine. This prevents start/replay lock inversion.
+                let mut replay_source = state.replay_source.lock();
                 with_engine_result(state, |engine| {
                     let start_request = OwnerLabStartRequest {
                         consent: body.consent,
@@ -377,7 +380,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                         };
                     // A new session/participant must never inherit a previous
                     // session's authorized speech-replay cache.
-                    *state.replay_source.lock() = None;
+                    *replay_source = None;
                     state
                         .evidence
                         .lock()
