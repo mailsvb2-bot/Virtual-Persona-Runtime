@@ -511,16 +511,30 @@ fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     );
     // Generation completion is not a provider-confirmed audible playback completion.
     for (subject, expected) in [
-        ("stream-video/started", RealtimeAvatarClientEvent::VideoGenerationStarted),
-        ("stream-video/error", RealtimeAvatarClientEvent::VideoGenerationFailed),
+        (
+            "stream-video/started",
+            RealtimeAvatarClientEvent::VideoGenerationStarted,
+        ),
+        (
+            "stream-video/error",
+            RealtimeAvatarClientEvent::VideoGenerationFailed,
+        ),
         ("chat/answer", RealtimeAvatarClientEvent::Informational),
         ("chat/partial", RealtimeAvatarClientEvent::Informational),
         ("tool-call/done", RealtimeAvatarClientEvent::Informational),
     ] {
         let message = serde_json::json!({"subject":subject,"content":"untrusted"}).to_string();
-        assert_eq!(provider.parse_client_event(&live, &message).unwrap(), Some(expected));
+        assert_eq!(
+            provider.parse_client_event(&live, &message).unwrap(),
+            Some(expected)
+        );
     }
-    assert_eq!(provider.parse_client_event(&live, r#"{"subject":"unknown/event"}"#).unwrap(), None);
+    assert_eq!(
+        provider
+            .parse_client_event(&live, r#"{"subject":"unknown/event"}"#)
+            .unwrap(),
+        None
+    );
 
     let text = provider
         .prepare_client_text(&live, "Привет", &probe)
