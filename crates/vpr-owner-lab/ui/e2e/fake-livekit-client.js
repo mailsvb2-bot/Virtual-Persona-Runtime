@@ -210,10 +210,16 @@
       };
       window.__vprExpressiveGenerationDone = () => {
         window.__vprExpressiveRemoteSpeech = false;
-        for (const subject of ["chat/answer", "stream-video/started", "stream-video/done"]) {
+        // Unknown provider events must be classified into bounded groups, never
+        // captured as raw subject/content or promoted into playback completion.
+        for (const subject of [
+          "chat/answer", "stream-video/started", "stream-video/done",
+          "chat/new-private-event", "stream-video/unknown", "tool-call/new-private-event",
+          "completely-private-event",
+        ]) {
           this.emit(
             roomEvents.DataReceived,
-            new TextEncoder().encode(JSON.stringify({ subject, content: "untrusted mock content" })),
+            new TextEncoder().encode(JSON.stringify({ subject, content: "PRIVATE_MEDIA_DIAGNOSTIC_MUST_NOT_LEAK" })),
           );
         }
       };
