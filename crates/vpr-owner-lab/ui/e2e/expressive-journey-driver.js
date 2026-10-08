@@ -100,14 +100,22 @@
         () => voice.disabled,
         "rt0-evidence-blocks-next-turn-during-playback",
       );
-      // Each queued phrase must finish before the scheduler releases the next did.speak.
-      // The delayed audio_started route deliberately keeps the provider-done race covered.
-      await sleep(50);
-      playbackDone();
+      // D-ID Expressive LiveKit queues fragments natively. Requiring a done event
+      // before the next send deadlocks when the provider completes the whole batch.
+      // This test intentionally withholds all completion events until EVERY phrase
+      // has reached the real LiveKit sendText boundary.
     }
 
     if (spokenParts.length < 2) {
       throw new Error("EXPRESSIVE_REPLY_WAS_NOT_STREAMED_BEFORE_LLM_COMPLETION");
+    }
+
+    // Simulate provider acknowledgements only AFTER the entire native queue
+    // was received. One completion per delivered segment keeps release-evidence
+    // accounting strict while catching the original first-word stall.
+    for (let index = 0; index < spokenParts.length; index += 1) {
+      playbackDone();
+      await sleep(50);
     }
 
     await waitFor(
