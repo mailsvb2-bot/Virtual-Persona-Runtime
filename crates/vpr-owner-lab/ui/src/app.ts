@@ -2538,10 +2538,9 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
   broadcastSessionEgressFence();
   closePeerTransport();
   const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
-  if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
-    setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
-    return;
-  }
+  // Failed evidence writing must not turn Close into a silently ACTIVE
+  // remote D-ID session. Complete canonical teardown and visibly report the
+  // missing proof instead of treating it as a successful RT0 measurement.
   if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
@@ -2560,7 +2559,12 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     } else {
       try {
         await downloadSessionEvidence();
-        setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+        setStatus(
+          connectionEvidenceError
+            ? `Сессия закрыта. Evidence snapshot сохранён. Connection evidence incomplete: ${connectionEvidenceError.message}`
+            : "Сессия закрыта. Evidence snapshot сохранён.",
+          connectionEvidenceError ? "error" : "idle",
+        );
       } catch (exportError) {
         setStatus(
           exportError instanceof Error
