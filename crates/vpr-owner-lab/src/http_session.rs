@@ -34,6 +34,9 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
     }
+    // A worker may have finished after the initial cache clear. Teardown is
+    // authoritative: no completed response survives this quiescent boundary.
+    *state.replay_source.lock() = None;
     state.evidence.lock().seal_session();
     let mut engine = state
         .engine
