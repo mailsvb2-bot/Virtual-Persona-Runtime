@@ -52,6 +52,10 @@ impl From<&RealtimeAvatarClientRoute> for LabClientRoute {
 pub enum LabClientEvent {
     PlaybackStarted { playback_id: String },
     PlaybackDone,
+    VideoGenerationStarted,
+    VideoGenerationDone,
+    VideoGenerationFailed,
+    Informational,
 }
 
 #[derive(Clone, Serialize, PartialEq, Eq)]
@@ -102,6 +106,10 @@ impl OwnerLabEngine {
                 LabClientEvent::PlaybackStarted { playback_id }
             }
             RealtimeAvatarClientEvent::PlaybackDone => LabClientEvent::PlaybackDone,
+            RealtimeAvatarClientEvent::VideoGenerationStarted => LabClientEvent::VideoGenerationStarted,
+            RealtimeAvatarClientEvent::VideoGenerationDone => LabClientEvent::VideoGenerationDone,
+            RealtimeAvatarClientEvent::VideoGenerationFailed => LabClientEvent::VideoGenerationFailed,
+            RealtimeAvatarClientEvent::Informational => LabClientEvent::Informational,
         }))
     }
 
