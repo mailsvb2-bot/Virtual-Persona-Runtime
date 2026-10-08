@@ -482,3 +482,36 @@ test("unexpected LiveKit disconnect during D-ID speech closes all output paths",
     avatar_open: false,
   });
 });
+
+
+test("cross-tab revoke signal stops browser LiveKit speech before REST revoke", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(100_000);
+  const reset = await request.delete(mailboxUrl);
+  expect(reset.ok()).toBeTruthy();
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/cross-tab-revoke-journey-driver.js" });
+  await page.goto("/");
+
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending:mailbox";
+    const payload = await response.json() as {
+      events: Array<{ status?: string; error?: string }>;
+    };
+    const outcome = payload.events.find((event) => event.status);
+    return outcome?.status === "failed"
+      ? `failed:${outcome.error ?? "unknown"}`
+      : outcome?.status ?? "pending:cross-tab";
+  }, { timeout: 65_000, intervals: [100, 250, 500] }).toBe("ok");
+
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  expect(await status.json()).toMatchObject({
+    session_state: "closed",
+    avatar_open: false,
+  });
+});
