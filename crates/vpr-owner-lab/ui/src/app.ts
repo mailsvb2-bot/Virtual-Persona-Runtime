@@ -2158,7 +2158,11 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     resetMicrophoneUpload();
     voiceRequestInFlight = false;
     updateControls();
-    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
+    // A late STT/LLM result must not replace the more important terminal
+    // revoke/close or provider-STOP-failure status after the session has ended.
+    if (terminalStatus && sessionState.backend.session_state === "active") {
+      setStatus(terminalStatus.text, terminalStatus.kind);
+    }
   }
 };
 
@@ -2181,7 +2185,9 @@ const toggleVoice = async (): Promise<void> => {
   } catch (error) {
     stopMicrophoneCapture();
     await cancelMicrophoneInput();
-    setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+    if (sessionState.backend.session_state === "active") {
+      setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+    }
   }
 };
 
