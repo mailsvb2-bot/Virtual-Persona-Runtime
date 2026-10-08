@@ -375,6 +375,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                             ),
                             _ => return Err(LabError::InvalidInput),
                         };
+                    // A new session/participant must never inherit a previous
+                    // session's authorized speech-replay cache.
+                    *state.replay_source.lock() = None;
                     state
                         .evidence
                         .lock()
