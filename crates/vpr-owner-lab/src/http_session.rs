@@ -13,6 +13,24 @@ pub(super) fn reject_if_session_ending(state: &AppState) -> Result<(), HttpRespo
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionEndBody {
+    // Legacy internal callers may still send {}. Browsers must include their
+    // observed session sequence to prevent stale tabs closing a newer session.
+    #[serde(default)]
+    expected_session_sequence: Option<u64>,
+}
+
+pub(super) fn end_session_response(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+    close: bool,
+) -> Result<HttpResponse, HttpResponse> {
+    let body: SessionEndBody = super::parse_json(request)?;
+    end_session(state, close, body.expected_session_sequence)
+}
+
 fn request_voice_cancel(state: &AppState) {
     if !state.voice_busy.load(Ordering::Acquire) {
         return;
@@ -27,9 +45,31 @@ fn request_voice_cancel(state: &AppState) {
     );
 }
 
-pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
-    state.session_end_requested.store(true, Ordering::Release);
-    *state.replay_source.lock() = None;
+fn end_session(
+    state: &AppState,
+    close: bool,
+    expected_session_sequence: Option<u64>,
+) -> Result<HttpResponse, HttpResponse> {
+    // Serialize conditional teardown with new-session startup using the same
+    // replay_source -> engine lock order. A stale tab may NEVER terminate a
+    // different (newer) session, even when its unload keepalive arrives late.
+    {
+        let mut replay = state.replay_source.lock();
+        let engine = state
+            .engine
+            .lock()
+            .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+        if expected_session_sequence.is_some_and(|sequence| {
+            sequence == 0 || engine.current_session_sequence() != Some(sequence)
+        }) {
+            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        if !matches!(engine.status().session_state.as_str(), "active" | "revoked") {
+            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+        }
+        state.session_end_requested.store(true, Ordering::Release);
+        *replay = None;
+    }
     request_voice_cancel(state);
     // Cancel and REVOKE AUTHORITY before waiting for slow or wedged STT/LLM
     // workers. A timeout below must never leave canonical session_state active.
