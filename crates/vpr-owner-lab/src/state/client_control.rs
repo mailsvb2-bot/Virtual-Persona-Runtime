@@ -83,7 +83,53 @@ impl std::fmt::Debug for LabClientCommand {
     }
 }
 
+/// A resumed output is its own canonical provider command and delivery handle.
+/// It does not claim audible completion of the original or resumed output.
+#[derive(Clone, Serialize)]
+pub struct LabResumedSpeech {
+    pub client_command: LabClientCommand,
+    pub evidence_turn_sequence: u64,
+    pub evidence_output_sequence: u64,
+}
+
 impl OwnerLabEngine {
+    /// Re-authorizes a suffix of a previously generated answer against the CURRENT
+    /// session epoch, Persona and egress/consent policies before browser-provider delivery.
+    ///
+    /// # Errors
+    /// Denies stale, revoked or otherwise unauthorized sessions and unsupported provider routes.
+    pub fn prepare_resumed_speech(&mut self, suffix: &str) -> Result<LabResumedSpeech, LabError> {
+        if suffix.is_empty() || suffix.len() > 16_000 {
+            return Err(LabError::InvalidInput);
+        }
+        let turn = std::sync::Arc::new(self.new_turn()?);
+        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        if !handle.client_control().is_some_and(|control| control.text_input) {
+            return Err(LabError::InvalidState);
+        }
+        turn.begin_output().map_err(LabError::Runtime)?;
+        let (delivery, command) = turn
+            .prepare_realtime_avatar_client_text(self.provider.as_ref(), handle, suffix)
+            .map_err(|error| match error {
+                vpr_runtime::RealtimeAvatarOutputError::Runtime(reason) => LabError::Runtime(reason),
+                vpr_runtime::RealtimeAvatarOutputError::Provider(reason) => {
+                    super::map_provider_execution(reason)
+                }
+            })?;
+        let evidence_turn_sequence = self.turn_counter;
+        let evidence_output_sequence = self.voice_playback.register_delivery(
+            evidence_turn_sequence,
+            &turn,
+            delivery,
+        )?;
+        turn.complete().map_err(LabError::Runtime)?;
+        Ok(LabResumedSpeech {
+            client_command: command.into(),
+            evidence_turn_sequence,
+            evidence_output_sequence,
+        })
+    }
+
     /// Normalizes one transient browser-received provider data-channel message against the exact
     /// current avatar session. Raw provider payloads are not retained.
     ///
