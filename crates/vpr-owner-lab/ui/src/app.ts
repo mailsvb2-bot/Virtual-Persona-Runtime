@@ -1461,6 +1461,12 @@ const closePeerTransport = (): void => {
   capabilities.clear();
 };
 
+const sessionEndRequest = (): { expected_session_sequence?: number } => {
+  const sequence = evidenceSessionSequence > 0
+    ? evidenceSessionSequence : observedBackendSessionSequence;
+  return sequence > 0 ? { expected_session_sequence: sequence } : {};
+};
+
 const broadcastSessionEgressFence = (): void => {
   const sequence = evidenceSessionSequence > 0
     ? evidenceSessionSequence : observedBackendSessionSequence;
@@ -1506,7 +1512,7 @@ const handleUnexpectedLiveKitDisconnect = async (
     ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
     : "";
   try {
-    await api<{ ok: true }>("/api/session/close", {});
+    await api<{ ok: true }>("/api/session/close", sessionEndRequest());
     await syncStatus();
     await refreshSessionEvidence();
     try {
@@ -1764,7 +1770,7 @@ const connectAvatar = async (): Promise<void> => {
     closePeerTransport();
     if (backendSessionStarted || backendSessionPresent()) {
       try {
-        await api<{ ok: true }>("/api/session/close", {});
+        await api<{ ok: true }>("/api/session/close", sessionEndRequest());
         backendSessionStarted = false;
         await syncStatus();
       } catch (cleanupError) {
@@ -2380,7 +2386,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     closePeerTransport();
     let cleanupFailed = false;
     try {
-      await api<{ ok: true }>("/api/session/revoke", {});
+      await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
     } catch {
       cleanupFailed = true;
     }
@@ -2500,7 +2506,7 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       closePeerTransport();
       let cleanupFailed = false;
       try {
-        await api<{ ok: true }>("/api/session/revoke", {});
+        await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
       } catch {
         cleanupFailed = true;
       }
@@ -2541,7 +2547,7 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     await pendingAvSyncEvidence.catch(() => undefined);
   }
   try {
-    await api<{ ok: true }>(`/api/session/${kind}`, {});
+    await api<{ ok: true }>(`/api/session/${kind}`, sessionEndRequest());
     await syncStatus();
     await refreshSessionEvidence();
     if (kind === "revoke") {
@@ -2574,12 +2580,14 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
 
 const closeBackendOnUnload = (): void => {
   if (!backendSessionPresent() || !csrfToken) return;
+  // An unknown or stale session must never issue an unscoped keepalive close.
+  if (!sessionEndRequest().expected_session_sequence) return;
   broadcastSessionEgressFence();
   closePeerTransport();
   void runtimeFetch("/api/session/close", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
-    body: "{}",
+    body: JSON.stringify(sessionEndRequest()),
     credentials: "same-origin",
     cache: "no-store",
     keepalive: true,
