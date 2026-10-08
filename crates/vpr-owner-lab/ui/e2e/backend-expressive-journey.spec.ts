@@ -447,3 +447,36 @@ test("rejected provider STOP disconnects LiveKit and revokes before replay", asy
   });
   expect(replay.status()).toBe(409);
 });
+
+
+test("unexpected LiveKit disconnect during D-ID speech closes all output paths", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(100_000);
+  const mailboxReset = await request.delete(mailboxUrl);
+  expect(mailboxReset.ok()).toBeTruthy();
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/unexpected-disconnect-journey-driver.js" });
+  await page.goto("/");
+
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending:mailbox";
+    const data = await response.json() as {
+      events: Array<{ status?: string; error?: string }>;
+    };
+    const outcome = data.events.find((event) => event.status);
+    return outcome?.status === "failed"
+      ? `failed:${outcome.error ?? "unknown"}`
+      : outcome?.status ?? "pending:disconnect";
+  }, { timeout: 65_000, intervals: [100, 250, 500] }).toBe("ok");
+
+  const response = await request.get(`${ownerLabUrl}/api/status`);
+  expect(response.ok()).toBeTruthy();
+  expect(await response.json()).toMatchObject({
+    session_state: "closed",
+    avatar_open: false,
+  });
+});
