@@ -60,8 +60,8 @@
 
   const recordStreamingVoiceTurn = async (transcript, reply) => {
     const voice = element("voice", HTMLButtonElement);
-    const playbackDone = window.__vprExpressivePlaybackDone;
-    if (typeof playbackDone !== "function") {
+    const generationDone = window.__vprExpressiveGenerationDone;
+    if (typeof generationDone !== "function") {
       throw new Error("EXPRESSIVE_PLAYBACK_CONTROL_MISSING");
     }
     const initialSpeakCount = commands().filter((command) => command.topic === "did.speak").length;
@@ -113,7 +113,7 @@
     // Report provider VIDEO GENERATION completion after the native queue was sent.
     // It must never count as verified playback completion.
     for (let index = 0; index < spokenParts.length; index += 1) {
-      playbackDone();
+      generationDone();
       await sleep(50);
     }
 
