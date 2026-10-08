@@ -1219,7 +1219,7 @@ const handleProviderClientEvent = (raw: string): void => {
       } else if (normalized) {
         const voice = activeVoiceEvidence;
         if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
-          const kind: MediaEvidenceKind = {
+          const kind: MediaEvidenceKind = ({
             video_generation_started: "provider_video_generation_started",
             video_generation_done: "provider_video_generation_done",
             video_generation_failed: "provider_video_generation_failed",
@@ -1228,7 +1228,7 @@ const handleProviderClientEvent = (raw: string): void => {
             unknown_video_event: "provider_unknown_video_event",
             unknown_tool_event: "provider_unknown_tool_event",
             unknown_other_event: "provider_unknown_other_event",
-          }[normalized.kind];
+          } as const)[normalized.kind];
           const saved = await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence)
             .then(() => true, () => false);
           if (saved) voice.providerEventKindsPosted.add(normalized.kind);
