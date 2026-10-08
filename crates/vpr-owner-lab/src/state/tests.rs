@@ -282,6 +282,34 @@ fn failed_provider_create_does_not_publish_a_poisoned_session() {
 }
 
 #[test]
+fn early_authority_revoke_fences_new_turns_before_provider_cleanup() {
+    let (mut engine, stats) = engine_with_failures(true, 0, 1);
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+
+    // No remote I/O is allowed to delay this authority transition.
+    engine.revoke_authority().unwrap();
+    engine.revoke_authority().unwrap();
+    assert_eq!(engine.status().session_state, "revoked");
+    assert!(engine.status().avatar_open);
+    assert_eq!(stats.close.load(Ordering::SeqCst), 0);
+    assert!(engine.apply(OwnerLabTurnInput::Text("late".into())).is_err());
+    assert_eq!(stats.text.load(Ordering::SeqCst), 0);
+
+    // Even a failed cleanup can never bring the authority back.
+    assert!(matches!(
+        engine.revoke(),
+        Err(LabError::Provider(Rt0ReasonCode::ProviderUnavailable))
+    ));
+    assert_eq!(engine.status().session_state, "revoked");
+    assert_eq!(stats.close.load(Ordering::SeqCst), 1);
+    engine.revoke().unwrap();
+    assert!(!engine.status().avatar_open);
+    assert_eq!(stats.close.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn repeated_revoke_retries_failed_remote_cleanup_without_reauthorizing() {
     let (mut engine, stats) = engine_with_failures(true, 0, 1);
     engine
