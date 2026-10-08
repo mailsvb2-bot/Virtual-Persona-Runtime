@@ -145,6 +145,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   expect(await injectedSpeech.json()).toMatchObject({ code: "AUTH_SCOPE_DENIED" });
   // Revoke is a safety boundary: close the browser transport synchronously,
   // before any awaited connection-evidence HTTP flush or backend confirmation.
+  await expect(page.getByRole("button", { name: "Отозвать доступ" })).toBeVisible();
   const stoppedImmediately = await page.evaluate(() => {
     const peers = (window as typeof window & {
       __vprFakePeers?: Array<{ connectionState: string }>;
