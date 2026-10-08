@@ -200,7 +200,13 @@ pub(super) fn parse_livekit_event(
     }
     let event: LiveKitEvent = serde_json::from_str(message).map_err(|_| invalid_response())?;
     match event.subject.as_deref() {
-        Some("stream-video/done") => Ok(Some(RealtimeAvatarClientEvent::PlaybackDone)),
+        Some("stream-video/started") => Ok(Some(RealtimeAvatarClientEvent::VideoGenerationStarted)),
+        Some("stream-video/done") => Ok(Some(RealtimeAvatarClientEvent::VideoGenerationDone)),
+        Some("stream-video/error") => Ok(Some(RealtimeAvatarClientEvent::VideoGenerationFailed)),
+        Some("chat/answer" | "chat/partial" | "chat/audio-transcribed"
+            | "tool-call/started" | "tool-call/done" | "tool-call/error") => {
+            Ok(Some(RealtimeAvatarClientEvent::Informational))
+        }
         _ => Ok(None),
     }
 }
