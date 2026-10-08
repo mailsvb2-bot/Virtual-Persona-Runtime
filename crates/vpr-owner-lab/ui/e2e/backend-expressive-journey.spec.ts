@@ -435,7 +435,9 @@ test("rejected provider STOP disconnects LiveKit and revokes before replay", asy
 
   const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
-  expect(await status.json()).toMatchObject({ session_state: "revoked" });
+  // The in-page owner journey already proved "revoked" before clicking Close;
+  // the terminal state must now be "closed" after UI evidence export.
+  expect(await status.json()).toMatchObject({ session_state: "closed" });
 
   // A server-prepared command remains forbidden after revoke even when an
   // interrupted answer had been cached earlier in the session.
