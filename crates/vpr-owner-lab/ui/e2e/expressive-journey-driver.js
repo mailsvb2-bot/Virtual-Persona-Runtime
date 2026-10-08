@@ -110,9 +110,8 @@
       throw new Error("EXPRESSIVE_REPLY_WAS_NOT_STREAMED_BEFORE_LLM_COMPLETION");
     }
 
-    // Simulate provider acknowledgements only AFTER the entire native queue
-    // was received. One completion per delivered segment keeps release-evidence
-    // accounting strict while catching the original first-word stall.
+    // Report provider VIDEO GENERATION completion after the native queue was sent.
+    // It must never count as verified playback completion.
     for (let index = 0; index < spokenParts.length; index += 1) {
       playbackDone();
       await sleep(50);
@@ -124,9 +123,15 @@
     );
     await waitEvidence(
       (snapshot) => snapshot.media_events?.some(
-        (event) => event.request_sequence === 1 && event.kind === "playback_completed",
+        (event) => event.request_sequence === 1 && event.kind === "provider_video_generation_done",
+      ) && !snapshot.canonical_playback_proven,
+      "video-generated-but-not-played",
+    );
+    await waitEvidence(
+      (snapshot) => snapshot.media_events?.some(
+        (event) => event.request_sequence === 1 && event.kind === "playback_recovery_triggered",
       ),
-      "provider-playback-completed",
+      "unconfirmed-playback-recovered",
     );
     await waitFor(
       () => element("readiness-voice", HTMLElement).textContent === "Готов",
@@ -212,11 +217,11 @@
       );
 
       await waitEvidence(
-        (snapshot) => snapshot.canonical_playback_proven === true
-          && snapshot.av_sync_proven === true
+        (snapshot) => snapshot.canonical_playback_proven === false
+          && snapshot.av_sync_proven === false
           && snapshot.voice_attempts?.some(
             (attempt) => attempt.status === "completed"
-              && attempt.canonical_playback_confirmed === true,
+              && attempt.canonical_playback_confirmed === false,
           )
           && snapshot.media_events?.some(
             (event) => event.kind === "backend_complete_received",
@@ -224,7 +229,7 @@
           && snapshot.media_events?.some(
             (event) => event.kind === "client_delivery_sent",
           ),
-        "canonical-playback-and-browser-timing",
+        "video-generation-not-falsely-promoted-to-playback",
       );
       const evidence = await fetchEvidence();
       await postPhase("first-voice-complete");
