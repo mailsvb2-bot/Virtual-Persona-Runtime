@@ -130,6 +130,12 @@ pub enum RealtimeAvatarClientEvent {
     VideoGenerationDone,
     VideoGenerationFailed,
     Informational,
+    /// Bounded, payload-free diagnostic categories for unrecognized provider subjects.
+    /// Unknown events must never count as audible playback or generation completion.
+    UnknownChatEvent,
+    UnknownVideoEvent,
+    UnknownToolEvent,
+    UnknownOtherEvent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
