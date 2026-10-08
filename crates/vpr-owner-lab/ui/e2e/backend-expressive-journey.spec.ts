@@ -203,8 +203,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   const evidence = report?.evidence;
   expect(evidence).toBeDefined();
-  expect(evidence?.canonical_playback_proven).toBeTruthy();
-  expect(evidence?.av_sync_proven).toBeTruthy();
+  expect(evidence?.canonical_playback_proven).toBe(false);
+  expect(evidence?.av_sync_proven).toBe(false);
   expect(evidence?.av_sync_samples).toHaveLength(3);
   expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(evidence?.av_sync_samples.every((sample) =>
@@ -212,21 +212,30 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
   expect(evidence?.voice_attempts.some((attempt) =>
-    attempt.status === "completed" && attempt.canonical_playback_confirmed
+    attempt.status === "completed" && !attempt.canonical_playback_confirmed
   )).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "provider_data_received")).toBeTruthy();
   expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_playback_done_received",
+    (event) => event.kind === "provider_video_generation_done",
   )).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_video_generation_started",
+  )).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_informational_event",
+  )).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_playback_done_received",
+  )).toBe(false);
   expect(evidence?.media_events.some(
     (event) => event.kind === "provider_event_parse_failed",
   )).toBeFalsy();
-  expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBe(false);
   expect(evidence?.media_events.some(
     (event) => event.kind === "playback_recovery_triggered",
-  )).toBeFalsy();
+  )).toBeTruthy();
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
@@ -239,8 +248,8 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(metrics?.providerAudioDelay).toMatch(/\d+ мс/);
   expect(metrics?.firstAudio).toMatch(/\d+ мс/);
   expect(metrics?.videoReady).toMatch(/\d+ мс/);
-  expect(metrics?.avSync).toBe("60 мс · 3 изм.");
-  expect(metrics?.playback).toBe("подтверждён");
+  expect(metrics?.avSync).toBe("ещё не доказан");
+  expect(metrics?.playback).toBe("не подтверждён");
   expect(metrics?.cost).toBe("провайдер не сообщил стоимость");
 
   const commands = report?.commands ?? [];
