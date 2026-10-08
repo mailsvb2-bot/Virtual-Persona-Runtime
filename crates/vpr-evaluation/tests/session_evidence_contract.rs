@@ -117,7 +117,9 @@ fn unknown_livekit_event_categories_survive_aggregation_without_promoting_playba
     input.canonical_playback_proven = false;
     input.av_sync_samples.clear();
     input.av_sync_proven = false;
-    input.media_events.retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
+    input
+        .media_events
+        .retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
     for category in [
         LabMediaEvidenceKind::ProviderUnknownChatEvent,
         LabMediaEvidenceKind::ProviderUnknownVideoEvent,
