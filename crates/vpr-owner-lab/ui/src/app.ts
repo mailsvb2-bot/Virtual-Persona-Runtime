@@ -432,7 +432,9 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
   }
   metricPlayback.textContent = snapshot.canonical_playback_proven
     ? "подтверждён"
-    : voice ? "ожидание" : "—";
+    : voice && snapshot.media_events.some((event) =>
+      event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered"
+    ) ? "не подтверждён" : voice ? "ожидание" : "—";
 
   const usages: Array<UsageEvidence | null> = [
     ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
@@ -835,7 +837,14 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
 
   while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
     attempts += 1;
-    const reading = await readAvSyncOffsetMillis(readState);
+    let reading: Awaited<ReturnType<typeof readAvSyncOffsetMillis>>;
+    try {
+      reading = await readAvSyncOffsetMillis(readState);
+    } catch {
+      lastAudioIssue = "stats_unavailable";
+      lastVideoIssue = "stats_unavailable";
+      break;
+    }
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
     if (reading.offsetMillis !== null && reading.reference !== null) {
