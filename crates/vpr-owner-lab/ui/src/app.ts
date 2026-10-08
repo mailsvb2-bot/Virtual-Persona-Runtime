@@ -51,7 +51,8 @@ type ClientControl = {
 type ClientEvent =
   | { kind: "playback_started"; playback_id: string }
   | { kind: "playback_done" }
-  | { kind: "video_generation_started" | "video_generation_done" | "video_generation_failed" | "informational" };
+  | { kind: "video_generation_started" | "video_generation_done" | "video_generation_failed" | "informational"
+    | "unknown_chat_event" | "unknown_video_event" | "unknown_tool_event" | "unknown_other_event" };
 type StartResponse = { evidence_session_sequence: number; transport: RealtimeTransport; capabilities: string[]; client_control: ClientControl | null };
 type ErrorPayload = { ok: false; code: string };
 type IceCandidatePayload = { candidate: string | null; sdpMid: string | null; sdpMLineIndex: number | null };
@@ -68,6 +69,10 @@ type MediaEvidenceKind =
   | "audio_started"
   | "provider_data_received"
   | "provider_event_ignored"
+  | "provider_unknown_chat_event"
+  | "provider_unknown_video_event"
+  | "provider_unknown_tool_event"
+  | "provider_unknown_other_event"
   | "provider_video_generation_started"
   | "provider_video_generation_done"
   | "provider_video_generation_failed"
@@ -1214,13 +1219,16 @@ const handleProviderClientEvent = (raw: string): void => {
       } else if (normalized) {
         const voice = activeVoiceEvidence;
         if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
-          const kind: MediaEvidenceKind = normalized.kind === "video_generation_started"
-            ? "provider_video_generation_started"
-            : normalized.kind === "video_generation_done"
-              ? "provider_video_generation_done"
-              : normalized.kind === "video_generation_failed"
-                ? "provider_video_generation_failed"
-                : "provider_informational_event";
+          const kind: MediaEvidenceKind = {
+            video_generation_started: "provider_video_generation_started",
+            video_generation_done: "provider_video_generation_done",
+            video_generation_failed: "provider_video_generation_failed",
+            informational: "provider_informational_event",
+            unknown_chat_event: "provider_unknown_chat_event",
+            unknown_video_event: "provider_unknown_video_event",
+            unknown_tool_event: "provider_unknown_tool_event",
+            unknown_other_event: "provider_unknown_other_event",
+          }[normalized.kind];
           const saved = await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence)
             .then(() => true, () => false);
           if (saved) voice.providerEventKindsPosted.add(normalized.kind);
