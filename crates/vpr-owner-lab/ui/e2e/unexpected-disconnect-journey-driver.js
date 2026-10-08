@@ -5,8 +5,9 @@
   window.fetch = (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url ?? "";
     const method = (init?.method ?? (typeof input === "object" ? input?.method : undefined) ?? "GET").toUpperCase();
-    if (method === "POST" && /^\\/api\\/session\\/(revoke|close)$/.test(new URL(url, location.href).pathname)) {
-      sessionRequestOrder.push(new URL(url, location.href).pathname);
+    const pathname = new URL(url, location.href).pathname;
+    if (method === "POST" && (pathname === "/api/session/revoke" || pathname === "/api/session/close")) {
+      sessionRequestOrder.push(pathname);
     }
     return nativeFetch(input, init);
   };
