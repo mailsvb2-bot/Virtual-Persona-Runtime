@@ -309,6 +309,7 @@ const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
 const sessionEgressFence = typeof BroadcastChannel === "undefined"
   ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
 let locallyFencedSessionSequence = 0;
+let observedBackendSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
@@ -1129,6 +1130,22 @@ const syncStatus = (): Promise<LabStatus> => {
     .then(async () => {
       const status = await api<LabStatus>("/api/status");
       sessionState.applyBackend(status);
+      // A second tab can revoke an existing backend session without ever
+      // running its own Connect flow. Hydrate its canonical session sequence
+      // before enabling the revoke control, so it fences the original tab.
+      if (status.session_state === "active" && evidenceSessionSequence === 0) {
+        const response = await runtimeFetch("/api/evidence/session", {
+          method: "GET", credentials: "same-origin", cache: "no-store",
+        });
+        if (response.ok) {
+          const snapshot = await response.json() as { session_sequence?: unknown };
+          if (typeof snapshot.session_sequence === "number"
+              && Number.isSafeInteger(snapshot.session_sequence)
+              && snapshot.session_sequence > 0) {
+            observedBackendSessionSequence = snapshot.session_sequence;
+          }
+        }
+      }
       if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
           && locallyFencedSessionSequence !== evidenceSessionSequence) {
         broadcastSessionEgressFence();
@@ -1443,11 +1460,13 @@ const closePeerTransport = (): void => {
 };
 
 const broadcastSessionEgressFence = (): void => {
-  if (evidenceSessionSequence <= 0) return;
-  locallyFencedSessionSequence = evidenceSessionSequence;
+  const sequence = evidenceSessionSequence > 0
+    ? evidenceSessionSequence : observedBackendSessionSequence;
+  if (sequence <= 0) return;
+  locallyFencedSessionSequence = sequence;
   sessionEgressFence?.postMessage({
     kind: "session-egress-revoked",
-    evidence_session_sequence: evidenceSessionSequence,
+    evidence_session_sequence: sequence,
   });
 };
 
@@ -1459,9 +1478,10 @@ sessionEgressFence?.addEventListener("message", (event: MessageEvent) => {
   if (!signal || signal.kind !== "session-egress-revoked"
       || typeof signal.evidence_session_sequence !== "number"
       || !Number.isSafeInteger(signal.evidence_session_sequence)
-      || signal.evidence_session_sequence !== evidenceSessionSequence
-      || evidenceSessionSequence <= 0) return;
-  locallyFencedSessionSequence = evidenceSessionSequence;
+      || signal.evidence_session_sequence !== (evidenceSessionSequence > 0
+        ? evidenceSessionSequence : observedBackendSessionSequence)
+      || signal.evidence_session_sequence <= 0) return;
+  locallyFencedSessionSequence = signal.evidence_session_sequence;
   closePeerTransport();
   setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
   updateControls();
@@ -1680,6 +1700,7 @@ const connectAvatar = async (): Promise<void> => {
     // first-useful-video clock starts only after the realtime transport itself is connected.
     const backendReadyAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
+    observedBackendSessionSequence = start.evidence_session_sequence;
     locallyFencedSessionSequence = 0;
     queueConnectionMediaEvidence(
       "backend_start_ready",
