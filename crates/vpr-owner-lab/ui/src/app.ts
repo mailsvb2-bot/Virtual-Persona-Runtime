@@ -1433,11 +1433,10 @@ const handleUnexpectedLiveKitDisconnect = async (
 ): Promise<void> => {
   if (liveKitRoom !== room) return;
   const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
-  liveKitRoom = null;
-  clearInterruptedAnswer();
-  stopMicrophoneCapture();
-  stopRemoteEvidence();
-  clearRealtimeMedia();
+  // An unexpected provider disconnect must invalidate all pending speech
+  // dispatches and release their playback barriers, not just remove the
+  // visible audio/video elements. closePeerTransport performs that full fence.
+  closePeerTransport();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
   const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
@@ -2433,14 +2432,28 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     // Any failure after preparation therefore requires fail-closed revoke.
     if (prepared !== null) {
       closePeerTransport();
+      let cleanupFailed = false;
       try {
         await api<{ ok: true }>("/api/session/revoke", {});
-        await syncStatus();
-      } catch (revokeError) {
-        setStatus(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`, "error");
-        updateControls();
-        return;
+      } catch {
+        cleanupFailed = true;
       }
+      // An HTTP 504 can follow successful authority revoke if a voice
+      // worker has not yet become quiescent. The canonical status, not the
+      // request result alone, decides whether additional speech is possible.
+      await syncStatus().catch(() => undefined);
+      const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+      const cause = error instanceof Error ? error.message : "RESUME_DELIVERY_UNCONFIRMED";
+      setStatus(
+        !canonicalRevoked
+          ? `RESUME_DELIVERY_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+          : cleanupFailed
+            ? `RESUME_DELIVERY_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+            : `RESUME_DELIVERY_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
+        "error",
+      );
+      updateControls();
+      return;
     }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
   }
