@@ -162,10 +162,20 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
+  let failedGenerationEvidenceOnce = false;
   await page.route("**/api/evidence/media", async (route) => {
     const incoming = route.request();
     if (incoming.method() === "POST") {
       const body = incoming.postDataJSON() as { kind?: string } | null;
+      if (body?.kind === "provider_video_generation_done" && !failedGenerationEvidenceOnce) {
+        failedGenerationEvidenceOnce = true;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: '{"ok":false,"code":"PROVIDER_EVIDENCE_TEMPORARY_FAILURE"}',
+        });
+        return;
+      }
       if (body?.kind === "audio_started") {
         await new Promise<void>((resolve) => setTimeout(resolve, 300));
       }
@@ -220,6 +230,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(evidence?.media_events.some(
     (event) => event.kind === "provider_video_generation_done",
   )).toBeTruthy();
+  expect(failedGenerationEvidenceOnce).toBe(true);
   expect(evidence?.media_events.some(
     (event) => event.kind === "provider_video_generation_started",
   )).toBeTruthy();
