@@ -978,7 +978,7 @@ const handleLiveKitTrackUnsubscribed = (track) => {
         liveKitAudioTrack = null;
         sessionState.setRealtimeReadiness({ audio: false });
         setStatus("Аудиопоток аватара потерян. Микрофон и текст остаются доступны; ожидаю восстановление LiveKit…", "error");
-        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback) {
+        if (voiceRequestInFlight || voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
             void interruptAvatar();
         }
     }
@@ -1558,6 +1558,7 @@ const finishMicrophoneTurn = async () => {
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
         const deliveryTasks = [];
+        let liveKitSendTail = Promise.resolve();
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
@@ -1572,7 +1573,20 @@ const finishMicrophoneTurn = async () => {
             if (!command)
                 return;
             let commandSent = false;
-            const dispatch = voiceCommandScheduler.dispatch(command);
+            const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
+            const dispatch = nativeLiveKitQueue
+                ? (() => {
+                    const generation = voiceDeliveryGeneration;
+                    const send = liveKitSendTail.then(async () => {
+                        if (generation !== voiceDeliveryGeneration)
+                            return false;
+                        await dispatchClientCommand(command);
+                        return true;
+                    });
+                    liveKitSendTail = send.then(() => undefined, () => undefined);
+                    return send;
+                })()
+                : voiceCommandScheduler.dispatch(command);
             const task = (async () => {
                 const sent = await dispatch;
                 if (!sent) {
@@ -1688,7 +1702,7 @@ const toggleVoice = async () => {
             if (rt0EvidenceMode && rt0PlaybackPending) {
                 throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
             }
-            if (voiceCommandScheduler.hasActivePlayback) {
+            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
                 await interruptAvatar();
             }
             await startMicrophone();
