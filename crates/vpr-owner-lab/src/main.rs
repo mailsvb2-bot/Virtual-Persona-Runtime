@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use http_json::{parse_empty_json, parse_json, read_body};
-use http_session::{end_session, reject_if_session_ending};
+use http_session::reject_if_session_ending;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -365,6 +365,9 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                 // Keep the canonical lock order with resume/correction:
                 // replay_source -> engine. This prevents start/replay lock inversion.
                 let mut replay_source = state.replay_source.lock();
+                // Revalidate under the canonical serialization lock: an end
+                // request may have fenced the session while Start waited.
+                reject_if_session_ending(state)?;
                 with_engine_result(state, |engine| {
                     let start_request = OwnerLabStartRequest {
                         consent: body.consent,
@@ -415,8 +418,8 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/interrupt" => {
             parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
         }
-        "/api/session/revoke" => parse_empty_json(request).and_then(|()| end_session(state, false)),
-        "/api/session/close" => parse_empty_json(request).and_then(|()| end_session(state, true)),
+        "/api/session/revoke" => http_session::end_session_response(request, state, false),
+        "/api/session/close" => http_session::end_session_response(request, state, true),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
