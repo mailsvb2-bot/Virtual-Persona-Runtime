@@ -1934,6 +1934,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     let deliveryFailure: Error | null = null;
     let clientDeliverySentElapsed: number | null = null;
     const deliveryTasks: Promise<void>[] = [];
+    // LiveKit D-ID queues speak commands itself. Serialise sends, but never wait for
+    // playback completion before sending the next phrase (the provider may only
+    // publish its completion event after the queued batch has been submitted).
+    let liveKitSendTail: Promise<void> = Promise.resolve();
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
       const voiceForSegment = activeVoiceEvidence;
@@ -1946,7 +1950,19 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       const command = segment.client_command;
       if (!command) return;
       let commandSent = false;
-      const dispatch = voiceCommandScheduler.dispatch(command);
+      const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
+      const dispatch: Promise<boolean> = nativeLiveKitQueue
+        ? (() => {
+          const generation = voiceDeliveryGeneration;
+          const send = liveKitSendTail.then(async () => {
+            if (generation !== voiceDeliveryGeneration) return false;
+            await dispatchClientCommand(command);
+            return true;
+          });
+          liveKitSendTail = send.then(() => undefined, () => undefined);
+          return send;
+        })()
+        : voiceCommandScheduler.dispatch(command);
       const task = (async () => {
         const sent = await dispatch;
         if (!sent) {
