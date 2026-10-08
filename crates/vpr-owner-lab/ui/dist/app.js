@@ -1558,6 +1558,8 @@ const finishMicrophoneTurn = async () => {
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
         const deliveryTasks = [];
+        // D-ID LiveKit manages its own phrase queue; send all segments without waiting for each done.
+        let liveKitSendTail = Promise.resolve();
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
@@ -1572,7 +1574,20 @@ const finishMicrophoneTurn = async () => {
             if (!command)
                 return;
             let commandSent = false;
-            const dispatch = voiceCommandScheduler.dispatch(command);
+            const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
+            const dispatch = nativeLiveKitQueue
+                ? (() => {
+                    const generation = voiceDeliveryGeneration;
+                    const send = liveKitSendTail.then(async () => {
+                        if (generation !== voiceDeliveryGeneration)
+                            return false;
+                        await dispatchClientCommand(command);
+                        return true;
+                    });
+                    liveKitSendTail = send.then(() => undefined, () => undefined);
+                    return send;
+                })()
+                : voiceCommandScheduler.dispatch(command);
             const task = (async () => {
                 const sent = await dispatch;
                 if (!sent) {
