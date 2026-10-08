@@ -2327,12 +2327,13 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     return;
   }
   resumeAnswerButton.disabled = true;
+  let prepared: ResumedSpeech | null = null;
   try {
     if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
     // The Rust runtime authorizes EACH playback replay under the current epoch.
     // The browser sends no text to the backend: suffix selection uses the original
     // canonical response retained only in per-session server memory.
-    const prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
+    prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
       request_sequence: resumeSourceRequest,
       sentence_index: index,
     });
@@ -2341,22 +2342,10 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       throw new Error("INVALID_STATE_TRANSITION");
     }
     await dispatchClientCommand(prepared.client_command);
-    try {
-      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
-        evidence_turn_sequence: prepared.evidence_turn_sequence,
-        evidence_output_sequence: prepared.evidence_output_sequence,
-      });
-    } catch (error) {
-      // A sent-but-unaccounted playback cannot remain connected.
-      closePeerTransport();
-      try {
-        await api<{ ok: true }>("/api/session/revoke", {});
-        await syncStatus();
-      } catch (revokeError) {
-        throw new Error(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`);
-      }
-      throw error;
-    }
+    await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+      evidence_turn_sequence: prepared.evidence_turn_sequence,
+      evidence_output_sequence: prepared.evidence_output_sequence,
+    });
     resumeFromIndex = index;
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
@@ -2367,6 +2356,19 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       "ready",
     );
   } catch (error) {
+    // Provider transport may have accepted a command before throwing.
+    // Any failure after preparation therefore requires fail-closed revoke.
+    if (prepared !== null) {
+      closePeerTransport();
+      try {
+        await api<{ ok: true }>("/api/session/revoke", {});
+        await syncStatus();
+      } catch (revokeError) {
+        setStatus(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`, "error");
+        updateControls();
+        return;
+      }
+    }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
   }
   updateControls();
