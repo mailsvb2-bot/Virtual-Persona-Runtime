@@ -45,7 +45,7 @@ export const suggestedResumeSentence = (sentences, heardMillis) => {
     let passed = 0;
     let selected = 0;
     for (let index = 0; index < sentences.length - 1; index += 1) {
-        passed += sentences[index].length + 1;
+        passed += (sentences[index]?.length ?? 0) + 1;
         if (passed > conservativeCharacters)
             break;
         selected = index + 1;
