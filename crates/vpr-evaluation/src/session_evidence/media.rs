@@ -21,27 +21,7 @@ pub(super) fn validate_and_collect_media(
         if event.elapsed_millis > MAX_MEDIA_ELAPSED_MILLIS {
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
         }
-        let requires_request = matches!(
-            event.kind,
-            LabMediaEvidenceKind::BackendCompleteReceived
-                | LabMediaEvidenceKind::ClientDeliverySent
-                | LabMediaEvidenceKind::AudioStarted
-                | LabMediaEvidenceKind::ProviderDataReceived
-                | LabMediaEvidenceKind::ProviderEventIgnored
-                | LabMediaEvidenceKind::ProviderUnknownChatEvent
-                | LabMediaEvidenceKind::ProviderUnknownVideoEvent
-                | LabMediaEvidenceKind::ProviderUnknownToolEvent
-                | LabMediaEvidenceKind::ProviderUnknownOtherEvent
-                | LabMediaEvidenceKind::ProviderVideoGenerationStarted
-                | LabMediaEvidenceKind::ProviderVideoGenerationDone
-                | LabMediaEvidenceKind::ProviderVideoGenerationFailed
-                | LabMediaEvidenceKind::ProviderInformationalEvent
-                | LabMediaEvidenceKind::ProviderEventParseFailed
-                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
-                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
-                | LabMediaEvidenceKind::PlaybackCompleted
-                | LabMediaEvidenceKind::InterruptionStopped
-        );
+        let requires_request = event.kind.requires_request_sequence();
         if requires_request != event.request_sequence.is_some() {
             return Err(LabSessionAggregateError::InvalidMediaEvidence);
         }
