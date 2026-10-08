@@ -211,7 +211,17 @@ pub(super) fn parse_livekit_event(
             | "tool-call/done"
             | "tool-call/error",
         ) => Ok(Some(RealtimeAvatarClientEvent::Informational)),
-        _ => Ok(None),
+        Some(subject) if subject.starts_with("chat/") => {
+            Ok(Some(RealtimeAvatarClientEvent::UnknownChatEvent))
+        }
+        Some(subject) if subject.starts_with("stream-video/") => {
+            Ok(Some(RealtimeAvatarClientEvent::UnknownVideoEvent))
+        }
+        Some(subject) if subject.starts_with("tool-call/") => {
+            Ok(Some(RealtimeAvatarClientEvent::UnknownToolEvent))
+        }
+        // No raw subject or content crosses the canonical diagnostic boundary.
+        _ => Ok(Some(RealtimeAvatarClientEvent::UnknownOtherEvent)),
     }
 }
 
