@@ -119,36 +119,40 @@ fn authorized_sentence_suffix(reply: &str, sentence_index: usize) -> Option<Stri
     (!suffix.is_empty() && suffix.len() <= 16_000).then_some(suffix)
 }
 
+fn confirm_interruption(
+    request: &mut Request,
+    state: &AppState,
+) -> Result<HttpResponse, HttpResponse> {
+    let body = parse_json::<ConfirmInterruptionBody>(request)?;
+    reject_if_session_ending(state)?;
+    if state.voice_busy.load(Ordering::Acquire) {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    let mut source = state.replay_source.lock();
+    let reply = source
+        .as_mut()
+        .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
+    if reply.request_sequence != body.request_sequence {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    with_engine_result(state, |engine| {
+        if engine.status().session_state != "active" {
+            return Err(vpr_owner_lab::LabError::InvalidState);
+        }
+        Ok(super::json_response(200, &serde_json::json!({"ok": true})))
+    })?;
+    reject_if_session_ending(state)?;
+    reply.interrupted = true;
+    Ok(super::json_response(200, &serde_json::json!({"ok": true})))
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut Request,
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     match path {
-        "/api/avatar/confirm-interruption" => {
-            Some(parse_json::<ConfirmInterruptionBody>(request).and_then(|body| {
-                reject_if_session_ending(state)?;
-                if state.voice_busy.load(Ordering::Acquire) {
-                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
-                }
-                let mut source = state.replay_source.lock();
-                let reply = source
-                    .as_mut()
-                    .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
-                if reply.request_sequence != body.request_sequence {
-                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
-                }
-                with_engine_result(state, |engine| {
-                    if engine.status().session_state != "active" {
-                        return Err(vpr_owner_lab::LabError::InvalidState);
-                    }
-                    Ok(super::json_response(200, &serde_json::json!({"ok": true})))
-                })?;
-                reject_if_session_ending(state)?;
-                reply.interrupted = true;
-                Ok(super::json_response(200, &serde_json::json!({"ok": true})))
-            }))
-        }
+        "/api/avatar/confirm-interruption" => Some(confirm_interruption(request, state)),
         "/api/avatar/resume-answer" => {
             Some(parse_json::<ResumeAnswerBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
@@ -264,25 +268,34 @@ mod resume_tests {
 
     #[test]
     fn late_stream_completion_cannot_restore_reply_after_revoke() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         use parking_lot::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         let source = Mutex::new(None);
         let ending = AtomicBool::new(false);
         super::retain_completed_reply(&source, &ending, 1, "Первый ответ.");
-        assert_eq!(source.lock().as_ref().map(|item| item.request_sequence), Some(1));
-        assert_eq!(source.lock().as_ref().map(|item| item.interrupted), Some(false));
+        assert_eq!(
+            source.lock().as_ref().map(|item| item.request_sequence),
+            Some(1)
+        );
+        assert_eq!(
+            source.lock().as_ref().map(|item| item.interrupted),
+            Some(false)
+        );
 
         ending.store(true, Ordering::Release);
         *source.lock() = None;
         super::retain_completed_reply(&source, &ending, 1, "Поздний ответ.");
-        assert!(source.lock().is_none(), "late completion must not revive revoked replay");
+        assert!(
+            source.lock().is_none(),
+            "late completion must not revive revoked replay"
+        );
     }
 
     #[test]
     fn no_replay_source_for_empty_or_oversized_reply() {
-        use std::sync::atomic::AtomicBool;
         use parking_lot::Mutex;
+        use std::sync::atomic::AtomicBool;
 
         let source = Mutex::new(None);
         let ending = AtomicBool::new(false);
