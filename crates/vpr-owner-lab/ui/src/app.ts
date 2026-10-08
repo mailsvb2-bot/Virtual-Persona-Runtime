@@ -2313,18 +2313,24 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     // anything, and revoke the canonical session. Never offer an unconfirmed
     // interrupted answer for replay.
     closePeerTransport();
-    let revokeFailed = false;
+    let cleanupFailed = false;
     try {
       await api<{ ok: true }>("/api/session/revoke", {});
-      await syncStatus();
     } catch {
-      revokeFailed = true;
+      cleanupFailed = true;
     }
+    // 504 may mean STT/LLM quiescence timed out AFTER authority and remote
+    // provider were already revoked. Always refresh the canonical state;
+    // do not confuse incomplete cleanup with permission still being active.
+    await syncStatus().catch(() => undefined);
+    const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
     const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
     setStatus(
-      revokeFailed
+      !canonicalRevoked
         ? `PROVIDER_STOP_UNCONFIRMED_REVOKE_FAILED: ${cause}`
-        : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
+        : cleanupFailed
+          ? `PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+          : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
       "error",
     );
     updateControls();
