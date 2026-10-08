@@ -126,6 +126,23 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
+// Both scenarios share one real backend process. A failed assertion must
+// never leave an active provider session that makes the next scenario unable
+// to reach its actual test precondition. This is REST teardown, not synthetic
+// Playwright manipulation of the running browser.
+test.afterEach(async ({ request }) => {
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  if (!bootstrap.ok()) return;
+  const csrf = String((await bootstrap.json()).csrf_token);
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  if (!status.ok()) return;
+  const state = (await status.json() as { session_state: string }).session_state;
+  if (state !== "none" && state !== "closed") {
+    const close = await postJson(request, csrf, "/api/session/close", {});
+    expect(close.ok()).toBeTruthy();
+  }
+});
+
 test("Expressive LiveKit generation-only events never grant canonical playback", async ({
   page,
   request,
