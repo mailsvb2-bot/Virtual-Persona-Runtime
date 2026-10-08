@@ -882,7 +882,6 @@ const handleProviderClientEvent = (raw) => {
         else if (normalized) {
             const voice = activeVoiceEvidence;
             if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
-                voice.providerEventKindsPosted.add(normalized.kind);
                 const kind = normalized.kind === "video_generation_started"
                     ? "provider_video_generation_started"
                     : normalized.kind === "video_generation_done"
@@ -890,14 +889,18 @@ const handleProviderClientEvent = (raw) => {
                         : normalized.kind === "video_generation_failed"
                             ? "provider_video_generation_failed"
                             : "provider_informational_event";
-                await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence);
+                const saved = await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence)
+                    .then(() => true, () => false);
+                if (saved)
+                    voice.providerEventKindsPosted.add(normalized.kind);
             }
         }
         else if (normalized === null) {
             const voice = activeVoiceEvidence;
             if (voice && !voice.providerIgnoredEventPosted) {
-                voice.providerIgnoredEventPosted = true;
-                await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence);
+                const saved = await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence).then(() => true, () => false);
+                if (saved)
+                    voice.providerIgnoredEventPosted = true;
             }
         }
         updateControls();
