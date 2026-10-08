@@ -15,7 +15,7 @@ mod launch;
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -69,6 +69,7 @@ struct AppState {
     voice_playback: LabVoicePlaybackRegistry,
     replay_source: ParkingMutex<Option<http_client_control::AuthorizedReply>>,
     session_end_requested: AtomicBool,
+    active_session_sequence: AtomicU64,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
     csrf_token: String,
@@ -179,6 +180,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_playback,
         replay_source: ParkingMutex::new(None),
         session_end_requested: AtomicBool::new(false),
+        active_session_sequence: AtomicU64::new(0),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
         csrf_token: generate_csrf_token()?,
@@ -362,7 +364,6 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         .and_then(|()| reject_if_session_ending(state))
         .and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
-                // Start and teardown share the replay_source -> engine lock order.
                 let mut replay_source = state.replay_source.lock();
                 reject_if_session_ending(state)?;
                 with_engine_result(state, |engine| {
@@ -378,14 +379,13 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                             ),
                             _ => return Err(LabError::InvalidInput),
                         };
-                    // A new session/participant must never inherit a previous
-                    // session's authorized speech-replay cache.
                     *replay_source = None;
                     state
                         .evidence
                         .lock()
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
+                    state.active_session_sequence.store(bundle.evidence_session_sequence, Ordering::Release);
                     state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
