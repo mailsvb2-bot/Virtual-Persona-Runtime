@@ -44,6 +44,44 @@ fn run(path: &Path) -> std::process::Output {
         .unwrap()
 }
 
+fn run_from(path: &Path, current_dir: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_vpr-rt0-evidence-prepare"))
+        .current_dir(current_dir)
+        .arg(path)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn prepare_reports_the_exact_dirty_worktree_entries() {
+    let temp = TempDir::new();
+    let repo = temp.child("repo");
+    let evidence = temp.child("evidence");
+    fs::create_dir(&repo).unwrap();
+
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .current_dir(&repo)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?} failed");
+    };
+    git(&["init"]);
+    git(&["config", "user.email", "rt0-test@example.invalid"]);
+    git(&["config", "user.name", "RT0 Test"]);
+    fs::write(repo.join("tracked.txt"), b"clean\n").unwrap();
+    git(&["add", "tracked.txt"]);
+    git(&["commit", "-m", "fixture"]);
+
+    fs::write(repo.join("dirty.txt"), b"diagnostic\n").unwrap();
+    let output = run_from(&evidence, &repo);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("WORKTREE_DIRTY_ENTRY: ?? dirty.txt"));
+    assert!(stderr.contains(r#"{"ok":false,"code":"WORKTREE_DIRTY"}"#));
+}
+
 #[test]
 fn prepare_materializes_only_exact_release_spec_and_reports_real_gaps() {
     let temp = TempDir::new();

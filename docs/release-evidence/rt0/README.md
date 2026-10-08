@@ -42,7 +42,7 @@ Before any credentialed or browser evidence capture, prepare the external eviden
 exact clean candidate:
 
 ```text
-cargo run -p vpr-evaluation --bin vpr-rt0-evidence-prepare -- /secure/evidence/rt0-candidate
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-evidence-prepare -- /secure/evidence/rt0-candidate
 ```
 
 The command derives the candidate from `git rev-parse HEAD`, rejects a dirty worktree, rejects
@@ -61,7 +61,7 @@ privacy, quality, human-review, or release evidence.
 Before spending provider calls on a real RT0 candidate, the operator can validate the local inputs and provider configuration without network egress:
 
 ```text
-cargo run -p vpr-live-proof -- doctor \
+cargo run --locked -p vpr-live-proof -- doctor \
   /secure/input/probe.raw \
   /secure/input/reviewed-profile.json \
   /secure/input/owner.raw \
@@ -77,7 +77,7 @@ A doctor PASS means only that the local candidate, private inputs and provider c
 `vpr-live-proof` is the fail-closed preflight for credentialed RT0 evidence. Run it from a clean checkout of the exact candidate and write the sanitized provider-state artifact outside the checkout, for example:
 
 ```text
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- /secure/evidence/provider-state.json
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- /secure/evidence/provider-state.json
 ```
 
 The preflight reuses the same `ProviderBundle` composition path as Owner Lab, requires one explicitly selected supported realtime-avatar provider plus both configured STT and LLM providers, derives the candidate from `git rev-parse HEAD`, and rejects a dirty worktree. D-ID is one supported avatar adapter, not an RT0 requirement; `local-open-source` can be selected without configuring any D-ID credential. When D-ID is selected, its account preflight uses the read-only `/credits` endpoint and fails early only when a successful response explicitly proves a zero remaining balance; an unknown response shape is not invented into a budget failure, and HTTP 404 remains an API error rather than being misclassified as zero credit. Runtime HTTP 402 remains the authoritative insufficient-credit failure path during session creation. Its receipt contains only provider/model/representation descriptors and SHA-256 configuration fingerprints; provider API keys are neither serialized nor included in the fingerprints.
@@ -108,7 +108,7 @@ For the realtime Owner Lab path, the DeepSeek adapter explicitly sends both `rea
 After preflight, `vpr-live-proof probe` can test real provider reachability for the exact clean candidate:
 
 ```text
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- probe /secure/input/utterance.pcm /secure/evidence/provider-state.json /secure/evidence/provider-probe.json
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- probe /secure/input/utterance.pcm /secure/evidence/provider-state.json /secure/evidence/provider-probe.json
 ```
 
 The input must be raw PCM S16LE, mono, 16 kHz and must live outside the Git worktree. STT and LLM execute only through canonical `ActiveTurn::execute_stt` / `execute_llm`; the realtime avatar control plane is opened and closed through `OwnerLabEngine`. The transcript is not forwarded to the LLM: the LLM reachability probe uses a fixed safe Russian prompt. A standalone TTS provider is **not required** when the selected realtime-avatar provider performs speech synthesis as part of its browser-connected text-to-spoken-avatar path.
@@ -122,7 +122,7 @@ After exporting the exact owner/visitor browser snapshots and creating the bound
 run the non-promoting runtime readiness report before replacing runtime-backed supporting artifacts:
 
 ```text
-cargo run -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
+cargo run --locked -p vpr-evaluation --bin vpr-rt0-runtime-readiness -- \
   /secure/evidence/rt0-candidate/provider-state.json \
   /secure/evidence/rt0-candidate/conversation-attempt.json \
   /secure/evidence/rt0-candidate/bound-session-aggregate.json \
@@ -149,7 +149,7 @@ paths, human quality review and known-limitations review remain separate mandato
 `vpr-live-proof conversation` reuses the canonical Owner Lab engine for one owner turn followed by one visitor-scoped turn over the same reviewed `DIGITAL_TWIN` Persona and the same credentialed STT/LLM/avatar provider composition:
 
 ```text
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- conversation \
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- conversation \
   /secure/input/reviewed-profile.json \
   /secure/input/owner-utterance.raw \
   /secure/input/visitor-utterance.raw \
@@ -168,7 +168,7 @@ A successful attempt proves only that real credentialed provider calls traversed
 For a new RT0 exact-candidate headless capture, prefer the single-file `candidate-bundle` mode:
 
 ```text
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate-bundle \
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- candidate-bundle \
   /secure/input/probe.raw \
   /secure/input/reviewed-profile.json \
   /secure/input/owner.raw \
@@ -188,7 +188,7 @@ copy/paste or hand-edit nested JSON out of the bundle. Extract them through the 
 projection while the checkout is still on the exact candidate:
 
 ```text
-cargo run -p vpr-live-proof -- candidate-bundle-extract \
+cargo run --locked -p vpr-live-proof -- candidate-bundle-extract \
   /secure/evidence/candidate-bundle.json \
   /secure/evidence/provider-state.json \
   /secure/evidence/provider-probe.json \
@@ -205,7 +205,7 @@ The older `candidate` mode remains available when three separate files are requi
 credentialed capture:
 
 ```text
-VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run -p vpr-live-proof -- candidate \
+VPR_LIVE_PROOF_ALLOW_EGRESS=true cargo run --locked -p vpr-live-proof -- candidate \
   /secure/input/probe.raw \
   /secure/input/reviewed-profile.json \
   /secure/input/owner.raw \
@@ -238,14 +238,14 @@ The aggregate can support browser-observed first-audio, interruption-stop, first
 
 ### Windows secure provider profile
 
-For the local Windows operator path, run `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- set` once and select the avatar provider. The secure profile can be created directly for D-ID or for `local-open-source`; a local-avatar profile does not require or invent D-ID credentials. If the operator still has a CMD session containing `VPR_*` values, `cargo run -p vpr-owner-lab --bin vpr-provider-credentials -- import-env` imports the selected avatar configuration plus the configured STT/LLM credentials without displaying or retyping secrets. Historical profiles that predate avatar selection continue to deserialize as D-ID for migration compatibility only.
+For the local Windows operator path, run `cargo run --locked -p vpr-owner-lab --bin vpr-provider-credentials -- set` once and select the avatar provider. The secure profile can be created directly for D-ID or for `local-open-source`; a local-avatar profile does not require or invent D-ID credentials. If the operator still has a CMD session containing `VPR_*` values, `cargo run --locked -p vpr-owner-lab --bin vpr-provider-credentials -- import-env` imports the selected avatar configuration plus the configured STT/LLM credentials without displaying or retyping secrets. Historical profiles that predate avatar selection continue to deserialize as D-ID for migration compatibility only.
 
 `ProviderBundle` resolves explicit process environment first and then the matching Windows credential profile. A stored secret therefore cannot silently override an explicitly selected different provider. For hermetic validation, `VPR_PROVIDER_CREDENTIAL_SOURCE=environment` disables Windows Credential Manager fallback for that process and makes incomplete environment configuration fail closed. The normal fallback remains available to Owner Lab and `vpr-live-proof`, while provider-state and evidence remain secret-free.
 
 For an interactive Owner Lab evidence session, prefer the explicit per-process opt-in:
 
 ```powershell
-cargo run -p vpr-owner-lab -- --allow-egress
+cargo run --locked -p vpr-owner-lab -- --allow-egress
 ```
 
 The flag is intentionally not persisted in Windows Credential Manager. A new process is fail-closed again unless the operator explicitly supplies `--allow-egress` (or the existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` automation override).

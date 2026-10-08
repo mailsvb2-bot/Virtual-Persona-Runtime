@@ -126,6 +126,9 @@ fn verify_snapshot(snapshot: &RepoSnapshot) -> Result<(), i32> {
     }
     let status = git_output(&["status", "--porcelain", "--untracked-files=all"])?;
     if !status.trim().is_empty() {
+        for entry in status.lines().filter(|line| !line.trim().is_empty()) {
+            eprintln!("WORKTREE_DIRTY_ENTRY: {entry}");
+        }
         return Err(emit_error("WORKTREE_DIRTY"));
     }
     Ok(())
