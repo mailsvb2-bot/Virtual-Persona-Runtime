@@ -26,14 +26,14 @@
   };
   const run = async () => {
     try {
-      // An earlier full-journey test closed the old session but left a
-      // reviewed Persona. Reconnect as that same owner without resetting it.
-      const consent = element("consent");
-      if (!consent.checked) consent.click();
-      const connect = element("connect");
-      await waitFor(() => !connect.disabled, "connect-enabled");
-      connect.click();
+      // The pre-navigation provider-bootstrap harness already ticks consent
+      // and clicks Connect. A second click or wait for an enabled Connect
+      // button races that harness and can deadlock after a successful connect.
+      // Observe the real session outcome instead of taking control twice.
       await waitFor(() => statusText().includes("LiveKit согласован"), "connected");
+      if (document.documentElement.dataset.vprProviderAutoConnect !== "clicked") {
+        throw new Error("PROVIDER_AUTO_CONNECT_NOT_EXERCISED");
+      }
       const voice = element("voice");
       const interrupt = element("interrupt");
       await waitFor(() => !voice.disabled, "voice-ready");
