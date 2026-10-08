@@ -42,36 +42,19 @@
           && window.__vprExpressiveRemoteSpeech === true,
         "spoken-output-published",
       );
-      const snap = await backend("/api/evidence/session");
-      const seq = snap.session_sequence;
-      if (!Number.isSafeInteger(seq) || seq < 1) throw new Error("INVALID_SESSION_SEQUENCE");
       const before = window.__vprLiveKitCommands.filter((c) => c.topic === "did.speak").length;
-      const otherTab = new BroadcastChannel("vpr.owner-lab.session-egress-fence.v1");
-      // Simulate a separate same-origin tab beginning a revoke: emit the
-      // best-effort early browser fence before making the canonical REST call.
-      otherTab.postMessage({
-        kind: "session-egress-revoked",
-        evidence_session_sequence: seq,
-      });
+      // Controller now opens a genuinely separate same-origin tab only after
+      // this checkpoint, so the new tab must discover the EXISTING active
+      // canonical session without starting a second one.
+      await writeReport({ kind: "phase", phase: "owner-speech-published" });
       await waitFor(
         () => (window.__vprExpressiveRoomDisconnectCount ?? 0) > 0,
         "other-tab-transport-closed",
+        45_000,
       );
       if (!voice.disabled || !get("resume-answer-row").hidden) {
         throw new Error("CROSS_TAB_MEDIA_CONTROLS_STILL_OPEN");
       }
-      const csrf = (await backend("/api/bootstrap")).csrf_token;
-      const revoke = await fetch("/api/session/revoke", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-VPR-CSRF": csrf,
-        },
-        body: "{}",
-        credentials: "same-origin",
-        cache: "no-store",
-      });
-      if (!revoke.ok) throw new Error("CANONICAL_REVOKE_FAILED:" + revoke.status);
       await waitFor(async () => (await backend("/api/status")).session_state === "revoked", "revoked");
       await sleep(250);
       if (window.__vprLiveKitCommands.filter((c) => c.topic === "did.speak").length !== before) {
@@ -88,7 +71,6 @@
       if (ended.session_state !== "closed" || ended.avatar_open !== false) {
         throw new Error("UNSAFE_TERMINAL_STATE");
       }
-      otherTab.close();
       await writeReport({
         status: "ok",
         session: "closed",
