@@ -1767,8 +1767,9 @@ const finishMicrophoneTurn = async () => {
         resetMicrophoneUpload();
         voiceRequestInFlight = false;
         updateControls();
-        if (terminalStatus)
+        if (terminalStatus && sessionState.backend.session_state === "active") {
             setStatus(terminalStatus.text, terminalStatus.kind);
+        }
     }
 };
 const toggleVoice = async () => {
@@ -1792,7 +1793,9 @@ const toggleVoice = async () => {
     catch (error) {
         stopMicrophoneCapture();
         await cancelMicrophoneInput();
-        setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+        if (sessionState.backend.session_state === "active") {
+            setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+        }
     }
 };
 const speak = async () => {
@@ -1823,8 +1826,9 @@ const speak = async () => {
     finally {
         textRequestInFlight = false;
         updateControls();
-        if (terminalStatus)
+        if (terminalStatus && sessionState.backend.session_state === "active") {
             setStatus(terminalStatus.text, terminalStatus.kind);
+        }
     }
 };
 const interruptAvatar = async (recordEvidence = true) => {
