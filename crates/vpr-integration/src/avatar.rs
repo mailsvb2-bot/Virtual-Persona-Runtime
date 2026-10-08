@@ -125,7 +125,7 @@ pub enum RealtimeAvatarClientEvent {
         playback_id: String,
     },
     PlaybackDone,
-    /// LiveKit video generation is complete; this is NOT user audio playout completion.
+    /// `LiveKit` video generation is complete; this is NOT user audio playout completion.
     VideoGenerationStarted,
     VideoGenerationDone,
     VideoGenerationFailed,
