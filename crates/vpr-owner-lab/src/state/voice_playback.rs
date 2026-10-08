@@ -88,4 +88,35 @@ impl LabVoicePlaybackRegistry {
             .acknowledge_output_played(delivery)
             .map_err(LabError::Runtime)
     }
+
+    /// Reconciles provider-confirmed completion of the whole browser-controlled playback queue.
+    ///
+    /// The first output sequence remains the immutable request binding used by sanitized evidence,
+    /// while every runtime-issued segment for the same canonical turn is promoted to Played.
+    /// This is required for phrase-streamed `LiveKit` turns: a turn is not canonically complete
+    /// while any queued segment is merely prepared or sent.
+    ///
+    /// # Errors
+    /// Returns invalid state for an unknown turn/first-output binding or any segment whose runtime
+    /// lifecycle cannot be reconciled as played.
+    pub fn acknowledge_voice_playback_complete(
+        &self,
+        evidence_turn_sequence: u64,
+        first_output_sequence: u64,
+    ) -> Result<(), LabError> {
+        let pending = self.inner.lock();
+        let entry = pending
+            .get(&evidence_turn_sequence)
+            .ok_or(LabError::InvalidState)?;
+        if !entry.deliveries.contains_key(&first_output_sequence) || entry.deliveries.is_empty() {
+            return Err(LabError::InvalidState);
+        }
+        for delivery in entry.deliveries.values() {
+            entry
+                .turn
+                .acknowledge_output_played(delivery)
+                .map_err(LabError::Runtime)?;
+        }
+        Ok(())
+    }
 }

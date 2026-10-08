@@ -47,7 +47,7 @@ const CANDIDATE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.3",
+        "schema_version":"rt0-owner-lab-session-evidence-1.4",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",
@@ -115,7 +115,7 @@ fn bind_mode_emits_exact_candidate_and_provider_state_receipt() {
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         value["schema_version"],
-        "rt0-owner-lab-session-aggregate-binding-0.7"
+        "rt0-owner-lab-session-aggregate-binding-0.8"
     );
     assert_eq!(
         value["candidate_sha"],

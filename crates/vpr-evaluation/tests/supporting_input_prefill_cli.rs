@@ -49,7 +49,7 @@ fn provider_state() -> Value {
 
 fn snapshot(session: u64, provider_state_sha256: &str) -> Value {
     json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.3",
+        "schema_version":"rt0-owner-lab-session-evidence-1.4",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",

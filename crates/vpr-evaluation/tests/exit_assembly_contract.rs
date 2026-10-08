@@ -261,7 +261,7 @@ fn conversation_bytes(provider_digest: &str) -> Vec<u8> {
 
 fn session_bytes(provider_state: &[u8]) -> Vec<u8> {
     let snapshot = bytes(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.3",
+        "schema_version":"rt0-owner-lab-session-evidence-1.4",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":sha256_hex(provider_state),
         "scope":"browser_observed_media_plane_only",

@@ -12,6 +12,7 @@ pub struct LabClientControl {
     pub interrupt: bool,
     pub interrupt_requires_playback_id: bool,
     pub text_input: bool,
+    pub prepared_interrupt: Option<LabClientCommand>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -28,6 +29,7 @@ impl From<&RealtimeAvatarClientControl> for LabClientControl {
             interrupt: value.interrupt,
             interrupt_requires_playback_id: value.interrupt_requires_playback_id,
             text_input: value.text_input,
+            prepared_interrupt: None,
         }
     }
 }

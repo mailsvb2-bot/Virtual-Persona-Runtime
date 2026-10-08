@@ -314,7 +314,27 @@ impl OwnerLabEngine {
                 return Err(map_provider_execution(error));
             }
         };
-        let bundle = signal_bundle(self.provider.as_ref(), &handle, self.session_counter);
+        let mut client_control = handle.client_control().map(LabClientControl::from);
+        if let Some(control) = client_control
+            .as_mut()
+            .filter(|control| control.interrupt && !control.interrupt_requires_playback_id)
+        {
+            control.prepared_interrupt = Some(
+                turn.prepare_realtime_avatar_client_interrupt(
+                    self.provider.as_ref(),
+                    &handle,
+                    None,
+                )
+                .map_err(map_provider_execution)?
+                .into(),
+            );
+        }
+        let bundle = signal_bundle(
+            self.provider.as_ref(),
+            &handle,
+            self.session_counter,
+            client_control,
+        );
         self.session = Some(session);
         self.avatar = Some(handle);
         self.session_audience = Some(audience);
@@ -462,9 +482,9 @@ fn signal_bundle(
     port: &dyn RealtimeAvatarPort,
     handle: &RealtimeAvatarHandle,
     evidence_session_sequence: u64,
+    client_control: Option<LabClientControl>,
 ) -> LabSignalBundle {
     let provider_capabilities = port.capabilities();
-    let client_control = handle.client_control().map(LabClientControl::from);
     let mut capabilities: Vec<String> = [
         (RealtimeAvatarCapability::TextInput, "text"),
         (RealtimeAvatarCapability::AudioUrlInput, "audio_url"),

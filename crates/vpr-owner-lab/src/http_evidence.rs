@@ -208,7 +208,7 @@ pub fn record_media(
             .prepare_canonical_playback(input)
             .map_err(MediaRecordError::Evidence)?;
         playback
-            .acknowledge_voice_playback(canonical_turn_sequence, canonical_output_sequence)
+            .acknowledge_voice_playback_complete(canonical_turn_sequence, canonical_output_sequence)
             .map_err(MediaRecordError::Lab)?;
         recorder
             .lock()

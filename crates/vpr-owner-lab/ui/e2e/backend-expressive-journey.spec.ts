@@ -159,10 +159,6 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     }
   };
 
-  await page.addInitScript(() => {
-    (window as typeof window & { __vprForceMediaElementAvSync?: boolean })
-      .__vprForceMediaElementAvSync = true;
-  });
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
@@ -212,7 +208,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(evidence?.av_sync_samples).toHaveLength(3);
   expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
   expect(evidence?.av_sync_samples.every((sample) =>
-    sample.reference === "html_media_element_current_time"
+    sample.reference === "web_rtc_estimated_playout_timestamp"
       && sample.absolute_offset_millis === 60
   )).toBeTruthy();
   expect(evidence?.voice_attempts.some((attempt) =>
@@ -220,7 +216,17 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   )).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
   expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
+  expect(evidence?.media_events.some((event) => event.kind === "provider_data_received")).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_playback_done_received",
+  )).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "provider_event_parse_failed",
+  )).toBeFalsy();
   expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBeTruthy();
+  expect(evidence?.media_events.some(
+    (event) => event.kind === "playback_recovery_triggered",
+  )).toBeFalsy();
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
@@ -239,10 +245,13 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(speak).toHaveLength(1);
-  const speakPayload = JSON.parse(speak[0]?.text ?? "{}");
-  expect(speakPayload.script?.should_queue_speaks).toBe(true);
-  expect(speakPayload.script?.input).toBe(
+  expect(speak.length).toBeGreaterThanOrEqual(2);
+  const streamedReply = speak.map((command) => {
+    const payload = JSON.parse(command.text ?? "{}");
+    expect(payload.script?.should_queue_speaks).toBe(true);
+    return String(payload.script?.input ?? "");
+  }).join(" ").replace(/\s+/g, " ").trim();
+  expect(streamedReply).toBe(
     "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
   );
   expect(commands.some((command) => command.topic === "did.interrupt")).toBeTruthy();

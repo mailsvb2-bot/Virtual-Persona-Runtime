@@ -59,7 +59,6 @@ pub struct LabSessionEvidenceRecorder {
 
 impl LabSessionEvidenceRecorder {
     /// Starts a fresh evidence record for one canonical Owner Lab session.
-    ///
     /// # Errors
     /// Returns `InvalidInput` for a zero session sequence.
     pub fn begin_session(
@@ -453,11 +452,9 @@ impl LabSessionEvidenceRecorder {
         Ok(())
     }
 
-    /// Records one browser-observed media-plane latency event without promoting it to full
-    /// canonical playback proof. `PlaybackCompleted` reaches the dedicated canonical path only.
-    ///
+    /// Records browser media latency without promoting it to canonical playback proof.
     /// # Errors
-    /// Fails for stale sessions, impossible event/request combinations, unknown requests, or duplicates.
+    /// Fails for stale, malformed, unknown-request, duplicate, or over-capacity evidence.
     pub fn record_media(&mut self, input: &LabMediaEvidenceInput) -> Result<(), LabEvidenceError> {
         if input.kind == LabMediaEvidenceKind::PlaybackCompleted {
             return Err(LabEvidenceError::InvalidState);
@@ -479,6 +476,11 @@ impl LabSessionEvidenceRecorder {
             LabMediaEvidenceKind::BackendCompleteReceived
                 | LabMediaEvidenceKind::ClientDeliverySent
                 | LabMediaEvidenceKind::AudioStarted
+                | LabMediaEvidenceKind::ProviderDataReceived
+                | LabMediaEvidenceKind::ProviderEventIgnored
+                | LabMediaEvidenceKind::ProviderEventParseFailed
+                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
+                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
                 | LabMediaEvidenceKind::PlaybackCompleted
                 | LabMediaEvidenceKind::InterruptionStopped
         );

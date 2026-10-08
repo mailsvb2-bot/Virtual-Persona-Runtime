@@ -366,6 +366,18 @@ fn av_sync_requires_canonical_playback_and_unique_request_scoped_samples() {
 }
 
 #[test]
+fn release_av_sync_rejects_html_media_clock_even_when_samples_are_consistent() {
+    let mut html = snapshot(43, 1, 100);
+    for sample in &mut html.av_sync_samples {
+        sample.reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
+    }
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[html]),
+        Err(LabSessionAggregateError::InvalidMediaEvidence)
+    );
+}
+
+#[test]
 fn av_sync_rejects_mixed_reference_for_one_request() {
     let mut mixed = snapshot(44, 1, 100);
     mixed.av_sync_samples[2].reference = LabAvSyncReference::HtmlMediaElementCurrentTime;
@@ -459,14 +471,14 @@ fn development_status_tracks_current_session_schema_contracts() {
 fn expanded_connection_evidence_uses_new_wire_versions() {
     assert_eq!(
         RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
-        "rt0-owner-lab-session-evidence-1.3"
+        "rt0-owner-lab-session-evidence-1.4"
     );
     assert_eq!(
         RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA,
-        "rt0-owner-lab-session-aggregate-1.0"
+        "rt0-owner-lab-session-aggregate-1.1"
     );
     assert_eq!(
         RT0_OWNER_LAB_SESSION_BINDING_SCHEMA,
-        "rt0-owner-lab-session-aggregate-binding-0.7"
+        "rt0-owner-lab-session-aggregate-binding-0.8"
     );
 }

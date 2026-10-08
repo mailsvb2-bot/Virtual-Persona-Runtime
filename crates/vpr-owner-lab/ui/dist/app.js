@@ -484,6 +484,15 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
     };
 };
 const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
+    if (rt0EvidenceMode) {
+        return {
+            offsetMillis: null,
+            reference: null,
+            diagnostic: `${diagnostic}; strict-rt0=rtp-playout-timestamp-only`,
+            audioIssue,
+            videoIssue,
+        };
+    }
     const audioTime = avatarAudio.currentTime;
     const videoTime = video.currentTime;
     if (Number.isFinite(audioTime)
@@ -693,6 +702,7 @@ const monitorRemoteAudio = () => {
             && performance.now() - voice.playbackSilenceStartedAt
                 >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS) {
             voice.playbackRecoveryTriggered = true;
+            void postMediaEvidence("playback_recovery_triggered", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void interruptAvatar(false).then((recovered) => {
                 if (recovered) {
                     setStatus("D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
@@ -844,28 +854,33 @@ const handleProviderClientEvent = (raw) => {
         }
         else if (normalized?.kind === "playback_done") {
             const voice = activeVoiceEvidence;
-            if (voice) {
-                voice.providerPlaybackDone = true;
-                voice.playbackSilenceStartedAt = null;
-                const completion = ensurePlaybackCompletionEvidence(voice);
-                if (completion) {
-                    try {
-                        await completion;
-                    }
-                    catch (error) {
-                        setStatus(error instanceof Error
-                            ? `Playback completion evidence: ${error.message}`
-                            : "Playback completion evidence failed", "error");
-                    }
-                }
-            }
             sessionState.setPlaybackId(null);
             voiceCommandScheduler.playbackDone();
-            rt0PlaybackPending = rt0EvidenceMode && voiceCommandScheduler.hasPendingPlayback;
+            if (voice) {
+                voice.providerPlaybackDoneCount += 1;
+                await maybeFinalizeProviderPlayback(voice);
+                syncRt0PlaybackPending(voice);
+            }
+            else if (rt0EvidenceMode) {
+                rt0PlaybackPending = false;
+            }
+        }
+        else if (normalized === null) {
+            const voice = activeVoiceEvidence;
+            if (voice && !voice.providerIgnoredEventPosted) {
+                voice.providerIgnoredEventPosted = true;
+                await postMediaEvidence("provider_event_ignored", performance.now() - voice.startedAt, voice.requestSequence);
+            }
         }
         updateControls();
     })
-        .catch(() => undefined);
+        .catch(async () => {
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerParseFailurePosted) {
+            voice.providerParseFailurePosted = true;
+            await postMediaEvidence("provider_event_parse_failed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+        }
+    });
 };
 const dispatchClientCommand = async (command) => {
     if (command.route.kind === "web_rtc_data_channel") {
@@ -884,6 +899,35 @@ const dispatchClientCommand = async (command) => {
     await room.localParticipant.sendText(command.payload, { topic: command.route.topic });
 };
 const voiceCommandScheduler = new PlaybackAwareCommandScheduler(dispatchClientCommand);
+const syncRt0PlaybackPending = (voice) => {
+    if (!rt0EvidenceMode)
+        return;
+    rt0PlaybackPending = voice !== null
+        && !voice.interrupted
+        && !voice.providerPlaybackDone
+        && voice.providerPlaybackExpectedCount > 0
+        && voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount;
+};
+const maybeFinalizeProviderPlayback = async (voice) => {
+    if (voice.providerPlaybackDone
+        || voice.interrupted
+        || !voice.responseComplete
+        || voice.providerPlaybackExpectedCount === 0
+        || voice.providerPlaybackDoneCount !== voice.providerPlaybackExpectedCount
+        || voiceCommandScheduler.hasPendingPlayback) {
+        return;
+    }
+    voice.providerPlaybackDone = true;
+    voice.playbackSilenceStartedAt = null;
+    syncRt0PlaybackPending(voice);
+    if (!voice.providerPlaybackDoneEvidencePosted) {
+        voice.providerPlaybackDoneEvidencePosted = true;
+        await postMediaEvidence("provider_playback_done_received", performance.now() - voice.startedAt, voice.requestSequence);
+    }
+    const completion = ensurePlaybackCompletionEvidence(voice);
+    if (completion)
+        await completion;
+};
 const attachLiveKitTrack = (track) => {
     if (track.kind === "video") {
         liveKitVideoTrack = track;
@@ -1111,6 +1155,11 @@ const connectLiveKitTransport = async (transport) => {
         const payload = args[0];
         if (!(payload instanceof Uint8Array))
             return;
+        const voice = activeVoiceEvidence;
+        if (voice && !voice.providerDataReceived) {
+            voice.providerDataReceived = true;
+            void postMediaEvidence("provider_data_received", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+        }
         handleProviderClientEvent(new TextDecoder().decode(payload));
     });
     room.on(sdk.RoomEvent.Reconnecting, () => {
@@ -1155,9 +1204,9 @@ const connectAvatar = async () => {
         const audience = audienceSelect.value;
         const start = await api("/api/avatar/start", { consent: true, audience });
         backendSessionStarted = true;
-        connectEvidenceStartedAt = performance.now();
+        const backendReadyAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
-        queueConnectionMediaEvidence("backend_start_ready", connectEvidenceStartedAt - connectJourneyStartedAt);
+        queueConnectionMediaEvidence("backend_start_ready", backendReadyAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
         const startedStatus = await syncStatus();
@@ -1173,7 +1222,16 @@ const connectAvatar = async () => {
         else {
             await connectLiveKitTransport(start.transport);
         }
-        queueConnectionMediaEvidence("transport_connected", performance.now() - connectJourneyStartedAt);
+        connectEvidenceStartedAt = performance.now();
+        queueConnectionMediaEvidence("transport_connected", connectEvidenceStartedAt - connectJourneyStartedAt);
+        if (!videoEvidencePosted) {
+            if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                recordFirstVideoFrame();
+            }
+            else if (!requestVideoFrame(video, recordFirstVideoFrame)) {
+                video.addEventListener("playing", recordFirstVideoFrame, { once: true });
+            }
+        }
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
@@ -1470,6 +1528,12 @@ const finishMicrophoneTurn = async () => {
         audioStartedEvidence: null,
         avSyncEvidence: null,
         playbackCompletionEvidence: null,
+        providerDataReceived: false,
+        providerIgnoredEventPosted: false,
+        providerParseFailurePosted: false,
+        providerPlaybackExpectedCount: 0,
+        providerPlaybackDoneCount: 0,
+        providerPlaybackDoneEvidencePosted: false,
         providerPlaybackDone: false,
         responseComplete: false,
         interrupted: false,
@@ -1490,22 +1554,22 @@ const finishMicrophoneTurn = async () => {
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
+            const voiceForSegment = activeVoiceEvidence;
+            if (voiceForSegment?.requestSequence === requestSequence) {
+                voiceForSegment.providerPlaybackExpectedCount += 1;
+                syncRt0PlaybackPending(voiceForSegment);
+                updateControls();
+            }
             const command = segment.client_command;
             if (!command)
                 return;
             let commandSent = false;
             const dispatch = voiceCommandScheduler.dispatch(command);
-            if (rt0EvidenceMode) {
-                rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-                updateControls();
-            }
             const task = (async () => {
                 const sent = await dispatch;
                 if (!sent) {
-                    if (rt0EvidenceMode) {
-                        rt0PlaybackPending = voiceCommandScheduler.hasPendingPlayback;
-                        updateControls();
-                    }
+                    syncRt0PlaybackPending(activeVoiceEvidence);
+                    updateControls();
                     return;
                 }
                 commandSent = true;
@@ -1573,6 +1637,7 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
+            await maybeFinalizeProviderPlayback(voice);
             if (voice.audioStartedEvidence) {
                 await voice.audioStartedEvidence;
             }
@@ -1677,12 +1742,28 @@ const interruptAvatar = async (recordEvidence = true) => {
         && sessionState.realtime.control
         && activeClientControl?.interrupt === true
         && playbackReady;
+    const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
+    const fastProviderStop = clientReady && preparedInterrupt
+        ? dispatchClientCommand(preparedInterrupt)
+        : null;
     try {
-        if (voiceRequestInFlight) {
-            await api("/api/avatar/interrupt", {});
+        const canonicalStop = voiceRequestInFlight
+            ? api("/api/avatar/interrupt", {})
+            : null;
+        if (fastProviderStop) {
+            await fastProviderStop;
+            if (canonicalStop)
+                await canonicalStop;
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
         }
+        if (canonicalStop)
+            await canonicalStop;
         if (clientReady) {
             const command = await api("/api/avatar/client-interrupt", {
                 playback_id: playbackId,

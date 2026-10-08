@@ -503,6 +503,22 @@ fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
     assert!(!control.interrupt_requires_playback_id);
     assert!(control.text_input);
 
+    assert_eq!(
+        provider
+            .parse_client_event(&live, r#"{"subject":"stream-video/done"}"#)
+            .unwrap(),
+        Some(RealtimeAvatarClientEvent::PlaybackDone)
+    );
+    assert_eq!(
+        provider
+            .parse_client_event(
+                &live,
+                r#"{"subject":"chat/answer","content":"ignored payload"}"#,
+            )
+            .unwrap(),
+        None
+    );
+
     let text = provider
         .prepare_client_text(&live, "Привет", &probe)
         .unwrap();

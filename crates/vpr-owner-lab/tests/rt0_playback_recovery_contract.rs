@@ -10,6 +10,7 @@ fn strict_rt0_recovers_from_missing_provider_playback_done_without_promoting_evi
         "!voice.interrupted",
         "voice.playbackSilenceStartedAt !== null",
         "voice.playbackRecoveryTriggered = true",
+        "\"playback_recovery_triggered\"",
         "interruptAvatar(false)",
         "playback_completed не засчитан",
     ] {
@@ -41,11 +42,71 @@ fn provider_playback_done_remains_the_only_success_path_for_completion_evidence(
         "provider completion event handler must remain present"
     );
     assert!(
+        APP.contains("\"provider_data_received\""),
+        "LiveKit data receipt must be observable without storing provider payloads"
+    );
+    assert!(
+        APP.contains("\"provider_event_ignored\""),
+        "ignored provider packets must be distinguishable from a missing data path"
+    );
+    assert!(
+        APP.contains("\"provider_event_parse_failed\""),
+        "rejected provider packets must be distinguishable from ignored packets"
+    );
+    assert!(
+        APP.contains("\"provider_playback_done_received\""),
+        "normalized provider completion must be separately observable"
+    );
+    assert!(
         APP.contains("voice.providerPlaybackDone = true"),
         "provider completion must set the canonical provider acknowledgement"
     );
     assert!(
         APP.contains("ensurePlaybackCompletionEvidence(voice)"),
         "provider acknowledgement must remain the playback-completion evidence path"
+    );
+}
+
+#[test]
+fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
+    for marker in [
+        "if (rt0EvidenceMode)",
+        "strict-rt0=rtp-playout-timestamp-only",
+        "reference: null",
+        "web_rtc_estimated_playout_timestamp",
+    ] {
+        assert!(
+            APP.contains(marker),
+            "strict RT0 A/V-sync fail-closed contract is missing marker: {marker}"
+        );
+    }
+}
+
+#[test]
+fn prepared_livekit_interrupt_bypasses_http_roundtrip_on_the_media_stop_path() {
+    let interrupt = APP
+        .split("const interruptAvatar = async")
+        .nth(1)
+        .expect("interruptAvatar must exist");
+    for marker in [
+        "activeClientControl?.prepared_interrupt",
+        "const fastProviderStop",
+        "dispatchClientCommand(preparedInterrupt)",
+        "const canonicalStop",
+    ] {
+        assert!(
+            interrupt.contains(marker),
+            "immediate provider STOP contract is missing marker: {marker}"
+        );
+    }
+    let dispatch = interrupt
+        .find("dispatchClientCommand(preparedInterrupt)")
+        .expect("prepared STOP dispatch must exist");
+    let canonical = interrupt
+        .find("const canonicalStop")
+        .expect("canonical cancellation must remain present");
+    assert!(
+        dispatch < canonical,
+        "provider media STOP must be dispatched before waiting on canonical cancellation"
     );
 }

@@ -6,6 +6,7 @@
   let finishSyntheticPlayback = null;
   let trackSequence = 0;
   let playbackSequence = 0;
+  let pendingPlaybackCompletions = 0;
   let activePeer = null;
   let providerDataChannel = null;
   const requestedMicrophones = [];
@@ -25,12 +26,15 @@
         : input.url;
     if (target.endsWith("/api/avatar/start")) {
       remoteSpeech = false;
+      pendingPlaybackCompletions = 0;
     }
     const response = await realFetch(input, init);
     if (target.endsWith("/api/voice/events") && response.ok) {
       try {
         const batch = await response.clone().json();
-        if (batch.events?.some((event) => event.kind === "segment")) {
+        const segmentCount = batch.events?.filter((event) => event.kind === "segment").length ?? 0;
+        for (let index = 0; index < segmentCount; index += 1) {
+          pendingPlaybackCompletions += 1;
           beginSyntheticPlayback?.();
         }
       } catch {
@@ -167,6 +171,7 @@
           interruptPayloads.push(payload);
           publishFixtureState();
           remoteSpeech = false;
+          pendingPlaybackCompletions = 0;
           queueMicrotask(() => channel.onmessage?.({ data: "stream/done:{}" }));
         },
         close() {
@@ -245,7 +250,11 @@
   finishSyntheticPlayback = () => {
     if (!remoteSpeech) return;
     remoteSpeech = false;
-    providerDataChannel?.onmessage?.({ data: "stream/done:{}" });
+    const completions = Math.max(1, pendingPlaybackCompletions);
+    pendingPlaybackCompletions = 0;
+    for (let index = 0; index < completions; index += 1) {
+      providerDataChannel?.onmessage?.({ data: "stream/done:{}" });
+    }
   };
   window.__vprBeginSyntheticPlayback = () => beginSyntheticPlayback?.();
   window.__vprFinishSyntheticPlayback = () => finishSyntheticPlayback?.();

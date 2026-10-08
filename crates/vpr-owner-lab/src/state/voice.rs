@@ -6,8 +6,8 @@ use vpr_domain::{Rt0ReasonCode, TurnState};
 pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
 pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
-    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, RealtimeAvatarTransport, SttPort,
-    TimedGeneratedTextBuffer, UsageEvidence,
+    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TimedGeneratedTextBuffer,
+    UsageEvidence,
 };
 use vpr_runtime::{
     ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarHandle,
@@ -102,11 +102,11 @@ impl OwnerLabEngine {
 
     /// Runs one realtime microphone turn using the canonical pull-based LLM stream.
     ///
-    /// Server-delivered avatar transports may emit bounded natural phrase segments while the
-    /// provider is still generating. Browser-controlled `LiveKit` text transports receive one
-    /// complete bounded reply per turn so provider-side queued playback cannot stall after an
-    /// introductory fragment. Every delivery still receives a runtime-issued output handle and
-    /// shares the same turn cancellation authority across STT, LLM, avatar output and generation.
+    /// Every realtime avatar transport emits bounded natural phrase segments while the LLM is
+    /// still generating. Browser-controlled `LiveKit` delivery remains serialized by the browser
+    /// playback scheduler, so only one provider speak is active at a time while the next phrase
+    /// can already be generated and queued. Every segment receives a runtime-issued output handle
+    /// and shares the same turn cancellation authority across STT, LLM, avatar output and generation.
     ///
     /// # Errors
     /// Fails closed for malformed audio, unavailable pull streaming, authority/cancellation
@@ -316,21 +316,6 @@ impl OwnerLabEngine {
         evidence_turn_sequence: u64,
         emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
     ) -> Result<VoiceGeneration, LabError> {
-        if matches!(handle.transport(), RealtimeAvatarTransport::LiveKit { .. })
-            && handle
-                .client_control()
-                .is_some_and(|control| control.text_input)
-        {
-            return self.livekit_full_reply_generation(
-                turn,
-                llm,
-                handle,
-                request,
-                evidence_turn_sequence,
-                emit_segment,
-            );
-        }
-
         let llm_started = Instant::now();
         let mut stream = turn
             .open_llm_stream(llm, request)
@@ -408,78 +393,6 @@ impl OwnerLabEngine {
             first_meaningful_millis: first_meaningful,
             avatar_millis,
             output_sequences,
-            client_command: None,
-        })
-    }
-    fn livekit_full_reply_generation(
-        &self,
-        turn: &Arc<ActiveTurn>,
-        llm: &dyn LlmPort,
-        handle: &RealtimeAvatarHandle,
-        request: &LlmRequest,
-        evidence_turn_sequence: u64,
-        emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
-    ) -> Result<VoiceGeneration, LabError> {
-        let llm_started = Instant::now();
-        let mut stream = turn
-            .open_llm_stream(llm, request)
-            .map_err(|error| terminalize_provider_error(turn, error))?;
-        let mut reply = String::new();
-        let mut first_meaningful = None;
-
-        while let Some(chunk) = stream
-            .next_chunk()
-            .map_err(|error| terminalize_provider_error(turn, error))?
-        {
-            if first_meaningful.is_none() && !chunk.trim().is_empty() {
-                first_meaningful = Some(elapsed_millis(llm_started));
-            }
-            if reply
-                .len()
-                .checked_add(chunk.len())
-                .is_none_or(|length| length > vpr_integration::MAX_GENERATED_TEXT_BYTES)
-            {
-                return Err(terminalize_provider_error(
-                    turn,
-                    ProviderExecutionError::Provider(vpr_integration::ProviderError {
-                        kind: vpr_integration::ProviderErrorKind::InvalidResponse,
-                        retryable: false,
-                    }),
-                ));
-            }
-            reply.push_str(&chunk);
-        }
-
-        let llm_millis = elapsed_millis(llm_started);
-        let first_meaningful = first_meaningful
-            .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
-        let reply = reply.trim().to_owned();
-        if reply.is_empty() {
-            return Err(terminalize_failed_turn(turn, LabError::InvalidInput));
-        }
-
-        turn.begin_output().map_err(LabError::Runtime)?;
-        let avatar_started = Instant::now();
-        let (delivery, client_command) =
-            deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
-        let avatar_millis = elapsed_millis(avatar_started);
-        let output_sequence =
-            self.voice_playback
-                .register_delivery(evidence_turn_sequence, turn, delivery)?;
-        emit_segment(LabVoiceSegment {
-            evidence_turn_sequence,
-            evidence_output_sequence: output_sequence,
-            client_command,
-        })
-        .map_err(|error| terminalize_failed_turn(turn, error))?;
-
-        Ok(VoiceGeneration {
-            reply,
-            usage: stream.usage(),
-            llm_millis,
-            first_meaningful_millis: first_meaningful,
-            avatar_millis,
-            output_sequences: vec![output_sequence],
             client_command: None,
         })
     }
