@@ -880,7 +880,7 @@ const handleProviderClientEvent = (raw) => {
                     rt0PlaybackPending = false;
             }
         }
-        else if (normalized && normalized.kind !== "playback_started" && normalized.kind !== "playback_done") {
+        else if (normalized) {
             const voice = activeVoiceEvidence;
             if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
                 voice.providerEventKindsPosted.add(normalized.kind);
