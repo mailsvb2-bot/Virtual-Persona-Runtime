@@ -1152,7 +1152,15 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
-    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+    const evidenceFlush = tryFlushConnectionMediaEvidence();
+    let revokeError = null;
+    try {
+        await api("/api/session/revoke", sessionEndRequest());
+    }
+    catch (error) {
+        revokeError = error;
+    }
+    const connectionEvidenceError = await evidenceFlush.catch((error) => error instanceof Error ? error : new Error(String(error)));
     const evidenceWarning = connectionEvidenceError
         ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
         : "";
@@ -1162,7 +1170,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
         await refreshSessionEvidence();
         try {
             await downloadSessionEvidence();
-            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
+            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}${revokeError ? "; первоначальный отзыв потребовал повторного закрытия" : ""}. Подключитесь снова.`, "error");
         }
         catch (exportError) {
             setStatus(exportError instanceof Error
