@@ -831,17 +831,16 @@ const syncStatus = () => {
         const status = await api("/api/status");
         sessionState.applyBackend(status);
         if (status.session_state === "active" && evidenceSessionSequence === 0) {
-            const response = await runtimeFetch("/api/evidence/session", {
+            const snapshot = await runtimeFetch("/api/evidence/session", {
                 method: "GET", credentials: "same-origin", cache: "no-store",
-            });
-            if (response.ok) {
-                const snapshot = await response.json();
-                if (typeof snapshot.session_sequence === "number"
-                    && Number.isSafeInteger(snapshot.session_sequence)
-                    && snapshot.session_sequence > 0) {
-                    observedBackendSessionSequence = snapshot.session_sequence;
-                }
-            }
+            }).then(async (response) => response.ok
+                ? await response.json()
+                : null).catch(() => null);
+            observedBackendSessionSequence = snapshot
+                && typeof snapshot.session_sequence === "number"
+                && Number.isSafeInteger(snapshot.session_sequence)
+                && snapshot.session_sequence > 0
+                ? snapshot.session_sequence : 0;
         }
         if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
             && locallyFencedSessionSequence !== evidenceSessionSequence) {
@@ -1819,7 +1818,8 @@ const finishMicrophoneTurn = async () => {
         resetMicrophoneUpload();
         voiceRequestInFlight = false;
         updateControls();
-        if (terminalStatus && sessionState.backend.session_state === "active") {
+        if (terminalStatus && sessionState.backend.session_state === "active"
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
             setStatus(terminalStatus.text, terminalStatus.kind);
         }
     }
@@ -1878,7 +1878,8 @@ const speak = async () => {
     finally {
         textRequestInFlight = false;
         updateControls();
-        if (terminalStatus && sessionState.backend.session_state === "active") {
+        if (terminalStatus && sessionState.backend.session_state === "active"
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
             setStatus(terminalStatus.text, terminalStatus.kind);
         }
     }
