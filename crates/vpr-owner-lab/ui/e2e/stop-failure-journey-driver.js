@@ -77,12 +77,30 @@
       if (!element("resume-answer-row").hidden || !voice.disabled) {
         throw new Error("REVOKED_SESSION_STILL_OFFERS_MEDIA_EGRESS");
       }
+      const streamCleanupPending = statusText().includes("CLEANUP_PENDING");
+      // A real user must now click Close and export sealed evidence before
+      // another session can start. Direct REST cleanup in Playwright afterEach
+      // is not equivalent: it leaves EVIDENCE_EXPORT_REQUIRED and poisons the
+      // following test's owner journey.
+      const close = element("close");
+      await waitFor(() => !close.disabled, "close-after-revoke-enabled");
+      close.click();
+      await waitFor(
+        () => statusText().includes("Сессия закрыта. Evidence snapshot сохранён."),
+        "owner-saved-evidence-after-revoke",
+      );
+      const closedResponse = await fetch("/api/status", { cache: "no-store" });
+      if (!closedResponse.ok || (await closedResponse.json()).session_state !== "closed") {
+        throw new Error("POST_REVOKE_SESSION_NOT_CLOSED");
+      }
       await sendReport({
         status: "ok",
-        session: "revoked",
+        session: "closed",
+        revoked_before_close: true,
         provider_resource_closed: true,
         stop_failed: true,
-        stream_cleanup_pending: statusText().includes("CLEANUP_PENDING"),
+        evidence_exported: true,
+        stream_cleanup_pending: streamCleanupPending,
       });
     } catch (error) {
       const state = await fetch("/api/status", { cache: "no-store" })
