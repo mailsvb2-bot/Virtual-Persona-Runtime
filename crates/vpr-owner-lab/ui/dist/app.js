@@ -1558,7 +1558,9 @@ const finishMicrophoneTurn = async () => {
         let deliveryFailure = null;
         let clientDeliverySentElapsed = null;
         const deliveryTasks = [];
-        // D-ID LiveKit manages its own phrase queue; send all segments without waiting for each done.
+        // LiveKit D-ID queues speak commands itself. Serialise sends, but never wait for
+        // playback completion before sending the next phrase (the provider may only
+        // publish its completion event after the queued batch has been submitted).
         let liveKitSendTail = Promise.resolve();
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
