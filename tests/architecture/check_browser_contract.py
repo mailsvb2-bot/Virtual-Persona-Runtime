@@ -558,13 +558,13 @@ for required in (
     'let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;',
     "textRequestInFlight = false;",
     "voiceRequestInFlight = false;",
-    'if (terminalStatus && sessionState.backend.session_state === "active") {',
+    'if (terminalStatus && sessionState.backend.session_state === "active"',
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab turn completion must publish terminal status after unlocking controls: {required}")
-if app.count('if (terminalStatus && sessionState.backend.session_state === "active") {') < 2:
+if app.count('if (terminalStatus && sessionState.backend.session_state === "active"') < 2:
     raise SystemExit(
-        "Owner Lab text and voice must both publish terminal status only while canonical session is active"
+        "Owner Lab text and voice must both suppress late status after cross-tab fence or canonical revoke"
     )
 if "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);" in app:
     raise SystemExit("Owner Lab late completion must not overwrite a revoked/closed session")
