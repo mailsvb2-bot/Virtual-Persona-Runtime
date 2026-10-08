@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use parking_lot::Mutex as ParkingMutex;
 use serde::Deserialize;
 use tiny_http::Request;
@@ -150,6 +152,13 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
         }
     }
 
+    // Preserve lock ordering with resume-answer (replay_source -> engine).
+    // An in-flight voice output cannot be silently rebound to a corrected
+    // PersonaVersion. Ask the owner to interrupt/finish that output first.
+    let mut replay_source = state.replay_source.lock();
+    if state.voice_busy.load(Ordering::Acquire) {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
     let mut engine = state
         .engine
         .lock()
@@ -157,6 +166,7 @@ fn correct_claim(request: &mut Request, state: &AppState) -> Result<HttpResponse
     engine
         .correct_owner_claim_persisted(&id, body.statement, kind)
         .map_err(|error| lab_error_response(&error))?;
+    *replay_source = None;
     Ok(json_response(200, &engine.status()))
 }
 
