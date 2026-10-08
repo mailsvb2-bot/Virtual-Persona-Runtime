@@ -41,6 +41,11 @@ pub enum LabMediaEvidenceKind {
     AudioStarted,
     ProviderDataReceived,
     ProviderEventIgnored,
+    /// Fixed, payload-free groups for otherwise unrecognized D-ID event subjects.
+    ProviderUnknownChatEvent,
+    ProviderUnknownVideoEvent,
+    ProviderUnknownToolEvent,
+    ProviderUnknownOtherEvent,
     /// D-ID `LiveKit` events report generation status, not browser playback completion.
     ProviderVideoGenerationStarted,
     ProviderVideoGenerationDone,
