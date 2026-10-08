@@ -553,14 +553,22 @@ fn finish_voice_stream(
     request_sequence: u64,
     result: Result<LabVoiceResult, LabError>,
 ) {
+    *state.replay_source.lock() = None;
     let event = match result {
         Ok(value) => match state
             .evidence
             .lock()
             .complete_voice_request(request_sequence, &value)
         {
-            Ok(()) => VoiceStreamEvent::Complete {
-                result: Box::new(value),
+            Ok(()) => {
+                if !value.reply.trim().is_empty() && value.reply.len() <= 16_000 {
+                    *state.replay_source.lock() = Some(super::http_client_control::AuthorizedReply {
+                        request_sequence,
+                        reply: value.reply.clone(),
+                        resume_count: 0,
+                    });
+                }
+                VoiceStreamEvent::Complete { result: Box::new(value) }
             },
             Err(error) => VoiceStreamEvent::Failed {
                 code: error.code().to_owned(),
