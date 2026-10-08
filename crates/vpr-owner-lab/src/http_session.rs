@@ -42,6 +42,12 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
         engine
             .revoke_authority()
             .map_err(|error| lab_error_response(&error))?;
+        // An in-flight voice stream is not a reason to leave D-ID's remote
+        // session running. Try remote cleanup under already-revoked authority,
+        // BEFORE the bounded quiescence wait (which can return 504).
+        engine
+            .revoke()
+            .map_err(|error| lab_error_response(&error))?;
     }
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
