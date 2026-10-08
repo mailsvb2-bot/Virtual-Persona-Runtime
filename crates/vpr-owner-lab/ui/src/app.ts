@@ -1134,17 +1134,19 @@ const syncStatus = (): Promise<LabStatus> => {
       // running its own Connect flow. Hydrate its canonical session sequence
       // before enabling the revoke control, so it fences the original tab.
       if (status.session_state === "active" && evidenceSessionSequence === 0) {
-        const response = await runtimeFetch("/api/evidence/session", {
+        // Session lookup is an optional SAME-ORIGIN browser hardening path:
+        // failure must not prevent this tab from revoking the real server
+        // session. If unknown, never broadcast a possibly stale session ID.
+        const snapshot = await runtimeFetch("/api/evidence/session", {
           method: "GET", credentials: "same-origin", cache: "no-store",
-        });
-        if (response.ok) {
-          const snapshot = await response.json() as { session_sequence?: unknown };
-          if (typeof snapshot.session_sequence === "number"
-              && Number.isSafeInteger(snapshot.session_sequence)
-              && snapshot.session_sequence > 0) {
-            observedBackendSessionSequence = snapshot.session_sequence;
-          }
-        }
+        }).then(async (response) => response.ok
+          ? await response.json() as { session_sequence?: unknown }
+          : null).catch(() => null);
+        observedBackendSessionSequence = snapshot
+          && typeof snapshot.session_sequence === "number"
+          && Number.isSafeInteger(snapshot.session_sequence)
+          && snapshot.session_sequence > 0
+          ? snapshot.session_sequence : 0;
       }
       if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
           && locallyFencedSessionSequence !== evidenceSessionSequence) {
@@ -2227,7 +2229,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     updateControls();
     // A late STT/LLM result must not replace the more important terminal
     // revoke/close or provider-STOP-failure status after the session has ended.
-    if (terminalStatus && sessionState.backend.session_state === "active") {
+    if (terminalStatus && sessionState.backend.session_state === "active"
+        && locallyFencedSessionSequence !== evidenceSessionSequence) {
       setStatus(terminalStatus.text, terminalStatus.kind);
     }
   }
@@ -2283,7 +2286,8 @@ const speak = async (): Promise<void> => {
   } finally {
     textRequestInFlight = false;
     updateControls();
-    if (terminalStatus && sessionState.backend.session_state === "active") {
+    if (terminalStatus && sessionState.backend.session_state === "active"
+        && locallyFencedSessionSequence !== evidenceSessionSequence) {
       setStatus(terminalStatus.text, terminalStatus.kind);
     }
   }
