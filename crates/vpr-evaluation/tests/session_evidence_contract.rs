@@ -111,6 +111,39 @@ fn snapshot(session: u64, request: u64, base: u64) -> LabSessionEvidenceSnapshot
 }
 
 #[test]
+fn unknown_livekit_event_categories_survive_aggregation_without_promoting_playback() {
+    let mut input = snapshot(90, 1, 100);
+    input.voice_attempts[0].canonical_playback_confirmed = false;
+    input.canonical_playback_proven = false;
+    input.av_sync_samples.clear();
+    input.av_sync_proven = false;
+    input.media_events.retain(|event| event.kind != LabMediaEvidenceKind::PlaybackCompleted);
+    for category in [
+        LabMediaEvidenceKind::ProviderUnknownChatEvent,
+        LabMediaEvidenceKind::ProviderUnknownVideoEvent,
+        LabMediaEvidenceKind::ProviderUnknownToolEvent,
+        LabMediaEvidenceKind::ProviderUnknownOtherEvent,
+    ] {
+        input.media_events.push(LabMediaEvidence {
+            request_sequence: Some(1),
+            kind: category,
+            elapsed_millis: 450,
+        });
+    }
+    let aggregate = aggregate_owner_lab_session_evidence(&[input.clone()]).unwrap();
+    assert!(!aggregate.canonical_playback_proven);
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.completed_voice_attempts, 1);
+
+    // New wire values must never masquerade as the older 1.5 schema.
+    input.schema_version = "rt0-owner-lab-session-evidence-1.5".into();
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[input]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+}
+
+#[test]
 fn aggregate_computes_deterministic_distributions_and_complete_cost_only() {
     let aggregate =
         aggregate_owner_lab_session_evidence(&[snapshot(1, 1, 100), snapshot(2, 1, 300)]).unwrap();
