@@ -906,9 +906,11 @@ const handleProviderClientEvent = (raw) => {
             voiceCommandScheduler.playbackDone();
             if (voice) {
                 voice.providerPlaybackDoneCount += 1;
-                await maybeFinalizeProviderPlayback(voice);
+                const completion = maybeFinalizeProviderPlayback(voice);
                 syncRt0PlaybackPending(voice);
                 providerPlaybackInFlight = !voice.interrupted && !voice.providerPlaybackDone;
+                updateControls();
+                await completion;
             }
             else {
                 providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
