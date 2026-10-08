@@ -106,9 +106,13 @@ impl OwnerLabEngine {
                 LabClientEvent::PlaybackStarted { playback_id }
             }
             RealtimeAvatarClientEvent::PlaybackDone => LabClientEvent::PlaybackDone,
-            RealtimeAvatarClientEvent::VideoGenerationStarted => LabClientEvent::VideoGenerationStarted,
+            RealtimeAvatarClientEvent::VideoGenerationStarted => {
+                LabClientEvent::VideoGenerationStarted
+            }
             RealtimeAvatarClientEvent::VideoGenerationDone => LabClientEvent::VideoGenerationDone,
-            RealtimeAvatarClientEvent::VideoGenerationFailed => LabClientEvent::VideoGenerationFailed,
+            RealtimeAvatarClientEvent::VideoGenerationFailed => {
+                LabClientEvent::VideoGenerationFailed
+            }
             RealtimeAvatarClientEvent::Informational => LabClientEvent::Informational,
         }))
     }
