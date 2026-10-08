@@ -31,6 +31,18 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
     state.session_end_requested.store(true, Ordering::Release);
     *state.replay_source.lock() = None;
     request_voice_cancel(state);
+    // Cancel and REVOKE AUTHORITY before waiting for slow or wedged STT/LLM
+    // workers. A timeout below must never leave canonical session_state active.
+    // Provider cleanup and evidence sealing are separate from permission removal.
+    {
+        let mut engine = state
+            .engine
+            .lock()
+            .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+        engine
+            .revoke_authority()
+            .map_err(|error| lab_error_response(&error))?;
+    }
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
     }
