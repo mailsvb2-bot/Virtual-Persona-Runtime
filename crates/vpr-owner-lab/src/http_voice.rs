@@ -560,14 +560,12 @@ fn finish_voice_stream(
             .complete_voice_request(request_sequence, &value)
         {
             Ok(()) => {
-                if !value.reply.trim().is_empty() && value.reply.len() <= 16_000 {
-                    *state.replay_source.lock() =
-                        Some(super::http_client_control::AuthorizedReply {
-                            request_sequence,
-                            reply: value.reply.clone(),
-                            resume_count: 0,
-                        });
-                }
+                super::http_client_control::retain_completed_reply(
+                    &state.replay_source,
+                    &state.session_end_requested,
+                    request_sequence,
+                    &value.reply,
+                );
                 VoiceStreamEvent::Complete {
                     result: Box::new(value),
                 }
