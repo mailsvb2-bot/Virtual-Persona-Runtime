@@ -465,27 +465,7 @@ impl LabSessionEvidenceRecorder {
         if input.elapsed_millis > MAX_MEDIA_ELAPSED_MILLIS {
             return Err(LabEvidenceError::InvalidInput);
         }
-        let request_required = matches!(
-            input.kind,
-            LabMediaEvidenceKind::BackendCompleteReceived
-                | LabMediaEvidenceKind::ClientDeliverySent
-                | LabMediaEvidenceKind::AudioStarted
-                | LabMediaEvidenceKind::ProviderDataReceived
-                | LabMediaEvidenceKind::ProviderEventIgnored
-                | LabMediaEvidenceKind::ProviderUnknownChatEvent
-                | LabMediaEvidenceKind::ProviderUnknownVideoEvent
-                | LabMediaEvidenceKind::ProviderUnknownToolEvent
-                | LabMediaEvidenceKind::ProviderUnknownOtherEvent
-                | LabMediaEvidenceKind::ProviderVideoGenerationStarted
-                | LabMediaEvidenceKind::ProviderVideoGenerationDone
-                | LabMediaEvidenceKind::ProviderVideoGenerationFailed
-                | LabMediaEvidenceKind::ProviderInformationalEvent
-                | LabMediaEvidenceKind::ProviderEventParseFailed
-                | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
-                | LabMediaEvidenceKind::PlaybackRecoveryTriggered
-                | LabMediaEvidenceKind::PlaybackCompleted
-                | LabMediaEvidenceKind::InterruptionStopped
-        );
+        let request_required = input.kind.requires_request_sequence();
         if request_required != input.request_sequence.is_some() {
             return Err(LabEvidenceError::InvalidInput);
         }
