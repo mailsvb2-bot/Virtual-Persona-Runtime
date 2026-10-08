@@ -126,7 +126,7 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-test("Expressive LiveKit voice path reaches canonical playback, A/V sync and recovery", async ({
+test("Expressive LiveKit generation-only events never grant canonical playback", async ({
   page,
   request,
 }) => {
@@ -244,9 +244,10 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
     (event) => event.kind === "provider_event_parse_failed",
   )).toBeFalsy();
   expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBe(false);
+  // Recovery is strict-RT0-only; this fixture intentionally does not enable that toggle.
   expect(evidence?.media_events.some(
     (event) => event.kind === "playback_recovery_triggered",
-  )).toBeTruthy();
+  )).toBe(false);
 
   const metrics = report?.metrics;
   expect(metrics).toBeDefined();
@@ -260,7 +261,7 @@ test("Expressive LiveKit voice path reaches canonical playback, A/V sync and rec
   expect(metrics?.firstAudio).toMatch(/\d+ мс/);
   expect(metrics?.videoReady).toMatch(/\d+ мс/);
   expect(metrics?.avSync).toBe("ещё не доказан");
-  expect(metrics?.playback).toBe("не подтверждён");
+  expect(metrics?.playback).toBe("ожидание");
   expect(metrics?.cost).toBe("провайдер не сообщил стоимость");
 
   const commands = report?.commands ?? [];
