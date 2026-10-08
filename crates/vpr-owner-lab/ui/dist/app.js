@@ -1952,7 +1952,15 @@ const resumeInterruptedAnswer = async () => {
             });
         }
         catch (error) {
-            await interruptAvatar(false);
+            // A sent-but-unaccounted playback cannot remain connected.
+            closePeerTransport();
+            try {
+                await api("/api/session/revoke", {});
+                await syncStatus();
+            }
+            catch (revokeError) {
+                throw new Error(`RESUME_DELIVERY_UNCONFIRMED_AND_REVOKE_FAILED:${String(revokeError)}`);
+            }
             throw error;
         }
         resumeFromIndex = index;
@@ -1968,7 +1976,9 @@ const resumeInterruptedAnswer = async () => {
     updateControls();
 };
 const endSession = async (kind) => {
-    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+    // Revoke first: browser egress must stop before any network/evidence await.
+    if (kind === "revoke") closePeerTransport();
+    const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
     if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
         setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
         return;
@@ -1977,7 +1987,7 @@ const endSession = async (kind) => {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
-    closePeerTransport();
+    if (kind === "close") closePeerTransport();
     try {
         await api(`/api/session/${kind}`, {});
         await syncStatus();
