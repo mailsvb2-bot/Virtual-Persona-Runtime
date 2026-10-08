@@ -385,7 +385,8 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                         .lock()
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
-                    state.active_session_sequence.store(bundle.evidence_session_sequence, Ordering::Release);
+                    let sequence = bundle.evidence_session_sequence;
+                    state.active_session_sequence.store(sequence, Ordering::Release);
                     state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
