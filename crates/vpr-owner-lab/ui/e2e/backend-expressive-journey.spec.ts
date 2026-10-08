@@ -391,56 +391,42 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
   expect(afterRequests).toHaveLength(requests.length);
 });
 
+
 test("rejected provider STOP disconnects LiveKit and revokes before replay", async ({
   page,
   request,
 }) => {
   test.setTimeout(120_000);
+  const mailboxReset = await request.delete(mailboxUrl);
+  expect(mailboxReset.ok()).toBeTruthy();
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/stop-failure-journey-driver.js" });
   await page.goto("/");
 
-  // The previous full-journey test closed its session. The reviewed Persona is
-  // intentionally reused, matching a real owner's second session after reconnect.
-  await page.locator("#consent").check();
-  await expect(page.locator("#connect")).toBeEnabled();
-  await page.locator("#connect").click();
   await expect.poll(async () => {
-    const response = await request.get(`${ownerLabUrl}/api/status`);
-    return (await response.json() as { session_state: string }).session_state;
-  }, { timeout: 20_000 }).toBe("active");
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending:mailbox";
+    const data = await response.json() as {
+      events: Array<{ status?: string; error?: string; kind?: string; phase?: string }>;
+    };
+    const outcome = data.events.find((event) => event.status);
+    return outcome?.status === "failed"
+      ? `failed:${outcome.error ?? "unknown"}`
+      : outcome?.status ?? "pending:stop-failure";
+  }, { timeout: 70_000, intervals: [100, 250, 500] }).toBe("ok");
 
-  const voice = page.locator("#voice");
-  const interrupt = page.locator("#interrupt");
-  await expect(voice).toBeEnabled();
-  await voice.click();
-  await expect(voice).toContainText("Остановить и отправить");
-  await voice.click();
-  await expect(interrupt).toBeEnabled({ timeout: 20_000 });
-  await page.evaluate(() => {
-    (window as typeof window & { __vprExpressiveFailNextInterrupt?: boolean })
-      .__vprExpressiveFailNextInterrupt = true;
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  expect(await status.json()).toMatchObject({ session_state: "revoked" });
+
+  // A server-prepared command remains forbidden after revoke even when an
+  // interrupted answer had been cached earlier in the session.
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  const csrf = String((await bootstrap.json()).csrf_token);
+  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
   });
-  await interrupt.click();
-
-  // The browser must not stay joined with its data-publishing LiveKit token if
-  // the provider did not accept STOP. In particular it must not offer a stale
-  // `resume-answer` control after failure.
-  await expect(page.locator("#status")).toContainText(
-    "PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED",
-    { timeout: 20_000 },
-  );
-  await expect.poll(async () => {
-    const response = await request.get(`${ownerLabUrl}/api/status`);
-    return (await response.json() as { session_state: string }).session_state;
-  }).toBe("revoked");
-  expect(await page.evaluate(() =>
-    (window as typeof window & { __vprExpressiveRoomDisconnectCount?: number })
-      .__vprExpressiveRoomDisconnectCount ?? 0
-  )).toBeGreaterThan(0);
-  await expect(page.locator("#resume-answer-row")).toBeHidden();
-  await expect(page.locator("#connect")).toBeDisabled();
-
-  await page.locator("#close").click();
-  await expect(page.locator("#status")).toContainText("Сессия закрыта");
+  expect(replay.status()).toBe(409);
 });
