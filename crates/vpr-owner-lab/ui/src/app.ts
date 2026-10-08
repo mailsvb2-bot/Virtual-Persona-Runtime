@@ -317,6 +317,7 @@ let baselineRms = 0.002;
 let activeVoiceEvidence: ActiveVoiceEvidence | null = null;
 let resumeSourceRequest: number | null = null;
 const authorizedDeliveredParts = new Map<number, string>();
+let completedAuthorizedReply: string | null = null;
 let interruptedAnswerSentences: string[] = [];
 let resumeFromIndex = 0;
 let resumedSpeechStartedAt: number | null = null;
@@ -337,6 +338,7 @@ const UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS = 3_000;
 const clearInterruptedAnswer = (): void => {
   resumeSourceRequest = null;
   authorizedDeliveredParts.clear();
+  completedAuthorizedReply = null;
   interruptedAnswerSentences = [];
   resumeFromIndex = 0;
   resumedSpeechStartedAt = null;
@@ -2115,6 +2117,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
+      if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+        completedAuthorizedReply = result.reply.trim();
       await maybeFinalizeProviderPlayback(voice);
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
@@ -2281,13 +2285,11 @@ const interruptAndOfferResume = async (): Promise<void> => {
   const replaying = resumedSpeechStartedAt !== null;
   const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
     replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
-      && resumeSourceRequest === voice.requestSequence)
+      && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null)
   );
   const sentences = replaying
     ? interruptedAnswerSentences
-    : resumeSentences([...authorizedDeliveredParts.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([, value]) => value));
+    : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
   const elapsed = replaying
     ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
     : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
