@@ -258,6 +258,7 @@ let csrfToken = "";
 let egressEnabled = false;
 let rt0EvidenceMode = false;
 let rt0PlaybackPending = false;
+let providerPlaybackInFlight = false;
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
@@ -1107,10 +1108,11 @@ const updateControls = (): void => {
     : true;
   const clientInterruptReady = transportReady
     && activeClientControl?.interrupt === true
-    && playbackReady;
+    && playbackReady
+    && providerPlaybackInFlight;
   const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
   speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-  interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
+  interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
   voiceButton.disabled = recording
     ? false
     : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
@@ -1142,6 +1144,7 @@ const handleProviderClientEvent = (raw: string): void => {
     .then(async (normalized) => {
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
+        providerPlaybackInFlight = true;
       } else if (normalized?.kind === "playback_done") {
         const voice = activeVoiceEvidence;
         sessionState.setPlaybackId(null);
@@ -1150,8 +1153,10 @@ const handleProviderClientEvent = (raw: string): void => {
           voice.providerPlaybackDoneCount += 1;
           await maybeFinalizeProviderPlayback(voice);
           syncRt0PlaybackPending(voice);
-        } else if (rt0EvidenceMode) {
-          rt0PlaybackPending = false;
+          providerPlaybackInFlight = !voice.providerPlaybackDone;
+        } else {
+          providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
+          if (rt0EvidenceMode) rt0PlaybackPending = false;
         }
       } else if (normalized === null) {
         const voice = activeVoiceEvidence;
@@ -1322,6 +1327,7 @@ const closePeerTransport = (): void => {
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
   rt0PlaybackPending = false;
+  providerPlaybackInFlight = false;
   stopMicrophoneCapture();
   stopRemoteEvidence();
   providerDataChannel?.close();
@@ -1933,6 +1939,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       const voiceForSegment = activeVoiceEvidence;
       if (voiceForSegment?.requestSequence === requestSequence) {
         voiceForSegment.providerPlaybackExpectedCount += 1;
+        providerPlaybackInFlight = true;
         syncRt0PlaybackPending(voiceForSegment);
         updateControls();
       }
@@ -2122,6 +2129,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
+  providerPlaybackInFlight = false;
 
   // For transports with a payload-free session-scoped stop command (currently D-ID Expressive
   // over LiveKit), dispatch STOP immediately. Canonical turn cancellation still runs, but it
