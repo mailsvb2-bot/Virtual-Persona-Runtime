@@ -124,6 +124,10 @@ pub(super) fn route_post(
                         .prepare_resumed_speech(&suffix)
                         .map(|response| super::json_response(200, &response))
                 })?;
+                // End-session writes the atomic intent BEFORE acquiring replay_source.
+                // Reject a revoke that began during the potentially slow provider
+                // preparation, rather than handing its command to the browser.
+                reject_if_session_ending(state)?;
                 reply.resume_count += 1;
                 Ok(result)
             }))
