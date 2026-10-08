@@ -123,6 +123,11 @@ pub struct RealtimeAvatarClientControl {
 pub enum RealtimeAvatarClientEvent {
     PlaybackStarted { playback_id: String },
     PlaybackDone,
+    /// LiveKit video generation is complete; this is NOT user audio playout completion.
+    VideoGenerationStarted,
+    VideoGenerationDone,
+    VideoGenerationFailed,
+    Informational,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
