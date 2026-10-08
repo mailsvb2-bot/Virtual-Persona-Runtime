@@ -484,11 +484,12 @@ test("unexpected LiveKit disconnect during D-ID speech closes all output paths",
 });
 
 
-test("cross-tab revoke signal stops browser LiveKit speech before REST revoke", async ({
+test("non-connecting second browser tab revokes owner LiveKit speech", async ({
   page,
+  context,
   request,
 }) => {
-  test.setTimeout(100_000);
+  test.setTimeout(110_000);
   const reset = await request.delete(mailboxUrl);
   expect(reset.ok()).toBeTruthy();
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
@@ -500,13 +501,33 @@ test("cross-tab revoke signal stops browser LiveKit speech before REST revoke", 
     const response = await request.get(mailboxUrl);
     if (!response.ok()) return "pending:mailbox";
     const payload = await response.json() as {
-      events: Array<{ status?: string; error?: string }>;
+      events: Array<{ kind?: string; phase?: string; status?: string; error?: string }>;
     };
-    const outcome = payload.events.find((event) => event.status);
-    return outcome?.status === "failed"
-      ? `failed:${outcome.error ?? "unknown"}`
-      : outcome?.status ?? "pending:cross-tab";
-  }, { timeout: 65_000, intervals: [100, 250, 500] }).toBe("ok");
+    const failure = payload.events.find((event) => event.status === "failed");
+    if (failure) return `failed:${failure.error ?? "unknown"}`;
+    return payload.events.some((event) =>
+      event.kind === "phase" && event.phase === "owner-speech-published"
+    ) ? "owner-speaking" : "pending:owner-speaking";
+  }, { timeout: 40_000, intervals: [100, 250, 500] }).toBe("owner-speaking");
+
+  // Second genuine browser tab: no fake provider, no Connect, no Playwright
+  // post-navigation click. The UI driver discovers the already-active backend
+  // session, clicks Revoke and broadcasts its cached session ID to the owner tab.
+  const otherTab = await context.newPage();
+  await otherTab.addInitScript({ path: "e2e/cross-tab-revoker-driver.js" });
+  await otherTab.goto("/");
+
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending:mailbox";
+    const payload = await response.json() as {
+      events: Array<{ kind?: string; phase?: string; status?: string; error?: string }>;
+    };
+    const failure = payload.events.find((event) => event.status === "failed");
+    if (failure) return `failed:${failure.error ?? "unknown"}`;
+    return payload.events.find((event) => event.status === "ok")?.status ?? "pending:cross-tab";
+  }, { timeout: 60_000, intervals: [100, 250, 500] }).toBe("ok");
+  await otherTab.close();
 
   const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
