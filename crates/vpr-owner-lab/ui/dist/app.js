@@ -1847,7 +1847,6 @@ const interruptAvatar = async (recordEvidence = true) => {
         && activeClientControl?.interrupt === true
         && playbackReady;
     const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
-    // Clearing the scheduler is not proof that provider output stopped.
     const providerStopRequired = providerPlaybackInFlight || voiceCommandScheduler.hasPendingPlayback;
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
@@ -1862,9 +1861,6 @@ const interruptAvatar = async (recordEvidence = true) => {
         const canonicalStop = voiceRequestInFlight
             ? api("/api/avatar/interrupt", {})
             : null;
-        // STOP and canonical cancellation run concurrently for interrupt latency.
-        // If provider STOP rejects first, the pending cancellation promise still
-        // needs its own rejection observer before the revoke path takes over.
         void canonicalStop?.catch(() => undefined);
         if (fastProviderStop) {
             await fastProviderStop;
@@ -1901,10 +1897,6 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
     catch (error) {
         interruptEvidenceWatch = null;
-        // A failed or unavailable STOP leaves the browser's LiveKit publish token
-        // capable of reaching D-ID. Disconnect it synchronously, before awaiting
-        // anything, and revoke the canonical session. Never offer an unconfirmed
-        // interrupted answer for replay.
         closePeerTransport();
         let revokeFailed = false;
         try {
