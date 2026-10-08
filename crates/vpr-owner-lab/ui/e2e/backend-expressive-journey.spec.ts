@@ -183,9 +183,19 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
     await route.continue();
   });
   let authorizedReplayPreparations = 0;
+  let rejectedReplayOnce = false;
   await page.route("**/api/avatar/resume-answer", async (route) => {
     if (route.request().method() === "POST") {
       authorizedReplayPreparations += 1;
+      if (!rejectedReplayOnce) {
+        rejectedReplayOnce = true;
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: '{"ok":false,"code":"INVALID_STATE_TRANSITION"}',
+        });
+        return;
+      }
     }
     await route.continue();
   });
@@ -273,7 +283,8 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
 
   const commands = report?.commands ?? [];
   const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(authorizedReplayPreparations).toBe(1);
+  expect(rejectedReplayOnce).toBe(true);
+  expect(authorizedReplayPreparations).toBe(2);
   expect(speak.length).toBeGreaterThanOrEqual(3);
   const replayed = JSON.parse(speak.at(-1)?.text ?? "{}");
   expect(replayed.script?.input).toBe("Третья фраза.");
