@@ -251,9 +251,35 @@
       }
 
       const interrupt = element("interrupt", HTMLButtonElement);
-      // Generation-only messages leave D-ID playback unconfirmed. The owner must
-      // retain interrupt control, and starting the next turn must stop stale audio.
       await waitFor(() => !interrupt.disabled, "interrupt-available-with-unconfirmed-playback");
+      interrupt.click();
+      const resumeRow = element("resume-answer-row", HTMLElement);
+      await waitFor(() => !resumeRow.hidden, "interrupted-answer-resume-available");
+      const resumeSelect = element("resume-answer-from", HTMLSelectElement);
+      if (resumeSelect.options.length !== 2) {
+        throw new Error("EXPRESSIVE_RESUME_MUST_HAVE_ORIGINAL_SENTENCE_BOUNDARIES");
+      }
+      resumeSelect.value = "1";
+      const resumeButton = element("resume-answer", HTMLButtonElement);
+      const interruptsBeforeReplay = commands().filter((command) => command.topic === "did.interrupt").length;
+      resumeButton.click();
+      await waitFor(
+        () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,
+        "resume-original-answer-suffix-sent",
+      );
+      const resumed = JSON.parse(commands().filter(
+        (command) => command.topic === "did.speak",
+      ).at(-1)?.text ?? "{}");
+      if (resumed.script?.input !== "Третья фраза." || resumed.script?.should_queue_speaks !== true) {
+        throw new Error("EXPRESSIVE_RESUME_GENERATED_NEW_OR_WRONG_ANSWER");
+      }
+      if (!resumeRow.hidden || interruptsBeforeReplay < 1) {
+        throw new Error("EXPRESSIVE_RESUME_UI_OR_INTERRUPT_INVALID");
+      }
+      await postPhase("same-answer-resume-complete");
+
+      // Resumed playback is still interruptible; the next voice turn must stop it.
+      const expectedSpeakCount = initialSpeakCount + 1;
       const interruptCountBeforeNextTurn = commands().filter(
         (command) => command.topic === "did.interrupt",
       ).length;
@@ -270,7 +296,7 @@
       voice.click();
 
       await waitFor(() => !interrupt.disabled, "interrupt-enabled-during-voice-turn");
-      if (commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
+      if (commands().filter((command) => command.topic === "did.speak").length !== expectedSpeakCount) {
         throw new Error("EXPRESSIVE_INTERRUPTED_TURN_SPOKE_TOO_EARLY");
       }
       interrupt.click();
@@ -278,7 +304,7 @@
       await sleep(800);
 
       const commandsAfterInterrupt = commands();
-      if (commandsAfterInterrupt.filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
+      if (commandsAfterInterrupt.filter((command) => command.topic === "did.speak").length !== expectedSpeakCount) {
         throw new Error("EXPRESSIVE_INTERRUPTED_TURN_LEAKED_SPEECH");
       }
       if (!commandsAfterInterrupt.some((command) => command.topic === "did.interrupt")) {
