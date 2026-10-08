@@ -1891,7 +1891,7 @@ const interruptAvatar = async (recordEvidence = true) => {
 const interruptAndOfferResume = async () => {
     const voice = activeVoiceEvidence;
     const replaying = resumedSpeechStartedAt !== null;
-    const eligible = backendSessionPresent() && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
+    const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
         && resumeSourceRequest === voice.requestSequence));
     const sentences = replaying
         ? interruptedAnswerSentences
@@ -1906,7 +1906,7 @@ const interruptAndOfferResume = async () => {
     const offset = replaying ? resumeFromIndex : 0;
     const interrupted = await interruptAvatar();
     resumedSpeechStartedAt = null;
-    if (interrupted && eligible && sentences.length > 0 && backendSessionPresent()) {
+    if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
         offerInterruptedAnswer(sentences, elapsed, offset);
         setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
             + "Точное слово остановки D-ID не сообщает.", "ready");
@@ -1920,7 +1920,7 @@ const interruptAndOfferResume = async () => {
     updateControls();
 };
 const resumeInterruptedAnswer = async () => {
-    if (resumeAnswerRow.hidden || !backendSessionPresent() || !liveKitRoom
+    if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
         || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
         return;
     }
