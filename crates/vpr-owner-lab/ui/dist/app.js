@@ -74,6 +74,7 @@ let csrfToken = "";
 let egressEnabled = false;
 let rt0EvidenceMode = false;
 let rt0PlaybackPending = false;
+let providerPlaybackInFlight = false;
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
@@ -816,10 +817,11 @@ const updateControls = () => {
         : true;
     const clientInterruptReady = transportReady
         && activeClientControl?.interrupt === true
-        && playbackReady;
+        && playbackReady
+        && providerPlaybackInFlight;
     const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
     speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-    interruptButton.disabled = !textRequestInFlight && !voiceRequestInFlight && !clientInterruptReady;
+    interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
     voiceButton.disabled = recording
         ? false
         : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
@@ -851,6 +853,7 @@ const handleProviderClientEvent = (raw) => {
         .then(async (normalized) => {
         if (normalized?.kind === "playback_started") {
             sessionState.setPlaybackId(normalized.playback_id);
+            providerPlaybackInFlight = true;
         }
         else if (normalized?.kind === "playback_done") {
             const voice = activeVoiceEvidence;
@@ -860,9 +863,12 @@ const handleProviderClientEvent = (raw) => {
                 voice.providerPlaybackDoneCount += 1;
                 await maybeFinalizeProviderPlayback(voice);
                 syncRt0PlaybackPending(voice);
+                providerPlaybackInFlight = !voice.interrupted && !voice.providerPlaybackDone;
             }
-            else if (rt0EvidenceMode) {
-                rt0PlaybackPending = false;
+            else {
+                providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
+                if (rt0EvidenceMode)
+                    rt0PlaybackPending = false;
             }
         }
         else if (normalized === null) {
@@ -998,6 +1004,7 @@ const closePeerTransport = () => {
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
+    providerPlaybackInFlight = false;
     stopMicrophoneCapture();
     stopRemoteEvidence();
     providerDataChannel?.close();
@@ -1557,6 +1564,7 @@ const finishMicrophoneTurn = async () => {
             const voiceForSegment = activeVoiceEvidence;
             if (voiceForSegment?.requestSequence === requestSequence) {
                 voiceForSegment.providerPlaybackExpectedCount += 1;
+                providerPlaybackInFlight = true;
                 syncRt0PlaybackPending(voiceForSegment);
                 updateControls();
             }
@@ -1745,6 +1753,7 @@ const interruptAvatar = async (recordEvidence = true) => {
     const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
+    providerPlaybackInFlight = false;
     const fastProviderStop = clientReady && preparedInterrupt
         ? dispatchClientCommand(preparedInterrupt)
         : null;
