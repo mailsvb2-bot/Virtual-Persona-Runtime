@@ -30,6 +30,8 @@ pub(super) struct AuthorizedReply {
     pub request_sequence: u64,
     pub reply: String,
     pub resume_count: u8,
+    /// Only a client-confirmed stop may make this reply eligible for replay.
+    pub interrupted: bool,
 }
 
 /// Publish a completed canonical reply only while its session is still live.
@@ -53,6 +55,7 @@ pub(super) fn retain_completed_reply(
         request_sequence,
         reply: reply.to_owned(),
         resume_count: 0,
+        interrupted: false,
     });
 }
 
@@ -61,6 +64,12 @@ pub(super) fn retain_completed_reply(
 struct ResumeAnswerBody {
     request_sequence: u64,
     sentence_index: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfirmInterruptionBody {
+    request_sequence: u64,
 }
 
 /// Split at natural sentence boundaries without letting browser-provided text
@@ -116,6 +125,30 @@ pub(super) fn route_post(
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     match path {
+        "/api/avatar/confirm-interruption" => {
+            Some(parse_json::<ConfirmInterruptionBody>(request).and_then(|body| {
+                reject_if_session_ending(state)?;
+                if state.voice_busy.load(Ordering::Acquire) {
+                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                }
+                let mut source = state.replay_source.lock();
+                let reply = source
+                    .as_mut()
+                    .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
+                if reply.request_sequence != body.request_sequence {
+                    return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+                }
+                with_engine_result(state, |engine| {
+                    if engine.status().session_state != "active" {
+                        return Err(vpr_owner_lab::LabError::InvalidState);
+                    }
+                    Ok(super::json_response(200, &serde_json::json!({"ok": true})))
+                })?;
+                reject_if_session_ending(state)?;
+                reply.interrupted = true;
+                Ok(super::json_response(200, &serde_json::json!({"ok": true})))
+            }))
+        }
         "/api/avatar/resume-answer" => {
             Some(parse_json::<ResumeAnswerBody>(request).and_then(|body| {
                 reject_if_session_ending(state)?;
@@ -136,6 +169,7 @@ pub(super) fn route_post(
                     .as_mut()
                     .ok_or_else(|| super::error_response(409, "INVALID_STATE_TRANSITION"))?;
                 if reply.request_sequence != body.request_sequence
+                    || !reply.interrupted
                     || reply.resume_count >= MAX_RESUMES_PER_REPLY
                 {
                     return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
@@ -155,6 +189,7 @@ pub(super) fn route_post(
                 // preparation, rather than handing its command to the browser.
                 reject_if_session_ending(state)?;
                 reply.resume_count += 1;
+                reply.interrupted = false;
                 Ok(result)
             }))
         }
@@ -236,6 +271,7 @@ mod resume_tests {
         let ending = AtomicBool::new(false);
         super::retain_completed_reply(&source, &ending, 1, "Первый ответ.");
         assert_eq!(source.lock().as_ref().map(|item| item.request_sequence), Some(1));
+        assert_eq!(source.lock().as_ref().map(|item| item.interrupted), Some(false));
 
         ending.store(true, Ordering::Release);
         *source.lock() = None;
