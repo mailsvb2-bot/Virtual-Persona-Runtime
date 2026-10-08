@@ -2216,7 +2216,9 @@ const speak = async (): Promise<void> => {
   } finally {
     textRequestInFlight = false;
     updateControls();
-    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
+    if (terminalStatus && sessionState.backend.session_state === "active") {
+      setStatus(terminalStatus.text, terminalStatus.kind);
+    }
   }
 };
 
