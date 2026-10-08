@@ -59,6 +59,35 @@ pub enum LabMediaEvidenceKind {
     ReconnectRestored,
 }
 
+impl LabMediaEvidenceKind {
+    /// Single canonical contract shared by ingestion and release evidence validators.
+    /// Provider event diagnostics are request-scoped and never indicate playback.
+    #[must_use]
+    pub const fn requires_request_sequence(self) -> bool {
+        matches!(
+            self,
+            Self::BackendCompleteReceived
+                | Self::ClientDeliverySent
+                | Self::AudioStarted
+                | Self::ProviderDataReceived
+                | Self::ProviderEventIgnored
+                | Self::ProviderUnknownChatEvent
+                | Self::ProviderUnknownVideoEvent
+                | Self::ProviderUnknownToolEvent
+                | Self::ProviderUnknownOtherEvent
+                | Self::ProviderVideoGenerationStarted
+                | Self::ProviderVideoGenerationDone
+                | Self::ProviderVideoGenerationFailed
+                | Self::ProviderInformationalEvent
+                | Self::ProviderEventParseFailed
+                | Self::ProviderPlaybackDoneReceived
+                | Self::PlaybackRecoveryTriggered
+                | Self::PlaybackCompleted
+                | Self::InterruptionStopped
+        )
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LabMediaEvidenceInput {
