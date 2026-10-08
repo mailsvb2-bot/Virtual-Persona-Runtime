@@ -159,7 +159,8 @@ if ($Rt0Evidence -and -not $NoBrowser) {
     $evidenceBrowser = Resolve-Rt0EvidenceBrowser
 }
 
-# Validate the frozen candidate before touching the existing listener.
+# The strict RT0 evidence launcher must never change its exact Git candidate.
+# Validate before stopping any existing listener to fail closed without disruption.
 if ($Rt0Evidence) {
     Push-Location $repoRoot
     try {
@@ -219,7 +220,6 @@ if ($Rt0Evidence) {
         }
         $dirty = @(git status --porcelain --untracked-files=all)
         if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) {
-            $dirty | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
             throw 'RT0 evidence requires a clean worktree; no listener was stopped'
         }
         Write-Host "Frozen RT0 candidate: $candidate (no Git switch or pull)"
