@@ -294,7 +294,11 @@ fn early_authority_revoke_fences_new_turns_before_provider_cleanup() {
     assert_eq!(engine.status().session_state, "revoked");
     assert!(engine.status().avatar_open);
     assert_eq!(stats.close.load(Ordering::SeqCst), 0);
-    assert!(engine.apply(OwnerLabTurnInput::Text("late".into())).is_err());
+    assert!(
+        engine
+            .apply(OwnerLabTurnInput::Text("late".into()))
+            .is_err()
+    );
     assert_eq!(stats.text.load(Ordering::SeqCst), 0);
 
     // Even a failed cleanup can never bring the authority back.
