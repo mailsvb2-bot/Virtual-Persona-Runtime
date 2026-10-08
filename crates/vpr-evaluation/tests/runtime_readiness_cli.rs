@@ -154,7 +154,7 @@ fn snapshot(
     }
 
     serde_json::to_vec_pretty(&json!({
-        "schema_version":"rt0-owner-lab-session-evidence-1.5",
+        "schema_version":"rt0-owner-lab-session-evidence-1.6",
         "candidate_sha":CANDIDATE,
         "provider_state_sha256":provider_state_sha256,
         "scope":"browser_observed_media_plane_only",

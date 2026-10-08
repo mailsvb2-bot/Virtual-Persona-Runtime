@@ -776,7 +776,7 @@ for required_evidence_boundary in (
     if required_evidence_boundary not in owner_lab_evidence:
         raise SystemExit(f"Owner Lab session recorder missing boundary {required_evidence_boundary}")
 for required_shared_evidence in (
-    "rt0-owner-lab-session-evidence-1.5",
+    "rt0-owner-lab-session-evidence-1.6",
     "candidate_sha",
     "provider_state_sha256",
     "rt0-owner-lab-session-aggregate-1.1",

@@ -20,7 +20,7 @@ use crate::{
     SessionUsageEvidence, sha256_hex,
 };
 
-pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.5";
+pub const RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA: &str = "rt0-owner-lab-session-evidence-1.6";
 pub const RT0_OWNER_LAB_SESSION_AGGREGATE_SCHEMA: &str = "rt0-owner-lab-session-aggregate-1.1";
 pub const RT0_OWNER_LAB_MEDIA_EVIDENCE_SCOPE: &str = "browser_observed_media_plane_only";
 pub const RT0_AV_SYNC_SAMPLES_PER_REQUEST: u32 = 3;
@@ -41,6 +41,11 @@ pub enum LabMediaEvidenceKind {
     AudioStarted,
     ProviderDataReceived,
     ProviderEventIgnored,
+    /// Fixed, payload-free groups for otherwise unrecognized D-ID event subjects.
+    ProviderUnknownChatEvent,
+    ProviderUnknownVideoEvent,
+    ProviderUnknownToolEvent,
+    ProviderUnknownOtherEvent,
     /// D-ID `LiveKit` events report generation status, not browser playback completion.
     ProviderVideoGenerationStarted,
     ProviderVideoGenerationDone,
@@ -52,6 +57,35 @@ pub enum LabMediaEvidenceKind {
     PlaybackCompleted,
     InterruptionStopped,
     ReconnectRestored,
+}
+
+impl LabMediaEvidenceKind {
+    /// Single canonical contract shared by ingestion and release evidence validators.
+    /// Provider event diagnostics are request-scoped and never indicate playback.
+    #[must_use]
+    pub const fn requires_request_sequence(self) -> bool {
+        matches!(
+            self,
+            Self::BackendCompleteReceived
+                | Self::ClientDeliverySent
+                | Self::AudioStarted
+                | Self::ProviderDataReceived
+                | Self::ProviderEventIgnored
+                | Self::ProviderUnknownChatEvent
+                | Self::ProviderUnknownVideoEvent
+                | Self::ProviderUnknownToolEvent
+                | Self::ProviderUnknownOtherEvent
+                | Self::ProviderVideoGenerationStarted
+                | Self::ProviderVideoGenerationDone
+                | Self::ProviderVideoGenerationFailed
+                | Self::ProviderInformationalEvent
+                | Self::ProviderEventParseFailed
+                | Self::ProviderPlaybackDoneReceived
+                | Self::PlaybackRecoveryTriggered
+                | Self::PlaybackCompleted
+                | Self::InterruptionStopped
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
