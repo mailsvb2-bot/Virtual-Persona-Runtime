@@ -2172,7 +2172,9 @@ const toggleVoice = async (): Promise<void> => {
       }
       clearInterruptedAnswer();
       if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
-        await interruptAvatar();
+        if (!await interruptAvatar()) {
+          throw new Error("PROVIDER_STOP_UNCONFIRMED");
+        }
       }
       await startMicrophone();
     }
@@ -2253,6 +2255,10 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     const canonicalStop = voiceRequestInFlight
       ? api<{ ok: true }>("/api/avatar/interrupt", {})
       : null;
+    // STOP and canonical cancellation run concurrently for interrupt latency.
+    // If provider STOP rejects first, the pending cancellation promise still
+    // needs its own rejection observer before the revoke path takes over.
+    void canonicalStop?.catch(() => undefined);
 
     if (fastProviderStop) {
       await fastProviderStop;
