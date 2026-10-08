@@ -2279,7 +2279,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 const interruptAndOfferResume = async (): Promise<void> => {
   const voice = activeVoiceEvidence;
   const replaying = resumedSpeechStartedAt !== null;
-  const eligible = backendSessionPresent() && !!liveKitRoom && (
+  const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
     replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
       && resumeSourceRequest === voice.requestSequence)
   );
@@ -2296,7 +2296,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
   const offset = replaying ? resumeFromIndex : 0;
   const interrupted = await interruptAvatar();
   resumedSpeechStartedAt = null;
-  if (interrupted && eligible && sentences.length > 0 && backendSessionPresent()) {
+  if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
     offerInterruptedAnswer(sentences, elapsed, offset);
     setStatus(
       "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
@@ -2313,7 +2313,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
 };
 
 const resumeInterruptedAnswer = async (): Promise<void> => {
-  if (resumeAnswerRow.hidden || !backendSessionPresent() || !liveKitRoom
+  if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
       || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
     return;
   }
