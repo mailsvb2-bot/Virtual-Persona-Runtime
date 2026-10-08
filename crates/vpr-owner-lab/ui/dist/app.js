@@ -668,7 +668,7 @@ const monitorRemoteAudio = () => {
                 voice.audioStarted = true;
                 voice.audioStartedElapsed = performance.now() - voice.startedAt;
                 const audioStartedEvidence = postMediaEvidence("audio_started", voice.audioStartedElapsed, voice.requestSequence).then(async () => {
-                    await syncStatus();
+                    await syncStatus().catch(() => undefined);
                     const avSyncEvidence = ensureAvSyncEvidence(voice);
                     if (avSyncEvidence)
                         await avSyncEvidence;
@@ -869,6 +869,20 @@ const handleProviderClientEvent = (raw) => {
                 providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
                 if (rt0EvidenceMode)
                     rt0PlaybackPending = false;
+            }
+        }
+        else if (normalized && normalized.kind !== "playback_started" && normalized.kind !== "playback_done") {
+            const voice = activeVoiceEvidence;
+            if (voice && !voice.providerEventKindsPosted.has(normalized.kind)) {
+                voice.providerEventKindsPosted.add(normalized.kind);
+                const kind = normalized.kind === "video_generation_started"
+                    ? "provider_video_generation_started"
+                    : normalized.kind === "video_generation_done"
+                        ? "provider_video_generation_done"
+                        : normalized.kind === "video_generation_failed"
+                            ? "provider_video_generation_failed"
+                            : "provider_informational_event";
+                await postMediaEvidence(kind, performance.now() - voice.startedAt, voice.requestSequence);
             }
         }
         else if (normalized === null) {
@@ -1537,6 +1551,7 @@ const finishMicrophoneTurn = async () => {
         playbackCompletionEvidence: null,
         providerDataReceived: false,
         providerIgnoredEventPosted: false,
+        providerEventKindsPosted: new Set(),
         providerParseFailurePosted: false,
         providerPlaybackExpectedCount: 0,
         providerPlaybackDoneCount: 0,
