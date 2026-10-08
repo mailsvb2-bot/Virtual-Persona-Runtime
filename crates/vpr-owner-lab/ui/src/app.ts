@@ -1507,18 +1507,31 @@ const handleUnexpectedLiveKitDisconnect = async (
   closePeerTransport();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
-  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  // Start the best-effort evidence flush, but NEVER wait for it before
+  // fencing canonical provider authority. The LiveKit publish transport
+  // is already disconnected above. Revoke is the first awaited operation.
+  const evidenceFlush = tryFlushConnectionMediaEvidence();
+  let revokeError: unknown = null;
+  try {
+    await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
+  } catch (error) {
+    revokeError = error;
+  }
+  const connectionEvidenceError = await evidenceFlush.catch((error: unknown) =>
+    error instanceof Error ? error : new Error(String(error)));
   const evidenceWarning = connectionEvidenceError
     ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
     : "";
   try {
+    // Close also retries provider teardown if revoke completed only the
+    // authority transition. Never claim evidence was exported on failure.
     await api<{ ok: true }>("/api/session/close", sessionEndRequest());
     await syncStatus();
     await refreshSessionEvidence();
     try {
       await downloadSessionEvidence();
       setStatus(
-        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`,
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}${revokeError ? "; первоначальный отзыв потребовал повторного закрытия" : ""}. Подключитесь снова.`,
         "error",
       );
     } catch (exportError) {
