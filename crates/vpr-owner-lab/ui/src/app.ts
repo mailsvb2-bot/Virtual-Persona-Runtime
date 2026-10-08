@@ -2232,6 +2232,8 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     && activeClientControl?.interrupt === true
     && playbackReady;
   const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
+  // Clearing the scheduler is not proof that provider output stopped.
+  const providerStopRequired = providerPlaybackInFlight || voiceCommandScheduler.hasPendingPlayback;
 
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
@@ -2245,6 +2247,9 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     : null;
 
   try {
+    if (providerStopRequired && !clientReady) {
+      throw new Error("PROVIDER_STOP_UNAVAILABLE");
+    }
     const canonicalStop = voiceRequestInFlight
       ? api<{ ok: true }>("/api/avatar/interrupt", {})
       : null;
@@ -2283,7 +2288,25 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     return false;
   } catch (error) {
     interruptEvidenceWatch = null;
-    setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
+    // A failed or unavailable STOP leaves the browser's LiveKit publish token
+    // capable of reaching D-ID. Disconnect it synchronously, before awaiting
+    // anything, and revoke the canonical session. Never offer an unconfirmed
+    // interrupted answer for replay.
+    closePeerTransport();
+    let revokeFailed = false;
+    try {
+      await api<{ ok: true }>("/api/session/revoke", {});
+      await syncStatus();
+    } catch {
+      revokeFailed = true;
+    }
+    const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
+    setStatus(
+      revokeFailed
+        ? `PROVIDER_STOP_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+        : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
+      "error",
+    );
     updateControls();
     return false;
   }
