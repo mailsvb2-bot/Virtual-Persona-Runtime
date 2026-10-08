@@ -898,9 +898,14 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
         &confirm_body,
     );
     assert_eq!(confirm.status, 409, "{}", confirm.body);
-    let resume_body =
-        format!(r#"{{"request_sequence":{request_sequence},"sentence_index":0}}"#);
-    let resume = post(port, &host, &csrf, "/api/avatar/resume-answer", &resume_body);
+    let resume_body = format!(r#"{{"request_sequence":{request_sequence},"sentence_index":0}}"#);
+    let resume = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/resume-answer",
+        &resume_body,
+    );
     assert_eq!(resume.status, 409, "{}", resume.body);
     assert_eq!(
         post(port, &host, &csrf, "/api/session/close", "{}").status,
