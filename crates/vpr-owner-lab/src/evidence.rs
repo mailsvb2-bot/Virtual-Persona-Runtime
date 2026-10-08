@@ -92,7 +92,6 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Registers a browser text request before provider work starts.
-    ///
     /// # Errors
     /// Fails when there is no current session, the request sequence is zero, or it is duplicated.
     pub fn begin_text_request(&mut self, request_sequence: u64) -> Result<(), LabEvidenceError> {
@@ -125,7 +124,6 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Completes a registered text request using sanitized server-side evidence only.
-    ///
     /// # Errors
     /// Fails when the request is unknown or no longer pending.
     pub fn complete_text_request(
@@ -158,7 +156,6 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Marks a registered text request failed without retaining input or generated reply payloads.
-    ///
     /// # Errors
     /// Fails when the request is unknown or no longer pending.
     pub fn fail_text_request(
@@ -179,7 +176,6 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Registers a browser voice request before provider work starts.
-    ///
     /// # Errors
     /// Fails when there is no current session, the request sequence is zero, or it is duplicated.
     pub fn begin_voice_request(&mut self, request_sequence: u64) -> Result<(), LabEvidenceError> {
@@ -220,7 +216,6 @@ impl LabSessionEvidenceRecorder {
     ///
     /// Later segments may extend the same canonical turn but cannot replace the first output
     /// sequence used for first-audio playback evidence.
-    ///
     /// # Errors
     /// Fails for malformed segments, unknown requests, or attempts that are no longer pending.
     pub fn bind_voice_segment(
@@ -253,7 +248,6 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Completes a registered request using sanitized server-side voice evidence.
-    ///
     /// # Errors
     /// Fails when the request is unknown or no longer pending.
     pub fn complete_voice_request(
@@ -398,7 +392,7 @@ impl LabSessionEvidenceRecorder {
     }
 
     /// Records one browser WebRTC A/V sync sample after real audio start is observed for the
-    /// exact completed request. Full playback completion is proven separately by the provider event.
+    /// exact completed request. Full playback requires separate authoritative playout evidence.
     ///
     /// # Errors
     /// Fails for stale sessions, malformed/duplicate samples, unknown requests, or requests whose
