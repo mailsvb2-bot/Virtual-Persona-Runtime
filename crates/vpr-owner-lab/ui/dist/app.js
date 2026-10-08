@@ -1904,18 +1904,21 @@ const interruptAvatar = async (recordEvidence = true) => {
     catch (error) {
         interruptEvidenceWatch = null;
         closePeerTransport();
-        let revokeFailed = false;
+        let cleanupFailed = false;
         try {
             await api("/api/session/revoke", {});
-            await syncStatus();
         }
         catch {
-            revokeFailed = true;
+            cleanupFailed = true;
         }
+        await syncStatus().catch(() => undefined);
+        const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
         const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
-        setStatus(revokeFailed
+        setStatus(!canonicalRevoked
             ? `PROVIDER_STOP_UNCONFIRMED_REVOKE_FAILED: ${cause}`
-            : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`, "error");
+            : cleanupFailed
+                ? `PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+                : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`, "error");
         updateControls();
         return false;
     }
