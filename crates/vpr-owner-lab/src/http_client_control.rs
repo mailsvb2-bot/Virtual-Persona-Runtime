@@ -64,6 +64,8 @@ pub(super) fn retain_completed_reply(
 struct ResumeAnswerBody {
     request_sequence: u64,
     sentence_index: usize,
+    #[serde(default)]
+    character_offset: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -117,6 +119,22 @@ fn authorized_sentence_suffix(reply: &str, sentence_index: usize) -> Option<Stri
     }
     let suffix = sentences[sentence_index..].join(" ");
     (!suffix.is_empty() && suffix.len() <= 16_000).then_some(suffix)
+}
+
+/// The cursor is a Unicode scalar offset into the SERVER-held normalized reply.
+/// It can only start at a word boundary and cannot introduce arbitrary browser text.
+fn authorized_character_suffix(reply: &str, offset: usize) -> Option<String> {
+    if reply.len() > 16_000 { return None; }
+    let normalized = reply.split_whitespace().collect::<Vec<_>>().join(" ");
+    let chars = normalized.chars().collect::<Vec<_>>();
+    if offset >= chars.len() || offset > 16_000 { return None; }
+    if offset > 0 && !chars[offset - 1].is_whitespace()
+        && !matches!(chars[offset - 1], '.' | '!' | '?' | '…' | ',' | ':' | ';' | '—' | '–' | '(' | ')' | '«' | '»') {
+        return None;
+    }
+    let suffix = chars[offset..].iter().collect::<String>();
+    let suffix = suffix.trim();
+    (!suffix.is_empty() && suffix.len() <= 16_000).then(|| suffix.to_owned())
 }
 
 fn confirm_interruption(
@@ -178,8 +196,11 @@ pub(super) fn route_post(
                 {
                     return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
                 }
-                let suffix = authorized_sentence_suffix(&reply.reply, body.sentence_index)
-                    .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?;
+                let suffix = match body.character_offset {
+                    Some(offset) => authorized_character_suffix(&reply.reply, offset),
+                    None => authorized_sentence_suffix(&reply.reply, body.sentence_index),
+                }
+                .ok_or_else(|| super::error_response(400, "INVALID_INPUT"))?;
                 let result = with_engine_result(state, |engine| {
                     if engine.status().session_state != "active" {
                         return Err(vpr_owner_lab::LabError::InvalidState);
@@ -243,7 +264,7 @@ pub(super) fn route_post(
 // in-memory sentence selector and must fail for wrong/out-of-range indices.
 #[cfg(test)]
 mod resume_tests {
-    use super::authorized_sentence_suffix;
+    use super::{authorized_character_suffix, authorized_sentence_suffix};
 
     #[test]
     fn choose_only_authoritative_remaining_sentences() {
@@ -290,6 +311,17 @@ mod resume_tests {
             source.lock().is_none(),
             "late completion must not revive revoked replay"
         );
+    }
+
+    #[test]
+    fn unicode_word_cursor_replays_only_authorized_suffix() {
+        let reply = "Первая мысль. Дальше важная мысль. Третья мысль.";
+        let offset = "Первая мысль. Дальше ".chars().count();
+        assert_eq!(authorized_character_suffix(reply, offset).as_deref(), Some("важная мысль. Третья мысль."));
+        assert_eq!(authorized_character_suffix(reply, offset + 2), None, "mid-word positions rejected");
+        assert_eq!(authorized_character_suffix(reply, reply.chars().count()), None);
+        assert_eq!(authorized_character_suffix(reply, usize::MAX), None);
+        assert_eq!(authorized_character_suffix("  ", 0), None);
     }
 
     #[test]
