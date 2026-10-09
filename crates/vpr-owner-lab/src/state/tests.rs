@@ -241,11 +241,12 @@ fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
     assert_eq!(stats.text.load(Ordering::SeqCst), 1);
 }
 
-
 #[test]
 fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_speech() {
     let (mut engine, stats) = engine(true);
-    engine.start(OwnerLabStartRequest { consent: true }).unwrap();
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
 
     // This provider has no browser text publisher. Resume must therefore use
     // the existing canonical server-side delivery path, not be forbidden or
