@@ -1,5 +1,16 @@
 (() => {
   const mailbox = "/__journey/report/expressive";
+  const sessionRequestOrder = [];
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input?.url ?? "";
+    const method = (init?.method ?? (typeof input === "object" ? input?.method : undefined) ?? "GET").toUpperCase();
+    const path = new URL(url, location.href).pathname;
+    if (method === "POST" && (path === "/api/session/fence" || path === "/api/session/close")) {
+      sessionRequestOrder.push(path);
+    }
+    return originalFetch(input, init);
+  };
   const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const waitFor = async (check, label, timeout = 30_000) => {
     const start = performance.now();
@@ -105,11 +116,19 @@
       if (stillActive.session_state !== "active" || stillActive.avatar_open !== true) {
         throw new Error("STALE_TAB_CLOSE_KILLED_NEW_SESSION");
       }
+      const beforeClose = sessionRequestOrder.length;
       close.click();
       await waitFor(
         () => statusText().includes("Сессия закрыта. Evidence snapshot сохранён."),
         "second-session-evidence-exported",
       );
+      const closeRequests = sessionRequestOrder.slice(beforeClose);
+      const fenceIndex = closeRequests.indexOf("/api/session/fence");
+      const closeIndex = closeRequests.indexOf("/api/session/close");
+      if (fenceIndex < 0 || closeIndex <= fenceIndex) {
+        throw new Error("ACTIVE_OWNER_CLOSE_DID_NOT_FENCE_BEFORE_TERMINAL_CLOSE:"
+          + JSON.stringify(closeRequests));
+      }
       await writeReport({
         status: "ok",
         session: "closed",
@@ -118,6 +137,7 @@
         evidence_exported: true,
         stale_tab_close_denied: true,
         subsequent_session_survived: true,
+        active_owner_close_fenced_before_terminal: true,
       });
     } catch (error) {
       const terminal = await backend("/api/status").catch(() => null);
