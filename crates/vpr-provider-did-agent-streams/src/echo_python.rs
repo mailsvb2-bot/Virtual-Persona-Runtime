@@ -394,3 +394,60 @@ impl Drop for EchoPythonBackend {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod bounded_stop_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::AtomicBool;
+
+    struct NeverCancelled(AtomicBool);
+
+    impl CancellationProbe for NeverCancelled {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Acquire)
+        }
+    }
+
+    #[test]
+    fn unresponsive_echo_interrupt_is_fenced_and_child_killed_without_five_second_wait() {
+        // A real child OS process, not a mocked DidEchoBackend. The fake
+        // interpreter acknowledges open, but indefinitely stalls on did.interrupt.
+        // No LiveKit account, paid TTS call or real network access is needed.
+        let script = std::env::temp_dir().join(format!(
+            "vpr-echo-hung-{}-{}.sh",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("stop")
+        ));
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\\"command\\":\\"open\\"'*) printf '{\\"id\\":0,\\"ok\\":true}\\n' ;;\n    *'\\"command\\":\\"interrupt\\"'*) while :; do :; done ;;\n  esac\ndone\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let configuration = EchoPythonConfig::new(
+            script.to_string_lossy().into_owned(),
+            "https://tts.example.test/v1/audio/speech",
+            "test-only-key",
+            "test-model",
+            "test-voice",
+        )
+        .unwrap();
+        let backend = EchoPythonBackend::new(configuration);
+        let probe = NeverCancelled(AtomicBool::new(false));
+        backend
+            .open("hung-session", "wss://livekit.example.test/room/agent-1", "test-token", &probe)
+            .unwrap();
+        let started = Instant::now();
+        let failed = backend.stop("hung-session");
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_file(&script);
+        assert!(failed.is_err(), "vendor receipt missing: STOP must not be reported successful");
+        assert!(
+            elapsed < Duration::from_millis(1800),
+            "STOP was blocked by a nonresponsive private worker: {elapsed:?}"
+        );
+        assert!(backend.worker("hung-session").is_err(), "dead publisher must be unregistered");
+    }
+}
