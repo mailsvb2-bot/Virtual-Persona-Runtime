@@ -648,12 +648,12 @@ fn assert_voice_epoch_rejections(
         "/api/voice/turn",
         Some(evidence_session),
         None,
-        &pcm,
+        pcm,
     );
     assert_eq!(missing_correlation.status, 400);
     assert!(missing_correlation.body.contains("INVALID_INPUT"));
 
-    let missing_epoch = post_binary(port, host, csrf, "/api/voice/turn", None, Some(1), &pcm);
+    let missing_epoch = post_binary(port, host, csrf, "/api/voice/turn", None, Some(1), pcm);
     assert_eq!(missing_epoch.status, 400);
     let stale_epoch = post_binary(
         port,
@@ -662,10 +662,9 @@ fn assert_voice_epoch_rejections(
         "/api/voice/turn",
         Some(evidence_session + 1),
         Some(1),
-        &pcm,
+        pcm,
     );
     assert_eq!(stale_epoch.status, 409);
-
 }
 
 #[test]
