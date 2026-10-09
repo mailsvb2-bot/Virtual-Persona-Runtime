@@ -111,7 +111,11 @@ mod tests {
         let mut buffer = RealtimePhraseBuffer::default();
         let phrase = "Довольно интересный вопрос который заслуживает объяснения";
         let emitted = buffer.push(phrase);
-        assert_eq!(emitted.len(), 1, "first phrase must not wait for 48+ characters");
+        assert_eq!(
+            emitted.len(),
+            1,
+            "first phrase must not wait for 48+ characters"
+        );
         assert!(!emitted[0].ends_with(' '));
         assert!(emitted[0].chars().count() <= 36);
         assert!(!buffer.finish().unwrap().is_empty());
