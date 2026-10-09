@@ -11,7 +11,8 @@ use vpr_integration::{
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionRevocationHandle,
+    SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -383,6 +384,13 @@ impl OwnerLabEngine {
             }
         }
         .map_err(map_provider_execution)
+    }
+
+    /// Returns a revoke-only capability tied to this exact runtime session.
+    /// It can invalidate provider permits without waiting for the Owner Lab engine mutex.
+    #[must_use]
+    pub fn session_revocation_handle(&self) -> Option<SessionRevocationHandle> {
+        self.session.as_ref().map(ActiveSession::revocation_handle)
     }
 
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
