@@ -479,115 +479,27 @@ fn detailed_probe_reports_403_when_legacy_stream_is_forbidden() {
 }
 
 #[test]
-fn expressive_agent_negotiates_livekit_without_leaking_credentials() {
-    let (endpoint, captured) = serve(vec![
-        ("200 OK", expressive_agent_body()),
-        (
-            "201 Created",
-            r#"{"id":"live-session-1","session_url":"wss://livekit.example.test","session_token":"private-livekit-token"}"#.to_owned(),
-        ),
-    ]);
+fn expressive_without_server_echo_fails_closed_before_session_creation() {
+    let (endpoint, captured) = serve(vec![("200 OK", expressive_agent_body())]);
     let provider = adapter(endpoint);
     let probe = Probe(AtomicBool::new(false));
-
-    let live = provider.create_session(&probe).unwrap();
-    assert_eq!(live.provider_resource_id, "live-session-1");
-    let RealtimeAvatarTransport::LiveKit { server_url, token } = &live.transport else {
-        panic!("expected LiveKit transport");
+    let error = provider.create_session(&probe).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    // Never create a LiveKit viewer with browser-publishing privileges.
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /agents/agent-7 "));
+    // Even if a previously created LiveKit session is passed in, the
+    // adapter must not expose a client speech route.
+    let stale = RealtimeAvatarSession {
+        provider_resource_id: "old-livekit".to_owned(),
+        provider_session_id: "old-livekit".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
     };
-    assert_eq!(server_url, "wss://livekit.example.test");
-    assert_eq!(token, "private-livekit-token");
-
-    let control = provider.client_control(&live).unwrap();
-    assert!(control.interrupt);
-    assert!(!control.interrupt_requires_playback_id);
-    assert!(control.text_input);
-
-    assert_eq!(
-        provider
-            .parse_client_event(&live, r#"{"subject":"stream-video/done"}"#)
-            .unwrap(),
-        Some(RealtimeAvatarClientEvent::VideoGenerationDone)
-    );
-    // Generation completion is not a provider-confirmed audible playback completion.
-    for (subject, expected) in [
-        (
-            "stream-video/started",
-            RealtimeAvatarClientEvent::VideoGenerationStarted,
-        ),
-        (
-            "stream-video/error",
-            RealtimeAvatarClientEvent::VideoGenerationFailed,
-        ),
-        ("chat/answer", RealtimeAvatarClientEvent::Informational),
-        ("chat/partial", RealtimeAvatarClientEvent::Informational),
-        ("tool-call/done", RealtimeAvatarClientEvent::Informational),
-    ] {
-        let message = serde_json::json!({"subject":subject,"content":"untrusted"}).to_string();
-        assert_eq!(
-            provider.parse_client_event(&live, &message).unwrap(),
-            Some(expected)
-        );
-    }
-    // Unknown provider subjects are classified without returning any raw subject
-    // or the untrusted content that may contain private owner/provider data.
-    for (subject, expected) in [
-        (
-            "chat/new-event",
-            RealtimeAvatarClientEvent::UnknownChatEvent,
-        ),
-        (
-            "stream-video/new-event",
-            RealtimeAvatarClientEvent::UnknownVideoEvent,
-        ),
-        (
-            "tool-call/new-event",
-            RealtimeAvatarClientEvent::UnknownToolEvent,
-        ),
-        (
-            "unknown/event",
-            RealtimeAvatarClientEvent::UnknownOtherEvent,
-        ),
-    ] {
-        let message = serde_json::json!({"subject":subject,"content":"PRIVATE_UNTRUSTED_PAYLOAD"})
-            .to_string();
-        let classified = provider.parse_client_event(&live, &message).unwrap();
-        assert_eq!(classified, Some(expected));
-        assert!(!format!("{classified:?}").contains("PRIVATE_UNTRUSTED_PAYLOAD"));
-        assert!(!format!("{classified:?}").contains(subject));
-    }
-
-    let text = provider
-        .prepare_client_text(&live, "Привет", &probe)
-        .unwrap();
-    assert_eq!(
-        text.route,
-        RealtimeAvatarClientRoute::LiveKitTextTopic {
-            topic: "did.speak".to_owned(),
-        }
-    );
-    let text_payload: serde_json::Value = serde_json::from_str(&text.payload).unwrap();
-    assert_eq!(text_payload["script"]["type"], "text");
-    assert_eq!(text_payload["script"]["input"], "Привет");
-    assert_eq!(text_payload["script"]["should_queue_speaks"], true);
-
-    let interrupt = provider
-        .prepare_client_interrupt(&live, None, &probe)
-        .unwrap();
-    assert_eq!(
-        interrupt.route,
-        RealtimeAvatarClientRoute::LiveKitTextTopic {
-            topic: "did.interrupt".to_owned(),
-        }
-    );
-
-    provider.close_session(&live).unwrap();
-    let requests: Vec<String> = (0..2).map(|_| captured.recv().unwrap()).collect();
-    assert!(requests[0].starts_with("GET /agents/agent-7 "));
-    assert!(requests[1].starts_with("POST /v2/agents/agent-7/sessions "));
-    let debug = format!("{live:?} {text:?} {interrupt:?}");
-    assert!(!debug.contains("private-livekit-token"));
-    assert!(!debug.contains("Привет"));
+    assert!(provider.client_control(&stale).is_none());
+    assert!(provider.prepare_client_text(&stale, "Привет", &probe).is_err());
 }
 
 #[test]
