@@ -220,6 +220,24 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertFalse(any(r["id"] == 21 and r["ok"] for r in receipts))
         self.assertTrue(any(r["id"] == 22 and r["ok"] for r in receipts))
 
+    def test_queued_echo_utterances_have_a_hard_limit(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            *({"id": idx, "command": "speak", "text": "Фраза"}
+              for idx in range(1, 18)),
+            {"id": 20, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            False, records=records, delay_before_close=0.05,
+            tts_latency=lambda _: 0.3,
+        )
+        self.assertFalse(any(r["id"] == 17 and r["ok"] for r in receipts))
+        self.assertTrue(any(r["id"] == 17 and not r["ok"] for r in receipts))
+        self.assertFalse(trace["audio"])
+        self.assertEqual(trace["disconnected"], 1)
+
     def test_duplicate_utterance_id_does_not_replace_active_task(self):
         records = [
             {"id": 0, "command": "open",
