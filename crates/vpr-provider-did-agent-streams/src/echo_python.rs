@@ -1,4 +1,4 @@
-//! Explicitly enabled, backend-only LiveKit Echo sender.
+//! Explicitly enabled, backend-only `LiveKit` Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Write};
@@ -70,7 +70,7 @@ impl EchoPythonConfig {
     }
 }
 
-/// Private subprocess transport. One child/LiveKit sender per canonical session.
+/// Private subprocess transport. One child/`LiveKit` sender per canonical session.
 /// The child carries a cancellation epoch and serializes utterance byte streams.
 pub struct EchoPythonBackend {
     config: EchoPythonConfig,
