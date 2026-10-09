@@ -180,7 +180,7 @@ impl OwnerLabEngine {
     }
 
     /// Returns an isolated stop-only capability only for a server-owned
-    /// LiveKit avatar. No arbitrary content publisher is copied to the caller.
+    /// `LiveKit` avatar. No arbitrary content publisher is copied to the caller.
     #[must_use]
     pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
         self.avatar
