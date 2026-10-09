@@ -119,7 +119,9 @@
     }
     async getRTCStatsReport() {
       this.statsPoll += 1;
-      const timestamp = this.kind === "audio" ? 1000 : 1060;
+      // The real playback clock must advance along with received RTP packets.
+      // Keep exactly 60 ms A/V offset without relying on frozen fixture timestamps.
+      const timestamp = (this.kind === "audio" ? 1000 : 1060) + this.statsPoll * 100;
       const entries = [
         [
           `${this.kind}-codec`,
