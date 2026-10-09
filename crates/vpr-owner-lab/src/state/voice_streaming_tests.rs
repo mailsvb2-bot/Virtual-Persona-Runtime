@@ -501,7 +501,7 @@ fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
 }
 
 #[test]
-fn streaming_voice_without_final_stt_transcript_is_invalid_input_not_internal_error() {
+fn streaming_voice_without_final_stt_transcript_is_diagnostic_not_internal_error() {
     let stats = Arc::new(StreamingStats::default());
     let avatar = StreamingAvatar {
         stats: Arc::clone(&stats),
@@ -525,7 +525,7 @@ fn streaming_voice_without_final_stt_transcript_is_invalid_input_not_internal_er
 
     assert_eq!(
         engine.voice_turn_streaming(sample_pcm(), |_| {}, |_| Ok(())),
-        Err(LabError::InvalidInput)
+        Err(LabError::SpeechNotRecognized)
     );
     assert_eq!(stats.stt_stream.load(Ordering::SeqCst), 1);
     assert_eq!(stats.llm.load(Ordering::SeqCst), 0);
