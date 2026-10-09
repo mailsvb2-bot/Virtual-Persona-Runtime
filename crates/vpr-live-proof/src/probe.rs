@@ -321,7 +321,7 @@ fn lab_reason(error: &LabError) -> Rt0ReasonCode {
     match error {
         LabError::EgressDisabled => Rt0ReasonCode::EgressDenied,
         LabError::ConsentRequired => Rt0ReasonCode::ConsentRequired,
-        LabError::InvalidInput | LabError::InvalidState => Rt0ReasonCode::InvalidStateTransition,
+        LabError::InvalidInput | LabError::SpeechNotRecognized | LabError::InvalidState => Rt0ReasonCode::InvalidStateTransition,
         LabError::Runtime(reason) | LabError::Provider(reason) => *reason,
         LabError::PersistenceFailed | LabError::Internal => Rt0ReasonCode::InternalError,
     }
