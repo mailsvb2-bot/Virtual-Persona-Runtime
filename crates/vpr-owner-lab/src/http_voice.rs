@@ -214,7 +214,6 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
         release_voice_busy(state);
         return error_response(http_evidence::error_status(error), error.code());
     }
-
     let input = {
         let Ok(mut engine) = state.engine.lock() else {
             fail_voice_evidence(state, request_sequence, &LabError::Internal);
@@ -235,7 +234,6 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             }
         }
     };
-
     if let Err(input) = state.voice_inputs.begin(request_sequence, input) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
@@ -243,7 +241,6 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
         cancel_active_input(state, LabError::Runtime(Rt0ReasonCode::TurnCancelled));
         return error_response(409, "TURN_CANCELLED");
     }
-
     json_response(
         201,
         &serde_json::json!({"ok": true, "request_sequence": request_sequence}),
@@ -364,7 +361,6 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         release_voice_busy(state);
         return error_response(http_evidence::error_status(error), error.code());
     }
-
     let mut input = {
         let Ok(mut engine) = state.engine.lock() else {
             let error = LabError::Internal;
@@ -571,7 +567,8 @@ fn finish_voice_stream(
                 }
             }
             Err(error) => VoiceStreamEvent::Failed {
-                code: error.code().to_owned(), diagnostic: None,
+                code: error.code().to_owned(),
+                diagnostic: None,
             },
         },
         Err(error) => {
@@ -585,7 +582,8 @@ fn finish_voice_stream(
             };
             VoiceStreamEvent::Failed {
                 code: code.to_owned(),
-                diagnostic: matches!(error, LabError::SpeechNotRecognized).then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
+                diagnostic: matches!(error, LabError::SpeechNotRecognized)
+                    .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
             }
         }
     };
