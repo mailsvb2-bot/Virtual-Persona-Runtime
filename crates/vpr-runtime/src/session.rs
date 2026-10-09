@@ -38,6 +38,25 @@ impl SessionSecurityConfig {
 }
 
 #[derive(Debug)]
+/// A revocation-only authority handle for HTTP termination paths that cannot wait
+/// for a voice worker holding the Owner Lab engine mutex.
+#[derive(Debug, Clone)]
+pub struct SessionRevocationHandle {
+    authorization: AuthorizationController,
+}
+
+impl SessionRevocationHandle {
+    /// Invalidates all previously issued turn/provider permits without locking the owner engine.
+    ///
+    /// # Errors
+    /// Returns a stable denial reason if the shared authorization cannot be revoked.
+    pub fn revoke_authority(&self) -> Result<(), Rt0ReasonCode> {
+        self.authorization
+            .revoke()
+            .map_err(RuntimeDenyReason::reason_code)
+    }
+}
+
 pub struct ActiveSession {
     pub(crate) session: RealtimeSession,
     pub(crate) authorization: AuthorizationController,
@@ -48,6 +67,15 @@ pub struct ActiveSession {
 }
 
 impl ActiveSession {
+    /// A generation-scoped revoke-only capability, safe to call while the mutable
+    /// session/owner engine is busy in a long-running STT or LLM operation.
+    #[must_use]
+    pub fn revocation_handle(&self) -> SessionRevocationHandle {
+        SessionRevocationHandle {
+            authorization: self.authorization.clone(),
+        }
+    }
+
     #[must_use]
     pub fn new(id: SessionId, persona_id: PersonaId, security: SessionSecurityConfig) -> Self {
         Self::with_clock(id, persona_id, security, Arc::new(SystemClock))
