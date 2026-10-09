@@ -126,10 +126,10 @@ const setupReviewedPersona = async (
   expect(reviewed.ok()).toBeTruthy();
 };
 
-// Both scenarios share one real backend process. A failed assertion must
-// never leave an active provider session that makes the next scenario unable
-// to reach its actual test precondition. This is REST teardown, not synthetic
-// Playwright manipulation of the running browser.
+// All Expressive journeys share one real Owner Lab backend. Closing alone
+// does NOT release its strict evidence-export gate: the next real Connect
+// must not bypass or silently discard a previous session's proof. This
+// teardown closes and exports through the same canonical HTTP paths as UI.
 test.afterEach(async ({ request }) => {
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   if (!bootstrap.ok()) return;
@@ -137,10 +137,15 @@ test.afterEach(async ({ request }) => {
   const status = await request.get(`${ownerLabUrl}/api/status`);
   if (!status.ok()) return;
   const state = (await status.json() as { session_state: string }).session_state;
-  if (state !== "none" && state !== "closed") {
+  if (state === "none") return;
+  if (state !== "closed") {
     const close = await postJson(request, csrf, "/api/session/close", {});
-    expect(close.ok()).toBeTruthy();
+    expect(close.ok(), "E2E teardown must close the provider before exporting").toBeTruthy();
   }
+  const exported = await postJson(request, csrf, "/api/evidence/session/export", {});
+  expect(exported.ok(), "E2E teardown must satisfy the next session's evidence export gate").toBeTruthy();
+  const evidence = await exported.json() as { session_sequence?: number };
+  expect(evidence.session_sequence).toBeGreaterThan(0);
 });
 
 test("Expressive LiveKit generation-only events never grant canonical playback", async ({
