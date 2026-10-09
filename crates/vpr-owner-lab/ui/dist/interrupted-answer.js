@@ -41,7 +41,7 @@ export const resumeSentences = (parts) => {
 export const suggestedResumeSentence = (sentences, heardMillis) => {
     if (sentences.length === 0 || !Number.isFinite(heardMillis))
         return 0;
-    const conservativeCharacters = Math.max(0, heardMillis / 1000 * 6 - 60);
+    const conservativeCharacters = Math.max(0, heardMillis / 1000 * 11 - 16);
     let passed = 0;
     let selected = 0;
     for (let index = 0; index < sentences.length - 1; index += 1) {
@@ -57,4 +57,14 @@ export const replayTextFrom = (sentences, index) => {
         return null;
     const text = sentences.slice(index).join(" ").trim();
     return text.length > 0 && text.length <= 16_000 ? text : null;
+};
+
+export const resumeWordOffset = (reply, utf16Cursor) => {
+    if (!Number.isInteger(utf16Cursor) || utf16Cursor < 0 || utf16Cursor >= reply.length)
+        return null;
+    let cursor = utf16Cursor;
+    while (cursor > 0 && !/[\\s.,!?…:;—–()«»]/u.test(reply[cursor - 1] ?? "")) {
+        cursor -= 1;
+    }
+    return Array.from(reply.slice(0, cursor)).length;
 };
