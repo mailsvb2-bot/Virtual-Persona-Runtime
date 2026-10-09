@@ -1220,7 +1220,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
         }
     }
     catch (error) {
-        const terminal = await waitForCanonicalTerminal(new Set(["closed"]), 45000);
+        const terminal = await waitForCanonicalTerminal(new Set(["closed"]), 45_000);
         if (terminal && sessionState.backend.avatar_open === false) {
             await refreshSessionEvidence().catch(() => undefined);
             try {
@@ -2033,7 +2033,7 @@ const interruptAvatar = async (recordEvidence = true) => {
         }
         if (cleanupFailed) {
             setStatus("PROVIDER_STOP_UNCONFIRMED: canonical cleanup pending", "error");
-            await waitForCanonicalTerminal(new Set(["revoked", "closed"]), 45000);
+            await waitForCanonicalTerminal(new Set(["revoked", "closed"]), 45_000);
         }
         else {
             await syncStatus().catch(() => undefined);
