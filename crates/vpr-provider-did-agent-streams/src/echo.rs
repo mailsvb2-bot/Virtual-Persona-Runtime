@@ -47,6 +47,33 @@ pub(crate) struct DidEchoRegistry {
 }
 
 impl DidEchoRegistry {
+    /// Reserves the vendor identity, opens the private sender, and aborts it
+    /// if authority was revoked while the transport was being established.
+    /// The cancellation and cleanup are one adapter-level invariant; no
+    /// viewer token is exposed until this operation returns successfully.
+    pub(crate) fn open_session(
+        &self,
+        backend: &dyn DidEchoBackend,
+        id: &str,
+        url: &str,
+        echo_token: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.insert(id)?;
+        if let Err(error) = backend.open(id, url, echo_token, cancellation) {
+            // Implementations must undo partial transport setup on failed open.
+            self.remove(id)?;
+            return Err(error);
+        }
+        if cancellation.is_cancelled() {
+            let cleanup = backend.stop(id);
+            self.remove(id)?;
+            // Report failed teardown, never successful revocation.
+            return Err(cleanup.err().unwrap_or(super::cancelled()));
+        }
+        Ok(())
+    }
+
     pub(crate) fn insert(&self, id: &str) -> Result<(), ProviderError> {
         let mut sessions = self
             .sessions
