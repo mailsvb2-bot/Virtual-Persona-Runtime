@@ -177,7 +177,11 @@ const offerInterruptedAnswer = (sentences, elapsedMillis, offset = 0) => {
     resumeFromIndex = Math.min(sentences.length - 1, offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
     resumeAnswerFrom.value = String(resumeFromIndex);
     resumeAnswerCursor.value = sentences.join(" ");
-    resumeCursorEdited = false;
+    const guessedPosition = Math.min(Math.max(0, resumeAnswerCursor.value.length - 1), Math.max(0, Math.round(elapsedMillis / 1000 * 11 - 10)));
+    const guessedOffset = resumeWordOffset(resumeAnswerCursor.value, guessedPosition) ?? 0;
+    const utf16Cursor = Array.from(resumeAnswerCursor.value).slice(0, guessedOffset).join("").length;
+    resumeAnswerCursor.setSelectionRange(utf16Cursor, utf16Cursor);
+    resumeCursorEdited = guessedOffset > 0;
     resumeAnswerRow.hidden = false;
     resumeAnswerButton.disabled = false;
 };
