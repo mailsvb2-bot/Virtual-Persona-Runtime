@@ -1,7 +1,7 @@
 //! Explicitly enabled, backend-only LiveKit Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -18,6 +18,7 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(55);
 const SPEECH_TIMEOUT: Duration = Duration::from_secs(80);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PHRASE_BYTES: usize = 4096;
+const MAX_RECEIPT_BYTES: usize = 512;
 
 #[derive(Clone)]
 pub struct EchoPythonConfig {
@@ -128,9 +129,23 @@ impl SessionWorker {
             disconnected: Arc::clone(&disconnected),
         });
         thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if let Ok(receipt) = serde_json::from_str::<Receipt>(&line) {
+            let mut stdout = BufReader::new(stdout);
+            'receipts: loop {
+                let mut line = Vec::with_capacity(64);
+                loop {
+                    let mut byte = [0_u8; 1];
+                    if stdout.read(&mut byte).ok() != Some(1) {
+                        break 'receipts;
+                    }
+                    if byte[0] == b'\n' {
+                        break;
+                    }
+                    if line.len() >= MAX_RECEIPT_BYTES {
+                        break 'receipts;
+                    }
+                    line.push(byte[0]);
+                }
+                if let Ok(receipt) = serde_json::from_slice::<Receipt>(&line) {
                     if let Ok(mut requests) = pending.lock() {
                         if let Some(reply) = requests.remove(&receipt.id) {
                             let _ = reply.send(receipt.ok);
