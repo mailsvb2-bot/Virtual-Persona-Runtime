@@ -634,6 +634,40 @@ fn launch_owner_lab_voice(
     }
 }
 
+fn assert_voice_epoch_rejections(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    evidence_session: u64,
+    pcm: &[u8],
+) {
+    let missing_correlation = post_binary(
+        port,
+        host,
+        csrf,
+        "/api/voice/turn",
+        Some(evidence_session),
+        None,
+        &pcm,
+    );
+    assert_eq!(missing_correlation.status, 400);
+    assert!(missing_correlation.body.contains("INVALID_INPUT"));
+
+    let missing_epoch = post_binary(port, host, csrf, "/api/voice/turn", None, Some(1), &pcm);
+    assert_eq!(missing_epoch.status, 400);
+    let stale_epoch = post_binary(
+        port,
+        host,
+        csrf,
+        "/api/voice/turn",
+        Some(evidence_session + 1),
+        Some(1),
+        &pcm,
+    );
+    assert_eq!(stale_epoch.status, 409);
+
+}
+
 #[test]
 fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     let _serial = serialize_owner_lab_http_contract();
@@ -687,30 +721,7 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     );
 
     let pcm = vec![0_u8; 3_200];
-    let missing_correlation = post_binary(
-        port,
-        &host,
-        &csrf,
-        "/api/voice/turn",
-        Some(evidence_session),
-        None,
-        &pcm,
-    );
-    assert_eq!(missing_correlation.status, 400);
-    assert!(missing_correlation.body.contains("INVALID_INPUT"));
-
-    let missing_epoch = post_binary(port, &host, &csrf, "/api/voice/turn", None, Some(1), &pcm);
-    assert_eq!(missing_epoch.status, 400);
-    let stale_epoch = post_binary(
-        port,
-        &host,
-        &csrf,
-        "/api/voice/turn",
-        Some(evidence_session + 1),
-        Some(1),
-        &pcm,
-    );
-    assert_eq!(stale_epoch.status, 409);
+    assert_voice_epoch_rejections(port, &host, &csrf, evidence_session, &pcm);
     let request_sequence = start_voice_turn(port, &host, &csrf, evidence_session, 1, &pcm);
     let voice_events = collect_voice_events(port, &host, &csrf, evidence_session, request_sequence);
     assert_completed_voice_contract(&voice_events);
