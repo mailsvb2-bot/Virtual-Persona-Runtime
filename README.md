@@ -49,6 +49,27 @@ Then open `http://127.0.0.1:8787`. `VPR_OWNER_LAB_PORT` is an optional override.
 
 D-ID and `local-open-source` are peer adapters behind the same `RealtimeAvatarPort`; neither is canonical Persona or Appearance identity, and no adapter may silently take over when another provider is selected.
 
+
+### Opt-in D-ID Echo: private LiveKit audio sender (experimental)
+
+The default Expressive/browser `did.speak` path is unchanged. To test the server-owned Echo transport instead, use a D-ID **v4 expressive** agent and explicitly enable all of these process-scoped settings in addition to the usual D-ID, STT/LLM, consent and egress configuration:
+
+```text
+VPR_DID_ECHO_ENABLED=true
+VPR_DID_ECHO_PYTHON=<path to a Python 3 interpreter with the livekit package installed>
+VPR_DID_ECHO_TTS_ENDPOINT=https://api.openai.com/v1/audio/speech
+VPR_DID_ECHO_TTS_API_KEY=<private TTS key>
+VPR_DID_ECHO_TTS_MODEL=<speech model>
+VPR_DID_ECHO_TTS_VOICE=<speech voice>
+```
+
+Install the SDK **into that specific interpreter** using `python -m pip install livekit` before launching Owner Lab. Python/LiveKit is a runtime prerequisite for this opt-in experimental sender; it is **not** bundled into the Windows RT0 launcher. For the new code, launch Owner Lab manually on the selected clean PR candidate, rather than using the Windows launcher that intentionally updates to `main` and clears transient `VPR_*` overrides.
+
+The Rust backend launches a private local worker; it sends TTS-generated bounded WAV utterances to `did.audio-stream` and uses `did.interrupt` for STOP. Only the viewer-scoped LiveKit token reaches the browser; `echo_token`, TTS key and audio remain server-private. STOP is generation-scoped and can run without waiting for an STT/LLM worker's engine mutex. Invalid configuration fails closed; this transport is never chosen as an implicit fallback. The Python worker receives credentials over a private subprocess boundary and never writes them to stdout.
+
+**Not RT0 exit evidence:** neither `did.audio-stream` success nor video-generation completion proves the entire reply was audibly played. Real D-ID owner/visitor sessions, authoritative playback confirmation, RTP A/V sync, human acceptance and cost still require exact-candidate proof. For security, do not mark RT0 ready based only on mocked CI.
+
+
 Optional push-to-talk voice conversation can be enabled without changing the avatar-only path. Configure one STT provider and one LLM provider together:
 
 ```bash
