@@ -8,8 +8,7 @@ use vpr_domain::{
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
     RealtimeAvatarCapabilities, RealtimeAvatarClientControl, RealtimeAvatarSession,
-    RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::readiness::LabModalityState;
@@ -127,7 +126,10 @@ impl RealtimeAvatarPort for FakeAvatar {
         Ok(())
     }
 
-    fn client_control(&self, _session: &RealtimeAvatarSession) -> Option<RealtimeAvatarClientControl> {
+    fn client_control(
+        &self,
+        _session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
         self.server_echo.then_some(RealtimeAvatarClientControl {
             event_route: None,
             interrupt: false,
@@ -304,7 +306,6 @@ fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_sp
     assert_eq!(stats.text.load(Ordering::SeqCst), 1);
 }
 
-
 #[test]
 fn echo_server_stop_works_while_engine_is_locked_and_after_authority_revoke() {
     let stats = Arc::new(Stats::default());
@@ -316,7 +317,9 @@ fn echo_server_stop_works_while_engine_is_locked_and_after_authority_revoke() {
         true,
     )
     .unwrap();
-    engine.start(OwnerLabStartRequest { consent: true }).unwrap();
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
     let stop_only = engine.backend_stop_handle().expect("server Echo STOP");
     // The real HTTP voice worker holds this mutex during STT/LLM.
     // The stop-only controller has no dependency on that lock.
