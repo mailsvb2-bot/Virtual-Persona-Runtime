@@ -416,6 +416,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         "/api/avatar/interrupt" => {
             parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
         }
+        "/api/session/fence" => http_session::fence_session_response(request, state),
         "/api/session/revoke" => http_session::end_session_response(request, state, false),
         "/api/session/close" => http_session::end_session_response(request, state, true),
         _ => Ok(error_response(404, "NOT_FOUND")),
