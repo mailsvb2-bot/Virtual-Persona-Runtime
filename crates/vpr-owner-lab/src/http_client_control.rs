@@ -124,12 +124,21 @@ fn authorized_sentence_suffix(reply: &str, sentence_index: usize) -> Option<Stri
 /// The cursor is a Unicode scalar offset into the SERVER-held normalized reply.
 /// It can only start at a word boundary and cannot introduce arbitrary browser text.
 fn authorized_character_suffix(reply: &str, offset: usize) -> Option<String> {
-    if reply.len() > 16_000 { return None; }
+    if reply.len() > 16_000 {
+        return None;
+    }
     let normalized = reply.split_whitespace().collect::<Vec<_>>().join(" ");
     let chars = normalized.chars().collect::<Vec<_>>();
-    if offset >= chars.len() || offset > 16_000 { return None; }
-    if offset > 0 && !chars[offset - 1].is_whitespace()
-        && !matches!(chars[offset - 1], '.' | '!' | '?' | '…' | ',' | ':' | ';' | '—' | '–' | '(' | ')' | '«' | '»') {
+    if offset >= chars.len() || offset > 16_000 {
+        return None;
+    }
+    if offset > 0
+        && !chars[offset - 1].is_whitespace()
+        && !matches!(
+            chars[offset - 1],
+            '.' | '!' | '?' | '…' | ',' | ':' | ';' | '—' | '–' | '(' | ')' | '«' | '»'
+        )
+    {
         return None;
     }
     let suffix = chars[offset..].iter().collect::<String>();
@@ -317,9 +326,19 @@ mod resume_tests {
     fn unicode_word_cursor_replays_only_authorized_suffix() {
         let reply = "Первая мысль. Дальше важная мысль. Третья мысль.";
         let offset = "Первая мысль. Дальше ".chars().count();
-        assert_eq!(authorized_character_suffix(reply, offset).as_deref(), Some("важная мысль. Третья мысль."));
-        assert_eq!(authorized_character_suffix(reply, offset + 2), None, "mid-word positions rejected");
-        assert_eq!(authorized_character_suffix(reply, reply.chars().count()), None);
+        assert_eq!(
+            authorized_character_suffix(reply, offset).as_deref(),
+            Some("важная мысль. Третья мысль.")
+        );
+        assert_eq!(
+            authorized_character_suffix(reply, offset + 2),
+            None,
+            "mid-word positions rejected"
+        );
+        assert_eq!(
+            authorized_character_suffix(reply, reply.chars().count()),
+            None
+        );
         assert_eq!(authorized_character_suffix(reply, usize::MAX), None);
         assert_eq!(authorized_character_suffix("  ", 0), None);
     }
