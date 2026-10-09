@@ -781,6 +781,12 @@ impl DidEchoBackend for MockEchoBackend {
         Ok(())
     }
 
+    fn interrupt(&self, session_id: &str) -> Result<(), ProviderError> {
+        assert_eq!(session_id, "echo-session-1");
+        self.calls.lock().unwrap().push("interrupt".to_owned());
+        Ok(())
+    }
+
     fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
         assert_eq!(session_id, "echo-session-1");
         self.calls.lock().unwrap().push("stop".to_owned());
@@ -835,7 +841,11 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     provider
         .speak_text(&session, "Серверный ответ.", &probe)
         .unwrap();
+    // An Echo STOP is server-owned and contains no browser did.interrupt
+    // command, nor any extra utterance.
+    provider.interrupt(&session, &probe).unwrap();
     provider.close_session(&session).unwrap();
+    assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
             .speak_text(&session, "stale after revoke", &probe)
@@ -844,7 +854,7 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     assert!(!provider.client_control(&session).unwrap().text_input);
     assert_eq!(
         *backend.calls.lock().unwrap(),
-        vec!["open", "speak", "stop"]
+        vec!["open", "speak", "interrupt", "stop"]
     );
 }
 
