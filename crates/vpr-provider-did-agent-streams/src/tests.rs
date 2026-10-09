@@ -526,8 +526,10 @@ fn empty_speak_text_is_rejected_before_network() {
 
 #[test]
 fn maps_insufficient_credits_without_collapsing_to_internal_error() {
+    // Exercise the supported legacy WebRTC billing-error path. Expressive
+    // without Echo is refused before session creation by design.
     let (endpoint, _) = serve(vec![
-        ("200 OK", expressive_agent_body()),
+        ("200 OK", r#"{"presenter":{"type":"standard"}}"#.to_owned()),
         (
             "402 Payment Required",
             r#"{"kind":"InsufficientCreditsError"}"#.to_owned(),
