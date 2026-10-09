@@ -43,7 +43,11 @@ pub(super) fn register_started_session(
         state.session_end_requested.store(false, Ordering::Release);
         return Err(LabError::InvalidState);
     }
-    *registered = Some(engine.session_revocation_handle().ok_or(LabError::InvalidState)?);
+    *registered = Some(
+        engine
+            .session_revocation_handle()
+            .ok_or(LabError::InvalidState)?,
+    );
     Ok(())
 }
 
