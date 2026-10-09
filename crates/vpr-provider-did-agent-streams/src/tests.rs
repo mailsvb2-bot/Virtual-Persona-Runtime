@@ -807,8 +807,11 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     assert!(created.starts_with("POST /v2/agents/agent-7/sessions "));
     assert!(created.contains(r#""session_type":"echo""#));
 
-    if let RealtimeAvatarTransport::LiveKit { token, .. } = &session.transport {
+    if let RealtimeAvatarTransport::LiveKit { server_url, token } = &session.transport {
         assert_eq!(token, "viewer-token");
+        // Vendor Echo includes /room/<id>, but LiveKit Room.connect expects
+        // the websocket server URL; the room is authorized by the token.
+        assert_eq!(server_url, "wss://livekit.example.test");
     } else {
         panic!("Echo must use the LiveKit viewer transport");
     }
