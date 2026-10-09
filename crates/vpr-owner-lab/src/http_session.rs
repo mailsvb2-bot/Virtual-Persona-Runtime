@@ -38,7 +38,9 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
             .engine
             .lock()
             .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-        engine.revoke().map_err(|error| lab_error_response(&error))?;
+        engine
+            .revoke()
+            .map_err(|error| lab_error_response(&error))?;
     }
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
