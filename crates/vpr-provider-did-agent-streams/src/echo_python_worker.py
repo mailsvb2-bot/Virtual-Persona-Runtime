@@ -102,8 +102,13 @@ async def run():
     async def speak(identifier, phrase, generation_at_start):
         writer = None
         try:
-            wav = await asyncio.to_thread(synthesize, phrase)
+            # Serialize synthesis as well as sending. Otherwise a later,
+            # faster TTS request can overtake an earlier spoken sentence.
             async with utterance_lock:
+                if generation_at_start != generation:
+                    emit(identifier, False)
+                    return
+                wav = await asyncio.to_thread(synthesize, phrase)
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
