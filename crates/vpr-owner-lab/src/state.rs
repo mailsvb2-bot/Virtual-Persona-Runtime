@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 #[cfg(test)]
 use vpr_domain::{ClaimId, ClaimKind};
@@ -11,7 +13,8 @@ use vpr_integration::{
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, RealtimeAvatarStopHandle,
+    SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -136,7 +139,7 @@ pub struct OwnerLabEngine {
     persona: PersonaIdentity,
     reviewed_owner_context: Option<ReviewedOwnerContext>,
     readiness: LabReadinessState,
-    provider: Box<dyn RealtimeAvatarPort>,
+    provider: Arc<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
     session: Option<ActiveSession>,
@@ -163,7 +166,7 @@ impl OwnerLabEngine {
             persona: PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin),
             reviewed_owner_context: None,
             readiness: LabReadinessState::default(),
-            provider,
+            provider: Arc::from(provider),
             stt: None,
             llm: None,
             session: None,
@@ -174,6 +177,15 @@ impl OwnerLabEngine {
             voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
+    }
+
+    /// Returns an isolated stop-only capability only for a server-owned
+    /// LiveKit avatar. No arbitrary content publisher is copied to the caller.
+    #[must_use]
+    pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
+        self.avatar
+            .as_ref()
+            .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
     }
 
     #[must_use]
