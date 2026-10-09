@@ -277,32 +277,13 @@ impl DidAgentStreamsAvatar {
                 .to_owned();
             let session_url = body.session_url.clone();
             let session: RealtimeAvatarSession = body.try_into()?;
-            // Reserve the vendor session identity BEFORE opening a backend
-            // publisher. A duplicate ID must not replace or stop the sender
-            // already serving the earlier canonical session.
-            self.echo_sessions.insert(&session.provider_session_id)?;
-            if let Err(error) = backend.open(
+            self.echo_sessions.open_session(
+                backend.as_ref(),
                 &session.provider_session_id,
                 &session_url,
                 &secret,
                 cancellation,
-            ) {
-                // A failed open cannot leave a falsely sendable registry entry.
-                // Concrete implementations must undo partial transport setup
-                // before returning Err from open.
-                self.echo_sessions.remove(&session.provider_session_id)?;
-                return Err(error);
-            }
-            // Cancellation can win while the backend LiveKit publisher is
-            // connecting. Do not expose its viewer session or leave its audio
-            // sender running after the canonical start has been withdrawn.
-            if let Err(cancel_error) = Self::ensure_active(cancellation) {
-                let cleanup = backend.stop(&session.provider_session_id);
-                self.echo_sessions.remove(&session.provider_session_id)?;
-                // A failed stop is a real provider-cleanup failure; never
-                // report the cancelled session as safely shut down.
-                return Err(cleanup.err().unwrap_or(cancel_error));
-            }
+            )?;
             Ok(session)
         } else {
             body.try_into()
