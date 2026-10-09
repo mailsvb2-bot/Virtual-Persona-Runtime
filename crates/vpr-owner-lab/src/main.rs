@@ -53,7 +53,6 @@ const LIVEKIT_CLIENT_SHA256: &str = include_str!("../ui/dist/vendor/livekit-clie
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
-
 type HttpResponse = Response<Cursor<Vec<u8>>>;
 
 struct AppState {
