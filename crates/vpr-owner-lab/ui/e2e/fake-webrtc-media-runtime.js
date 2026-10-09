@@ -147,6 +147,9 @@
       this.ontrack = null;
       this.onconnectionstatechange = null;
       this.onicecandidate = null;
+      this.audioPackets = 20;
+      this.videoPackets = 20;
+      this.playoutClock = 1_000;
       activePeer = this;
       remoteSpeech = false;
       remoteTrackPublished = false;
@@ -199,9 +202,16 @@
       }, 0);
     }
     async getStats() {
+      // A real inbound RTP stream keeps receiving packets while audio plays.
+      // Frozen counters must NOT produce three accepted A/V samples.
+      if (remoteSpeech) this.audioPackets += 2;
+      this.videoPackets += 2;
+      this.playoutClock += 40;
       return new Map([
-        ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 1_000 }],
-        ["video", { type: "inbound-rtp", kind: "video", packetsReceived: 20, estimatedPlayoutTimestamp: 1_060 }],
+        ["audio", { type: "inbound-rtp", kind: "audio", packetsReceived: this.audioPackets,
+          estimatedPlayoutTimestamp: this.playoutClock }],
+        ["video", { type: "inbound-rtp", kind: "video", packetsReceived: this.videoPackets,
+          estimatedPlayoutTimestamp: this.playoutClock + 60 }],
       ]);
     }
     close() { this.connectionState = "closed"; }

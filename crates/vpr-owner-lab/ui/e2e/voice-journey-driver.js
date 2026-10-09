@@ -90,6 +90,15 @@
       ),
       "first-audio-before-playback-complete",
     );
+    // Capture real progressing RTP while the simulated avatar is SPEAKING,
+    // not after the fixture has stopped feeding audio packets.
+    await waitForEvidence(
+      (snapshot) => snapshot.av_sync_samples?.filter(
+        (sample) => sample.request_sequence === 1
+          && sample.reference === "web_rtc_estimated_playout_timestamp",
+      ).length === 3,
+      "advancing-rtp-av-sync-before-playback-complete",
+    );
     finishPlayback();
     await waitForEvidence(
       (snapshot) =>

@@ -470,11 +470,21 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         });
     });
     if (candidates.length === 1) {
+        const only = candidates[0];
+        const previous = previousPackets?.get(only.id);
+        if (previousPackets !== null && (previous === undefined || only.packetsReceived <= previous)) {
+            return {
+                timestamp: null,
+                packetCounts,
+                issue: "no_unique_active_stream",
+                diagnostic: `${expectedKind}: sole RTP stream not advancing`,
+            };
+        }
         return {
-            timestamp: candidates[0]?.timestamp ?? null,
+            timestamp: only.timestamp,
             packetCounts,
             issue: null,
-            diagnostic: `${expectedKind}: one RTP timestamp candidate`,
+            diagnostic: `${expectedKind}: one advancing RTP timestamp candidate`,
         };
     }
     if (candidates.length > 1 && previousPackets) {
