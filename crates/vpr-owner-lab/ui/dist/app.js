@@ -268,7 +268,7 @@ const renderTelemetry = (snapshot) => {
     }
     metricPlayback.textContent = snapshot.canonical_playback_proven
         ? "подтверждён"
-        : voice && snapshot.media_events.some((event) => event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered") ? "не подтверждён" : voice ? "ожидание" : "—";
+        : voice && snapshot.media_events.some((event) => event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered") ? "конец слышимого звука обнаружен; подтверждения D-ID нет" : voice ? "ожидание" : "—";
     const usages = [
         ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
         ...snapshot.voice_attempts.flatMap((attempt) => [attempt.stt_usage, attempt.llm_usage]),
@@ -798,9 +798,12 @@ const monitorRemoteAudio = () => {
             && !voice.speaking
             && voice.playbackSilenceStartedAt !== null
             && !voice.playbackRecoveryTriggered
+            && !avatarAudio.muted && !video.muted
+            && voice.audibleDurationMillis >= 500
             && performance.now() - voice.playbackSilenceStartedAt
                 >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS) {
             voice.playbackRecoveryTriggered = true;
+            void postMediaEvidence("browser_audio_tail_observed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void postMediaEvidence("playback_recovery_triggered", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void interruptAvatar(false).then((recovered) => {
                 if (recovered) {
