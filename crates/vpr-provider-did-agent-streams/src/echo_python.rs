@@ -424,7 +424,7 @@ mod bounded_stop_tests {
             r#"#!/bin/sh
 while IFS= read -r line; do
   case "$line" in
-    *'"command":"open"'*) printf '{"id":0,"ok":true}\\n' ;;
+    *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
     *'"command":"interrupt"'*) while :; do :; done ;;
   esac
 done
