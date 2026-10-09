@@ -58,7 +58,6 @@ export const replayTextFrom = (sentences, index) => {
     const text = sentences.slice(index).join(" ").trim();
     return text.length > 0 && text.length <= 16_000 ? text : null;
 };
-
 export const resumeWordOffset = (reply, utf16Cursor) => {
     if (!Number.isInteger(utf16Cursor) || utf16Cursor < 0 || utf16Cursor >= reply.length)
         return null;
