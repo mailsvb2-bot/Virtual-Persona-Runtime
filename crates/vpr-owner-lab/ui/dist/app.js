@@ -529,6 +529,19 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         diagnostic: `${expectedKind}: ${candidates.length} RTP timestamp candidates awaiting unique activity`,
     };
 };
+// Receiving more RTP packets does not prove the browser's playout clock moved.
+// A frozen timestamp must not count toward the three strict RT0 A/V samples.
+const requireAdvancingPlayoutClock = (selected, previouslyAccepted, kind) => {
+    if (selected.timestamp === null || previouslyAccepted === null || selected.timestamp > previouslyAccepted) {
+        return selected;
+    }
+    return {
+        ...selected,
+        timestamp: null,
+        issue: "no_unique_active_stream",
+        diagnostic: `${kind}: RTP packets advanced but estimated playout clock stalled or reset`,
+    };
+};
 const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
     if (rt0EvidenceMode) {
         return {
@@ -583,8 +596,14 @@ const readAvSyncOffsetMillis = async (state) => {
         audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
         videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
     }
+    audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
+    videoSelection = requireAdvancingPlayoutClock(videoSelection, state.lastVideoPlayoutTimestamp, "video");
     state.audioPackets = audioSelection.packetCounts;
     state.videoPackets = videoSelection.packetCounts;
+    if (audioSelection.timestamp !== null)
+        state.lastAudioPlayoutTimestamp = audioSelection.timestamp;
+    if (videoSelection.timestamp !== null)
+        state.lastVideoPlayoutTimestamp = videoSelection.timestamp;
     if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
         return mediaElementAvSyncFallback(`${audioSelection.diagnostic}; ${videoSelection.diagnostic}`, audioSelection.issue, videoSelection.issue);
     }
@@ -602,6 +621,8 @@ const collectAvSyncEvidence = async (requestSequence) => {
     const readState = {
         audioPackets: null,
         videoPackets: null,
+        lastAudioPlayoutTimestamp: null,
+        lastVideoPlayoutTimestamp: null,
     };
     let lastAudioIssue = "stats_unavailable";
     let lastVideoIssue = "stats_unavailable";
