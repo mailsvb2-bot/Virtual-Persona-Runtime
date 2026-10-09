@@ -484,7 +484,11 @@ fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_p
     assert!(!snapshot.voice_attempts[0].canonical_playback_confirmed);
     assert!(!snapshot.canonical_playback_proven);
     assert!(!snapshot.av_sync_proven);
-    assert!(!serde_json::to_string(&snapshot).unwrap().contains("приватный"));
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("приватный")
+    );
 
     // The diagnostic is scoped, unique and excludes later claims of completed proof.
     assert_eq!(
