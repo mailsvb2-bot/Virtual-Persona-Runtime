@@ -16,7 +16,9 @@ use super::{DidEchoBackend, cancelled, invalid_response, unavailable};
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(55);
 const SPEECH_TIMEOUT: Duration = Duration::from_secs(80);
-const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(5);
+// A missing vendor STOP receipt must never delay local safety fencing for five seconds.
+// Successful dispatch is not proof of remote audible playback completion.
+const INTERRUPT_TIMEOUT: Duration = Duration::from_millis(350);
 const MAX_PHRASE_BYTES: usize = 4096;
 const MAX_RECEIPT_BYTES: usize = 512;
 
@@ -85,7 +87,7 @@ struct Receipt {
 
 struct SessionWorker {
     child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    command_tx: mpsc::SyncSender<Vec<u8>>,
     pending: Arc<Mutex<HashMap<u64, mpsc::SyncSender<bool>>>>,
     next_id: AtomicU64,
     stopped: AtomicBool,
@@ -120,9 +122,21 @@ impl SessionWorker {
         let pending: Arc<Mutex<HashMap<u64, mpsc::SyncSender<bool>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let disconnected = Arc::new(AtomicBool::new(false));
+        // Only the dedicated writer owns the blocking OS pipe. STOP never waits
+        // for a stalled speak to acquire a stdin mutex: all producers enqueue
+        // bounded commands without blocking, and can kill the child independently.
+        let (command_tx, commands) = mpsc::sync_channel::<Vec<u8>>(16);
+        thread::spawn(move || {
+            let mut stdin: ChildStdin = stdin;
+            while let Ok(message) = commands.recv() {
+                if stdin.write_all(&message).and_then(|()| stdin.flush()).is_err() {
+                    break;
+                }
+            }
+        });
         let worker = Arc::new(Self {
             child: Mutex::new(child),
-            stdin: Mutex::new(stdin),
+            command_tx,
             pending: Arc::clone(&pending),
             next_id: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
@@ -182,29 +196,22 @@ impl SessionWorker {
     ) -> Result<(), ProviderError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (sender, receiver) = mpsc::sync_channel(1);
+        if self.disconnected.load(Ordering::Acquire)
+            || (!allow_stopped && self.stopped.load(Ordering::Acquire))
+            || cancellation.is_some_and(CancellationProbe::is_cancelled)
         {
-            let mut stdin = self.stdin.lock().map_err(|_| unavailable())?;
-            if self.disconnected.load(Ordering::Acquire)
-                || (!allow_stopped && self.stopped.load(Ordering::Acquire))
-                || cancellation.is_some_and(CancellationProbe::is_cancelled)
-            {
-                return Err(cancelled());
-            }
-            payload["id"] = json!(id);
-            let mut encoded = serde_json::to_vec(&payload).map_err(|_| invalid_response())?;
-            encoded.push(b'\n');
-            self.pending
-                .lock()
-                .map_err(|_| unavailable())?
-                .insert(id, sender);
-            if stdin
-                .write_all(&encoded)
-                .and_then(|()| stdin.flush())
-                .is_err()
-            {
-                let _ = self.pending.lock().map(|mut pending| pending.remove(&id));
-                return Err(unavailable());
-            }
+            return Err(cancelled());
+        }
+        payload["id"] = json!(id);
+        let mut encoded = serde_json::to_vec(&payload).map_err(|_| invalid_response())?;
+        encoded.push(b'\n');
+        self.pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .insert(id, sender);
+        if self.command_tx.try_send(encoded).is_err() {
+            let _ = self.pending.lock().map(|mut pending| pending.remove(&id));
+            return Err(unavailable());
         }
         let deadline = Instant::now() + timeout;
         loop {
@@ -325,12 +332,20 @@ impl DidEchoBackend for EchoPythonBackend {
     }
 
     fn interrupt(&self, session_id: &str) -> Result<(), ProviderError> {
-        self.worker(session_id)?.request(
+        let worker = self.worker(session_id)?;
+        let result = worker.request(
             json!({"command": "interrupt"}),
             INTERRUPT_TIMEOUT,
             None,
             false,
-        )
+        );
+        if result.is_err() {
+            // A failed STOP is never followed by a still-authorized publisher.
+            worker.stopped.store(true, Ordering::Release);
+            let _ = worker.terminate();
+            let _ = self.sessions.lock().map(|mut sessions| sessions.remove(session_id));
+        }
+        result
     }
 
     fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
@@ -344,6 +359,8 @@ impl DidEchoBackend for EchoPythonBackend {
             None,
             true,
         );
+        // Even on timeout or a disconnected pipe, terminate the only private
+        // publisher. Never return success when the interrupt receipt was absent.
         let terminated = worker.terminate();
         if terminated.is_ok() {
             self.sessions
