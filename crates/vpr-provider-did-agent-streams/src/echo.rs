@@ -84,6 +84,19 @@ impl DidEchoRegistry {
         Ok(())
     }
 
+    /// Sends no audio. Only registered private Echo sender sessions may STOP.
+    pub(crate) fn interrupt_session(
+        &self,
+        backend: Option<&dyn DidEchoBackend>,
+        id: &str,
+    ) -> Result<(), ProviderError> {
+        let backend = backend.ok_or_else(super::unavailable)?;
+        if !self.contains(id)? {
+            return Err(super::unavailable());
+        }
+        backend.interrupt(id)
+    }
+
     pub(crate) fn insert(&self, id: &str) -> Result<(), ProviderError> {
         let mut sessions = self
             .sessions
