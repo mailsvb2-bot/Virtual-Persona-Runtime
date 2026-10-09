@@ -92,7 +92,7 @@ impl VoiceSttInput {
                 // protocol/transport failures typed above, but classify an empty final result as
                 // INVALID_INPUT so the operator can retry without misdiagnosing the runtime.
                 let transcript = final_transcript
-                    .ok_or_else(|| terminalize_failed_turn(turn, LabError::InvalidInput))?;
+                    .ok_or_else(|| terminalize_failed_turn(turn, LabError::SpeechNotRecognized))?;
                 Ok((transcript, usage))
             }
             VoiceSttMode::Buffered(pcm) => {
