@@ -88,6 +88,8 @@ struct Receipt {
 struct SessionWorker {
     child: Mutex<Child>,
     command_tx: mpsc::SyncSender<Vec<u8>>,
+    // Protect only producer ordering and STOP fencing, never blocking pipe I/O.
+    enqueue_gate: Mutex<()>,
     pending: Arc<Mutex<HashMap<u64, mpsc::SyncSender<bool>>>>,
     next_id: AtomicU64,
     stopped: AtomicBool,
@@ -137,6 +139,7 @@ impl SessionWorker {
         let worker = Arc::new(Self {
             child: Mutex::new(child),
             command_tx,
+            enqueue_gate: Mutex::new(()),
             pending: Arc::clone(&pending),
             next_id: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
@@ -196,22 +199,25 @@ impl SessionWorker {
     ) -> Result<(), ProviderError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (sender, receiver) = mpsc::sync_channel(1);
-        if self.disconnected.load(Ordering::Acquire)
-            || (!allow_stopped && self.stopped.load(Ordering::Acquire))
-            || cancellation.is_some_and(CancellationProbe::is_cancelled)
         {
-            return Err(cancelled());
-        }
-        payload["id"] = json!(id);
-        let mut encoded = serde_json::to_vec(&payload).map_err(|_| invalid_response())?;
-        encoded.push(b'\n');
-        self.pending
-            .lock()
-            .map_err(|_| unavailable())?
-            .insert(id, sender);
-        if self.command_tx.try_send(encoded).is_err() {
-            let _ = self.pending.lock().map(|mut pending| pending.remove(&id));
-            return Err(unavailable());
+            let _enqueue = self.enqueue_gate.lock().map_err(|_| unavailable())?;
+            if self.disconnected.load(Ordering::Acquire)
+                || (!allow_stopped && self.stopped.load(Ordering::Acquire))
+                || cancellation.is_some_and(CancellationProbe::is_cancelled)
+            {
+                return Err(cancelled());
+            }
+            payload["id"] = json!(id);
+            let mut encoded = serde_json::to_vec(&payload).map_err(|_| invalid_response())?;
+            encoded.push(b'\n');
+            self.pending
+                .lock()
+                .map_err(|_| unavailable())?
+                .insert(id, sender);
+            if self.command_tx.try_send(encoded).is_err() {
+                let _ = self.pending.lock().map(|mut pending| pending.remove(&id));
+                return Err(unavailable());
+            }
         }
         let deadline = Instant::now() + timeout;
         loop {
@@ -231,8 +237,14 @@ impl SessionWorker {
         }
     }
 
-    fn terminate(&self) -> Result<(), ProviderError> {
+    fn mark_stopped(&self) -> Result<(), ProviderError> {
+        let _enqueue = self.enqueue_gate.lock().map_err(|_| unavailable())?;
         self.stopped.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    fn terminate(&self) -> Result<(), ProviderError> {
+        self.mark_stopped()?;
         let mut child = self.child.lock().map_err(|_| unavailable())?;
         if child.try_wait().map_err(|_| unavailable())?.is_none() {
             child.kill().map_err(|_| unavailable())?;
@@ -341,7 +353,7 @@ impl DidEchoBackend for EchoPythonBackend {
         );
         if result.is_err() {
             // A failed STOP is never followed by a still-authorized publisher.
-            worker.stopped.store(true, Ordering::Release);
+            let _ = worker.mark_stopped();
             let _ = worker.terminate();
             let _ = self.sessions.lock().map(|mut sessions| sessions.remove(session_id));
         }
@@ -350,7 +362,7 @@ impl DidEchoBackend for EchoPythonBackend {
 
     fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
-        worker.stopped.store(true, Ordering::Release);
+        worker.mark_stopped()?;
         // STOP must clear already queued avatar speech, not merely disconnect
         // the private publisher and leave D-ID playing its queued audio.
         let interrupted = worker.request(
