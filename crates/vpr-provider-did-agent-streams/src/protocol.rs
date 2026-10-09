@@ -28,19 +28,6 @@ pub(super) struct CreateV2SessionResponse {
     pub(super) echo_token: Option<String>,
 }
 
-#[derive(Serialize)]
-pub(super) struct LiveKitSpeakRequest<'a> {
-    pub(super) script: LiveKitSpeakScript<'a>,
-}
-
-#[derive(Serialize)]
-pub(super) struct LiveKitSpeakScript<'a> {
-    #[serde(rename = "type")]
-    pub(super) kind: &'static str,
-    pub(super) input: &'a str,
-    pub(super) should_queue_speaks: bool,
-}
-
 #[derive(Deserialize)]
 struct LiveKitEvent {
     subject: Option<String>,
