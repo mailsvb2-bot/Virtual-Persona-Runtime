@@ -48,10 +48,16 @@ pub(crate) struct DidEchoRegistry {
 
 impl DidEchoRegistry {
     pub(crate) fn insert(&self, id: &str) -> Result<(), ProviderError> {
-        self.sessions
+        let mut sessions = self
+            .sessions
             .lock()
-            .map_err(|_| super::invalid_response())?
-            .insert(id.to_owned());
+            .map_err(|_| super::invalid_response())?;
+        // Every Echo session has its own distinct private publisher grant.
+        // Duplicate vendor session identities must never silently re-use one.
+        if id.is_empty() || sessions.len() >= 256 || sessions.contains(id) {
+            return Err(super::invalid_response());
+        }
+        sessions.insert(id.to_owned());
         Ok(())
     }
 
