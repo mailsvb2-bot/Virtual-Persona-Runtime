@@ -293,6 +293,16 @@ impl DidAgentStreamsAvatar {
                 self.echo_sessions.remove(&session.provider_session_id)?;
                 return Err(error);
             }
+            // Cancellation can win while the backend LiveKit publisher is
+            // connecting. Do not expose its viewer session or leave its audio
+            // sender running after the canonical start has been withdrawn.
+            if let Err(cancel_error) = Self::ensure_active(cancellation) {
+                let cleanup = backend.stop(&session.provider_session_id);
+                self.echo_sessions.remove(&session.provider_session_id)?;
+                // A failed stop is a real provider-cleanup failure; never
+                // report the cancelled session as safely shut down.
+                return Err(cleanup.err().unwrap_or(cancel_error));
+            }
             Ok(session)
         } else {
             body.try_into()
