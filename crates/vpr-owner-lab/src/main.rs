@@ -332,7 +332,7 @@ fn route_request(
     }
 }
 
-fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpResponse {
+fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
