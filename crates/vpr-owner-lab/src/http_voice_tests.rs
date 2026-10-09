@@ -12,7 +12,7 @@ fn segment(sequence: u64) -> VoiceStreamEvent {
 }
 
 #[test]
-fn abandoned_terminal_stream_is_evicted_before_next_request() {
+fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
     let registry = VoiceStreamRegistry::default();
     assert!(registry.begin(1));
     registry.finish(
@@ -24,7 +24,9 @@ fn abandoned_terminal_stream_is_evicted_before_next_request() {
     );
 
     assert!(registry.begin(2));
-    assert!(registry.wait_events(1).is_none());
+    let old = registry.wait_events(1).expect("old terminal must remain readable");
+    assert!(old.terminal);
+    assert_eq!(old.events.len(), 1);
     assert!(!registry.begin(3));
 
     registry.finish(
@@ -114,16 +116,47 @@ fn terminal_handoff_releases_voice_gate_only_once_even_after_next_turn_starts() 
 
     // A new request may now own the same atomic bit; dropping the OLD guard
     // must not unlock or reset cancellation for the NEW owner.
-    assert!(busy
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok());
+    assert!(
+        busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    );
     cancelled.store(true, Ordering::Release);
     drop(old_guard);
     assert!(busy.load(Ordering::Acquire));
     assert!(cancelled.load(Ordering::Acquire));
 
-    let terminal = registry.wait_events(1).expect("old terminal remains consumable");
+    let terminal = registry
+        .wait_events(1)
+        .expect("old terminal remains consumable");
     assert!(terminal.terminal);
     assert_eq!(terminal.events.len(), 1);
-    assert!(registry.begin(2), "new stream may start after atomic handoff");
+    assert!(
+        registry.begin(2),
+        "new stream may start after atomic handoff"
+    );
+}
+
+#[test]
+fn two_unconsumed_terminal_events_apply_backpressure_without_evidence_loss() {
+    let registry = VoiceStreamRegistry::default();
+    assert!(registry.begin(1));
+    registry.finish(
+        1,
+        VoiceStreamEvent::Failed {
+            code: "PROVIDER_TIMEOUT".into(),
+            diagnostic: None,
+        },
+    );
+    assert!(registry.begin(2));
+    registry.finish(
+        2,
+        VoiceStreamEvent::Failed {
+            code: "TURN_CANCELLED".into(),
+            diagnostic: None,
+        },
+    );
+    assert!(!registry.begin(3), "must not discard an unconsumed terminal event");
+    assert!(registry.wait_events(1).expect("first reply").terminal);
+    assert!(registry.begin(3), "a consumed terminal slot is immediately reusable");
+    assert!(registry.wait_events(2).expect("second reply").terminal);
 }
