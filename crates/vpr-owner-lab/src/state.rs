@@ -113,6 +113,8 @@ pub enum LabError {
     EgressDisabled,
     ConsentRequired,
     InvalidInput,
+    /// STT finished normally without a usable final transcript.
+    SpeechNotRecognized,
     InvalidState,
     Runtime(Rt0ReasonCode),
     Provider(Rt0ReasonCode),
@@ -126,7 +128,7 @@ impl LabError {
         match self {
             Self::EgressDisabled => "EGRESS_DENIED",
             Self::ConsentRequired => "CONSENT_REQUIRED",
-            Self::InvalidInput => "INVALID_INPUT",
+            Self::InvalidInput | Self::SpeechNotRecognized => "INVALID_INPUT",
             Self::InvalidState => "INVALID_STATE_TRANSITION",
             Self::Runtime(reason) | Self::Provider(reason) => reason.as_str(),
             Self::PersistenceFailed => "PERSONA_PERSISTENCE_FAILED",
