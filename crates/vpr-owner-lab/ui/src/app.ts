@@ -2256,7 +2256,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
           voiceCommandScheduler.interrupt();
           rt0PlaybackPending = false;
           updateControls();
-          await api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
+          await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest()).catch(() => undefined);
         }
         if (activeVoiceEvidence?.requestSequence === requestSequence) {
           setStatus(deliveryFailure.message, "error");
@@ -2425,10 +2425,18 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
 
   try {
     if (providerStopRequired && !clientReady) {
-      throw new Error("PROVIDER_STOP_UNAVAILABLE");
+      // Echo's viewer never publishes did.interrupt. An independent
+      // server-owned STOP can run while STT/LLM holds the engine mutex.
+      // A missing/failed server STOP throws and triggers fail-closed revoke.
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
+      rt0PlaybackPending = false;
+      sessionState.setPlaybackId(null);
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
     }
     const canonicalStop = voiceRequestInFlight
-      ? api<{ ok: true }>("/api/avatar/interrupt", {})
+      ? api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest())
       : null;
     // STOP and canonical cancellation run concurrently for interrupt latency.
     // If provider STOP rejects first, the pending cancellation promise still
@@ -2459,7 +2467,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       return true;
     }
     if (!voiceRequestInFlight) {
-      await api<{ ok: true }>("/api/avatar/interrupt", {});
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
       updateControls();
       await refreshSessionEvidence();
