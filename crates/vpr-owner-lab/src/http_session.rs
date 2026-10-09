@@ -177,7 +177,7 @@ fn complete_deferred_session(
     Ok(())
 }
 
-fn finish_after_quiescence(state: Arc<AppState>, close: bool, expected_generation: u64) {
+fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u64) {
     // A single request can time out after the canonical authority has already
     // been revoked. Finish only when the voice worker has released its output
     // stream. Do not evict a live stream or claim provider cleanup succeeded.
@@ -207,7 +207,7 @@ fn end_session(
     if !state.voice_streams.wait_until_quiescent() {
         let worker_state = Arc::clone(state);
         thread::spawn(move || {
-            finish_after_quiescence(worker_state, close, expected_generation);
+            finish_after_quiescence(&worker_state, close, expected_generation);
         });
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
     }
