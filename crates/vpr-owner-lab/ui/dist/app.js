@@ -2092,8 +2092,18 @@ const resumeInterruptedAnswer = async () => {
 const endSession = async (kind) => {
     broadcastSessionEgressFence();
     closePeerTransport();
-    const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
-    if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
+    let fenceError = null;
+    if (kind === "close") {
+        try {
+            await api("/api/session/fence", sessionEndRequest());
+        }
+        catch (error) {
+            fenceError = error instanceof Error ? error : new Error("CANONICAL_FENCE_FAILED");
+        }
+    }
+    const connectionEvidenceError = kind === "revoke"
+        ? null : fenceError ?? await tryFlushConnectionMediaEvidence();
+    if (kind === "close" && !fenceError && rt0EvidenceMode && pendingAvSyncEvidence) {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
