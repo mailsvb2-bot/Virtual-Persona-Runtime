@@ -118,9 +118,14 @@ fn browser_silence_is_diagnostic_only_and_does_not_fake_provider_ack() {
     assert!(APP.contains("voice.audibleDurationMillis >= 500"));
     let tail = APP.find("browser_audio_tail_observed").unwrap();
     let trigger = APP.find("voice.playbackRecoveryTriggered = true").unwrap();
-    let post = APP[trigger..].find("postMediaEvidence(\"browser_audio_tail_observed\"").unwrap();
+    let post = APP[trigger..]
+        .find("postMediaEvidence(\"browser_audio_tail_observed\"")
+        .unwrap();
     assert!(tail > 0 && post > 0);
-    assert!(APP.contains("providerPlaybackDone"), "canonical ACK must remain distinct");
+    assert!(
+        APP.contains("providerPlaybackDone"),
+        "canonical ACK must remain distinct"
+    );
 }
 
 #[test]
@@ -134,6 +139,9 @@ fn av_sync_tries_native_receiver_without_synthesizing_timestamps() {
         "estimatedPlayoutTimestamp",
         "strict-rt0=rtp-playout-timestamp-only",
     ] {
-        assert!(APP.contains(marker), "real AV stats fallback missing: {marker}");
+        assert!(
+            APP.contains(marker),
+            "real AV stats fallback missing: {marker}"
+        );
     }
 }
