@@ -144,6 +144,13 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             }
         }
     };
+    // begin_voice_input can wait for a slow engine operation. Its original
+    // authorization epoch may have been revoked while this handler waited.
+    // Never register a newly returned microphone input in another session.
+    if let Err(response) = http_evidence::require_voice_session_sequence(state, session_sequence) {
+        let _ = fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
+        return response;
+    }
     if let Err(input) = state
         .voice_inputs
         .begin(session_sequence, request_sequence, input)
