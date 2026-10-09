@@ -37,6 +37,7 @@ OWNER_LAB_MAIN = ROOT / "crates" / "vpr-owner-lab" / "src" / "main.rs"
 SESSION_EVIDENCE = ROOT / "crates" / "vpr-evaluation" / "src" / "session_evidence.rs"
 RT0_RELEASE_SPEC = ROOT / "docs" / "releases" / "RT0_RELEASE_SPEC.md"
 HTTP_CLIENT_CONTROL = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_client_control.rs"
+HTTP_SESSION = ROOT / "crates" / "vpr-owner-lab" / "src" / "http_session.rs"
 VOICE_STREAMING_TESTS = ROOT / "crates" / "vpr-owner-lab" / "src" / "state" / "voice_streaming_tests.rs"
 VOICE_STATE_TESTS = ROOT / "crates" / "vpr-owner-lab" / "src" / "state" / "voice_tests.rs"
 
@@ -75,6 +76,13 @@ owner_lab_main = OWNER_LAB_MAIN.read_text(encoding="utf-8")
 session_evidence = SESSION_EVIDENCE.read_text(encoding="utf-8")
 rt0_release_spec = RT0_RELEASE_SPEC.read_text(encoding="utf-8")
 http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
+http_session = HTTP_SESSION.read_text(encoding="utf-8")
+# A provider or LLM worker may miss the bounded cancellation deadline.
+# The timeout response MUST NOT leave canonical authorization active.
+if "engine.revoke()" not in http_session or "wait_until_quiescent()" not in http_session:
+    raise SystemExit("RT0 session teardown lacks canonical revoke/quiescence ordering")
+if http_session.index("engine.revoke()") > http_session.index("wait_until_quiescent()"):
+    raise SystemExit("RT0 timeout can leave canonical provider authority active")
 voice_streaming_tests = VOICE_STREAMING_TESTS.read_text(encoding="utf-8")
 voice_state_tests = VOICE_STATE_TESTS.read_text(encoding="utf-8")
 
