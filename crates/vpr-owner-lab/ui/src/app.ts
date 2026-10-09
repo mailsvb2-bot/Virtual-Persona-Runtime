@@ -2550,11 +2550,24 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
   // Stop media on Close as well: waiting for evidence must not prolong speech.
   broadcastSessionEgressFence();
   closePeerTransport();
-  const connectionEvidenceError = kind === "revoke" ? null : await tryFlushConnectionMediaEvidence();
+  // Revoke canonical authority and remote provider before any potentially
+  // stalled media-evidence flush. Fence does not seal the recorder, so already
+  // observed connection diagnostics can still be submitted before final Close.
+  let fenceError: Error | null = null;
+  if (kind === "close") {
+    try {
+      await api<{ ok: true }>("/api/session/fence", sessionEndRequest());
+    } catch (error) {
+      fenceError = error instanceof Error ? error : new Error("CANONICAL_FENCE_FAILED");
+    }
+  }
+  // If fencing failed, never wait for evidence before retrying terminal Close.
+  const connectionEvidenceError = kind === "revoke"
+    ? null : fenceError ?? await tryFlushConnectionMediaEvidence();
   // Failed evidence writing must not turn Close into a silently ACTIVE
   // remote D-ID session. Complete canonical teardown and visibly report the
   // missing proof instead of treating it as a successful RT0 measurement.
-  if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
+  if (kind === "close" && !fenceError && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
   }
