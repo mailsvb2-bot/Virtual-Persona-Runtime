@@ -19,13 +19,9 @@ const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_RETAINED_VOICE_STREAMS: usize = 1;
 const MAX_PENDING_VOICE_STREAM_EVENTS: usize = 64;
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum VoiceStreamEvent {
-    Segment { segment: LabVoiceSegment },
-    Complete { result: Box<LabVoiceResult> },
-    Failed { code: String, diagnostic: Option<String> },
-}
+#[path = "http_voice_event.rs"]
+mod voice_event;
+use voice_event::VoiceStreamEvent;
 
 #[derive(Default)]
 struct VoiceStreamState {
