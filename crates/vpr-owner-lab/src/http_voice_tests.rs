@@ -1,4 +1,5 @@
 use super::*;
+use vpr_owner_lab::LabVoiceSegment;
 
 fn segment(sequence: u64) -> VoiceStreamEvent {
     VoiceStreamEvent::Segment {
