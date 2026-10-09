@@ -171,8 +171,8 @@ class EchoWorkerTests(unittest.TestCase):
             False, records=records, delay_before_close=0.25,
         )
         self.assertEqual(len(trace["stream_options"]), 1)
-        self.assertIn(b"Первый ответ", b"".join(trace["audio"]))
-        self.assertNotIn(b"Второй ответ", b"".join(trace["audio"]))
+        self.assertIn("Первый ответ".encode("utf-8"), b"".join(trace["audio"]))
+        self.assertNotIn("Второй ответ".encode("utf-8"), b"".join(trace["audio"]))
         self.assertEqual(
             sorted(item["ok"] for item in receipts if item["id"] == 7),
             [False, True],
