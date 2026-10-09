@@ -2546,6 +2546,13 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
+  // A stale tab with no known canonical generation must not issue an
+  // unscoped legacy revoke/close that could terminate another owner's turn.
+  if (!sessionEndRequest().expected_session_sequence) {
+    closePeerTransport();
+    setStatus("SESSION_GENERATION_UNKNOWN: завершение отклонено для защиты другой сессии", "error");
+    return;
+  }
   // Tell every same-origin tab to fence its publisher BEFORE any await.
   // Stop media on Close as well: waiting for evidence must not prolong speech.
   broadcastSessionEgressFence();
