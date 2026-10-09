@@ -1,12 +1,12 @@
 use std::env;
 
-mod avatar_selection;
 mod avatar_factory;
+mod avatar_selection;
 mod provider_state;
+use avatar_factory::build_avatar;
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
-use avatar_factory::build_avatar;
 use sha2::{Digest, Sha256};
 
 use crate::provider_credentials::ProviderCredentialProfile;
