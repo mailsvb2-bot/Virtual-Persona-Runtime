@@ -99,6 +99,17 @@ fn fence_authority(
         .revoke_authority()
         .map_err(|code| lab_error_response(&LabError::Runtime(code)))?;
     request_voice_cancel(state);
+    // When the engine is idle, also complete the normal remote-provider cleanup
+    // immediately. This preserves the existing /fence user-visible "revoked"
+    // state while keeping the busy-worker path strictly NON-BLOCKING: authority
+    // has already been withdrawn even if the provider is still unwinding.
+    match state.engine.try_lock() {
+        Ok(mut engine) => engine.revoke().map_err(|error| lab_error_response(&error))?,
+        Err(std::sync::TryLockError::WouldBlock) => {}
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            return Err(error_response(500, "INTERNAL_ERROR"));
+        }
+    }
     Ok(())
 }
 
