@@ -25,6 +25,39 @@ pub fn request_sequence(request: &Request) -> Result<u64, LabEvidenceError> {
         .ok_or(LabEvidenceError::InvalidInput)
 }
 
+/// Require an exact browser-observed session generation on all voice I/O.
+/// A request sequence is only unique within one session; it cannot authorize
+/// upload, cancellation or event consumption after a new session starts.
+pub fn require_active_voice_session(
+    request: &Request,
+    state: &AppState,
+) -> Result<u64, HttpResponse> {
+    let sequence = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("X-VPR-Session-Sequence"))
+        .map(|header| header.value.as_str())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| error_response(400, "INVALID_INPUT"))?;
+    require_voice_session_sequence(state, sequence)?;
+    Ok(sequence)
+}
+
+/// Verifies the epoch a second time after potentially blocking I/O.
+pub fn require_voice_session_sequence(
+    state: &AppState,
+    sequence: u64,
+) -> Result<(), HttpResponse> {
+    if sequence == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != sequence
+        || state.session_end_requested.load(Ordering::Acquire)
+    {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    Ok(())
+}
+
 pub fn snapshot(
     recorder: &Mutex<LabSessionEvidenceRecorder>,
 ) -> Result<LabSessionEvidenceSnapshot, LabEvidenceError> {
