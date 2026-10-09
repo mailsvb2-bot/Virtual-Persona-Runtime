@@ -444,10 +444,24 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
     assert_eq!(still_active_json["session_state"], "active");
     assert_eq!(still_active_json["avatar_open"], true);
 
-    assert_eq!(
-        post(port, host, csrf, "/api/session/revoke", "{}").status,
-        200
+    let started: Value = serde_json::from_str(&start.body).unwrap();
+    let sequence = started["evidence_session_sequence"].as_u64().unwrap();
+    let stale = post(
+        port,
+        host,
+        csrf,
+        "/api/session/fence",
+        &format!(r#"{{"expected_session_sequence":{}}}"#, sequence + 1),
     );
+    assert_eq!(stale.status, 409);
+    let fence = post(
+        port,
+        host,
+        csrf,
+        "/api/session/fence",
+        &format!(r#"{{"expected_session_sequence":{sequence}}}"#),
+    );
+    assert_eq!(fence.status, 200, "{}", fence.body);
 
     let after_revoke = post(port, host, csrf, "/api/avatar/speak", r#"{"text":"late"}"#);
     assert_eq!(after_revoke.status, 409);
@@ -458,10 +472,19 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
     let status_json: Value = serde_json::from_str(&status.body).unwrap();
     assert_eq!(status_json["session_state"], "revoked");
     assert_eq!(status_json["avatar_open"], false);
+
+    // Fence rejects new provider execution but leaves evidence open until Close.
+    let diagnostic = format!(
+        r#"{{"session_sequence":{sequence},"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":1}}"#
+    );
+    let recorded = post(port, host, csrf, "/api/evidence/media", &diagnostic);
+    assert_eq!(recorded.status, 200, "{}", recorded.body);
     assert_eq!(
         post(port, host, csrf, "/api/session/close", "{}").status,
         200
     );
+    let after_close = post(port, host, csrf, "/api/evidence/media", &diagnostic);
+    assert_eq!(after_close.status, 409);
 }
 
 fn assert_provider_sequence(captured: &mpsc::Receiver<String>) {
