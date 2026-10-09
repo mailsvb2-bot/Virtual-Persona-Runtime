@@ -38,7 +38,9 @@ pub(super) fn register_started_session(
     if state.session_end_requested.load(Ordering::Acquire) {
         // The start may have been executing against the provider when the
         // user revoked. Do not return an active transport/token to that caller.
+        drop(registered);
         let _ = engine.revoke();
+        state.session_end_requested.store(false, Ordering::Release);
         return Err(LabError::InvalidState);
     }
     *registered = Some(engine.session_revocation_handle().ok_or(LabError::InvalidState)?);
@@ -56,7 +58,12 @@ pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse,
     };
     let Some(revoker) = revoker else {
         // No active session has registered any canonical authority.
-        state.session_end_requested.store(false, Ordering::Release);
+        // If a concurrent start is opening the provider, its engine mutex is
+        // busy; keep the fence set until registration rejects that new session.
+        // Only clear the fence when no start/worker holds the engine.
+        if state.engine.try_lock().is_ok() {
+            state.session_end_requested.store(false, Ordering::Release);
+        }
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     };
     // This is the actual shared runtime authorization owner, not an HTTP-only
