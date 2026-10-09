@@ -515,35 +515,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
 
     fn prepare_client_text(
         &self,
-        session: &RealtimeAvatarSession,
-        text: &str,
-        cancellation: &dyn CancellationProbe,
+        _session: &RealtimeAvatarSession,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        Self::validate_session(session)?;
-        let text = text.trim();
-        if text.is_empty() {
-            return Err(invalid_response());
-        }
-        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
-            || self.echo_backend.is_some()
-        {
-            return Err(unavailable());
-        }
-        let payload = serde_json::to_string(&LiveKitSpeakRequest {
-            script: LiveKitSpeakScript {
-                kind: "text",
-                input: text,
-                should_queue_speaks: true,
-            },
-        })
-        .map_err(|_| invalid_response())?;
-        Ok(RealtimeAvatarClientCommand {
-            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
-                topic: "did.speak".to_owned(),
-            },
-            payload,
-        })
+        // No browser did.speak: cross-tab revocation cannot atomically
+        // invalidate a queued LiveKit data publish from an existing viewer.
+        Err(policy_denied())
     }
 
     fn prepare_client_interrupt(
