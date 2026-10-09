@@ -81,6 +81,7 @@ type MediaEvidenceKind =
   | "provider_event_parse_failed"
   | "provider_playback_done_received"
   | "playback_recovery_triggered"
+  | "browser_audio_tail_observed"
   | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
@@ -492,7 +493,7 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
     ? "подтверждён"
     : voice && snapshot.media_events.some((event) =>
       event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered"
-    ) ? "не подтверждён" : voice ? "ожидание" : "—";
+    ) ? "конец слышимого звука обнаружен; подтверждения D-ID нет" : voice ? "ожидание" : "—";
 
   const usages: Array<UsageEvidence | null> = [
     ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
@@ -1096,10 +1097,16 @@ const monitorRemoteAudio = (): void => {
       && !voice.speaking
       && voice.playbackSilenceStartedAt !== null
       && !voice.playbackRecoveryTriggered
+      && !avatarAudio.muted && !video.muted
+      && voice.audibleDurationMillis >= 500
       && performance.now() - voice.playbackSilenceStartedAt
         >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS
     ) {
       voice.playbackRecoveryTriggered = true;
+      // Real decoded audio was observed, then at least three seconds of silence.
+      // This is browser OBSERVATION only; it is never a provider playback ACK.
+      void postMediaEvidence("browser_audio_tail_observed",
+        performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
       void postMediaEvidence(
         "playback_recovery_triggered",
         performance.now() - voice.startedAt,
