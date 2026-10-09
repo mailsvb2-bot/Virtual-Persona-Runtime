@@ -171,10 +171,10 @@ test("Expressive without a backend Echo sender is denied before viewer credentia
   const state = await status.json() as { session_state: string; avatar_open: boolean };
   expect(state.avatar_open).toBe(false);
   await page.goto("/");
-  const controls = await page.evaluate(() =>
-    (window as typeof window & { __vprLiveKitCommands?: Array<{ topic: string }> })
-      .__vprLiveKitCommands ?? []);
-  expect(controls.filter((cmd) => cmd.topic === "did.speak")).toHaveLength(0);
+  // The browser must not obtain a speech-publishing LiveKit session.
+  // Verify observable UI state rather than invoking renderer internals.
+  await expect(page.locator("#status")).toContainText("EGRESS_DENIED");
+  await expect(page.locator("#voice")).toBeDisabled();
 });
 
 test("Expressive LiveKit generation-only events never grant canonical playback", async ({
