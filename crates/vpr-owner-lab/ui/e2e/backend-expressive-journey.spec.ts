@@ -151,6 +151,7 @@ test.afterEach(async ({ request }) => {
 // The fixture launches a real server-owned Echo worker with a hermetic
 // LiveKit transport. The browser must receive only a viewer token.
 test("Expressive Echo keeps its sender credentials private", async ({
+  page,
   request,
 }) => {
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
@@ -177,6 +178,8 @@ test("Expressive Echo keeps its sender credentials private", async ({
     session_state: "active",
     avatar_open: true,
   });
+  // Exercise a genuine browser navigation without post-navigation renderer RPC.
+  await page.goto("/");
 });
 
 // Echo speech is published from the actual backend Python process; observe
