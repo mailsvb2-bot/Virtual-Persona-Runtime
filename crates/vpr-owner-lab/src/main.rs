@@ -11,14 +11,12 @@ mod http_session;
 mod http_text;
 mod http_voice;
 mod launch;
-
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-
 use http_json::{parse_empty_json, parse_json, read_body};
 use http_session::reject_if_session_ending;
 use parking_lot::Mutex as ParkingMutex;
@@ -32,7 +30,6 @@ use vpr_owner_lab::{
     restore_reviewed_persona,
 };
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
-
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
@@ -54,7 +51,6 @@ const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 type HttpResponse = Response<Cursor<Vec<u8>>>;
-
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
     rt0_evidence_mode: bool,
@@ -75,14 +71,12 @@ struct AppState {
     csrf_token: String,
     port: u16,
 }
-
 #[derive(Serialize)]
 struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
     rt0_evidence_mode: bool,
 }
-
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
     ok: bool,
