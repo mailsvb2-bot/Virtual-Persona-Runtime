@@ -11,8 +11,10 @@ const from = source.indexOf("const selectPlayoutTimestamp = ");
 const to = source.indexOf("const mediaElementAvSyncFallback = ", from);
 assert.ok(from >= 0 && to > from, "RT0 RTP selector must exist in shipped app.js");
 const sandbox = {};
-vm.runInNewContext(source.slice(from, to) + "\nthis.select = selectPlayoutTimestamp;", sandbox);
+vm.runInNewContext(source.slice(from, to)
+  + "\nthis.select = selectPlayoutTimestamp; this.requireProgress = requireAdvancingPlayoutClock;", sandbox);
 const select = sandbox.select;
+const requireProgress = sandbox.requireProgress;
 
 const report = (...items) => new Map(items.map((s) => [s.id, { type: "inbound-rtp", kind: "audio", ...s }]));
 
@@ -24,6 +26,28 @@ test("one live RTP stream requires advancing packets for every subsequent sample
   assert.equal(stalled.issue, "no_unique_active_stream");
   const advanced = select(report({ id: "rtp1", packetsReceived: 11, estimatedPlayoutTimestamp: 1250 }), "audio", stalled.packetCounts);
   assert.equal(advanced.timestamp, 1250);
+});
+
+
+test("advancing RTP packets with a frozen playout clock cannot prove another A/V sample", () => {
+  const initial = select(report({ id: "audio", packetsReceived: 10, estimatedPlayoutTimestamp: 5000 }), "audio", null);
+  assert.equal(requireProgress(initial, null, "audio").timestamp, 5000);
+  const morePackets = select(report({ id: "audio", packetsReceived: 20, estimatedPlayoutTimestamp: 5000 }), "audio", initial.packetCounts);
+  assert.equal(morePackets.timestamp, 5000, "packet counter by itself looks active");
+  const frozenClock = requireProgress(morePackets, 5000, "audio");
+  assert.equal(frozenClock.timestamp, null, "strict A/V sample must be rejected");
+  assert.equal(frozenClock.issue, "no_unique_active_stream");
+  assert.match(frozenClock.diagnostic, /playout clock stalled/);
+  const next = select(report({ id: "audio", packetsReceived: 30, estimatedPlayoutTimestamp: 5150 }), "audio", morePackets.packetCounts);
+  assert.equal(requireProgress(next, 5000, "audio").timestamp, 5150);
+});
+
+test("RTP clock resetting backwards fails closed even with newer packets", () => {
+  const first = select(report({ id: "video", kind: "video", packetsReceived: 14, estimatedPlayoutTimestamp: 9000 }), "video", null);
+  const rollback = select(report({ id: "video", kind: "video", packetsReceived: 23, estimatedPlayoutTimestamp: 8900 }), "video", first.packetCounts);
+  const rejected = requireProgress(rollback, 9000, "video");
+  assert.equal(rejected.timestamp, null);
+  assert.equal(rejected.issue, "no_unique_active_stream");
 });
 
 test("a switched RTP identifier cannot reuse stale timing as verified activity", () => {
