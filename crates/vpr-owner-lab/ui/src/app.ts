@@ -182,6 +182,7 @@ type LiveKitTrack = {
   attach: (element: HTMLMediaElement) => HTMLMediaElement;
   detach?: (element?: HTMLMediaElement) => HTMLMediaElement[];
   getRTCStatsReport?: () => Promise<RTCStatsReport | undefined>;
+  receiver?: RTCRtpReceiver;
 };
 type LiveKitParticipant = {
   sendText: (text: string, options: { topic: string }) => Promise<void>;
@@ -867,6 +868,29 @@ const mediaElementAvSyncFallback = (
   };
 };
 
+// LiveKit's wrapper can provide a scoped report with fewer fields than the
+// native receiver. Try BOTH genuine receiver reports; never derive an A/V
+// offset from packet arrival times, mediaElement.currentTime or remoteTimestamp.
+const readLiveKitTrackPlayout = async (
+  track: LiveKitTrack | null,
+  kind: "audio" | "video",
+  previousPackets: Map<string, number> | null,
+): Promise<AvSyncTrackSelection> => {
+  const methods: Array<() => Promise<RTCStatsReport | undefined>> = [];
+  if (track?.getRTCStatsReport) methods.push(() => track.getRTCStatsReport!());
+  if (track?.receiver) methods.push(() => track.receiver!.getStats());
+  let best = selectPlayoutTimestamp(undefined, kind, previousPackets);
+  for (const method of methods) {
+    try {
+      const candidate = selectPlayoutTimestamp(await method(), kind, previousPackets);
+      if (candidate.timestamp !== null) return candidate;
+      // Preserve an actionable reason when neither genuine source has playout timestamps.
+      if (candidate.issue !== "stats_unavailable") best = candidate;
+    } catch { /* failed source is not a fabricated sample */ }
+  }
+  return best;
+};
+
 const readAvSyncOffsetMillis = async (
   state: AvSyncReadState,
 ): Promise<{
@@ -884,21 +908,12 @@ const readAvSyncOffsetMillis = async (
     audioSelection = selectPlayoutTimestamp(stats, "audio", state.audioPackets);
     videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
   } else {
-    const audioStats = liveKitAudioTrack?.getRTCStatsReport;
-    const videoStats = liveKitVideoTrack?.getRTCStatsReport;
-    if (!audioStats || !videoStats) {
-      return mediaElementAvSyncFallback(
-        "LiveKit track stats method unavailable",
-        "stats_unavailable",
-        "stats_unavailable",
-      );
-    }
-    const [audioReport, videoReport] = await Promise.all([
-      audioStats.call(liveKitAudioTrack),
-      videoStats.call(liveKitVideoTrack),
+    const [audio, videoStats] = await Promise.all([
+      readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
+      readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
     ]);
-    audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
-    videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
+    audioSelection = audio;
+    videoSelection = videoStats;
   }
 
   audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
