@@ -464,7 +464,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session).ok()?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
-                let backend_owned = self.echo_sessions.contains(&session.provider_session_id).ok()?;
+                let backend_owned = self.echo_backend.is_some();
                 Some(RealtimeAvatarClientControl {
                     event_route: None,
                     interrupt: !backend_owned,
@@ -503,7 +503,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             return Err(invalid_response());
         }
         if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
-            || self.echo_sessions.contains(&session.provider_session_id)?
+            || self.echo_backend.is_some()
         {
             return Err(unavailable());
         }
@@ -531,7 +531,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
-        if self.echo_sessions.contains(&session.provider_session_id)? {
+        if self.echo_backend.is_some() {
             return Err(unavailable());
         }
         match session.transport {
@@ -551,12 +551,11 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session)?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
-                if self.echo_sessions.contains(&session.provider_session_id)? {
-                    self.echo_backend
-                        .as_ref()
-                        .ok_or_else(unavailable)?
-                        .stop(&session.provider_session_id)?;
-                    self.echo_sessions.remove(&session.provider_session_id)?;
+                if let Some(backend) = &self.echo_backend {
+                    if self.echo_sessions.contains(&session.provider_session_id)? {
+                        backend.stop(&session.provider_session_id)?;
+                        self.echo_sessions.remove(&session.provider_session_id)?;
+                    }
                     return Ok(());
                 }
                 // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
