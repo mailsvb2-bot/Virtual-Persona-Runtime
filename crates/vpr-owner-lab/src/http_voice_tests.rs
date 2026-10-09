@@ -24,7 +24,9 @@ fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
     );
 
     assert!(registry.begin(2));
-    let old = registry.wait_events(1).expect("old terminal must remain readable");
+    let old = registry
+        .wait_events(1)
+        .expect("old terminal must remain readable");
     assert!(old.terminal);
     assert_eq!(old.events.len(), 1);
     assert!(!registry.begin(3));
@@ -155,8 +157,14 @@ fn two_unconsumed_terminal_events_apply_backpressure_without_evidence_loss() {
             diagnostic: None,
         },
     );
-    assert!(!registry.begin(3), "must not discard an unconsumed terminal event");
+    assert!(
+        !registry.begin(3),
+        "must not discard an unconsumed terminal event"
+    );
     assert!(registry.wait_events(1).expect("first reply").terminal);
-    assert!(registry.begin(3), "a consumed terminal slot is immediately reusable");
+    assert!(
+        registry.begin(3),
+        "a consumed terminal slot is immediately reusable"
+    );
     assert!(registry.wait_events(2).expect("second reply").terminal);
 }
