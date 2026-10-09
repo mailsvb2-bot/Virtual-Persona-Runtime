@@ -18,6 +18,7 @@ fn abandoned_terminal_stream_is_evicted_before_next_request() {
         1,
         VoiceStreamEvent::Failed {
             code: "PROVIDER_TIMEOUT".into(),
+            diagnostic: None,
         },
     );
 
@@ -29,6 +30,7 @@ fn abandoned_terminal_stream_is_evicted_before_next_request() {
         2,
         VoiceStreamEvent::Failed {
             code: "TURN_CANCELLED".into(),
+            diagnostic: None,
         },
     );
     let terminal = registry
@@ -58,6 +60,7 @@ fn pending_stream_is_never_evicted_and_event_queue_is_bounded() {
         10,
         VoiceStreamEvent::Failed {
             code: "INVALID_STATE_TRANSITION".into(),
+            diagnostic: None,
         },
     );
     let response = registry
@@ -76,6 +79,7 @@ fn quiescence_does_not_require_terminal_stream_polling() {
         1,
         VoiceStreamEvent::Failed {
             code: "PROVIDER_TIMEOUT".into(),
+            diagnostic: None,
         },
     );
     assert!(registry.wait_until_quiescent());
