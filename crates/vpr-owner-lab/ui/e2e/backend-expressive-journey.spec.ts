@@ -203,11 +203,18 @@ const startEcho = async (request: APIRequestContext) => {
   expect(session.client_control?.text_input ?? false).toBe(false);
   return { csrf, sequence: session.evidence_session_sequence };
 };
-const submitOwnerTurn = async (request: APIRequestContext, csrf: string, sequence: number, text: string) =>
-  request.post(`${ownerLabUrl}/api/text/turn`, {
+const submitOwnerTurn = async (request: APIRequestContext, csrf: string, sequence: number, text: string) => {
+  const turn = await request.post(`${ownerLabUrl}/api/text/turn`, {
     headers: { ...csrfHeaders(csrf), "X-VPR-Evidence-Request": String(sequence) },
     data: { text },
   });
+  if (!turn.ok()) return turn;
+  const answer = await turn.json() as { reply: string };
+  expect(answer.reply.trim().length).toBeGreaterThan(0);
+  // Text completion alone never creates audio. Dispatch the canonical LLM
+  // answer through the authorized server avatar endpoint, not browser did.speak.
+  return postJson(request, csrf, "/api/avatar/speak", { text: answer.reply });
+};
 
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
   test.setTimeout(90000);
