@@ -746,3 +746,110 @@ fn audio_url_userinfo_is_rejected_before_network() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
 }
+
+
+#[derive(Default)]
+struct MockEchoBackend {
+    calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl DidEchoBackend for MockEchoBackend {
+    fn open(
+        &self,
+        session_id: &str,
+        session_url: &str,
+        echo_token: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        assert_eq!(session_id, "echo-session-1");
+        assert_eq!(session_url, "wss://livekit.example.test/room/agent-echo");
+        assert_eq!(echo_token, "server-ONLY-echo-token");
+        self.calls.lock().unwrap().push("open".to_owned());
+        Ok(())
+    }
+
+    fn speak(
+        &self,
+        session_id: &str,
+        text: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        assert_eq!(session_id, "echo-session-1");
+        assert_eq!(text, "Серверный ответ.");
+        self.calls.lock().unwrap().push("speak".to_owned());
+        Ok(())
+    }
+
+    fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
+        assert_eq!(session_id, "echo-session-1");
+        self.calls.lock().unwrap().push("stop".to_owned());
+        Ok(())
+    }
+}
+
+#[test]
+fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
+    use std::sync::Arc;
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let probe = Probe(AtomicBool::new(false));
+    let session = provider.create_session(&probe).unwrap();
+    let create = captured.recv().unwrap();
+    assert!(create.starts_with("GET /agents/agent-7 "));
+    let created = captured.recv().unwrap();
+    assert!(created.starts_with("POST /v2/agents/agent-7/sessions "));
+    assert!(created.contains(r#""session_type":"echo""#));
+
+    if let RealtimeAvatarTransport::LiveKit { token, .. } = &session.transport {
+        assert_eq!(token, "viewer-token");
+    } else {
+        panic!("Echo must use the LiveKit viewer transport");
+    }
+    assert!(!format!("{session:?}").contains("server-ONLY-echo-token"));
+    let control = provider.client_control(&session).unwrap();
+    assert!(!control.text_input, "Echo viewer must not publish did.speak");
+    assert!(!control.interrupt);
+    assert!(provider
+        .prepare_client_text(&session, "forbidden browser text", &probe)
+        .is_err());
+    assert!(provider
+        .prepare_client_interrupt(&session, None, &probe)
+        .is_err());
+    provider.speak_text(&session, "Серверный ответ.", &probe).unwrap();
+    provider.close_session(&session).unwrap();
+    assert!(provider
+        .speak_text(&session, "stale after revoke", &probe)
+        .is_err());
+    assert!(!provider.client_control(&session).unwrap().text_input);
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["open", "speak", "stop"]
+    );
+}
+
+#[test]
+fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
+    use std::sync::Arc;
+
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#.to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    assert!(backend.calls.lock().unwrap().is_empty());
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.recv().unwrap().contains(r#""session_type":"echo""#));
+}
