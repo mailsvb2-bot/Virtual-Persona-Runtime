@@ -47,7 +47,7 @@ impl Debug for RealtimeAvatarHandle {
 }
 
 impl RealtimeAvatarHandle {
-    /// Private stop-only capability for server-controlled LiveKit avatars.
+    /// Private stop-only capability for server-controlled `LiveKit` avatars.
     #[must_use]
     pub fn backend_stop_handle(
         &self,
