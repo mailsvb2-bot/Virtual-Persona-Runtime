@@ -86,7 +86,12 @@ def run_worker(delay_after_speak):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.synthesize = lambda text: b"RIFF" + text.encode("utf-8")
+    def synthesize(text):
+        if not delay_after_speak:
+            time.sleep(0.12)
+        return b"RIFF" + text.encode("utf-8")
+
+    module.synthesize = synthesize
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
         Room=FakeRoom,
