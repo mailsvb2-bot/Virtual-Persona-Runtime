@@ -28,7 +28,7 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
-type ResumedSpeech = { client_command: ClientCommand; evidence_turn_sequence: number; evidence_output_sequence: number };
+type ResumedSpeech = { client_command: ClientCommand | null; evidence_turn_sequence: number; evidence_output_sequence: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type VoiceStartAck = { ok: true; request_sequence: number };
 type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
@@ -2575,11 +2575,15 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     if (sessionState.backend.session_state !== "active") {
       throw new Error("INVALID_STATE_TRANSITION");
     }
-    await dispatchClientCommand(prepared.client_command);
-    await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
-      evidence_turn_sequence: prepared.evidence_turn_sequence,
-      evidence_output_sequence: prepared.evidence_output_sequence,
-    });
+    // Server-owned Echo already delivered and marked Sent in the Rust turn.
+    // Never send a browser did.speak or duplicate its delivery ACK.
+    if (prepared.client_command !== null) {
+      await dispatchClientCommand(prepared.client_command);
+      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+        evidence_turn_sequence: prepared.evidence_turn_sequence,
+        evidence_output_sequence: prepared.evidence_output_sequence,
+      });
+    }
     resumeFromIndex = index;
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
