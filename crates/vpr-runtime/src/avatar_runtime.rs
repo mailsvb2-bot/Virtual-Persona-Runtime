@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    CancellationProbe, ProviderDescriptor, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -54,8 +54,14 @@ impl RealtimeAvatarHandle {
         provider: Arc<dyn RealtimeAvatarPort>,
     ) -> Option<RealtimeAvatarStopHandle> {
         if self.closed
-            || !matches!(self.provider_session.transport, RealtimeAvatarTransport::LiveKit { .. })
-            || !self.client_control.as_ref().is_some_and(|control| !control.interrupt && !control.text_input)
+            || !matches!(
+                self.provider_session.transport,
+                RealtimeAvatarTransport::LiveKit { .. }
+            )
+            || !self
+                .client_control
+                .as_ref()
+                .is_some_and(|control| !control.interrupt && !control.text_input)
         {
             return None;
         }
