@@ -57,7 +57,7 @@ pub(super) fn build_avatar(
 fn build_did_avatar(
     profile: Option<&ProviderCredentialProfile>,
 ) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
-let endpoint = resolved_value(
+    let endpoint = resolved_value(
         "VPR_DID_ENDPOINT",
         profile.map(|profile| profile.did_endpoint.as_str()),
     )
