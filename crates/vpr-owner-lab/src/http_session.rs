@@ -45,51 +45,60 @@ fn request_voice_cancel(state: &AppState) {
     );
 }
 
-/// Fences the current generation and revokes server authority/provider resource
-/// without sealing the RT0 evidence recorder. The browser can finish flushing
-/// already queued media diagnostics before invoking the terminal Close endpoint.
-/// A second Close always retries provider cleanup if the first attempt failed.
+/// Registers the just-created session only if no concurrent revoke already won.
+/// The registration and end-session fence use the same small mutex, never the
+/// worker-owned engine mutex. A start racing revoke fails closed.
+pub(super) fn register_started_session(
+    state: &AppState,
+    engine: &mut vpr_owner_lab::OwnerLabEngine,
+) -> Result<(), LabError> {
+    let mut registered = state.session_revocation.lock();
+    if state.session_end_requested.load(Ordering::Acquire) {
+        // The start may have been executing against the provider when the
+        // user revoked. Do not return an active transport/token to that caller.
+        drop(registered);
+        let _ = engine.revoke();
+        state.session_end_requested.store(false, Ordering::Release);
+        return Err(LabError::InvalidState);
+    }
+    *registered = Some(
+        engine
+            .session_revocation_handle()
+            .ok_or(LabError::InvalidState)?,
+    );
+    Ok(())
+}
+
+/// Fences the exact session generation before audio/provider work. This
+/// invalidates the *shared Rust authorization epoch* without waiting for the
+/// engine mutex held by a slow STT/LLM worker. Diagnostics may still be flushed
+/// before the final close, but no new canonical provider permits can be issued.
 fn fence_authority(
     state: &AppState,
     expected_session_sequence: Option<u64>,
 ) -> Result<(), HttpResponse> {
-    // The initial identity check must NOT wait on the engine mutex: a voice
-    // worker can hold it during LLM streaming, and STOP must preempt that work.
-    // Session Start publishes this atomic sequence under the replay-source
-    // lock, so comparing and fencing here cannot target a newer session.
-    {
+    // Start holds replay_source through the new-session registration. This
+    // ordering ensures an old tab cannot fence a newer generation.
+    let revoker = {
         let mut replay = state.replay_source.lock();
+        let registered = state.session_revocation.lock();
         let current = state.active_session_sequence.load(Ordering::Acquire);
         if current == 0 || expected_session_sequence.is_some_and(|id| id == 0 || id != current) {
             return Err(error_response(409, "INVALID_STATE_TRANSITION"));
         }
+        let Some(revoker) = registered.clone() else {
+            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+        };
         state.session_end_requested.store(true, Ordering::Release);
         *replay = None;
-    }
+        revoker
+    };
+    // Canonical revoke is FIRST. Do not take engine.lock() on this path:
+    // the in-flight voice worker may hold it beyond the teardown deadline.
+    revoker
+        .revoke_authority()
+        .map_err(|code| lab_error_response(&LabError::Runtime(code)))?;
     request_voice_cancel(state);
-    // Cancel and REVOKE AUTHORITY before waiting for slow or wedged STT/LLM
-    // workers. A timeout below must never leave canonical session_state active.
-    // Provider cleanup and evidence sealing are separate from permission removal.
-    {
-        let mut engine = state
-            .engine
-            .lock()
-            .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-        if let Err(error) = engine.revoke_authority() {
-            // Idempotent stale unload after terminal closure must not poison
-            // the next session's start gate.
-            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            return Err(lab_error_response(&error));
-        }
-        // An in-flight voice stream is not a reason to leave D-ID's remote
-        // session running. Try remote cleanup under already-revoked authority,
-        // BEFORE the bounded quiescence wait (which can return 504).
-        engine
-            .revoke()
-            .map_err(|error| lab_error_response(&error))?;
-    }
     Ok(())
 }
 
@@ -138,6 +147,8 @@ fn end_session(
                 *state.active_voice_interrupt.lock() = None;
                 state.voice_cancel_requested.store(false, Ordering::Release);
                 state.voice_busy.store(false, Ordering::Release);
+                *state.session_revocation.lock() = None;
+                state.active_session_sequence.store(0, Ordering::Release);
                 state.session_end_requested.store(false, Ordering::Release);
             }
             Ok(json_response(200, &serde_json::json!({"ok": true})))

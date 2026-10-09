@@ -31,7 +31,7 @@ use vpr_owner_lab::{
     OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
     restore_reviewed_persona,
 };
-use vpr_runtime::TurnInterruptHandle;
+use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
@@ -68,6 +68,7 @@ struct AppState {
     voice_playback: LabVoicePlaybackRegistry,
     replay_source: ParkingMutex<Option<http_client_control::AuthorizedReply>>,
     session_end_requested: AtomicBool,
+    session_revocation: ParkingMutex<Option<SessionRevocationHandle>>,
     active_session_sequence: AtomicU64,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -178,6 +179,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_playback,
         replay_source: ParkingMutex::new(None),
         session_end_requested: AtomicBool::new(false),
+        session_revocation: ParkingMutex::new(None),
         active_session_sequence: AtomicU64::new(0),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -376,6 +378,7 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                             ),
                             _ => return Err(LabError::InvalidInput),
                         };
+                    http_session::register_started_session(state, engine)?;
                     *replay_source = None;
                     state
                         .evidence

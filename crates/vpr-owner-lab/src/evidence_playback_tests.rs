@@ -437,3 +437,91 @@ fn av_sync_retention_is_mathematically_bounded_by_session_attempt_budget() {
         Err(LabEvidenceError::CapacityExceeded)
     );
 }
+
+#[test]
+fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_proof() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder
+        .bind_provenance(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .unwrap();
+    recorder.begin_session(26, ParticipantRole::Owner).unwrap();
+    recorder.begin_voice_request(1).unwrap();
+    recorder.complete_voice_request(1, &voice_result()).unwrap();
+
+    let diagnostic = LabAvSyncDiagnosticInput {
+        session_sequence: 26,
+        request_sequence: 1,
+        attempts: 50,
+        audio_issue: Some(LabAvSyncTrackIssue::StatsUnavailable),
+        video_issue: Some(LabAvSyncTrackIssue::TimestampUnavailable),
+    };
+
+    // A completed backend response alone does not establish actual audio.
+    assert_eq!(
+        recorder.record_av_sync_diagnostic(&diagnostic),
+        Err(LabEvidenceError::InvalidState)
+    );
+    recorder
+        .record_media(&LabMediaEvidenceInput {
+            session_sequence: 26,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 400,
+        })
+        .unwrap();
+    recorder.record_av_sync_diagnostic(&diagnostic).unwrap();
+
+    let snapshot = recorder.snapshot().unwrap();
+    assert_eq!(snapshot.av_sync_diagnostics.len(), 1);
+    assert_eq!(snapshot.av_sync_diagnostics[0].request_sequence, 1);
+    assert_eq!(
+        snapshot.av_sync_diagnostics[0].video_issue,
+        Some(LabAvSyncTrackIssue::TimestampUnavailable)
+    );
+    assert!(!snapshot.voice_attempts[0].canonical_playback_confirmed);
+    assert!(!snapshot.canonical_playback_proven);
+    assert!(!snapshot.av_sync_proven);
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("приватный")
+    );
+
+    // The diagnostic is scoped, unique and excludes later claims of completed proof.
+    assert_eq!(
+        recorder.record_av_sync_diagnostic(&diagnostic),
+        Err(LabEvidenceError::DuplicateEvidence)
+    );
+    assert_eq!(
+        recorder.record_av_sync(&LabAvSyncEvidenceInput {
+            session_sequence: 26,
+            request_sequence: 1,
+            sample_sequence: 1,
+            reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
+            absolute_offset_millis: 75,
+        }),
+        Err(LabEvidenceError::InvalidState)
+    );
+    assert_eq!(
+        recorder.record_av_sync_diagnostic(&LabAvSyncDiagnosticInput {
+            session_sequence: 25,
+            ..diagnostic.clone()
+        }),
+        Err(LabEvidenceError::InvalidState)
+    );
+
+    // A real release-evidence consumer must accept the typed failure without
+    // counting the completed backend turn as heard or A/V-synchronized.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    recorder.seal_session();
+    let aggregate =
+        vpr_evaluation::aggregate_owner_lab_session_evidence(&[recorder.snapshot().unwrap()])
+            .unwrap();
+    assert_eq!(aggregate.completed_voice_attempts, 1);
+    assert!(!aggregate.canonical_playback_proven);
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset, None);
+}
