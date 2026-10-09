@@ -1024,6 +1024,13 @@ const stopRemoteEvidence = (): void => {
   baselineRms = 0.002;
 };
 
+// Cut audible output locally before network STOP, while the independent media
+// analyser continues measuring whether the PROVIDER actually stopped.
+const setLocalAudioMuted = (muted: boolean): void => {
+  avatarAudio.muted = muted;
+  video.muted = muted; // WebRTC may carry its audio inside the video element.
+};
+
 const monitorRemoteAudio = (): void => {
   const analyser = remoteAudioAnalyser;
   if (!analyser) return;
@@ -1780,6 +1787,7 @@ const connectAvatar = async (): Promise<void> => {
     setStatus("Нужно явное согласие", "error");
     return;
   }
+  setLocalAudioMuted(false);
   connectButton.disabled = true;
   connectEvidenceStartedAt = 0;
   connectJourneyStartedAt = performance.now();
@@ -2202,6 +2210,9 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         updateControls();
       }
       const command = segment.client_command;
+      // A new authorized output may be heard only after the preceding turn's
+      // provider STOP returned. Never unmute a stale cancelled generation.
+      if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
       if (!command) {
         // Server-owned delivery has already passed the canonical provider
         // boundary and recorded Sent; there is no browser command to publish.
@@ -2414,6 +2425,10 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     };
   }
 
+  // Immediate user-visible silence is independent of the remote STOP receipt.
+  // It must NOT create interruption_stopped or playback_completed evidence.
+  setLocalAudioMuted(true);
+
   const playbackId = sessionState.playbackId;
   const playbackReady = activeClientControl?.interrupt_requires_playback_id
     ? playbackId !== null
@@ -2610,6 +2625,8 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     if (sessionState.backend.session_state !== "active") {
       throw new Error("INVALID_STATE_TRANSITION");
     }
+    // Re-enable audible output only for a freshly authorized resume.
+    setLocalAudioMuted(false);
     // Server-owned Echo already delivered and marked Sent in the Rust turn.
     // Never send a browser did.speak or duplicate its delivery ACK.
     if (prepared.client_command !== null) {
