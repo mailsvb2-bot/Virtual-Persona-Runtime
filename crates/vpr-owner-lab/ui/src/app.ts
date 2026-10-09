@@ -1,6 +1,6 @@
 import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
-import { authorizedSpeakText, replayTextFrom, resumeSentences, suggestedResumeSentence } from "./interrupted-answer.js";
+import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import {
@@ -119,7 +119,7 @@ type AvSyncReadState = {
   lastAudioPlayoutTimestamp: number | null;
   lastVideoPlayoutTimestamp: number | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; audibleDurationMillis: number; lastAudioTickAt: number | null; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -246,6 +246,7 @@ const interruptButton = byId<HTMLButtonElement>("interrupt");
 const resumeAnswerRow = byId<HTMLElement>("resume-answer-row");
 const resumeAnswerButton = byId<HTMLButtonElement>("resume-answer");
 const resumeAnswerFrom = byId<HTMLSelectElement>("resume-answer-from");
+const resumeAnswerCursor = byId<HTMLTextAreaElement>("resume-answer-cursor");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
@@ -335,6 +336,7 @@ const authorizedDeliveredParts = new Map<number, string>();
 let completedAuthorizedReply: string | null = null;
 let interruptedAnswerSentences: string[] = [];
 let resumeFromIndex = 0;
+let resumeCursorEdited = false;
 let resumedSpeechStartedAt: number | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 let avSyncCollectionPending = false;
@@ -356,6 +358,8 @@ const clearInterruptedAnswer = (): void => {
   completedAuthorizedReply = null;
   interruptedAnswerSentences = [];
   resumeFromIndex = 0;
+  resumeCursorEdited = false;
+  resumeAnswerCursor.value = "";
   resumedSpeechStartedAt = null;
   resumeAnswerFrom.replaceChildren();
   resumeAnswerRow.hidden = true;
@@ -373,6 +377,8 @@ const offerInterruptedAnswer = (sentences: string[], elapsedMillis: number, offs
   resumeFromIndex = Math.min(sentences.length - 1,
     offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
   resumeAnswerFrom.value = String(resumeFromIndex);
+  resumeAnswerCursor.value = sentences.join(" ");
+  resumeCursorEdited = false;
   resumeAnswerRow.hidden = false;
   resumeAnswerButton.disabled = false;
 };
@@ -1031,6 +1037,11 @@ const monitorRemoteAudio = (): void => {
     const voice = activeVoiceEvidence;
     const speechThreshold = Math.max(0.015, baselineRms * 3 + 0.003);
     if (voice && level > speechThreshold) {
+      const now = performance.now();
+      if (voice.lastAudioTickAt !== null) {
+        voice.audibleDurationMillis += Math.min(100, Math.max(0, now - voice.lastAudioTickAt));
+      }
+      voice.lastAudioTickAt = now;
       voice.speaking = true;
       voice.silentFrames = 0;
       voice.playbackSilenceStartedAt = null;
@@ -1055,6 +1066,7 @@ const monitorRemoteAudio = (): void => {
           .catch(() => undefined);
       }
     } else if (voice?.speaking) {
+      voice.lastAudioTickAt = null;
       voice.silentFrames += 1;
       if (voice.silentFrames >= 6) {
         voice.speaking = false;
@@ -2158,6 +2170,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     silentFrames: 0,
     playbackSilenceStartedAt: null,
     playbackRecoveryTriggered: false,
+    audibleDurationMillis: 0,
+    lastAudioTickAt: null,
   };
 
   let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;
@@ -2528,7 +2542,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
     ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
     : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
       ? 0
-      : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+      : voice.audibleDurationMillis;
   const offset = replaying ? resumeFromIndex : 0;
   const interrupted = await interruptAvatar();
   resumedSpeechStartedAt = null;
@@ -2570,7 +2584,12 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     return;
   }
   const index = Number(resumeAnswerFrom.value);
-  const text = replayTextFrom(interruptedAnswerSentences, index);
+  const manualCursorOffset = resumeCursorEdited
+    ? resumeWordOffset(resumeAnswerCursor.value, resumeAnswerCursor.selectionStart)
+    : null;
+  const text = manualCursorOffset === null
+    ? replayTextFrom(interruptedAnswerSentences, index)
+    : Array.from(resumeAnswerCursor.value).slice(manualCursorOffset).join("").trim();
   if (!text) {
     setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
     return;
@@ -2585,6 +2604,7 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
       request_sequence: resumeSourceRequest,
       sentence_index: index,
+      ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
     });
     await syncStatus();
     if (sessionState.backend.session_state !== "active") {
@@ -2745,6 +2765,10 @@ connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
+// A deliberate caret placement takes precedence over the estimated sentence.
+resumeAnswerCursor.addEventListener("mouseup", () => { resumeCursorEdited = true; });
+resumeAnswerCursor.addEventListener("keyup", () => { resumeCursorEdited = true; });
+resumeAnswerFrom.addEventListener("change", () => { resumeCursorEdited = false; });
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
