@@ -2177,6 +2177,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     // playback completion before sending the next phrase (the provider may only
     // publish its completion event after the queued batch has been submitted).
     let liveKitSendTail: Promise<void> = Promise.resolve();
+    let serverDeliveredSpeechObserved = false;
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
       const voiceForSegment = activeVoiceEvidence;
@@ -2187,7 +2188,12 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         updateControls();
       }
       const command = segment.client_command;
-      if (!command) return;
+      if (!command) {
+        // Server-owned delivery has already passed the canonical provider
+        // boundary and recorded Sent; there is no browser command to publish.
+        serverDeliveredSpeechObserved = true;
+        return;
+      }
       let commandSent = false;
       const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
       const dispatch: Promise<boolean> = nativeLiveKitQueue
@@ -2284,7 +2290,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
-      if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+      if ((authorizedDeliveredParts.size > 0 || serverDeliveredSpeechObserved)
+          && result.reply.trim().length <= 16_000)
         completedAuthorizedReply = result.reply.trim();
       await maybeFinalizeProviderPlayback(voice);
       if (voice.audioStartedEvidence) {
