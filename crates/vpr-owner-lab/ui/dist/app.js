@@ -529,8 +529,6 @@ const selectPlayoutTimestamp = (stats, expectedKind, previousPackets) => {
         diagnostic: `${expectedKind}: ${candidates.length} RTP timestamp candidates awaiting unique activity`,
     };
 };
-// Receiving more RTP packets does not prove the browser's playout clock moved.
-// A frozen timestamp must not count toward the three strict RT0 A/V samples.
 const requireAdvancingPlayoutClock = (selected, previouslyAccepted, kind) => {
     if (selected.timestamp === null || previouslyAccepted === null || selected.timestamp > previouslyAccepted) {
         return selected;
