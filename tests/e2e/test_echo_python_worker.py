@@ -177,6 +177,26 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(all(any(r["id"] == idx and r["ok"] for r in receipts)
                             for idx in (7, 8)))
 
+    def test_interrupt_drops_queued_second_phrase_before_audio_publication(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 10, "command": "speak", "text": "Первая фраза"},
+            {"id": 11, "command": "speak", "text": "Вторая фраза"},
+            {"id": 12, "command": "interrupt"},
+            {"id": 13, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records,
+            tts_latency=lambda text: 0.01 if text.startswith("Первая") else 0.3,
+        )
+        audio = b"".join(trace["audio"])
+        self.assertIn("Первая фраза".encode("utf-8"), audio)
+        self.assertNotIn("Вторая фраза".encode("utf-8"), audio)
+        self.assertTrue(any(r["id"] == 12 and r["ok"] for r in receipts))
+        self.assertFalse(any(r["id"] == 11 and r["ok"] for r in receipts))
+
     def test_duplicate_utterance_id_does_not_replace_active_task(self):
         records = [
             {"id": 0, "command": "open",
