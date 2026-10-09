@@ -23,7 +23,7 @@ pub(super) struct CreateV2SessionResponse {
     pub(super) session_url: String,
     pub(super) session_token: String,
     /// Only in Echo sessions. Must stay on the server; the browser receives
-    /// the ordinary session_token and is not authorized as speech sender.
+    /// the ordinary `session_token` and is not authorized as speech sender.
     #[serde(default)]
     pub(super) echo_token: Option<String>,
 }
