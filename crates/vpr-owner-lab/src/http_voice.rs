@@ -17,9 +17,9 @@ mod voice_event;
 use voice_event::VoiceStreamEvent;
 #[path = "http_voice_stream.rs"]
 mod voice_stream;
-pub(super) use voice_stream::VoiceStreamRegistry;
 #[cfg(test)]
 use voice_stream::MAX_PENDING_VOICE_STREAM_EVENTS;
+pub(super) use voice_stream::VoiceStreamRegistry;
 
 struct VoiceInputState {
     request_sequence: u64,
