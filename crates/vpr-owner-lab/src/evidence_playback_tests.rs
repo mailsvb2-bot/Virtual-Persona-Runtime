@@ -517,10 +517,9 @@ fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_p
     // counting the completed backend turn as heard or A/V-synchronized.
     std::thread::sleep(std::time::Duration::from_millis(2));
     recorder.seal_session();
-    let aggregate = vpr_evaluation::aggregate_owner_lab_session_evidence(&[
-        recorder.snapshot().unwrap(),
-    ])
-    .unwrap();
+    let aggregate =
+        vpr_evaluation::aggregate_owner_lab_session_evidence(&[recorder.snapshot().unwrap()])
+            .unwrap();
     assert_eq!(aggregate.completed_voice_attempts, 1);
     assert!(!aggregate.canonical_playback_proven);
     assert!(!aggregate.av_sync_proven);
