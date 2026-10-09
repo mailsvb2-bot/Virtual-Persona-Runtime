@@ -221,18 +221,27 @@ pub fn record_media(
         .lock()
         .record_media(input)
         .map_err(MediaRecordError::Evidence)?;
-    if input.kind == LabMediaEvidenceKind::AudioStarted {
-        engine
+    if matches!(
+        input.kind,
+        LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::VideoReady
+    ) {
+        let mut runtime = engine
             .lock()
-            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
-            .mark_voice_ready_from_media()
-            .map_err(MediaRecordError::Lab)?;
-    } else if input.kind == LabMediaEvidenceKind::VideoReady {
-        engine
-            .lock()
-            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
-            .mark_video_ready_from_media()
-            .map_err(MediaRecordError::Lab)?;
+            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?;
+        // After an early Close fence, previously observed media can still be
+        // recorded without reviving a revoked Persona preparation state.
+        // Readiness promotion is only meaningful for an active session.
+        if runtime.status().session_state == "active" {
+            if input.kind == LabMediaEvidenceKind::AudioStarted {
+                runtime
+                    .mark_voice_ready_from_media()
+                    .map_err(MediaRecordError::Lab)?;
+            } else {
+                runtime
+                    .mark_video_ready_from_media()
+                    .map_err(MediaRecordError::Lab)?;
+            }
+        }
     }
     Ok(())
 }
