@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 MAX_WAV_BYTES = 8 * 1024 * 1024
 MAX_TEXT_BYTES = 4096
+MAX_PENDING_UTTERANCES = 16
 TTS_TIMEOUT_SECONDS = 35
 
 
@@ -156,7 +157,7 @@ async def run():
                     text = request["text"]
                     # Request IDs identify exactly one in-flight utterance. A duplicate
                     # must not replace its task or evade STOP/close cancellation.
-                    if identifier in tasks:
+                    if identifier in tasks or len(tasks) >= MAX_PENDING_UTTERANCES:
                         emit(identifier, False)
                         continue
                     if (
