@@ -131,7 +131,9 @@ async def run():
                     await writer.aclose()
                 except Exception:
                     pass
-            tasks.pop(identifier, None)
+            # A stale task must never remove a newer task's ownership.
+            if tasks.get(identifier) is asyncio.current_task():
+                tasks.pop(identifier, None)
 
     try:
         while raw := await asyncio.to_thread(sys.stdin.readline):
@@ -141,6 +143,11 @@ async def run():
                 command = request["command"]
                 if command == "speak":
                     text = request["text"]
+                    # Request IDs identify exactly one in-flight utterance. A duplicate
+                    # must not replace its task or evade STOP/close cancellation.
+                    if identifier in tasks:
+                        emit(identifier, False)
+                        continue
                     if (
                         not isinstance(text, str)
                         or not text.strip()
