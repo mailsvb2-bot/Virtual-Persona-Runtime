@@ -59,7 +59,9 @@ pub(super) fn build_avatar(
             } else {
                 None
             };
-            let provider = if let Some((python, tts_endpoint, tts_key, model, voice)) = &echo_settings {
+            let provider = if let Some((python, tts_endpoint, tts_key, model, voice)) =
+                &echo_settings
+            {
                 backend_fingerprint.extend([tts_endpoint.as_str(), model.as_str(), voice.as_str()]);
                 let config = EchoPythonConfig::new(python, tts_endpoint, tts_key, model, voice)
                     .map_err(|_| "D-ID Echo TTS configuration rejected".to_string())?;
@@ -111,4 +113,3 @@ pub(super) fn build_avatar(
         _ => Err(format!("unsupported avatar provider: {name}")),
     }
 }
-
