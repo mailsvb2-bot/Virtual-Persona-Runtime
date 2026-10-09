@@ -35,7 +35,7 @@ type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: 
 type VoiceStreamEvent =
   | { kind: "segment"; segment: VoiceSegment }
   | { kind: "complete"; result: VoiceResult }
-  | { kind: "failed"; code: string };
+  | { kind: "failed"; code: string; diagnostic?: string | null };
 type VoiceEventsResponse = { events: VoiceStreamEvent[]; terminal: boolean };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
@@ -594,7 +594,12 @@ const waitForVoiceEvents = async (
       } else if (event.kind === "complete") {
         finalResult = event.result;
       } else {
-        throw new Error(event.code);
+        if (event.diagnostic === "STT_NO_FINAL_TRANSCRIPT") {
+          throw new Error("STT_NO_FINAL_TRANSCRIPT: Распознавание завершилось без текста. Проверьте микрофон, говорите 2–3 секунды отчётливо и завершите запись.");
+        }
+        throw new Error(event.code === "INVALID_INPUT"
+          ? "INVALID_INPUT: голосовой фрагмент пустой, слишком короткий или неверного формата; попробуйте записать вопрос ещё раз."
+          : event.code);
       }
     }
     if (batch.terminal) {
