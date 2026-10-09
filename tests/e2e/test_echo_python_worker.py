@@ -27,6 +27,8 @@ class FakeWriter:
         self.trace["audio"].append(bytes(data))
 
     async def aclose(self):
+        if self.trace["close_latency"]:
+            await asyncio.sleep(self.trace["close_latency"])
         self.trace["closed"] += 1
 
 
@@ -44,11 +46,13 @@ class FakeLocalParticipant:
 
 class FakeRoom:
     instances = []
+    close_latency = 0
 
     def __init__(self):
         self.trace = {
             "audio": [], "closed": 0, "stream_options": [], "stops": [],
             "connected": [], "disconnected": 0,
+            "close_latency": self.__class__.close_latency,
         }
         self.local_participant = FakeLocalParticipant(self.trace)
         self.remote_participants = {
@@ -85,7 +89,8 @@ class DelayedInput:
         return line
 
 
-def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None):
+def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
+               close_latency=0):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -115,6 +120,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
         {"id": 3, "command": "close"},
     ]
     FakeRoom.instances.clear()
+    FakeRoom.close_latency = close_latency
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
@@ -196,6 +202,23 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertNotIn("Вторая фраза".encode("utf-8"), audio)
         self.assertTrue(any(r["id"] == 12 and r["ok"] for r in receipts))
         self.assertFalse(any(r["id"] == 11 and r["ok"] for r in receipts))
+
+    def test_interrupt_during_livekit_stream_close_is_not_acked_as_success(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 21, "command": "speak", "text": "Завершение речи"},
+            {"id": 22, "command": "interrupt"},
+            {"id": 23, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, tts_latency=lambda _: 0,
+            close_latency=0.30,
+        )
+        self.assertTrue(trace["audio"])
+        self.assertFalse(any(r["id"] == 21 and r["ok"] for r in receipts))
+        self.assertTrue(any(r["id"] == 22 and r["ok"] for r in receipts))
 
     def test_duplicate_utterance_id_does_not_replace_active_task(self):
         records = [
