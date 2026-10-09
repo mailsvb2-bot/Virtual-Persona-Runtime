@@ -446,6 +446,9 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
 
     let started: Value = serde_json::from_str(&start.body).unwrap();
     let sequence = started["evidence_session_sequence"].as_u64().unwrap();
+    let unscoped = post(port, host, csrf, "/api/session/fence", "{}");
+    assert_eq!(unscoped.status, 400);
+    assert!(unscoped.body.contains("INVALID_INPUT"));
     let stale = post(
         port,
         host,
