@@ -1633,8 +1633,6 @@ const finishMicrophoneTurn = async () => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
             const command = segment.client_command;
-            // A segment without a provider command is not queued audio. Do not
-            // create a phantom playback barrier that can never receive completion.
             if (!command)
                 return;
             const voiceForSegment = activeVoiceEvidence;
