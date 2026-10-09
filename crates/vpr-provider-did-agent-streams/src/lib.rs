@@ -21,8 +21,8 @@ mod protocol;
 mod provider_error;
 
 use client_control::DidClientControlRegistry;
-use echo::DidEchoRegistry;
 pub use echo::DidEchoBackend;
+use echo::DidEchoRegistry;
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
     CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
@@ -263,7 +263,9 @@ impl DidAgentStreamsAvatar {
         } else {
             request
         };
-        let response = request.send().map_err(|error| map_transport_error(&error))?;
+        let response = request
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
         let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
         if let Some(backend) = &self.echo_backend {
@@ -471,7 +473,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                     interrupt_requires_playback_id: false,
                     text_input: !backend_owned,
                 })
-            },
+            }
             RealtimeAvatarTransport::WebRtc { .. } => self.client_control.control(session),
         }
     }
