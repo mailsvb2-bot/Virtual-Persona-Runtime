@@ -133,7 +133,11 @@ impl SessionWorker {
         thread::spawn(move || {
             let mut stdin: ChildStdin = stdin;
             while let Ok(message) = commands.recv() {
-                if stdin.write_all(&message).and_then(|()| stdin.flush()).is_err() {
+                if stdin
+                    .write_all(&message)
+                    .and_then(|()| stdin.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -373,7 +377,11 @@ impl DidEchoBackend for EchoPythonBackend {
         let worker = self.worker(session_id)?;
         let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
         if let Some(confirmed) = *worker.stop_receipt.lock().map_err(|_| unavailable())? {
-            return if confirmed { Ok(()) } else { Err(unavailable()) };
+            return if confirmed {
+                Ok(())
+            } else {
+                Err(unavailable())
+            };
         }
         worker.mark_stopped()?;
         // STOP must clear already queued avatar speech, not merely disconnect
@@ -466,18 +474,29 @@ done
         let backend = EchoPythonBackend::new(configuration);
         let probe = NeverCancelled(AtomicBool::new(false));
         backend
-            .open("hung-session", "wss://livekit.example.test/room/agent-1", "test-token", &probe)
+            .open(
+                "hung-session",
+                "wss://livekit.example.test/room/agent-1",
+                "test-token",
+                &probe,
+            )
             .unwrap();
         let started = Instant::now();
         let failed = backend.stop("hung-session");
         let elapsed = started.elapsed();
         let _ = std::fs::remove_file(&script);
-        assert!(failed.is_err(), "vendor receipt missing: STOP must not be reported successful");
+        assert!(
+            failed.is_err(),
+            "vendor receipt missing: STOP must not be reported successful"
+        );
         assert!(
             elapsed < Duration::from_millis(1800),
             "STOP was blocked by a nonresponsive private worker: {elapsed:?}"
         );
-        assert!(backend.stop("hung-session").is_err(), "unconfirmed STOP must remain unconfirmed");
+        assert!(
+            backend.stop("hung-session").is_err(),
+            "unconfirmed STOP must remain unconfirmed"
+        );
         backend.forget("hung-session").unwrap();
         assert!(
             backend.worker("hung-session").is_err(),
@@ -486,10 +505,7 @@ done
     }
     #[test]
     fn acknowledged_echo_stop_is_reusable_for_canonical_close_without_replaying_control() {
-        let script = std::env::temp_dir().join(format!(
-            "vpr-echo-ack-{}.sh",
-            std::process::id()
-        ));
+        let script = std::env::temp_dir().join(format!("vpr-echo-ack-{}.sh", std::process::id()));
         std::fs::write(
             &script,
             r#"#!/bin/sh
@@ -516,7 +532,12 @@ done
         );
         let probe = NeverCancelled(AtomicBool::new(false));
         backend
-            .open("ack-session", "wss://livekit.example.test/room/agent-1", "token", &probe)
+            .open(
+                "ack-session",
+                "wss://livekit.example.test/room/agent-1",
+                "token",
+                &probe,
+            )
             .unwrap();
         backend.stop("ack-session").unwrap();
         backend.stop("ack-session").unwrap();
@@ -528,5 +549,4 @@ done
         let _ = std::fs::remove_file(&script);
         assert!(backend.worker("ack-session").is_err());
     }
-
 }
