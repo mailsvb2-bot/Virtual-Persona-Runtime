@@ -296,12 +296,27 @@ impl DidEchoBackend for EchoPythonBackend {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        self.worker(session_id)?.request(
+        let worker = self.worker(session_id)?;
+        let result = worker.request(
             json!({"command": "speak", "text": text}),
             SPEECH_TIMEOUT,
             Some(cancellation),
             false,
-        )
+        );
+        if result.as_ref().err() == Some(&cancelled()) {
+            // Turn cancellation can occur independently of the browser STOP.
+            // The private sender must be interrupted even if the Rust caller
+            // stopped waiting while its previously accepted utterance plays.
+            if worker
+                .request(json!({"command": "interrupt"}), INTERRUPT_TIMEOUT, None, true)
+                .is_err()
+            {
+                // Never leave an unconfirmed private audio publisher running.
+                let _ = worker.terminate();
+                return Err(unavailable());
+            }
+        }
+        result
     }
 
     fn interrupt(&self, session_id: &str) -> Result<(), ProviderError> {
