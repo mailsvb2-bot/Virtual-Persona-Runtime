@@ -189,7 +189,7 @@ fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u
             return;
         }
         if state.voice_streams.wait_until_quiescent() {
-            let _ = complete_deferred_session(&state, close, expected_generation);
+            let _ = complete_deferred_session(state, close, expected_generation);
             return;
         }
     }
