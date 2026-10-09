@@ -68,6 +68,7 @@ pub(super) fn register_started_session(
             .session_revocation_handle()
             .ok_or(LabError::InvalidState)?,
     );
+    *state.backend_stop.lock() = engine.backend_stop_handle();
     Ok(())
 }
 
@@ -78,10 +79,10 @@ pub(super) fn register_started_session(
 fn fence_authority(
     state: &AppState,
     expected_session_sequence: Option<u64>,
-) -> Result<(), HttpResponse> {
+) -> Result<bool, HttpResponse> {
     // Start holds replay_source through the new-session registration. This
     // ordering ensures an old tab cannot fence a newer generation.
-    let revoker = {
+    let (revoker, backend_stop) = {
         let mut replay = state.replay_source.lock();
         let registered = state.session_revocation.lock();
         let current = state.active_session_sequence.load(Ordering::Acquire);
@@ -93,7 +94,7 @@ fn fence_authority(
         };
         state.session_end_requested.store(true, Ordering::Release);
         *replay = None;
-        revoker
+        (revoker, state.backend_stop.lock().clone())
     };
     // Canonical revoke is FIRST. Do not take engine.lock() on this path:
     // the in-flight voice worker may hold it beyond the teardown deadline.
@@ -101,20 +102,24 @@ fn fence_authority(
         .revoke_authority()
         .map_err(|code| lab_error_response(&LabError::Runtime(code)))?;
     request_voice_cancel(state);
+    // Independent of engine.lock(): an STT/LLM worker cannot delay the
+    // private LiveKit sender STOP after the authority epoch has been revoked.
+    let mut stopped = backend_stop.is_none_or(|handle| handle.stop().is_ok());
     // When the engine is idle, also complete the normal remote-provider cleanup
     // immediately. This preserves the existing /fence user-visible "revoked"
     // state while keeping the busy-worker path strictly NON-BLOCKING: authority
     // has already been withdrawn even if the provider is still unwinding.
     match state.engine.try_lock() {
-        Ok(mut engine) => engine
-            .revoke()
-            .map_err(|error| lab_error_response(&error))?,
+        Ok(mut engine) => {
+            engine.revoke().map_err(|error| lab_error_response(&error))?;
+            stopped = true;
+        }
         Err(std::sync::TryLockError::WouldBlock) => {}
         Err(std::sync::TryLockError::Poisoned(_)) => {
             return Err(error_response(500, "INTERNAL_ERROR"));
         }
     }
-    Ok(())
+    Ok(stopped)
 }
 
 /// First phase of user Close: deny new turns and revoke provider authority now.
@@ -130,7 +135,9 @@ pub(super) fn fence_session_response(
         .expected_session_sequence
         .filter(|sequence| *sequence > 0)
         .ok_or_else(|| error_response(400, "INVALID_INPUT"))?;
-    fence_authority(state, Some(sequence))?;
+    if !fence_authority(state, Some(sequence))? {
+        return Err(error_response(502, "PROVIDER_STOP_UNCONFIRMED"));
+    }
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
@@ -165,6 +172,7 @@ fn complete_deferred_session(
     .map_err(|error| lab_error_response(&error))?;
 
     *state.replay_source.lock() = None;
+    *state.backend_stop.lock() = None;
     state.evidence.lock().seal_session();
     if close {
         *state.active_voice_interrupt.lock() = None;
@@ -202,7 +210,7 @@ fn end_session(
     close: bool,
     expected_session_sequence: Option<u64>,
 ) -> Result<HttpResponse, HttpResponse> {
-    fence_authority(state, expected_session_sequence)?;
+    let _stopped = fence_authority(state, expected_session_sequence)?;
     let expected_generation = state.active_session_sequence.load(Ordering::Acquire);
     if !state.voice_streams.wait_until_quiescent() {
         let worker_state = Arc::clone(state);
