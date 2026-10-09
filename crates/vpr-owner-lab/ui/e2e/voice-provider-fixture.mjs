@@ -187,6 +187,7 @@ const server = http.createServer(async (request, response) => {
       id: `live-session-${expressiveSessionSequence}`,
       session_url: "wss://livekit.example.test",
       session_token: `fixture-livekit-token-${expressiveSessionSequence}`,
+      echo_token: `fixture-private-echo-token-${expressiveSessionSequence}`,
     });
   }
 
