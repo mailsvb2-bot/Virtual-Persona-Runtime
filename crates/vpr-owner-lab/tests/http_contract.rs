@@ -260,8 +260,12 @@ fn post_binary(
 }
 
 fn start_voice_turn(
-    port: u16, host: &str, csrf: &str,
-    session_sequence: u64, request_sequence: u64, pcm: &[u8],
+    port: u16,
+    host: &str,
+    csrf: &str,
+    session_sequence: u64,
+    request_sequence: u64,
+    pcm: &[u8],
 ) -> u64 {
     let started = post_binary(
         port,
@@ -281,8 +285,11 @@ fn start_voice_turn(
 }
 
 fn collect_voice_events(
-    port: u16, host: &str, csrf: &str,
-    session_sequence: u64, request_sequence: u64,
+    port: u16,
+    host: &str,
+    csrf: &str,
+    session_sequence: u64,
+    request_sequence: u64,
 ) -> Vec<Value> {
     let mut collected = Vec::new();
     for _ in 0..16 {
@@ -291,7 +298,9 @@ fn collect_voice_events(
             host,
             csrf,
             "/api/voice/events",
-            &format!(r#"{{"session_sequence":{session_sequence},"request_sequence":{request_sequence}}}"#),
+            &format!(
+                r#"{{"session_sequence":{session_sequence},"request_sequence":{request_sequence}}}"#
+            ),
         );
         assert_eq!(response.status, 200, "{}", response.body);
         let payload: Value = serde_json::from_str(&response.body).unwrap();
@@ -678,16 +687,28 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     );
 
     let pcm = vec![0_u8; 3_200];
-    let missing_correlation = post_binary(port, &host, &csrf, "/api/voice/turn", Some(evidence_session), None, &pcm);
+    let missing_correlation = post_binary(
+        port,
+        &host,
+        &csrf,
+        "/api/voice/turn",
+        Some(evidence_session),
+        None,
+        &pcm,
+    );
     assert_eq!(missing_correlation.status, 400);
     assert!(missing_correlation.body.contains("INVALID_INPUT"));
 
-    let missing_epoch = post_binary(
-        port, &host, &csrf, "/api/voice/turn", None, Some(1), &pcm,
-    );
+    let missing_epoch = post_binary(port, &host, &csrf, "/api/voice/turn", None, Some(1), &pcm);
     assert_eq!(missing_epoch.status, 400);
     let stale_epoch = post_binary(
-        port, &host, &csrf, "/api/voice/turn", Some(evidence_session + 1), Some(1), &pcm,
+        port,
+        &host,
+        &csrf,
+        "/api/voice/turn",
+        Some(evidence_session + 1),
+        Some(1),
+        &pcm,
     );
     assert_eq!(stale_epoch.status, 409);
     let request_sequence = start_voice_turn(port, &host, &csrf, evidence_session, 1, &pcm);
@@ -917,12 +938,13 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
         r#"{"consent":true}"#,
     );
     assert_eq!(started.status, 200, "{}", started.body);
-    let evidence_session = serde_json::from_str::<Value>(&started.body).unwrap()
-        ["evidence_session_sequence"].as_u64().unwrap();
+    let evidence_session =
+        serde_json::from_str::<Value>(&started.body).unwrap()["evidence_session_sequence"]
+            .as_u64()
+            .unwrap();
 
-    let request_sequence = start_voice_turn(
-        port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200],
-    );
+    let request_sequence =
+        start_voice_turn(port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let revoke_started = Instant::now();
@@ -996,12 +1018,13 @@ fn close_preempts_active_voice_before_any_avatar_output() {
         r#"{"consent":true}"#,
     );
     assert_eq!(started.status, 200, "{}", started.body);
-    let evidence_session = serde_json::from_str::<Value>(&started.body).unwrap()
-        ["evidence_session_sequence"].as_u64().unwrap();
+    let evidence_session =
+        serde_json::from_str::<Value>(&started.body).unwrap()["evidence_session_sequence"]
+            .as_u64()
+            .unwrap();
 
-    let request_sequence = start_voice_turn(
-        port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200],
-    );
+    let request_sequence =
+        start_voice_turn(port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let close_started = Instant::now();
