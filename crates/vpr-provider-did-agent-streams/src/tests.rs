@@ -880,6 +880,64 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     );
 }
 
+
+#[derive(Default)]
+struct CancelledDuringEchoOpen {
+    cancellation: std::sync::Arc<Probe>,
+    calls: std::sync::Mutex<Vec<&'static str>>,
+}
+
+impl DidEchoBackend for CancelledDuringEchoOpen {
+    fn open(
+        &self,
+        _session_id: &str,
+        _session_url: &str,
+        _echo_token: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("open");
+        // A second tab can revoke while the private LiveKit room connects.
+        self.cancellation.0.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn speak(
+        &self,
+        _session_id: &str,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        panic!("cancelled Echo session must never send speech");
+    }
+
+    fn stop(&self, _session_id: &str) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("stop");
+        Ok(())
+    }
+}
+
+#[test]
+fn echo_start_cancelled_during_open_stops_private_sender_and_returns_no_session() {
+    use std::sync::Arc;
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, _captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let cancellation = Arc::new(Probe(AtomicBool::new(false)));
+    let backend = Arc::new(CancelledDuringEchoOpen {
+        cancellation: Arc::clone(&cancellation),
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let error = provider.create_session(cancellation.as_ref()).unwrap_err();
+
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "stop"]);
+    assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+}
+
 #[test]
 fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
     use std::sync::Arc;
