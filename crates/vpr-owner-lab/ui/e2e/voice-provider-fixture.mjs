@@ -97,6 +97,17 @@ const server = http.createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/health") {
     return sendJson(response, 200, { ok: true });
   }
+  if (request.method === "POST" && url.pathname === "/__echo-event") {
+    const eventBody = await readBody(request);
+    const event = JSON.parse(eventBody.toString("utf8"));
+    const allowed = new Set([
+      "audio_stream_opened", "audio_bytes_written", "audio_stream_closed",
+      "provider_stop_sent", "private_echo_connected", "private_echo_disconnected",
+    ]);
+    if (!allowed.has(event.kind)) return sendJson(response, 400, { ok: false });
+    requests.push({ kind: "echo", event: event.kind });
+    return sendJson(response, 200, { ok: true });
+  }
   if (request.method === "GET" && url.pathname === "/__state") {
     return sendJson(response, 200, { requests });
   }
