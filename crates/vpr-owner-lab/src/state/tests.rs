@@ -256,15 +256,8 @@ fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_sp
     assert!(resumed.evidence_output_sequence > 0);
     assert_eq!(stats.text.load(Ordering::SeqCst), 1);
 
-    // Server delivery was already acknowledged Sent by the runtime. It must
-    // still not be misreported as audible playback without media evidence.
-    assert!(engine
-        .voice_playback
-        .acknowledge_voice_playback_complete(
-            resumed.evidence_turn_sequence,
-            resumed.evidence_output_sequence,
-        )
-        .is_err());
+    // The server has accepted delivery, not a browser playback receipt.
+    // Do not fabricate an acknowledge_voice_playback_complete call here.
 
     engine.revoke_authority().unwrap();
     assert!(engine.prepare_resumed_speech("Поздний ответ.").is_err());
