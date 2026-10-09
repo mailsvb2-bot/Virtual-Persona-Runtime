@@ -877,8 +877,10 @@ const readLiveKitTrackPlayout = async (
   previousPackets: Map<string, number> | null,
 ): Promise<AvSyncTrackSelection> => {
   const methods: Array<() => Promise<RTCStatsReport | undefined>> = [];
-  if (track?.getRTCStatsReport) methods.push(() => track.getRTCStatsReport!());
-  if (track?.receiver) methods.push(() => track.receiver!.getStats());
+  const sdkReport = track?.getRTCStatsReport;
+  const receiver = track?.receiver;
+  if (sdkReport && track) methods.push(() => sdkReport.call(track));
+  if (receiver) methods.push(() => receiver.getStats());
   let best = selectPlayoutTimestamp(undefined, kind, previousPackets);
   for (const method of methods) {
     try {
