@@ -8,7 +8,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
-use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult, LabVoiceSegment};
+use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult};
 
 use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
