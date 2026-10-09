@@ -1,6 +1,6 @@
 import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
-import { authorizedSpeakText, replayTextFrom, resumeSentences, suggestedResumeSentence } from "./interrupted-answer.js";
+import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject, } from "./media-runtime.js";
@@ -50,6 +50,7 @@ const interruptButton = byId("interrupt");
 const resumeAnswerRow = byId("resume-answer-row");
 const resumeAnswerButton = byId("resume-answer");
 const resumeAnswerFrom = byId("resume-answer-from");
+const resumeAnswerCursor = byId("resume-answer-cursor");
 const revokeButton = byId("revoke");
 const closeButton = byId("close");
 const voiceButton = byId("voice");
@@ -136,6 +137,7 @@ const authorizedDeliveredParts = new Map();
 let completedAuthorizedReply = null;
 let interruptedAnswerSentences = [];
 let resumeFromIndex = 0;
+let resumeCursorEdited = false;
 let resumedSpeechStartedAt = null;
 let interruptEvidenceWatch = null;
 let avSyncCollectionPending = false;
@@ -156,6 +158,8 @@ const clearInterruptedAnswer = () => {
     completedAuthorizedReply = null;
     interruptedAnswerSentences = [];
     resumeFromIndex = 0;
+    resumeCursorEdited = false;
+    resumeAnswerCursor.value = "";
     resumedSpeechStartedAt = null;
     resumeAnswerFrom.replaceChildren();
     resumeAnswerRow.hidden = true;
@@ -172,6 +176,8 @@ const offerInterruptedAnswer = (sentences, elapsedMillis, offset = 0) => {
     });
     resumeFromIndex = Math.min(sentences.length - 1, offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
     resumeAnswerFrom.value = String(resumeFromIndex);
+    resumeAnswerCursor.value = sentences.join(" ");
+    resumeCursorEdited = false;
     resumeAnswerRow.hidden = false;
     resumeAnswerButton.disabled = false;
 };
@@ -356,7 +362,12 @@ const waitForVoiceEvents = async (requestSequence, onSegment) => {
                 finalResult = event.result;
             }
             else {
-                throw new Error(event.code);
+                if (event.diagnostic === "STT_NO_FINAL_TRANSCRIPT") {
+                    throw new Error("STT_NO_FINAL_TRANSCRIPT: Распознавание завершилось без текста. Проверьте микрофон, говорите 2–3 секунды отчётливо и завершите запись.");
+                }
+                throw new Error(event.code === "INVALID_INPUT"
+                    ? "INVALID_INPUT: голосовой фрагмент пустой, слишком короткий или неверного формата; попробуйте записать вопрос ещё раз."
+                    : event.code);
             }
         }
         if (batch.terminal) {
@@ -722,6 +733,10 @@ const stopRemoteEvidence = () => {
     interruptEvidenceWatch = null;
     baselineRms = 0.002;
 };
+const setLocalAudioMuted = (muted) => {
+    avatarAudio.muted = muted;
+    video.muted = muted;
+};
 const monitorRemoteAudio = () => {
     const analyser = remoteAudioAnalyser;
     if (!analyser)
@@ -738,6 +753,11 @@ const monitorRemoteAudio = () => {
         const voice = activeVoiceEvidence;
         const speechThreshold = Math.max(0.015, baselineRms * 3 + 0.003);
         if (voice && level > speechThreshold) {
+            const now = performance.now();
+            if (voice.lastAudioTickAt !== null) {
+                voice.audibleDurationMillis += Math.min(100, Math.max(0, now - voice.lastAudioTickAt));
+            }
+            voice.lastAudioTickAt = now;
             voice.speaking = true;
             voice.silentFrames = 0;
             voice.playbackSilenceStartedAt = null;
@@ -761,6 +781,7 @@ const monitorRemoteAudio = () => {
             }
         }
         else if (voice?.speaking) {
+            voice.lastAudioTickAt = null;
             voice.silentFrames += 1;
             if (voice.silentFrames >= 6) {
                 voice.speaking = false;
@@ -1376,6 +1397,7 @@ const connectAvatar = async () => {
         setStatus("Нужно явное согласие", "error");
         return;
     }
+    setLocalAudioMuted(false);
     connectButton.disabled = true;
     connectEvidenceStartedAt = 0;
     connectJourneyStartedAt = performance.now();
@@ -1737,6 +1759,8 @@ const finishMicrophoneTurn = async () => {
         silentFrames: 0,
         playbackSilenceStartedAt: null,
         playbackRecoveryTriggered: false,
+        audibleDurationMillis: 0,
+        lastAudioTickAt: null,
     };
     let terminalStatus = null;
     try {
@@ -1760,6 +1784,8 @@ const finishMicrophoneTurn = async () => {
                 updateControls();
             }
             const command = segment.client_command;
+            if (deliveryGeneration === voiceDeliveryGeneration)
+                setLocalAudioMuted(false);
             if (!command) {
                 serverDeliveredSpeechObserved = true;
                 return;
@@ -1967,6 +1993,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             silentFrames: 0,
         };
     }
+    setLocalAudioMuted(true);
     const playbackId = sessionState.playbackId;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? playbackId !== null
@@ -2070,7 +2097,7 @@ const interruptAndOfferResume = async () => {
         ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
         : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
             ? 0
-            : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+            : voice.audibleDurationMillis;
     const offset = replaying ? resumeFromIndex : 0;
     const interrupted = await interruptAvatar();
     resumedSpeechStartedAt = null;
@@ -2105,7 +2132,12 @@ const resumeInterruptedAnswer = async () => {
         return;
     }
     const index = Number(resumeAnswerFrom.value);
-    const text = replayTextFrom(interruptedAnswerSentences, index);
+    const manualCursorOffset = resumeCursorEdited
+        ? resumeWordOffset(resumeAnswerCursor.value, resumeAnswerCursor.selectionStart)
+        : null;
+    const text = manualCursorOffset === null
+        ? replayTextFrom(interruptedAnswerSentences, index)
+        : Array.from(resumeAnswerCursor.value).slice(manualCursorOffset).join("").trim();
     if (!text) {
         setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
         return;
@@ -2118,11 +2150,13 @@ const resumeInterruptedAnswer = async () => {
         prepared = await api("/api/avatar/resume-answer", {
             request_sequence: resumeSourceRequest,
             sentence_index: index,
+            ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
         });
         await syncStatus();
         if (sessionState.backend.session_state !== "active") {
             throw new Error("INVALID_STATE_TRANSITION");
         }
+        setLocalAudioMuted(false);
         if (prepared.client_command !== null) {
             await dispatchClientCommand(prepared.client_command);
             await api("/api/avatar/client-delivery-sent", {
@@ -2248,6 +2282,9 @@ connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
+resumeAnswerCursor.addEventListener("mouseup", () => { resumeCursorEdited = true; });
+resumeAnswerCursor.addEventListener("keyup", () => { resumeCursorEdited = true; });
+resumeAnswerFrom.addEventListener("change", () => { resumeCursorEdited = false; });
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
