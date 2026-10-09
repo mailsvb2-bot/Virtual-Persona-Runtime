@@ -148,6 +148,35 @@ test.afterEach(async ({ request }) => {
   expect(evidence.session_sequence).toBeGreaterThan(0);
 });
 
+// Security boundary: the fixture intentionally has no private Echo sender.
+// An expressive viewer must never receive a usable LiveKit speech session.
+test("Expressive without a backend Echo sender is denied before viewer credentials", async ({
+  page,
+  request,
+}) => {
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+  await setupReviewedPersona(request, csrf);
+
+  const started = await postJson(request, csrf, "/api/session/start", { consent: true });
+  expect(started.ok()).toBeFalsy();
+  const payload = await started.text();
+  expect(payload).not.toContain("private-livekit-token");
+  expect(payload).not.toContain("session_token");
+  expect(payload).not.toContain("echo_token");
+
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  const state = await status.json() as { session_state: string; avatar_open: boolean };
+  expect(state.avatar_open).toBe(false);
+  await page.goto("/");
+  const controls = await page.evaluate(() =>
+    (window as typeof window & { __vprLiveKitCommands?: Array<{ topic: string }> })
+      .__vprLiveKitCommands ?? []);
+  expect(controls.filter((cmd) => cmd.topic === "did.speak")).toHaveLength(0);
+});
+
 test("Expressive LiveKit generation-only events never grant canonical playback", async ({
   page,
   request,
