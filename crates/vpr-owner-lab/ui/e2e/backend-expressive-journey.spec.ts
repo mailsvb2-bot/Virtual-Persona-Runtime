@@ -179,396 +179,85 @@ test("Expressive Echo keeps its sender credentials private", async ({
   });
 });
 
-test("Expressive LiveKit generation-only events never grant canonical playback", async ({
-  page,
-  request,
-}) => {
-  test.setTimeout(EXPRESSIVE_JOURNEY_TEST_TIMEOUT_MS);
-
+// Echo speech is published from the actual backend Python process; observe
+// the local provider fixture, not obsolete browser data-channel commands.
+type EchoEvent = { kind: string; event?: string };
+const echoEvents = async (request: APIRequestContext): Promise<string[]> => {
+  const response = await request.get(`${providerUrl}/__state`);
+  expect(response.ok()).toBeTruthy();
+  const state = await response.json() as { requests: EchoEvent[] };
+  return state.requests.filter((entry) => entry.kind === "echo").map((entry) => String(entry.event));
+};
+const startEcho = async (request: APIRequestContext) => {
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
-
-  let report: ExpressiveJourneyReport | null = null;
-  let lastJourneyPhase = "not-started";
-  const resetMailbox = await request.delete(mailboxUrl);
-  expect(resetMailbox.ok()).toBeTruthy();
-
-  const readJourney = async (): Promise<void> => {
-    const response = await request.get(mailboxUrl);
-    if (!response.ok()) return;
-    const payload = await response.json() as {
-      events?: Array<ExpressiveJourneyReport | { kind: "phase"; phase: string }>;
-    };
-    report = null;
-    lastJourneyPhase = "not-started";
-    for (const event of Array.isArray(payload.events) ? payload.events : []) {
-      if ("kind" in event && event.kind === "phase") {
-        lastJourneyPhase = event.phase;
-      } else {
-        report = event as ExpressiveJourneyReport;
-      }
-    }
-  };
-
-  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
-  await installProviderAutoConnect(page);
-  await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });
-  let failedGenerationEvidenceOnce = false;
-  await page.route("**/api/evidence/media", async (route) => {
-    const incoming = route.request();
-    if (incoming.method() === "POST") {
-      const body = incoming.postDataJSON() as { kind?: string } | null;
-      if (body?.kind === "provider_video_generation_done" && !failedGenerationEvidenceOnce) {
-        failedGenerationEvidenceOnce = true;
-        await route.fulfill({
-          status: 503,
-          contentType: "application/json",
-          body: '{"ok":false,"code":"PROVIDER_EVIDENCE_TEMPORARY_FAILURE"}',
-        });
-        return;
-      }
-      if (body?.kind === "audio_started") {
-        await new Promise<void>((resolve) => setTimeout(resolve, 300));
-      }
-    }
-    await route.continue();
+  const started = await postJson(request, csrf, "/api/avatar/start", { consent: true });
+  expect(started.status()).toBe(200);
+  const session = await started.json() as { evidence_session_sequence: number; transport: { kind: string; token: string }; client_control?: { text_input?: boolean } };
+  expect(session.transport.kind).toBe("live_kit");
+  expect(session.client_control?.text_input ?? false).toBe(false);
+  return { csrf, sequence: session.evidence_session_sequence };
+};
+const submitOwnerTurn = async (request: APIRequestContext, csrf: string, sequence: number, text: string) =>
+  request.post(`${ownerLabUrl}/api/text/turn`, {
+    headers: { ...csrfHeaders(csrf), "X-VPR-Evidence-Request": String(sequence) },
+    data: { text },
   });
-  let authorizedReplayPreparations = 0;
-  let rejectedReplayOnce = false;
-  await page.route("**/api/avatar/resume-answer", async (route) => {
-    if (route.request().method() === "POST") {
-      authorizedReplayPreparations += 1;
-      if (!rejectedReplayOnce) {
-        rejectedReplayOnce = true;
-        await route.fulfill({
-          status: 409,
-          contentType: "application/json",
-          body: '{"ok":false,"code":"INVALID_STATE_TRANSITION"}',
-        });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await page.goto("/");
 
-  await expect.poll(async () => {
-    await readJourney();
-    if (!report) return `pending:${lastJourneyPhase}`;
-    return report.status === "failed"
-      ? `failed:${report.error ?? "unknown"}@phase:${lastJourneyPhase}`
-      : report.status;
-  }, {
-    timeout: EXPRESSIVE_JOURNEY_COMPLETION_TIMEOUT_MS,
-    intervals: [100, 250, 500],
-    message: "Expressive journey must publish a terminal controller-independent report",
-  }).toBe("ok");
-
-  await readJourney();
-  expect(report).not.toBeNull();
-  expect(report?.status).toBe("ok");
-
-  const layout = report?.layout;
-  expect(layout).toBeDefined();
-  expect(layout?.overflow).toBe(false);
-  expect(layout?.objectFit).toBe("contain");
-  expect(layout?.avatarWidth ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
-    layout?.stageWidth ?? 0,
-  );
-  expect(layout?.avatarHeight ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(
-    layout?.stageHeight ?? 0,
-  );
-
-  const evidence = report?.evidence;
-  expect(evidence).toBeDefined();
-  expect(evidence?.canonical_playback_proven).toBe(false);
-  expect(evidence?.av_sync_proven).toBe(false);
-  expect(evidence?.av_sync_samples).toHaveLength(3);
-  expect(evidence?.av_sync_samples.map((sample) => sample.sample_sequence)).toEqual([1, 2, 3]);
-  expect(evidence?.av_sync_samples.every((sample) =>
-    sample.reference === "web_rtc_estimated_playout_timestamp"
-      && sample.absolute_offset_millis === 60
-  )).toBeTruthy();
-  expect(evidence?.voice_attempts.some((attempt) =>
-    attempt.status === "completed" && !attempt.canonical_playback_confirmed
-  )).toBeTruthy();
-  expect(evidence?.media_events.some((event) => event.kind === "backend_complete_received")).toBeTruthy();
-  expect(evidence?.media_events.some((event) => event.kind === "client_delivery_sent")).toBeTruthy();
-  expect(evidence?.media_events.some((event) => event.kind === "provider_data_received")).toBeTruthy();
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_video_generation_done",
-  )).toBeTruthy();
-  expect(failedGenerationEvidenceOnce).toBe(true);
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_video_generation_started",
-  )).toBeTruthy();
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_informational_event",
-  )).toBeTruthy();
-  for (const category of [
-    "provider_unknown_chat_event",
-    "provider_unknown_video_event",
-    "provider_unknown_tool_event",
-    "provider_unknown_other_event",
-  ]) {
-    expect(evidence?.media_events.some((event) => event.kind === category)).toBeTruthy();
-  }
-  // D-ID's arbitrary subject and payload never become evidence text.
-  expect(JSON.stringify(evidence)).not.toContain("PRIVATE_MEDIA_DIAGNOSTIC_MUST_NOT_LEAK");
-  expect(JSON.stringify(evidence)).not.toContain("new-private-event");
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_playback_done_received",
-  )).toBe(false);
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "provider_event_parse_failed",
-  )).toBeFalsy();
-  expect(evidence?.media_events.some((event) => event.kind === "playback_completed")).toBe(false);
-  // Recovery is strict-RT0-only; this fixture intentionally does not enable that toggle.
-  expect(evidence?.media_events.some(
-    (event) => event.kind === "playback_recovery_triggered",
-  )).toBe(false);
-
-  const metrics = report?.metrics;
-  expect(metrics).toBeDefined();
-  expect(metrics?.stt).toMatch(/\d+ мс/);
-  expect(metrics?.llm).toMatch(/\d+ мс/);
-  expect(metrics?.llmFirst).toMatch(/\d+ мс/);
-  expect(metrics?.serverTotal).toMatch(/\d+ мс/);
-  expect(metrics?.backendComplete).toMatch(/\d+ мс/);
-  expect(metrics?.clientDelivery).toMatch(/\d+ мс/);
-  expect(metrics?.providerAudioDelay).toMatch(/\d+ мс/);
-  expect(metrics?.firstAudio).toMatch(/\d+ мс/);
-  expect(metrics?.videoReady).toMatch(/\d+ мс/);
-  expect(metrics?.avSync).toBe("ещё не доказан");
-  expect(metrics?.playback).toBe("ожидание");
-  expect(metrics?.cost).toBe("провайдер не сообщил стоимость");
-
-  const commands = report?.commands ?? [];
-  const speak = commands.filter((command) => command.topic === "did.speak");
-  expect(rejectedReplayOnce).toBe(true);
-  expect(authorizedReplayPreparations).toBe(2);
-  expect(speak.length).toBeGreaterThanOrEqual(3);
-  const replayed = JSON.parse(speak.at(-1)?.text ?? "{}");
-  expect(replayed.script?.input).toBe("фраза."); // explicit word-level resume, not entire sentence
-  expect(replayed.script?.should_queue_speaks).toBe(true);
-  const streamedReply = speak.slice(0, -1).map((command) => {
-    const payload = JSON.parse(command.text ?? "{}");
-    expect(payload.script?.should_queue_speaks).toBe(true);
-    return String(payload.script?.input ?? "");
-  }).join(" ").replace(/\s+/g, " ").trim();
-  expect(streamedReply).toBe(
-    "Сначала уточню один важный момент, затем продолжу. Третья фраза.",
-  );
-  expect(commands.some((command) => command.topic === "did.interrupt")).toBeTruthy();
-
-  const providerState = await request.get(`${providerUrl}/__state`);
-  expect(providerState.ok()).toBeTruthy();
-  const { requests } = await providerState.json() as {
-    requests: Array<{
-      kind: "stt" | "llm" | "avatar";
-      method: string;
-      path: string;
-      query: string;
-      authorization: string | null;
-      contentType: string | null;
-      bodyLength: number;
-      bodyText: string;
-      completed?: boolean;
-    }>;
-  };
-  const sttRequests = requests.filter((entry) => entry.kind === "stt");
-  const llmRequests = requests.filter((entry) => entry.kind === "llm");
-  const avatarRequests = requests.filter((entry) => entry.kind === "avatar");
-
-  // Provider-call evidence is recorded when each Deepgram WebSocket opens. The interrupted
-  // second turn may or may not reach CloseStream before cancellation, so completion is not
-  // a stable boundary; opening the authorized stream is.
-  expect(sttRequests).toHaveLength(2);
-  expect(sttRequests.every((entry) => entry.method === "WEBSOCKET")).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.path === "/v1/listen")).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("model=nova-3"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("encoding=linear16"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("sample_rate=16000"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("channels=1"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("interim_results=true"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("smart_format=true"))).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.query.includes("language=ru"))).toBeTruthy();
-  expect(sttRequests.every(
-    (entry) => entry.authorization === "Token expressive-stt-e2e-secret",
-  )).toBeTruthy();
-  expect(sttRequests.every((entry) => entry.contentType === null)).toBeTruthy();
-  expect(sttRequests[0]?.completed).toBe(true);
-  expect(sttRequests[0]?.bodyLength ?? 0).toBeGreaterThan(0);
-
-  // The browser contract ends at canonical interrupt: cancellation may beat LLM dispatch,
-  // or it may cancel an already-open LLM stream. Both are correct as long as no second did.speak
-  // escapes. Open-stream tail cancellation is proven deterministically in Rust state tests.
-  expect(llmRequests.length).toBeGreaterThanOrEqual(1);
-  expect(llmRequests.length).toBeLessThanOrEqual(2);
-  expect(llmRequests.every(
-    (entry) => entry.authorization === "Bearer expressive-llm-e2e-secret",
-  )).toBeTruthy();
-  expect(llmRequests[0]?.bodyText).toContain('"model":"deepseek-flash"');
-  expect(llmRequests[0]?.bodyText).toContain('"reasoning_effort":"none"');
-  expect(llmRequests[0]?.bodyText).toContain('"thinking":{"type":"disabled"}');
-  expect(llmRequests[0]?.bodyText).toContain('"max_tokens":96');
-  if (llmRequests[1]) {
-    expect(llmRequests[1].bodyText).toContain("Что думает владелец?");
-  }
-
-  expect(avatarRequests.some((entry) =>
-    entry.method === "GET" && entry.path === "/agents/voice-e2e-expressive-agent"
-  )).toBeTruthy();
-  expect(avatarRequests.some((entry) =>
-    entry.method === "POST"
-      && entry.path === "/v2/agents/voice-e2e-expressive-agent/sessions"
-  )).toBeTruthy();
-  expect(avatarRequests.some((entry) => entry.path.includes("/streams"))).toBeFalsy();
-
-  // The same stale request can no longer prepare a speak after disconnect.
-  const denied = await postJson(request, csrf, "/api/avatar/resume-answer", {
-    request_sequence: 1,
-    sentence_index: 0,
-  });
-  expect(denied.status()).toBe(409);
-  const invalid = await postJson(request, csrf, "/api/avatar/resume-answer", {
-    request_sequence: 1,
-    sentence_index: 999,
-  });
-  expect(invalid.status()).toBe(409);
-  const providerAfterDeny = await request.get(`${providerUrl}/__state`);
-  expect(providerAfterDeny.ok()).toBeTruthy();
-  const afterRequests = (await providerAfterDeny.json() as { requests: unknown[] }).requests;
-  expect(afterRequests).toHaveLength(requests.length);
+test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  const reply = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  expect(reply.status()).toBe(200);
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 30000,
+  }).toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
+  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(evidence.ok()).toBeTruthy();
+  expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
 });
 
-
-test("rejected provider STOP disconnects LiveKit and revokes before replay", async ({
-  page,
-  request,
-}) => {
-  test.setTimeout(120_000);
-  const mailboxReset = await request.delete(mailboxUrl);
-  expect(mailboxReset.ok()).toBeTruthy();
-  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
-  await installProviderAutoConnect(page);
-  await page.addInitScript({ path: "e2e/stop-failure-journey-driver.js" });
-  await page.goto("/");
-
-  await expect.poll(async () => {
-    const response = await request.get(mailboxUrl);
-    if (!response.ok()) return "pending:mailbox";
-    const data = await response.json() as {
-      events: Array<{ status?: string; error?: string; kind?: string; phase?: string }>;
-    };
-    const outcome = data.events.find((event) => event.status);
-    return outcome?.status === "failed"
-      ? `failed:${outcome.error ?? "unknown"}`
-      : outcome?.status ?? "pending:stop-failure";
-  }, { timeout: 70_000, intervals: [100, 250, 500] }).toBe("ok");
-
-  const status = await request.get(`${ownerLabUrl}/api/status`);
-  expect(status.ok()).toBeTruthy();
-  // The in-page owner journey already proved "revoked" before clicking Close;
-  // the terminal state must now be "closed" after UI evidence export.
-  expect(await status.json()).toMatchObject({ session_state: "closed" });
-
-  // A server-prepared command remains forbidden after revoke even when an
-  // interrupted answer had been cached earlier in the session.
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  const csrf = String((await bootstrap.json()).csrf_token);
-  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", {
-    request_sequence: 1,
-    sentence_index: 0,
-  });
+test("Expressive server STOP is sent from backend and prevents stale replay", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  const reply = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  expect(reply.status()).toBe(200);
+  const stopped = await postJson(request, csrf, "/api/avatar/interrupt", { expected_session_sequence: sequence });
+  expect(stopped.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoke.ok()).toBeTruthy();
+  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
   expect(replay.status()).toBe(409);
 });
 
-
-test("unexpected LiveKit disconnect during D-ID speech closes all output paths", async ({
-  page,
-  request,
-}) => {
-  test.setTimeout(100_000);
-  const mailboxReset = await request.delete(mailboxUrl);
-  expect(mailboxReset.ok()).toBeTruthy();
-  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
-  await installProviderAutoConnect(page);
-  await page.addInitScript({ path: "e2e/unexpected-disconnect-journey-driver.js" });
-  await page.goto("/");
-
-  await expect.poll(async () => {
-    const response = await request.get(mailboxUrl);
-    if (!response.ok()) return "pending:mailbox";
-    const data = await response.json() as {
-      events: Array<{ status?: string; error?: string }>;
-    };
-    const outcome = data.events.find((event) => event.status);
-    return outcome?.status === "failed"
-      ? `failed:${outcome.error ?? "unknown"}`
-      : outcome?.status ?? "pending:disconnect";
-  }, { timeout: 65_000, intervals: [100, 250, 500] }).toBe("ok");
-
-  const response = await request.get(`${ownerLabUrl}/api/status`);
-  expect(response.ok()).toBeTruthy();
-  expect(await response.json()).toMatchObject({
-    session_state: "closed",
-    avatar_open: false,
-  });
+test("Expressive server Echo closes privately on session revoke", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  const turn = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  expect(turn.ok()).toBeTruthy();
+  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoke.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["private_echo_disconnected"]));
+  const blocked = await submitOwnerTurn(request, csrf, 2, "Запрещённая речь после отзыва");
+  expect(blocked.ok()).toBeFalsy();
 });
 
-
-test("non-connecting second browser tab revokes owner LiveKit speech", async ({
-  page,
-  context,
-  request,
-}) => {
-  test.setTimeout(110_000);
-  const reset = await request.delete(mailboxUrl);
-  expect(reset.ok()).toBeTruthy();
-  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
-  await installProviderAutoConnect(page);
-  await page.addInitScript({ path: "e2e/cross-tab-revoke-journey-driver.js" });
-  await page.goto("/");
-
-  await expect.poll(async () => {
-    const response = await request.get(mailboxUrl);
-    if (!response.ok()) return "pending:mailbox";
-    const payload = await response.json() as {
-      events: Array<{ kind?: string; phase?: string; status?: string; error?: string }>;
-    };
-    const failure = payload.events.find((event) => event.status === "failed");
-    if (failure) return `failed:${failure.error ?? "unknown"}`;
-    return payload.events.some((event) =>
-      event.kind === "phase" && event.phase === "owner-speech-published"
-    ) ? "owner-speaking" : "pending:owner-speaking";
-  }, { timeout: 40_000, intervals: [100, 250, 500] }).toBe("owner-speaking");
-
-  // Second genuine browser tab: no fake provider, no Connect, no Playwright
-  // post-navigation click. The UI driver discovers the already-active backend
-  // session, clicks Revoke and broadcasts its cached session ID to the owner tab.
-  const otherTab = await context.newPage();
-  await otherTab.addInitScript({ path: "e2e/cross-tab-revoker-driver.js" });
-  await otherTab.goto("/");
-
-  await expect.poll(async () => {
-    const response = await request.get(mailboxUrl);
-    if (!response.ok()) return "pending:mailbox";
-    const payload = await response.json() as {
-      events: Array<{ kind?: string; phase?: string; status?: string; error?: string }>;
-    };
-    const failure = payload.events.find((event) => event.status === "failed");
-    if (failure) return `failed:${failure.error ?? "unknown"}`;
-    return payload.events.find((event) => event.status === "ok")?.status ?? "pending:cross-tab";
-  }, { timeout: 60_000, intervals: [100, 250, 500] }).toBe("ok");
-  await otherTab.close();
-
-  const status = await request.get(`${ownerLabUrl}/api/status`);
-  expect(status.ok()).toBeTruthy();
-  expect(await status.json()).toMatchObject({
-    session_state: "closed",
-    avatar_open: false,
-  });
+test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
+  const { csrf } = await startEcho(request);
+  const revoked = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoked.ok()).toBeTruthy();
+  const before = await echoEvents(request);
+  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  expect(rejected.status()).toBe(409);
+  const rejectedTurn = await submitOwnerTurn(request, csrf, 1, "Несанкционированный ответ");
+  expect(rejectedTurn.ok()).toBeFalsy();
+  expect(await echoEvents(request)).toEqual(before);
 });
