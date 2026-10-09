@@ -85,3 +85,45 @@ fn quiescence_does_not_require_terminal_stream_polling() {
     );
     assert!(registry.wait_until_quiescent());
 }
+
+#[test]
+fn terminal_handoff_releases_voice_gate_only_once_even_after_next_turn_starts() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let registry = VoiceStreamRegistry::default();
+    let busy = AtomicBool::new(true);
+    let cancelled = AtomicBool::new(true);
+    let mut old_guard = http_evidence::VoiceBusyGuard::new(&busy, &cancelled);
+    assert!(registry.begin(1));
+
+    // The previous stream must become terminal while the registry is locked,
+    // and the same owner releases busy before any consumer is notified.
+    registry.finish_with_unlock(
+        1,
+        VoiceStreamEvent::Failed {
+            code: "TURN_CANCELLED".into(),
+            diagnostic: None,
+        },
+        || {
+            assert!(busy.load(Ordering::Acquire));
+            old_guard.release();
+        },
+    );
+    assert!(!busy.load(Ordering::Acquire));
+    assert!(!cancelled.load(Ordering::Acquire));
+
+    // A new request may now own the same atomic bit; dropping the OLD guard
+    // must not unlock or reset cancellation for the NEW owner.
+    assert!(busy
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok());
+    cancelled.store(true, Ordering::Release);
+    drop(old_guard);
+    assert!(busy.load(Ordering::Acquire));
+    assert!(cancelled.load(Ordering::Acquire));
+
+    let terminal = registry.wait_events(1).expect("old terminal remains consumable");
+    assert!(terminal.terminal);
+    assert_eq!(terminal.events.len(), 1);
+    assert!(registry.begin(2), "new stream may start after atomic handoff");
+}
