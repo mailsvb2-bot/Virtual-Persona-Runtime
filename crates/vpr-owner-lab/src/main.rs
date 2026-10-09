@@ -3,6 +3,7 @@ mod http_avatar_input;
 mod http_client_control;
 mod http_evidence;
 mod http_json;
+mod http_interrupt;
 mod http_owner_capture;
 mod http_references;
 #[cfg(test)]
@@ -19,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use http_json::{parse_empty_json, parse_json, read_body};
+use http_json::{parse_json, read_body};
 use http_session::reject_if_session_ending;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,7 @@ use vpr_owner_lab::{
     OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
     restore_reviewed_persona,
 };
-use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
+use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
@@ -67,6 +68,7 @@ struct AppState {
     replay_source: ParkingMutex<Option<http_client_control::AuthorizedReply>>,
     session_end_requested: AtomicBool,
     session_revocation: ParkingMutex<Option<SessionRevocationHandle>>,
+    backend_stop: ParkingMutex<Option<RealtimeAvatarStopHandle>>,
     active_session_sequence: AtomicU64,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
@@ -176,6 +178,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         replay_source: ParkingMutex::new(None),
         session_end_requested: AtomicBool::new(false),
         session_revocation: ParkingMutex::new(None),
+        backend_stop: ParkingMutex::new(None),
         active_session_sequence: AtomicU64::new(0),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
@@ -411,29 +414,13 @@ fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpR
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
-        "/api/avatar/interrupt" => {
-            parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
-        }
+        "/api/avatar/interrupt" => http_interrupt::interrupt_response(request, state),
         "/api/session/fence" => http_session::fence_session_response(request, state),
         "/api/session/revoke" => http_session::end_session_response(request, state, false),
         "/api/session/close" => http_session::end_session_response(request, state, true),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
-}
-
-fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse> {
-    if state.voice_busy.load(Ordering::Acquire) {
-        state.voice_cancel_requested.store(true, Ordering::Release);
-        if let Some(handle) = state.active_voice_interrupt.lock().clone() {
-            return handle
-                .interrupt()
-                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                .map_err(|reason| lab_error_response(&LabError::Runtime(reason)));
-        }
-        return Ok(json_response(200, &serde_json::json!({"ok": true})));
-    }
-    apply_input(state, OwnerLabTurnInput::Interrupt)
 }
 
 fn apply_input(state: &AppState, input: OwnerLabTurnInput) -> Result<HttpResponse, HttpResponse> {
