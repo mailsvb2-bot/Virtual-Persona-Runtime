@@ -35,8 +35,9 @@ pub(super) fn interrupt_response(
         if state.voice_busy.load(Ordering::Acquire) {
             state.voice_cancel_requested.store(true, Ordering::Release);
             if let Some(turn) = state.active_voice_interrupt.lock().clone() {
-                turn.interrupt()
-                    .map_err(|reason| lab_error_response(&LabError::Runtime(reason)))?;
+                // A finished/stale turn may legitimately reject interruption.
+                // That must NEVER prevent the mandatory provider audio STOP.
+                let _ = turn.interrupt();
             }
         }
         // No engine.lock(): the server LiveKit sender receives STOP immediately
