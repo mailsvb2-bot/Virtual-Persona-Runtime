@@ -251,14 +251,22 @@ fn revocation_handle_fences_egress_while_engine_mutex_is_held_and_is_session_sco
     // independent canonical revocation must not need to acquire that mutex.
     let mut worker = engine_mutex.lock().unwrap();
     revoked_session.revoke_authority().unwrap();
-    assert!(worker.apply(OwnerLabTurnInput::Text("denied".into())).is_err());
+    assert!(
+        worker
+            .apply(OwnerLabTurnInput::Text("denied".into()))
+            .is_err()
+    );
     assert_eq!(stats.text.load(Ordering::SeqCst), 0);
     worker.revoke().unwrap();
     worker.close().unwrap();
-    worker.start(OwnerLabStartRequest { consent: true }).unwrap();
+    worker
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
     // A stale revoke-only handle cannot revoke the new session's authority.
     revoked_session.revoke_authority().unwrap();
-    worker.apply(OwnerLabTurnInput::Text("fresh".into())).unwrap();
+    worker
+        .apply(OwnerLabTurnInput::Text("fresh".into()))
+        .unwrap();
     assert_eq!(stats.text.load(Ordering::SeqCst), 1);
 }
 
