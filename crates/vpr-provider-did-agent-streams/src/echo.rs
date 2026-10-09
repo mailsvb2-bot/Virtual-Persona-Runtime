@@ -32,7 +32,7 @@ pub trait DidEchoBackend: Send + Sync {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError>;
 
-    /// Cancels current Echo playback without closing the private LiveKit room.
+    /// Cancels current Echo playback without closing the private `LiveKit` room.
     /// An implementation must send did.interrupt and drop pending utterances;
     /// it must not publish any new audio as part of STOP.
     ///
