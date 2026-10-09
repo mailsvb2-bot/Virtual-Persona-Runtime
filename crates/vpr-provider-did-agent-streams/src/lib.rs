@@ -27,8 +27,8 @@ use echo::DidEchoRegistry;
 pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
-    CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
-    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+    CreateV2SessionResponse, IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
+    SpeakScript, parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
