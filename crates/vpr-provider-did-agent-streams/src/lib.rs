@@ -259,6 +259,12 @@ impl DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
+        // A viewer-side LiveKit token cannot be atomically revoked with a
+        // browser-published did.speak. No expressive session is issued without
+        // a separately credentialed server-owned Echo audio publisher.
+        if self.echo_backend.is_none() {
+            return Err(policy_denied());
+        }
         let request = self.authorized(self.client.post(self.v2_sessions_url()?));
         let request = if self.echo_backend.is_some() {
             request.json(&serde_json::json!({"session_type": "echo"}))
@@ -479,12 +485,14 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session).ok()?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
-                let backend_owned = self.echo_backend.is_some();
+                // Viewer tokens are never given a browser speech-command route,
+                // even for stale sessions constructed before Echo enforcement.
+                self.echo_backend.as_ref()?;
                 Some(RealtimeAvatarClientControl {
                     event_route: None,
-                    interrupt: !backend_owned,
+                    interrupt: false,
                     interrupt_requires_playback_id: false,
-                    text_input: !backend_owned,
+                    text_input: false,
                 })
             }
             RealtimeAvatarTransport::WebRtc { .. } => self.client_control.control(session),
