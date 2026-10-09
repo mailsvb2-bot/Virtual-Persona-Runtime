@@ -197,7 +197,11 @@ impl SessionWorker {
                 .lock()
                 .map_err(|_| unavailable())?
                 .insert(id, sender);
-            if stdin.write_all(&encoded).and_then(|()| stdin.flush()).is_err() {
+            if stdin
+                .write_all(&encoded)
+                .and_then(|()| stdin.flush())
+                .is_err()
+            {
                 let _ = self.pending.lock().map(|mut pending| pending.remove(&id));
                 return Err(unavailable());
             }
@@ -258,7 +262,12 @@ impl DidEchoBackend for EchoPythonBackend {
         echo_token: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
-        if self.sessions.lock().map_err(|_| unavailable())?.contains_key(session_id) {
+        if self
+            .sessions
+            .lock()
+            .map_err(|_| unavailable())?
+            .contains_key(session_id)
+        {
             return Err(invalid_response());
         }
         let worker = SessionWorker::spawn(&self.config, session_url, echo_token, cancellation)?;
@@ -317,7 +326,10 @@ impl DidEchoBackend for EchoPythonBackend {
         );
         let terminated = worker.terminate();
         if terminated.is_ok() {
-            self.sessions.lock().map_err(|_| unavailable())?.remove(session_id);
+            self.sessions
+                .lock()
+                .map_err(|_| unavailable())?
+                .remove(session_id);
         }
         interrupted.and(terminated)
     }
