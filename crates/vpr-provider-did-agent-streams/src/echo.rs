@@ -32,6 +32,16 @@ pub trait DidEchoBackend: Send + Sync {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError>;
 
+    /// Cancels current Echo playback without closing the private LiveKit room.
+    /// An implementation must send did.interrupt and drop pending utterances;
+    /// it must not publish any new audio as part of STOP.
+    ///
+    /// # Errors
+    /// Defaults to unavailable until the backend can confirm STOP.
+    fn interrupt(&self, _session_id: &str) -> Result<(), ProviderError> {
+        Err(super::unavailable())
+    }
+
     /// Fences the server-owned Echo audio publisher and closes its connection.
     ///
     /// # Errors
