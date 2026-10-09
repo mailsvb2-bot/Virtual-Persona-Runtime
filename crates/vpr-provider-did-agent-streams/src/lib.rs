@@ -23,8 +23,8 @@ mod provider_error;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
-pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use echo::DidEchoRegistry;
+pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
     CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
