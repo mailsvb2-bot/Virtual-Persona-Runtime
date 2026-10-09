@@ -2114,8 +2114,6 @@ const resumeInterruptedAnswer = async () => {
         if (sessionState.backend.session_state !== "active") {
             throw new Error("INVALID_STATE_TRANSITION");
         }
-        // Server-owned Echo already delivered and marked Sent in the Rust turn.
-        // Never send a browser did.speak or duplicate its delivery ACK.
         if (prepared.client_command !== null) {
             await dispatchClientCommand(prepared.client_command);
             await api("/api/avatar/client-delivery-sent", {
