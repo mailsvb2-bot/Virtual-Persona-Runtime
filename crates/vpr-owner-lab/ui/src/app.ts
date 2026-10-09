@@ -2020,6 +2020,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     let liveKitSendTail: Promise<void> = Promise.resolve();
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
+      const command = segment.client_command;
+      // A segment without a provider command is not queued audio. Do not
+      // create a phantom playback barrier that can never receive completion.
+      if (!command) return;
       const voiceForSegment = activeVoiceEvidence;
       if (voiceForSegment?.requestSequence === requestSequence) {
         voiceForSegment.providerPlaybackExpectedCount += 1;
@@ -2027,8 +2031,6 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         syncRt0PlaybackPending(voiceForSegment);
         updateControls();
       }
-      const command = segment.client_command;
-      if (!command) return;
       let commandSent = false;
       const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
       const dispatch: Promise<boolean> = nativeLiveKitQueue
