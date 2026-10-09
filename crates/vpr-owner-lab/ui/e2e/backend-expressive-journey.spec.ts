@@ -216,6 +216,29 @@ const submitOwnerTurn = async (request: APIRequestContext, csrf: string, sequenc
   return postJson(request, csrf, "/api/avatar/speak", { text: answer.reply });
 };
 
+test("real browser owner voice reaches private server Echo audio", async ({ page, request }) => {
+  test.setTimeout(120000);
+  const cleared = await request.delete(mailboxUrl);
+  expect(cleared.ok()).toBeTruthy();
+  const before = (await echoEvents(request)).length;
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/echo-owner-voice-driver.js" });
+  await page.goto("/");
+  await expect.poll(async () => {
+    const mailbox = await request.get(mailboxUrl);
+    if (!mailbox.ok()) return "pending:mailbox";
+    const data = await mailbox.json() as { events?: Array<{ status?: string; error?: string }> };
+    const event = data.events?.find((item) => item.status);
+    return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:voice";
+  }, { timeout: 80000 }).toBe("ok");
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+  const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(snapshot.ok()).toBeTruthy();
+  expect(await snapshot.json()).toMatchObject({ canonical_playback_proven: false });
+});
+
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
   test.setTimeout(90000);
   const { csrf } = await startEcho(request);
