@@ -45,10 +45,7 @@ pub fn require_active_voice_session(
 }
 
 /// Verifies the epoch a second time after potentially blocking I/O.
-pub fn require_voice_session_sequence(
-    state: &AppState,
-    sequence: u64,
-) -> Result<(), HttpResponse> {
+pub fn require_voice_session_sequence(state: &AppState, sequence: u64) -> Result<(), HttpResponse> {
     if sequence == 0
         || state.active_session_sequence.load(Ordering::Acquire) != sequence
         || state.session_end_requested.load(Ordering::Acquire)
