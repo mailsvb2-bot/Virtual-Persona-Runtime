@@ -320,7 +320,7 @@ test("Expressive LiveKit generation-only events never grant canonical playback",
   expect(authorizedReplayPreparations).toBe(2);
   expect(speak.length).toBeGreaterThanOrEqual(3);
   const replayed = JSON.parse(speak.at(-1)?.text ?? "{}");
-  expect(replayed.script?.input).toBe("Третья фраза.");
+  expect(replayed.script?.input).toBe("фраза."); // explicit word-level resume, not entire sentence
   expect(replayed.script?.should_queue_speaks).toBe(true);
   const streamedReply = speak.slice(0, -1).map((command) => {
     const payload = JSON.parse(command.text ?? "{}");
