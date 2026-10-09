@@ -269,9 +269,13 @@ pub const fn error_status(error: LabEvidenceError) -> u16 {
     }
 }
 
+/// Sole owner of a voice turn's busy flag. A terminal stream can release
+/// ownership explicitly before waking clients; Drop must never release the
+/// flag a second time after another turn has acquired it.
 pub struct VoiceBusyGuard<'a> {
     busy: &'a AtomicBool,
     cancel_requested: &'a AtomicBool,
+    released: bool,
 }
 
 impl<'a> VoiceBusyGuard<'a> {
@@ -279,14 +283,23 @@ impl<'a> VoiceBusyGuard<'a> {
         Self {
             busy,
             cancel_requested,
+            released: false,
         }
+    }
+
+    pub fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        self.cancel_requested.store(false, Ordering::Release);
+        self.busy.store(false, Ordering::Release);
     }
 }
 
 impl Drop for VoiceBusyGuard<'_> {
     fn drop(&mut self) {
-        self.cancel_requested.store(false, Ordering::Release);
-        self.busy.store(false, Ordering::Release);
+        self.release();
     }
 }
 

@@ -1,11 +1,9 @@
-use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::thread;
-use std::time::Duration;
 
-use parking_lot::{Condvar, Mutex};
-use serde::{Deserialize, Serialize};
+use parking_lot::Mutex;
+use serde::Deserialize;
 use tiny_http::Request;
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::{LabError, LabEvidenceError, LabVoiceInput, LabVoiceResult};
@@ -14,20 +12,14 @@ use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
 };
 
-const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
-const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_RETAINED_VOICE_STREAMS: usize = 1;
-const MAX_PENDING_VOICE_STREAM_EVENTS: usize = 64;
-
 #[path = "http_voice_event.rs"]
 mod voice_event;
 use voice_event::VoiceStreamEvent;
-
-#[derive(Default)]
-struct VoiceStreamState {
-    events: VecDeque<VoiceStreamEvent>,
-    terminal: bool,
-}
+#[path = "http_voice_stream.rs"]
+mod voice_stream;
+#[cfg(test)]
+use voice_stream::MAX_PENDING_VOICE_STREAM_EVENTS;
+pub(super) use voice_stream::VoiceStreamRegistry;
 
 struct VoiceInputState {
     request_sequence: u64,
@@ -80,104 +72,9 @@ impl VoiceInputRegistry {
     }
 }
 
-#[derive(Default)]
-pub(super) struct VoiceStreamRegistry {
-    streams: Mutex<BTreeMap<u64, VoiceStreamState>>,
-    changed: Condvar,
-}
-
-impl VoiceStreamRegistry {
-    pub(super) fn clear(&self) {
-        self.streams.lock().clear();
-        self.changed.notify_all();
-    }
-
-    pub(super) fn wait_until_quiescent(&self) -> bool {
-        let started = std::time::Instant::now();
-        let mut streams = self.streams.lock();
-        loop {
-            if streams.values().all(|stream| stream.terminal) {
-                return true;
-            }
-            let Some(remaining) = TERMINATION_WAIT_TIMEOUT.checked_sub(started.elapsed()) else {
-                return false;
-            };
-            if remaining.is_zero() {
-                return false;
-            }
-            if self.changed.wait_for(&mut streams, remaining).timed_out()
-                && streams.values().any(|stream| !stream.terminal)
-            {
-                return false;
-            }
-        }
-    }
-
-    fn begin(&self, request_sequence: u64) -> bool {
-        let mut streams = self.streams.lock();
-        streams.retain(|_, stream| !stream.terminal);
-        if streams.len() >= MAX_RETAINED_VOICE_STREAMS || streams.contains_key(&request_sequence) {
-            return false;
-        }
-        streams.insert(request_sequence, VoiceStreamState::default());
-        true
-    }
-
-    fn push(&self, request_sequence: u64, event: VoiceStreamEvent) -> Result<(), LabError> {
-        let mut streams = self.streams.lock();
-        let stream = streams
-            .get_mut(&request_sequence)
-            .ok_or(LabError::InvalidState)?;
-        if stream.terminal
-            || stream.events.len() >= MAX_PENDING_VOICE_STREAM_EVENTS.saturating_sub(1)
-        {
-            return Err(LabError::InvalidState);
-        }
-        stream.events.push_back(event);
-        drop(streams);
-        self.changed.notify_all();
-        Ok(())
-    }
-
-    fn finish(&self, request_sequence: u64, event: VoiceStreamEvent) {
-        let mut streams = self.streams.lock();
-        if let Some(stream) = streams.get_mut(&request_sequence) {
-            debug_assert!(stream.events.len() < MAX_PENDING_VOICE_STREAM_EVENTS);
-            stream.events.push_back(event);
-            stream.terminal = true;
-        }
-        drop(streams);
-        self.changed.notify_all();
-    }
-
-    fn wait_events(&self, request_sequence: u64) -> Option<VoiceEventsResponse> {
-        let mut streams = self.streams.lock();
-        {
-            let stream = streams.get(&request_sequence)?;
-            if stream.events.is_empty() && !stream.terminal {
-                self.changed.wait_for(&mut streams, EVENT_WAIT_TIMEOUT);
-            }
-        }
-        let (events, terminal) = {
-            let stream = streams.get_mut(&request_sequence)?;
-            (stream.events.drain(..).collect::<Vec<_>>(), stream.terminal)
-        };
-        if terminal {
-            streams.remove(&request_sequence);
-        }
-        Some(VoiceEventsResponse { events, terminal })
-    }
-}
-
 #[derive(Deserialize)]
 struct VoiceEventsBody {
     request_sequence: u64,
-}
-
-#[derive(Serialize)]
-struct VoiceEventsResponse {
-    events: Vec<VoiceStreamEvent>,
-    terminal: bool,
 }
 
 pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
@@ -442,16 +339,12 @@ fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result
 fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVoiceInput) {
     let worker_state = Arc::clone(state);
     thread::spawn(move || {
-        let _busy = http_evidence::VoiceBusyGuard::new(
+        let mut busy = http_evidence::VoiceBusyGuard::new(
             &worker_state.voice_busy,
             &worker_state.voice_cancel_requested,
         );
-        let result = {
-            let Ok(mut engine) = worker_state.engine.lock() else {
-                finish_voice_stream(&worker_state, request_sequence, Err(LabError::Internal));
-                return;
-            };
-            let result = engine.finish_voice_input_streaming(input, |segment| {
+        let result = match worker_state.engine.lock() {
+            Ok(mut engine) => engine.finish_voice_input_streaming(input, |segment| {
                 worker_state
                     .evidence
                     .lock()
@@ -460,11 +353,14 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
                 worker_state
                     .voice_streams
                     .push(request_sequence, VoiceStreamEvent::Segment { segment })
-            });
-            *worker_state.active_voice_interrupt.lock() = None;
-            result
+            }),
+            Err(_) => Err(LabError::Internal),
         };
-        finish_voice_stream(&worker_state, request_sequence, result);
+        *worker_state.active_voice_interrupt.lock() = None;
+        let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
+        worker_state
+            .voice_streams
+            .finish_with_unlock(request_sequence, terminal, || busy.release());
     });
 }
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
@@ -539,13 +435,13 @@ pub(super) fn events_response(
     Ok(json_response(200, &response))
 }
 
-fn finish_voice_stream(
+fn prepare_voice_terminal_event(
     state: &AppState,
     request_sequence: u64,
     result: Result<LabVoiceResult, LabError>,
-) {
+) -> VoiceStreamEvent {
     *state.replay_source.lock() = None;
-    let event = match result {
+    match result {
         Ok(value) => match state
             .evidence
             .lock()
@@ -582,10 +478,7 @@ fn finish_voice_stream(
                     .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
             }
         }
-    };
-    // Release the turn gate before publishing terminal state to prevent a new-turn race.
-    release_voice_busy(state);
-    state.voice_streams.finish(request_sequence, event);
+    }
 }
 
 #[cfg(test)]
