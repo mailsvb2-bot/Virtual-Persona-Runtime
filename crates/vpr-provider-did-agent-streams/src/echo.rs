@@ -84,9 +84,10 @@ impl DidEchoRegistry {
         }
         if cancellation.is_cancelled() {
             let cleanup = backend.stop(id);
+            let forgotten = backend.forget(id);
             self.remove(id)?;
             // Report failed teardown, never successful revocation.
-            return Err(cleanup.err().unwrap_or(super::cancelled()));
+            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
         }
         Ok(())
     }
