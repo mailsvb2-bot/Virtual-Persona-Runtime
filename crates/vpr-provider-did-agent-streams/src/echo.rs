@@ -119,6 +119,24 @@ impl DidEchoRegistry {
         Ok(())
     }
 
+    /// Canonical finalizer: STOP acknowledgement is preserved until the
+    /// publisher is forgotten, including when interrupt ran earlier.
+    pub(crate) fn close_session(
+        &self,
+        backend: &dyn DidEchoBackend,
+        id: &str,
+    ) -> Result<(), ProviderError> {
+        if !self.contains(id)? {
+            return Ok(());
+        }
+        let stopped = backend.stop(id);
+        let forgotten = backend.forget(id);
+        if forgotten.is_ok() {
+            self.remove(id)?;
+        }
+        stopped.and(forgotten)
+    }
+
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {
         Ok(self
             .sessions
