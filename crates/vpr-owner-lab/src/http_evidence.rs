@@ -185,7 +185,7 @@ impl MediaRecordError {
                     | Rt0ReasonCode::AuthScopeDenied,
                 ),
             ) => 403,
-            Self::Lab(LabError::InvalidInput) => 400,
+            Self::Lab(LabError::InvalidInput | LabError::SpeechNotRecognized) => 400,
             Self::Lab(LabError::InvalidState | LabError::Runtime(_)) => 409,
             Self::Lab(LabError::Provider(Rt0ReasonCode::BudgetExhausted)) => 402,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderRateLimited)) => 429,
