@@ -478,7 +478,7 @@ fn exercise_browser_flow(port: u16, host: &str, csrf: &str) {
 
     // Fence rejects new provider execution but leaves evidence open until Close.
     let diagnostic = format!(
-        r#"{{"session_sequence":{sequence},"request_sequence":null,"kind":"reconnect_restored","elapsed_millis":1}}"#
+        r#"{{"session_sequence":{sequence},"request_sequence":null,"kind":"video_ready","elapsed_millis":1}}"#
     );
     let recorded = post(port, host, csrf, "/api/evidence/media", &diagnostic);
     assert_eq!(recorded.status, 200, "{}", recorded.body);
