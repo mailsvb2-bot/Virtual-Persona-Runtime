@@ -99,6 +99,7 @@ let audioContext = null;
 let micSource = null;
 let micWorklet = null;
 let micRequestSequence = null;
+let micSessionSequence = null;
 let micSamplesSent = 0;
 let voiceDeliveryGeneration = 0;
 let micPendingPcm = new Uint8Array(0);
@@ -314,13 +315,14 @@ const api = async (path, body) => {
     }
     return payload;
 };
-const apiEvidenceJson = async (path, body, requestSequence) => {
+const apiEvidenceJson = async (path, body, requestSequence, sessionSequence = evidenceSessionSequence) => {
     const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             "X-VPR-CSRF": csrfToken,
             "X-VPR-Evidence-Request": String(requestSequence),
+            "X-VPR-Session-Sequence": String(sessionSequence),
         },
         body: JSON.stringify(body),
         credentials: "same-origin",
@@ -333,13 +335,14 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
     }
     return payload;
 };
-const apiBinary = async (path, body, requestSequence) => {
+const apiBinary = async (path, body, requestSequence, sessionSequence = evidenceSessionSequence) => {
     const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/octet-stream",
             "X-VPR-CSRF": csrfToken,
             "X-VPR-Evidence-Request": String(requestSequence),
+            "X-VPR-Session-Sequence": String(sessionSequence),
         },
         body,
         credentials: "same-origin",
@@ -352,11 +355,12 @@ const apiBinary = async (path, body, requestSequence) => {
     }
     return payload;
 };
-const waitForVoiceEvents = async (requestSequence, onSegment) => {
+const waitForVoiceEvents = async (requestSequence, sessionSequence, onSegment) => {
     let finalResult = null;
     while (true) {
         const batch = await api("/api/voice/events", {
             request_sequence: requestSequence,
+            session_sequence: sessionSequence,
         });
         for (const event of batch.events) {
             if (event.kind === "segment") {
@@ -1506,6 +1510,7 @@ const connectAvatar = async () => {
 };
 const resetMicrophoneUpload = () => {
     micRequestSequence = null;
+    micSessionSequence = null;
     micSamplesSent = 0;
     micPendingPcm = new Uint8Array(0);
     micChunkTail = Promise.resolve();
@@ -1513,8 +1518,9 @@ const resetMicrophoneUpload = () => {
 };
 const cancelMicrophoneInput = async () => {
     const requestSequence = micRequestSequence;
-    if (requestSequence !== null) {
-        await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+    const sessionSequence = micSessionSequence;
+    if (requestSequence !== null && sessionSequence !== null) {
+        await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence, sessionSequence).catch(() => undefined);
     }
     resetMicrophoneUpload();
 };
@@ -1549,14 +1555,15 @@ const encodeS16Le = (input) => {
 };
 const queueMicrophoneChunk = (chunk) => {
     const requestSequence = micRequestSequence;
-    if (requestSequence === null || chunk.length === 0 || micUploadFailure)
+    const sessionSequence = micSessionSequence;
+    if (requestSequence === null || sessionSequence === null || chunk.length === 0 || micUploadFailure)
         return;
     const body = chunk.slice().buffer;
     micChunkTail = micChunkTail.then(async () => {
         if (micUploadFailure)
             return;
         try {
-            await apiBinary("/api/voice/input/chunk", body, requestSequence);
+            await apiBinary("/api/voice/input/chunk", body, requestSequence, sessionSequence);
         }
         catch (error) {
             micUploadFailure = error instanceof Error ? error : new Error("VOICE_UPLOAD_FAILED");
@@ -1687,12 +1694,16 @@ const startMicrophone = async () => {
     micWorklet = createRuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
     nextVoiceRequestSequence += 1;
     const requestSequence = nextVoiceRequestSequence;
+    const sessionSequence = evidenceSessionSequence;
+    if (sessionSequence === 0)
+        throw new Error("VOICE_SESSION_UNAVAILABLE");
     micRequestSequence = requestSequence;
+    micSessionSequence = sessionSequence;
     micSamplesSent = 0;
     micPendingPcm = new Uint8Array(0);
     micChunkTail = Promise.resolve();
     micUploadFailure = null;
-    const started = await apiEvidenceJson("/api/voice/input/start", {}, requestSequence);
+    const started = await apiEvidenceJson("/api/voice/input/start", {}, requestSequence, sessionSequence);
     if (started.request_sequence !== requestSequence) {
         throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
     }
@@ -1732,9 +1743,10 @@ const finishMicrophoneTurn = async () => {
     if (!recording)
         return;
     const requestSequence = micRequestSequence;
+    const sessionSequence = micSessionSequence;
     const samplesSent = micSamplesSent;
     stopMicrophoneCapture();
-    if (requestSequence === null) {
+    if (requestSequence === null || sessionSequence === null) {
         resetMicrophoneUpload();
         setStatus("Поток микрофона не был создан", "error");
         return;
@@ -1787,7 +1799,7 @@ const finishMicrophoneTurn = async () => {
     };
     let terminalStatus = null;
     try {
-        const started = await apiEvidenceJson("/api/voice/input/finish", {}, requestSequence);
+        const started = await apiEvidenceJson("/api/voice/input/finish", {}, requestSequence, sessionSequence);
         if (started.request_sequence !== requestSequence)
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
         finishAccepted = true;
@@ -1886,7 +1898,7 @@ const finishMicrophoneTurn = async () => {
             if (!rt0EvidenceMode)
                 void task.catch(() => undefined);
         };
-        const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+        const result = await waitForVoiceEvents(requestSequence, sessionSequence, scheduleSegmentDelivery);
         const voiceAtBackendComplete = activeVoiceEvidence;
         const backendCompleteElapsed = voiceAtBackendComplete?.requestSequence === requestSequence
             ? performance.now() - voiceAtBackendComplete.startedAt
@@ -1925,7 +1937,7 @@ const finishMicrophoneTurn = async () => {
     }
     catch (error) {
         if (!finishAccepted) {
-            await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+            await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence, sessionSequence).catch(() => undefined);
         }
         if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence)
             activeVoiceEvidence = null;
