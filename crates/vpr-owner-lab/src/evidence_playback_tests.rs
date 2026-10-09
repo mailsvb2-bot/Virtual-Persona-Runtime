@@ -441,6 +441,12 @@ fn av_sync_retention_is_mathematically_bounded_by_session_attempt_budget() {
 #[test]
 fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_proof() {
     let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder
+        .bind_provenance(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .unwrap();
     recorder.begin_session(26, ParticipantRole::Owner).unwrap();
     recorder.begin_voice_request(1).unwrap();
     recorder.complete_voice_request(1, &voice_result()).unwrap();
@@ -502,4 +508,17 @@ fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_p
         }),
         Err(LabEvidenceError::InvalidState)
     );
+
+    // A real release-evidence consumer must accept the typed failure without
+    // counting the completed backend turn as heard or A/V-synchronized.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    recorder.seal_session();
+    let aggregate = vpr_evaluation::aggregate_owner_lab_session_evidence(&[
+        recorder.snapshot().unwrap(),
+    ])
+    .unwrap();
+    assert_eq!(aggregate.completed_voice_attempts, 1);
+    assert!(!aggregate.canonical_playback_proven);
+    assert!(!aggregate.av_sync_proven);
+    assert_eq!(aggregate.av_sync_absolute_offset, None);
 }
