@@ -484,4 +484,49 @@ done
             "dead publisher must be unregistered"
         );
     }
+    #[test]
+    fn acknowledged_echo_stop_is_reusable_for_canonical_close_without_replaying_control() {
+        let script = std::env::temp_dir().join(format!(
+            "vpr-echo-ack-{}.sh",
+            std::process::id()
+        ));
+        std::fs::write(
+            &script,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
+    *'"command":"interrupt"'*) printf '{"id":1,"ok":true}\n' ;;
+  esac
+done
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let backend = EchoPythonBackend::new(
+            EchoPythonConfig::new(
+                script.to_string_lossy().into_owned(),
+                "https://tts.example.test/v1/audio/speech",
+                "test-only-key",
+                "test-model",
+                "test-voice",
+            )
+            .unwrap(),
+        );
+        let probe = NeverCancelled(AtomicBool::new(false));
+        backend
+            .open("ack-session", "wss://livekit.example.test/room/agent-1", "token", &probe)
+            .unwrap();
+        backend.stop("ack-session").unwrap();
+        backend.stop("ack-session").unwrap();
+        assert!(
+            backend.speak("ack-session", "late speech", &probe).is_err(),
+            "STOP must fence all future egress"
+        );
+        backend.forget("ack-session").unwrap();
+        let _ = std::fs::remove_file(&script);
+        assert!(backend.worker("ack-session").is_err());
+    }
+
 }
