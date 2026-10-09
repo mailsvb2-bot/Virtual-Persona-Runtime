@@ -22,6 +22,7 @@ use voice_stream::MAX_PENDING_VOICE_STREAM_EVENTS;
 pub(super) use voice_stream::VoiceStreamRegistry;
 
 struct VoiceInputState {
+    session_sequence: u64,
     request_sequence: u64,
     input: LabVoiceInput,
 }
@@ -32,32 +33,33 @@ pub(super) struct VoiceInputRegistry {
 }
 
 impl VoiceInputRegistry {
-    fn begin(&self, request_sequence: u64, input: LabVoiceInput) -> Result<(), LabVoiceInput> {
+    fn begin(&self, session_sequence: u64, request_sequence: u64, input: LabVoiceInput) -> Result<(), LabVoiceInput> {
         let mut active = self.active.lock();
         if active.is_some() {
             return Err(input);
         }
         *active = Some(VoiceInputState {
+            session_sequence,
             request_sequence,
             input,
         });
         Ok(())
     }
 
-    fn push(&self, request_sequence: u64, pcm: &[u8]) -> Result<(), LabError> {
+    fn push(&self, session_sequence: u64, request_sequence: u64, pcm: &[u8]) -> Result<(), LabError> {
         let mut active = self.active.lock();
         let state = active.as_mut().ok_or(LabError::InvalidState)?;
-        if state.request_sequence != request_sequence {
+        if state.session_sequence != session_sequence || state.request_sequence != request_sequence {
             return Err(LabError::InvalidState);
         }
         state.input.push_audio(pcm)
     }
 
-    fn take(&self, request_sequence: u64) -> Option<LabVoiceInput> {
+    fn take(&self, session_sequence: u64, request_sequence: u64) -> Option<LabVoiceInput> {
         let mut active = self.active.lock();
         if active
             .as_ref()
-            .is_some_and(|state| state.request_sequence == request_sequence)
+            .is_some_and(|state| state.session_sequence == session_sequence && state.request_sequence == request_sequence)
         {
             return active.take().map(|state| state.input);
         }
@@ -74,10 +76,15 @@ impl VoiceInputRegistry {
 
 #[derive(Deserialize)]
 struct VoiceEventsBody {
+    session_sequence: u64,
     request_sequence: u64,
 }
 
 pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    let session_sequence = match http_evidence::require_active_voice_session(request, state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     if let Err(response) = super::parse_empty_json(request) {
         return response;
     }
@@ -127,7 +134,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             }
         }
     };
-    if let Err(input) = state.voice_inputs.begin(request_sequence, input) {
+    if let Err(input) = state.voice_inputs.begin(session_sequence, request_sequence, input) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
     if state.voice_cancel_requested.load(Ordering::Acquire) {
@@ -142,6 +149,10 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
 
 pub(super) fn input_chunk_response(request: &mut Request, state: &AppState) -> HttpResponse {
     const MAX_CHUNK_BYTES: u64 = 64 * 1024;
+    let session_sequence = match http_evidence::require_active_voice_session(request, state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
 
     if let Err(response) = reject_if_session_ending(state) {
         return response;
@@ -155,10 +166,13 @@ pub(super) fn input_chunk_response(request: &mut Request, state: &AppState) -> H
         Ok(_) => return error_response(400, "INVALID_INPUT"),
         Err(response) => return response,
     };
-    match state.voice_inputs.push(request_sequence, &pcm) {
+    if let Err(response) = http_evidence::require_voice_session_sequence(state, session_sequence) {
+        return response;
+    }
+    match state.voice_inputs.push(session_sequence, request_sequence, &pcm) {
         Ok(()) => json_response(200, &serde_json::json!({"ok": true})),
         Err(error) => {
-            if let Some(input) = state.voice_inputs.take(request_sequence) {
+            if let Some(input) = state.voice_inputs.take(session_sequence, request_sequence) {
                 fail_voice_upload(state, request_sequence, input, error)
             } else {
                 error_response(lab_error_status(&error), error.code())
@@ -168,6 +182,10 @@ pub(super) fn input_chunk_response(request: &mut Request, state: &AppState) -> H
 }
 
 pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    let session_sequence = match http_evidence::require_active_voice_session(request, state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     if let Err(response) = super::parse_empty_json(request) {
         return response;
     }
@@ -178,11 +196,15 @@ pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>
         Ok(sequence) => sequence,
         Err(error) => return error_response(http_evidence::error_status(error), error.code()),
     };
-    let Some(input) = state.voice_inputs.take(request_sequence) else {
+    let Some(input) = state.voice_inputs.take(session_sequence, request_sequence) else {
         return error_response(409, "INVALID_STATE_TRANSITION");
     };
     if input.received_bytes() == 0 {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidInput);
+    }
+    if let Err(response) = http_evidence::require_voice_session_sequence(state, session_sequence) {
+        let _ = fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
+        return response;
     }
     if !state.voice_streams.begin(request_sequence) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
@@ -195,6 +217,10 @@ pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>
 }
 
 pub(super) fn cancel_input_response(request: &mut Request, state: &AppState) -> HttpResponse {
+    let session_sequence = match http_evidence::require_active_voice_session(request, state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     if let Err(response) = super::parse_empty_json(request) {
         return response;
     }
@@ -202,7 +228,7 @@ pub(super) fn cancel_input_response(request: &mut Request, state: &AppState) -> 
         Ok(sequence) => sequence,
         Err(error) => return error_response(http_evidence::error_status(error), error.code()),
     };
-    let Some(input) = state.voice_inputs.take(request_sequence) else {
+    let Some(input) = state.voice_inputs.take(session_sequence, request_sequence) else {
         return error_response(409, "INVALID_STATE_TRANSITION");
     };
     state.voice_cancel_requested.store(true, Ordering::Release);
@@ -228,6 +254,10 @@ pub(super) fn cancel_active_input(state: &AppState, error: LabError) -> bool {
 }
 
 pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    let session_sequence = match http_evidence::require_active_voice_session(request, state) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     if let Err(response) = reject_if_session_ending(state) {
         return response;
     }
@@ -284,6 +314,10 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
 
     if let Err(error) = stream_voice_body(request, &mut input) {
         return fail_voice_upload(state, request_sequence, input, error);
+    }
+    if let Err(response) = http_evidence::require_voice_session_sequence(state, session_sequence) {
+        let _ = fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
+        return response;
     }
     if !state.voice_streams.begin(request_sequence) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
@@ -428,6 +462,7 @@ pub(super) fn events_response(
     state: &AppState,
 ) -> Result<HttpResponse, HttpResponse> {
     let body = super::parse_json::<VoiceEventsBody>(request)?;
+    http_evidence::require_voice_session_sequence(state, body.session_sequence)?;
     let response = state
         .voice_streams
         .wait_events(body.request_sequence)
