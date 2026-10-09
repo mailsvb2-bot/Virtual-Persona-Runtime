@@ -24,6 +24,8 @@ jobs:
           rustc --version
           cargo --version
           rustc --version | grep '^rustc 1\.88\.0 '
+      - name: Echo private LiveKit sender and STOP contract
+        run: python3 tests/e2e/test_echo_python_worker.py
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
