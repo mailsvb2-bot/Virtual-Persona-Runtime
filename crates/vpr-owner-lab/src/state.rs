@@ -11,8 +11,7 @@ use vpr_integration::{
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle,
-    SessionRevocationHandle, SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -393,32 +392,6 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
-    /// Returns a revoke-only capability tied to this exact runtime session.
-    /// It can invalidate provider permits without waiting for the Owner Lab engine mutex.
-    #[must_use]
-    pub fn session_revocation_handle(&self) -> Option<SessionRevocationHandle> {
-        self.session.as_ref().map(ActiveSession::revocation_handle)
-    }
-
-    /// Withdraws runtime authority without waiting for an in-flight voice worker
-    /// or an unreliable remote-provider close. Teardown must call this BEFORE
-    /// waiting for quiescence: a timed-out stream must not leave the session active.
-    ///
-    /// # Errors
-    /// Returns a stable state/runtime error; does not perform provider I/O.
-    pub fn revoke_authority(&mut self) -> Result<(), LabError> {
-        let session = self.session.as_mut().ok_or(LabError::InvalidState)?;
-        match session.state() {
-            RealtimeSessionState::Active => session.revoke().map_err(LabError::Runtime)?,
-            RealtimeSessionState::Revoked => {}
-            RealtimeSessionState::Created
-            | RealtimeSessionState::Draining
-            | RealtimeSessionState::Closed => return Err(LabError::InvalidState),
-        }
-        self.cancel_avatar_preparation();
-        Ok(())
-    }
-
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
@@ -584,6 +557,7 @@ const fn map_owner_context_error(error: OwnerContextError) -> LabError {
 mod client_control;
 mod persistence;
 mod readiness;
+mod session_revocation;
 mod status;
 mod text;
 mod voice;
