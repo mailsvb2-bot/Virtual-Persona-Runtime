@@ -2090,6 +2090,11 @@ const resumeInterruptedAnswer = async () => {
     updateControls();
 };
 const endSession = async (kind) => {
+    if (!sessionEndRequest().expected_session_sequence) {
+        closePeerTransport();
+        setStatus("SESSION_GENERATION_UNKNOWN: завершение отклонено для защиты другой сессии", "error");
+        return;
+    }
     broadcastSessionEgressFence();
     closePeerTransport();
     let fenceError = null;
