@@ -1826,7 +1826,7 @@ const finishMicrophoneTurn = async () => {
                     voiceCommandScheduler.interrupt();
                     rt0PlaybackPending = false;
                     updateControls();
-                    await api("/api/avatar/interrupt", {}).catch(() => undefined);
+                    await api("/api/avatar/interrupt", sessionEndRequest()).catch(() => undefined);
                 }
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
                     setStatus(deliveryFailure.message, "error");
@@ -1985,10 +1985,15 @@ const interruptAvatar = async (recordEvidence = true) => {
         : null;
     try {
         if (providerStopRequired && !clientReady) {
-            throw new Error("PROVIDER_STOP_UNAVAILABLE");
+            await api("/api/avatar/interrupt", sessionEndRequest());
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
         }
         const canonicalStop = voiceRequestInFlight
-            ? api("/api/avatar/interrupt", {})
+            ? api("/api/avatar/interrupt", sessionEndRequest())
             : null;
         void canonicalStop?.catch(() => undefined);
         if (fastProviderStop) {
@@ -2015,7 +2020,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             return true;
         }
         if (!voiceRequestInFlight) {
-            await api("/api/avatar/interrupt", {});
+            await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
             updateControls();
             await refreshSessionEvidence();
