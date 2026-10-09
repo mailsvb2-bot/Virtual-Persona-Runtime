@@ -201,6 +201,9 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Build
         run: npm run build
+      - name: Precompile real Owner Lab voice backend
+        working-directory: .
+        run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Backend-integrated voice browser E2E
