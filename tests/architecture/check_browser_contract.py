@@ -58,6 +58,20 @@ fake_livekit = (UI / "e2e" / "fake-livekit-client.js").read_text(encoding="utf-8
 expressive_config = EXPRESSIVE_CONFIG.read_text(encoding="utf-8")
 expressive_launcher = EXPRESSIVE_LAUNCHER.read_text(encoding="utf-8")
 app = APP.read_text(encoding="utf-8")
+# A streamed segment may have no browser/provider command. A missing command
+# must never increment the expected playback count or strand the next turn.
+segment_dispatch = app.split("const scheduleSegmentDelivery = (segment: VoiceSegment): void => {", 1)
+if len(segment_dispatch) != 2:
+    raise SystemExit("Owner Lab streaming delivery callback is missing")
+segment_dispatch = segment_dispatch[1].split("let commandSent = false;", 1)[0]
+if not (
+    "const command = segment.client_command;" in segment_dispatch
+    and "if (!command) return;" in segment_dispatch
+    and "providerPlaybackExpectedCount += 1;" in segment_dispatch
+    and segment_dispatch.index("if (!command) return;")
+        < segment_dispatch.index("providerPlaybackExpectedCount += 1;")
+):
+    raise SystemExit("Owner Lab must not count a commandless segment as pending provider playback")
 bootstrap_context = BOOTSTRAP_CONTEXT.read_text(encoding="utf-8")
 media_runtime = MEDIA_RUNTIME.read_text(encoding="utf-8")
 session_runtime_state = SESSION_RUNTIME_STATE.read_text(encoding="utf-8")
