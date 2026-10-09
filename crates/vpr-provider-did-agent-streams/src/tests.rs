@@ -846,6 +846,31 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
 }
 
 #[test]
+fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
+    use std::sync::Arc;
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, _captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let probe = Probe(AtomicBool::new(false));
+    let first = provider.create_session(&probe).unwrap();
+    let duplicate = provider.create_session(&probe).unwrap_err();
+    assert_eq!(duplicate.kind, ProviderErrorKind::InvalidResponse);
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["open"]);
+    assert!(provider.echo_sessions.contains(&first.provider_session_id).unwrap());
+
+    provider.speak_text(&first, "Серверный ответ.", &probe).unwrap();
+    provider.close_session(&first).unwrap();
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "speak", "stop"]);
+}
+
+#[test]
 fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
     use std::sync::Arc;
 
