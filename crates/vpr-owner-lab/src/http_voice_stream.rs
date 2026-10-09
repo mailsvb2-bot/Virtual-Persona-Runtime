@@ -9,7 +9,10 @@ use super::voice_event::VoiceStreamEvent;
 
 const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(25);
 const TERMINATION_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_RETAINED_VOICE_STREAMS: usize = 1;
+// Keep a just-completed reply pollable while the next voice turn runs.
+// If two terminal replies are unconsumed, reject new turns instead of
+// silently deleting the evidence required by their clients.
+const MAX_RETAINED_VOICE_STREAMS: usize = 2;
 pub(super) const MAX_PENDING_VOICE_STREAM_EVENTS: usize = 64;
 
 #[derive(Default)]
@@ -53,15 +56,21 @@ impl VoiceStreamRegistry {
 
     pub(crate) fn begin(&self, request_sequence: u64) -> bool {
         let mut streams = self.streams.lock();
-        streams.retain(|_, stream| !stream.terminal);
-        if streams.len() >= MAX_RETAINED_VOICE_STREAMS || streams.contains_key(&request_sequence) {
+        if streams.len() >= MAX_RETAINED_VOICE_STREAMS
+            || streams.contains_key(&request_sequence)
+            || streams.values().any(|stream| !stream.terminal)
+        {
             return false;
         }
         streams.insert(request_sequence, VoiceStreamState::default());
         true
     }
 
-    pub(crate) fn push(&self, request_sequence: u64, event: VoiceStreamEvent) -> Result<(), LabError> {
+    pub(super) fn push(
+        &self,
+        request_sequence: u64,
+        event: VoiceStreamEvent,
+    ) -> Result<(), LabError> {
         let mut streams = self.streams.lock();
         let stream = streams
             .get_mut(&request_sequence)
