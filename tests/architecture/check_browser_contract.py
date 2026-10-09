@@ -79,12 +79,15 @@ http_client_control = HTTP_CLIENT_CONTROL.read_text(encoding="utf-8")
 http_session = HTTP_SESSION.read_text(encoding="utf-8")
 # A provider or LLM worker may miss the bounded cancellation deadline.
 # The timeout response MUST NOT leave canonical authorization active.
-revoke_call = re.search(r"engine\s*\.revoke\(\)", http_session)
+revoke_call = re.search(r"revoker\s*\.revoke_authority\(\)", http_session)
 wait_call = re.search(r"wait_until_quiescent\(\)", http_session)
 if revoke_call is None or wait_call is None:
-    raise SystemExit("RT0 session teardown lacks canonical revoke/quiescence ordering")
+    raise SystemExit("RT0 session teardown lacks shared authority revoke/quiescence ordering")
 if revoke_call.start() > wait_call.start():
     raise SystemExit("RT0 timeout can leave canonical provider authority active")
+end_session_source = http_session.split("pub(super) fn end_session", 1)[1]
+if re.search(r"state\.engine\s*\.lock\(\)", end_session_source.split("wait_until_quiescent", 1)[0]):
+    raise SystemExit("RT0 revoke can block behind the worker-owned engine mutex")
 voice_streaming_tests = VOICE_STREAMING_TESTS.read_text(encoding="utf-8")
 voice_state_tests = VOICE_STATE_TESTS.read_text(encoding="utf-8")
 
