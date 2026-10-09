@@ -65,7 +65,10 @@ impl VoiceStreamRegistry {
         {
             return false;
         }
-        streams.insert((session_sequence, request_sequence), VoiceStreamState::default());
+        streams.insert(
+            (session_sequence, request_sequence),
+            VoiceStreamState::default(),
+        );
         true
     }
 
@@ -91,7 +94,12 @@ impl VoiceStreamRegistry {
     }
 
     #[cfg(test)]
-    pub(super) fn finish(&self, session_sequence: u64, request_sequence: u64, event: VoiceStreamEvent) {
+    pub(super) fn finish(
+        &self,
+        session_sequence: u64,
+        request_sequence: u64,
+        event: VoiceStreamEvent,
+    ) {
         self.finish_with_unlock(session_sequence, request_sequence, event, || {});
     }
 
@@ -116,7 +124,11 @@ impl VoiceStreamRegistry {
         self.changed.notify_all();
     }
 
-    pub(super) fn wait_events(&self, session_sequence: u64, request_sequence: u64) -> Option<VoiceEventsResponse> {
+    pub(super) fn wait_events(
+        &self,
+        session_sequence: u64,
+        request_sequence: u64,
+    ) -> Option<VoiceEventsResponse> {
         let mut streams = self.streams.lock();
         {
             let stream = streams.get(&(session_sequence, request_sequence))?;
