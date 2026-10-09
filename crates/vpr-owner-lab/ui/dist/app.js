@@ -1748,6 +1748,7 @@ const finishMicrophoneTurn = async () => {
         let clientDeliverySentElapsed = null;
         const deliveryTasks = [];
         let liveKitSendTail = Promise.resolve();
+        let serverDeliveredSpeechObserved = false;
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
@@ -1759,8 +1760,10 @@ const finishMicrophoneTurn = async () => {
                 updateControls();
             }
             const command = segment.client_command;
-            if (!command)
+            if (!command) {
+                serverDeliveredSpeechObserved = true;
                 return;
+            }
             let commandSent = false;
             const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
             const dispatch = nativeLiveKitQueue
@@ -1854,7 +1857,8 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
-            if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+            if ((authorizedDeliveredParts.size > 0 || serverDeliveredSpeechObserved)
+                && result.reply.trim().length <= 16_000)
                 completedAuthorizedReply = result.reply.trim();
             await maybeFinalizeProviderPlayback(voice);
             if (voice.audioStartedEvidence) {
