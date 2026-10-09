@@ -30,7 +30,25 @@ fn automatic_terminal_paths_flush_connection_evidence_before_close() {
         "const handleUnexpectedLiveKitDisconnect = async",
         "const connectWebRtcTransport = async",
     );
-    assert_flush_before_close("unexpected LiveKit disconnect", unexpected_disconnect);
+    // Unexpected disconnect prioritizes immediate revoke over telemetry. The
+    // flush starts before revoke, then must be awaited before backend Close
+    // seals the evidence session. Do not require the obsolete inline await.
+    let flush_started = unexpected_disconnect
+        .find("const evidenceFlush = tryFlushConnectionMediaEvidence()")
+        .expect("unexpected LiveKit disconnect: missing evidence flush start");
+    let revoke = unexpected_disconnect
+        .find("await api<{ ok: true }>(\"/api/session/revoke\", sessionEndRequest())")
+        .expect("unexpected LiveKit disconnect: missing immediate revoke");
+    let flush_awaited = unexpected_disconnect
+        .find("await evidenceFlush.catch(")
+        .expect("unexpected LiveKit disconnect: missing evidence flush await");
+    let close = unexpected_disconnect
+        .find("await api<{ ok: true }>(\"/api/session/close\", sessionEndRequest())")
+        .expect("unexpected LiveKit disconnect: missing final close");
+    assert!(
+        flush_started < revoke && revoke < flush_awaited && flush_awaited < close,
+        "unexpected disconnect must revoke first, then drain evidence before final Close"
+    );
     assert!(
         unexpected_disconnect.contains("connection evidence incomplete:"),
         "unexpected disconnect must surface incomplete connection evidence"
