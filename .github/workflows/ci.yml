@@ -157,6 +157,8 @@ jobs:
             git diff -- dist/
             exit 1
           fi
+      - name: Strict RTP active-stream regression
+        run: npm run test:rtp
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Browser contract E2E
