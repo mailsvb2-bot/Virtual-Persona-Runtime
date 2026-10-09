@@ -747,7 +747,6 @@ fn audio_url_userinfo_is_rejected_before_network() {
     assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
 }
 
-
 #[derive(Default)]
 struct MockEchoBackend {
     calls: std::sync::Mutex<Vec<String>>,
@@ -815,19 +814,30 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     }
     assert!(!format!("{session:?}").contains("server-ONLY-echo-token"));
     let control = provider.client_control(&session).unwrap();
-    assert!(!control.text_input, "Echo viewer must not publish did.speak");
+    assert!(
+        !control.text_input,
+        "Echo viewer must not publish did.speak"
+    );
     assert!(!control.interrupt);
-    assert!(provider
-        .prepare_client_text(&session, "forbidden browser text", &probe)
-        .is_err());
-    assert!(provider
-        .prepare_client_interrupt(&session, None, &probe)
-        .is_err());
-    provider.speak_text(&session, "Серверный ответ.", &probe).unwrap();
+    assert!(
+        provider
+            .prepare_client_text(&session, "forbidden browser text", &probe)
+            .is_err()
+    );
+    assert!(
+        provider
+            .prepare_client_interrupt(&session, None, &probe)
+            .is_err()
+    );
+    provider
+        .speak_text(&session, "Серверный ответ.", &probe)
+        .unwrap();
     provider.close_session(&session).unwrap();
-    assert!(provider
-        .speak_text(&session, "stale after revoke", &probe)
-        .is_err());
+    assert!(
+        provider
+            .speak_text(&session, "stale after revoke", &probe)
+            .is_err()
+    );
     assert!(!provider.client_control(&session).unwrap().text_input);
     assert_eq!(
         *backend.calls.lock().unwrap(),
@@ -851,5 +861,10 @@ fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     assert!(backend.calls.lock().unwrap().is_empty());
     assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
-    assert!(captured.recv().unwrap().contains(r#""session_type":"echo""#));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .contains(r#""session_type":"echo""#)
+    );
 }
