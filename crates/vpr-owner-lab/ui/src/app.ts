@@ -115,6 +115,8 @@ type AvSyncTrackSelection = {
 type AvSyncReadState = {
   audioPackets: Map<string, number> | null;
   videoPackets: Map<string, number> | null;
+  lastAudioPlayoutTimestamp: number | null;
+  lastVideoPlayoutTimestamp: number | null;
 };
 type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
@@ -782,6 +784,24 @@ const selectPlayoutTimestamp = (
   };
 };
 
+// Receiving more RTP packets does not prove the browser's playout clock moved.
+// A frozen timestamp must not count toward the three strict RT0 A/V samples.
+const requireAdvancingPlayoutClock = (
+  selected: AvSyncTrackSelection,
+  previouslyAccepted: number | null,
+  kind: "audio" | "video",
+): AvSyncTrackSelection => {
+  if (selected.timestamp === null || previouslyAccepted === null || selected.timestamp > previouslyAccepted) {
+    return selected;
+  }
+  return {
+    ...selected,
+    timestamp: null,
+    issue: "no_unique_active_stream",
+    diagnostic: `${kind}: RTP packets advanced but estimated playout clock stalled or reset`,
+  };
+};
+
 const mediaElementAvSyncFallback = (
   diagnostic: string,
   audioIssue: AvSyncTrackIssue | null,
@@ -861,8 +881,12 @@ const readAvSyncOffsetMillis = async (
     videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
   }
 
+  audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
+  videoSelection = requireAdvancingPlayoutClock(videoSelection, state.lastVideoPlayoutTimestamp, "video");
   state.audioPackets = audioSelection.packetCounts;
   state.videoPackets = videoSelection.packetCounts;
+  if (audioSelection.timestamp !== null) state.lastAudioPlayoutTimestamp = audioSelection.timestamp;
+  if (videoSelection.timestamp !== null) state.lastVideoPlayoutTimestamp = videoSelection.timestamp;
   if (audioSelection.timestamp === null || videoSelection.timestamp === null) {
     return mediaElementAvSyncFallback(
       `${audioSelection.diagnostic}; ${videoSelection.diagnostic}`,
@@ -885,6 +909,8 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   const readState: AvSyncReadState = {
     audioPackets: null,
     videoPackets: null,
+    lastAudioPlayoutTimestamp: null,
+    lastVideoPlayoutTimestamp: null,
   };
   let lastAudioIssue: AvSyncTrackIssue | null = "stats_unavailable";
   let lastVideoIssue: AvSyncTrackIssue | null = "stats_unavailable";
