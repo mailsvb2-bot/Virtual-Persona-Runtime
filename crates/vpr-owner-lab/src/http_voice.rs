@@ -24,7 +24,7 @@ const MAX_PENDING_VOICE_STREAM_EVENTS: usize = 64;
 enum VoiceStreamEvent {
     Segment { segment: LabVoiceSegment },
     Complete { result: Box<LabVoiceResult> },
-    Failed { code: String },
+    Failed { code: String, diagnostic: Option<String> },
 }
 
 #[derive(Default)]
@@ -525,7 +525,7 @@ const fn lab_error_status(error: &LabError) -> u16 {
             | Rt0ReasonCode::AuthExpired
             | Rt0ReasonCode::AuthScopeDenied,
         ) => 403,
-        LabError::InvalidInput => 400,
+        LabError::InvalidInput | LabError::SpeechNotRecognized => 400,
         LabError::InvalidState | LabError::Runtime(_) => 409,
         LabError::Provider(Rt0ReasonCode::BudgetExhausted) => 402,
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,
@@ -572,6 +572,7 @@ fn finish_voice_stream(
             }
             Err(error) => VoiceStreamEvent::Failed {
                 code: error.code().to_owned(),
+                diagnostic: None,
             },
         },
         Err(error) => {
@@ -585,6 +586,8 @@ fn finish_voice_stream(
             };
             VoiceStreamEvent::Failed {
                 code: code.to_owned(),
+                diagnostic: matches!(error, LabError::SpeechNotRecognized)
+                    .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
             }
         }
     };
