@@ -100,7 +100,13 @@ pub(super) fn fence_session_response(
     state: &AppState,
 ) -> Result<HttpResponse, HttpResponse> {
     let body: SessionEndBody = super::parse_json(request)?;
-    fence_authority(state, body.expected_session_sequence)?;
+    // Unlike legacy revoke/close, the new pre-flush fence is always strictly
+    // generation-bound. An unscoped stale tab must not fence another session.
+    let sequence = body
+        .expected_session_sequence
+        .filter(|sequence| *sequence > 0)
+        .ok_or_else(|| error_response(400, "INVALID_INPUT"))?;
+    fence_authority(state, Some(sequence))?;
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
