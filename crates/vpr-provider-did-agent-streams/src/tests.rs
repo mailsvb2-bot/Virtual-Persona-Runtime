@@ -881,7 +881,6 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
 }
 
 
-#[derive(Default)]
 struct CancelledDuringEchoOpen {
     cancellation: std::sync::Arc<Probe>,
     calls: std::sync::Mutex<Vec<&'static str>>,
