@@ -308,7 +308,12 @@ impl DidEchoBackend for EchoPythonBackend {
             // The private sender must be interrupted even if the Rust caller
             // stopped waiting while its previously accepted utterance plays.
             if worker
-                .request(json!({"command": "interrupt"}), INTERRUPT_TIMEOUT, None, true)
+                .request(
+                    json!({"command": "interrupt"}),
+                    INTERRUPT_TIMEOUT,
+                    None,
+                    true,
+                )
                 .is_err()
             {
                 // Never leave an unconfirmed private audio publisher running.
