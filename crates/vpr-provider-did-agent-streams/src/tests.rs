@@ -499,7 +499,11 @@ fn expressive_without_server_echo_fails_closed_before_session_creation() {
         },
     };
     assert!(provider.client_control(&stale).is_none());
-    assert!(provider.prepare_client_text(&stale, "Привет", &probe).is_err());
+    assert!(
+        provider
+            .prepare_client_text(&stale, "Привет", &probe)
+            .is_err()
+    );
 }
 
 #[test]
