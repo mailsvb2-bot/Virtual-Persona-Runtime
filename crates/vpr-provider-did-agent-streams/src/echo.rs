@@ -12,7 +12,7 @@ pub trait DidEchoBackend: Send + Sync {
     /// Connects the private Echo sender before the viewer receives the session.
     ///
     /// # Errors
-    /// Rejects unverified credentials, unavailable LiveKit or cancellation.
+    /// Rejects unverified credentials, unavailable `LiveKit` or cancellation.
     fn open(
         &self,
         session_id: &str,
