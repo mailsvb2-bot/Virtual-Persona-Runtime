@@ -140,12 +140,25 @@ impl VoiceStreamRegistry {
     }
 
     fn finish(&self, request_sequence: u64, event: VoiceStreamEvent) {
+        self.finish_with_unlock(request_sequence, event, || {});
+    }
+
+    /// Publish the terminal event and release the old voice turn as one
+    /// state transition: a new turn cannot observe busy=false while the
+    /// old stream still appears non-terminal in this registry.
+    fn finish_with_unlock(
+        &self,
+        request_sequence: u64,
+        event: VoiceStreamEvent,
+        release_turn: impl FnOnce(),
+    ) {
         let mut streams = self.streams.lock();
         if let Some(stream) = streams.get_mut(&request_sequence) {
             debug_assert!(stream.events.len() < MAX_PENDING_VOICE_STREAM_EVENTS);
             stream.events.push_back(event);
             stream.terminal = true;
         }
+        release_turn();
         drop(streams);
         self.changed.notify_all();
     }
@@ -442,16 +455,12 @@ fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result
 fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVoiceInput) {
     let worker_state = Arc::clone(state);
     thread::spawn(move || {
-        let _busy = http_evidence::VoiceBusyGuard::new(
+        let mut busy = http_evidence::VoiceBusyGuard::new(
             &worker_state.voice_busy,
             &worker_state.voice_cancel_requested,
         );
-        let result = {
-            let Ok(mut engine) = worker_state.engine.lock() else {
-                finish_voice_stream(&worker_state, request_sequence, Err(LabError::Internal));
-                return;
-            };
-            let result = engine.finish_voice_input_streaming(input, |segment| {
+        let result = match worker_state.engine.lock() {
+            Ok(mut engine) => engine.finish_voice_input_streaming(input, |segment| {
                 worker_state
                     .evidence
                     .lock()
@@ -460,11 +469,14 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
                 worker_state
                     .voice_streams
                     .push(request_sequence, VoiceStreamEvent::Segment { segment })
-            });
-            *worker_state.active_voice_interrupt.lock() = None;
-            result
+            }),
+            Err(_) => Err(LabError::Internal),
         };
-        finish_voice_stream(&worker_state, request_sequence, result);
+        *worker_state.active_voice_interrupt.lock() = None;
+        let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
+        worker_state
+            .voice_streams
+            .finish_with_unlock(request_sequence, terminal, || busy.release());
     });
 }
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
@@ -539,11 +551,11 @@ pub(super) fn events_response(
     Ok(json_response(200, &response))
 }
 
-fn finish_voice_stream(
+fn prepare_voice_terminal_event(
     state: &AppState,
     request_sequence: u64,
     result: Result<LabVoiceResult, LabError>,
-) {
+) -> VoiceStreamEvent {
     *state.replay_source.lock() = None;
     let event = match result {
         Ok(value) => match state
@@ -583,9 +595,7 @@ fn finish_voice_stream(
             }
         }
     };
-    // Release the turn gate before publishing terminal state to prevent a new-turn race.
-    release_voice_busy(state);
-    state.voice_streams.finish(request_sequence, event);
+    event
 }
 
 #[cfg(test)]
