@@ -242,6 +242,27 @@ fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
 }
 
 #[test]
+fn revocation_handle_fences_egress_while_engine_mutex_is_held_and_is_session_scoped() {
+    let (mut lab, stats) = engine(true);
+    lab.start(OwnerLabStartRequest { consent: true }).unwrap();
+    let revoked_session = lab.session_revocation_handle().unwrap();
+    let engine_mutex = std::sync::Mutex::new(lab);
+    // Simulate a long-running voice provider holding the engine mutex. The
+    // independent canonical revocation must not need to acquire that mutex.
+    let mut worker = engine_mutex.lock().unwrap();
+    revoked_session.revoke_authority().unwrap();
+    assert!(worker.apply(OwnerLabTurnInput::Text("denied".into())).is_err());
+    assert_eq!(stats.text.load(Ordering::SeqCst), 0);
+    worker.revoke().unwrap();
+    worker.close().unwrap();
+    worker.start(OwnerLabStartRequest { consent: true }).unwrap();
+    // A stale revoke-only handle cannot revoke the new session's authority.
+    revoked_session.revoke_authority().unwrap();
+    worker.apply(OwnerLabTurnInput::Text("fresh".into())).unwrap();
+    assert_eq!(stats.text.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn revoke_blocks_new_content_but_still_cleans_remote_avatar() {
     let (mut engine, stats) = engine(true);
     engine
