@@ -241,6 +241,36 @@ fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
     assert_eq!(stats.text.load(Ordering::SeqCst), 1);
 }
 
+
+#[test]
+fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_speech() {
+    let (mut engine, stats) = engine(true);
+    engine.start(OwnerLabStartRequest { consent: true }).unwrap();
+
+    // This provider has no browser text publisher. Resume must therefore use
+    // the existing canonical server-side delivery path, not be forbidden or
+    // manufacture a did.speak payload.
+    let resumed = engine.prepare_resumed_speech("Продолжаю ответ.").unwrap();
+    assert!(resumed.client_command.is_none());
+    assert!(resumed.evidence_turn_sequence > 0);
+    assert!(resumed.evidence_output_sequence > 0);
+    assert_eq!(stats.text.load(Ordering::SeqCst), 1);
+
+    // Server delivery was already acknowledged Sent by the runtime. It must
+    // still not be misreported as audible playback without media evidence.
+    assert!(engine
+        .voice_playback
+        .acknowledge_voice_playback_complete(
+            resumed.evidence_turn_sequence,
+            resumed.evidence_output_sequence,
+        )
+        .is_err());
+
+    engine.revoke_authority().unwrap();
+    assert!(engine.prepare_resumed_speech("Поздний ответ.").is_err());
+    assert_eq!(stats.text.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn revocation_handle_fences_egress_while_engine_mutex_is_held_and_is_session_scoped() {
     let (mut lab, stats) = engine(true);
