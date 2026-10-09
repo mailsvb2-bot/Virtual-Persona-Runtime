@@ -421,7 +421,14 @@ mod bounded_stop_tests {
         ));
         std::fs::write(
             &script,
-            "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\\"command\\":\\"open\\"'*) printf '{\\"id\\":0,\\"ok\\":true}\\n' ;;\n    *'\\"command\\":\\"interrupt\\"'*) while :; do :; done ;;\n  esac\ndone\n",
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"command":"open"'*) printf '{"id":0,"ok":true}\\n' ;;
+    *'"command":"interrupt"'*) while :; do :; done ;;
+  esac
+done
+"#,
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
