@@ -125,6 +125,12 @@ async def run():
                     await writer.write(wav[offset:offset + 16 * 1024])
                 await writer.aclose()
                 writer = None
+                # Closing a byte stream means D-ID received the utterance,
+                # not that audio played. A concurrent STOP must not turn a
+                # cancelled utterance into a successful sender receipt.
+                if generation_at_start != generation:
+                    emit(identifier, False)
+                    return
                 emit(identifier, True)
         except asyncio.CancelledError:
             emit(identifier, False)
