@@ -1173,6 +1173,17 @@ sessionEgressFence?.addEventListener("message", (event) => {
     setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
     updateControls();
 });
+const waitForCanonicalTerminal = async (states, timeoutMillis) => {
+    const deadline = performance.now() + timeoutMillis;
+    do {
+        const status = await syncStatus().catch(() => null);
+        if (status && states.has(status.session_state))
+            return true;
+        if (performance.now() >= deadline)
+            return false;
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+    } while (true);
+};
 const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
@@ -1209,10 +1220,24 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
         }
     }
     catch (error) {
-        await syncStatus().catch(() => undefined);
-        setStatus(error instanceof Error
-            ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
-            : `LiveKit отключен${reasonSuffix}; cleanup failed`, "error");
+        const terminal = await waitForCanonicalTerminal(new Set(["closed"]), 45000);
+        if (terminal && sessionState.backend.avatar_open === false) {
+            await refreshSessionEvidence().catch(() => undefined);
+            try {
+                await downloadSessionEvidence();
+                setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
+            }
+            catch (exportError) {
+                setStatus(exportError instanceof Error
+                    ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+                    : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`, "error");
+            }
+        }
+        else {
+            setStatus(error instanceof Error
+                ? `LiveKit отключен${reasonSuffix}; canonical cleanup pending: ${error.message}`
+                : `LiveKit отключен${reasonSuffix}; canonical cleanup pending`, "error");
+        }
     }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
@@ -2006,7 +2031,13 @@ const interruptAvatar = async (recordEvidence = true) => {
         catch {
             cleanupFailed = true;
         }
-        await syncStatus().catch(() => undefined);
+        if (cleanupFailed) {
+            setStatus("PROVIDER_STOP_UNCONFIRMED: canonical cleanup pending", "error");
+            await waitForCanonicalTerminal(new Set(["revoked", "closed"]), 45000);
+        }
+        else {
+            await syncStatus().catch(() => undefined);
+        }
         const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
         const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
         setStatus(!canonicalRevoked
