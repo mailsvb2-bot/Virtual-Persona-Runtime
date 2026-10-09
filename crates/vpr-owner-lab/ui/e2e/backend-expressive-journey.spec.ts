@@ -159,7 +159,7 @@ test("Expressive without a backend Echo sender is denied before viewer credentia
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
 
-  const started = await postJson(request, csrf, "/api/session/start", { consent: true });
+  const started = await postJson(request, csrf, "/api/avatar/start", { consent: true });
   expect(started.ok()).toBeFalsy();
   const payload = await started.text();
   expect(payload).not.toContain("private-livekit-token");
