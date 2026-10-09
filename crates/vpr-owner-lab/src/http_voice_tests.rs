@@ -25,7 +25,7 @@ fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
 
     assert!(registry.begin(1, 2));
     let old = registry
-        .wait_events(1)
+        .wait_events(1, 1)
         .expect("old terminal must remain readable");
     assert!(old.terminal);
     assert_eq!(old.events.len(), 1);
@@ -39,7 +39,7 @@ fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
         },
     );
     let terminal = registry
-        .wait_events(2)
+        .wait_events(1, 2)
         .expect("terminal stream must remain pollable");
     assert!(terminal.terminal);
     assert_eq!(terminal.events.len(), 1);
@@ -53,7 +53,7 @@ fn pending_stream_is_never_evicted_and_event_queue_is_bounded() {
 
     for index in 0..MAX_PENDING_VOICE_STREAM_EVENTS.saturating_sub(1) {
         registry
-            .push(10, segment(u64::try_from(index + 1).unwrap()))
+            .push(1, 10, segment(u64::try_from(index + 1).unwrap()))
             .unwrap();
     }
     assert!(matches!(
@@ -69,7 +69,7 @@ fn pending_stream_is_never_evicted_and_event_queue_is_bounded() {
         },
     );
     let response = registry
-        .wait_events(10)
+        .wait_events(1, 10)
         .expect("stream must still be available");
     assert!(response.terminal);
     assert_eq!(response.events.len(), MAX_PENDING_VOICE_STREAM_EVENTS);
@@ -128,7 +128,7 @@ fn terminal_handoff_releases_voice_gate_only_once_even_after_next_turn_starts() 
     assert!(cancelled.load(Ordering::Acquire));
 
     let terminal = registry
-        .wait_events(1)
+        .wait_events(1, 1)
         .expect("old terminal remains consumable");
     assert!(terminal.terminal);
     assert_eq!(terminal.events.len(), 1);
