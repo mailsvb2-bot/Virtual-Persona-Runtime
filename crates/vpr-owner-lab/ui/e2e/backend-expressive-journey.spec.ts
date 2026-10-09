@@ -79,6 +79,24 @@ const setupReviewedPersona = async (
   request: APIRequestContext,
   csrf: string,
 ): Promise<void> => {
+  // The Expressive suite shares one backend process. Its reviewed owner
+  // profile survives Close/Export; recreating it for every test is correctly
+  // rejected by the production lifecycle (409). Reuse only a fully reviewed
+  // profile, never bypass the review or evidence-export gates.
+  const current = await request.get(`${ownerLabUrl}/api/status`);
+  expect(current.ok()).toBeTruthy();
+  const status = await current.json() as {
+    owner_context_state: string;
+    reviewed_owner_claims: number;
+    session_state: string;
+  };
+  expect(["none", "closed"]).toContain(status.session_state);
+  if (status.owner_context_state === "reviewed") {
+    expect(status.reviewed_owner_claims).toBe(ownerAnswers.length);
+    return;
+  }
+  expect(status.owner_context_state).toBe("missing");
+
   const created = await postJson(
     request,
     csrf,
