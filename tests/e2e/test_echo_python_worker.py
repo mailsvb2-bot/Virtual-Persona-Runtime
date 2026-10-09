@@ -85,12 +85,14 @@ class DelayedInput:
         return line
 
 
-def run_worker(delay_after_speak, records=None, delay_before_close=0):
+def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     def synthesize(text):
-        if not delay_after_speak:
+        if tts_latency is not None:
+            time.sleep(tts_latency(text))
+        elif not delay_after_speak:
             time.sleep(0.12)
         return b"RIFF" + text.encode("utf-8")
 
@@ -155,6 +157,25 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertFalse(any(item["id"] == 1 and item["ok"] for item in receipts))
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
+
+    def test_out_of_order_tts_cannot_reorder_canonical_speech(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 7, "command": "speak", "text": "Первое предложение."},
+            {"id": 8, "command": "speak", "text": "Второе предложение."},
+            {"id": 9, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            False, records=records, delay_before_close=0.30,
+            tts_latency=lambda text: 0.12 if text.startswith("Первое") else 0.01,
+        )
+        audio = b"".join(trace["audio"])
+        self.assertEqual(len(trace["stream_options"]), 2)
+        self.assertLess(audio.index("Первое".encode()), audio.index("Второе".encode()))
+        self.assertTrue(all(any(r["id"] == idx and r["ok"] for r in receipts)
+                            for idx in (7, 8)))
 
     def test_duplicate_utterance_id_does_not_replace_active_task(self):
         records = [
