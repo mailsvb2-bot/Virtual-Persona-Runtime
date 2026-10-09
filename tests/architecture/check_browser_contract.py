@@ -272,29 +272,30 @@ for required in (
     if required not in voice_journey_contract:
         raise SystemExit(f"Owner Lab Voice evidence contract missing proof: {required}")
 
-expressive_proof = expressive_e2e + "\n" + expressive_journey_driver
+# Expressive R0 now publishes speech through a credentialed server Echo
+# process. Legacy browser did.speak checks cannot attest server audio delivery.
+# Require canonical API journeys and independently observed private-worker events.
+expressive_proof = expressive_e2e + "\\n" + expressive_journey_driver
 for required in (
-    "LiveKit согласован",
+    "Expressive Echo keeps its sender credentials private",
+    "fixture-private-echo-token",
+    "client_control",
+    "text_input",
+    "audio_stream_opened",
+    "audio_bytes_written",
+    "audio_stream_closed",
+    "provider_stop_sent",
+    "private_echo_disconnected",
     "canonical_playback_proven",
-    "av_sync_proven",
+    "/api/avatar/speak",
+    "/api/avatar/interrupt",
+    "/api/avatar/resume-answer",
+    "/api/session/revoke",
+    "X-VPR-Evidence-Request",
     "did.speak",
-    "did.interrupt",
-    "__vprExpressiveDisconnect",
-    "/v2/agents/voice-e2e-expressive-agent/sessions",
-    "metric-stt",
-    "metric-llm-first",
-    "metric-av-sync",
-    "metric-playback",
-    "metric-cost",
-    '"/v1/listen"',
-    '"model=nova-3"',
-    '"language=ru"',
-    '"reasoning_effort":"none"',
-    '"max_tokens":96',
-    '"model":"deepseek-flash"',
 ):
     if required not in expressive_proof:
-        raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
+        raise SystemExit(f"Owner Lab server Echo browser proof missing: {required}")
 
 
 def require_pre_navigation_media_runtime(source: str, installer: str, fixture_path: str, label: str) -> None:
