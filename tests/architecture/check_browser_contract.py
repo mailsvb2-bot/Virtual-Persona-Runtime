@@ -333,33 +333,24 @@ for forbidden in (
         raise SystemExit(
             f"Owner Lab Expressive runtime must be owned by the fake LiveKit SDK boundary, not {forbidden}"
         )
-if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must load the fake SDK before navigation without network routing")
-if 'await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must install its in-page journey driver before navigation")
+# The backend-owned Echo proof uses a real private worker with a hermetic
+# LiveKit stand-in. Require its actual provider-observed receipts, not the
+# retired browser-published did.speak simulation.
 for required in (
-    'const reportUrl = "/__journey/report/expressive";',
-    'postPhase("driver-started")',
-    'postPhase("connected")',
-    'postPhase("interrupt-complete")',
-    'postPhase("disconnect-complete")',
-):
-    if required not in expressive_journey_driver:
-        raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
-for required in (
-    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/expressive";',
-    "request.delete(mailboxUrl)",
-    "request.get(mailboxUrl)",
+    "startEcho(request)",
+    "submitOwnerTurn(request",
+    "echoEvents(request)",
+    'await page.goto("/")',
+    '"audio_stream_opened"',
+    '"audio_bytes_written"',
+    '"provider_stop_sent"',
+    '"private_echo_disconnected"',
+    '"/api/session/revoke"',
 ):
     if required not in expressive_e2e:
-        raise SystemExit(f"Owner Lab Expressive controller missing independent mailbox contract: {required}")
+        raise SystemExit(f"Owner Lab private Echo E2E missing canonical proof: {required}")
 if 'page.route("**/__expressive_journey_report"' in expressive_e2e:
     raise SystemExit("Owner Lab Expressive terminal reporting must not depend on Playwright page routing")
-
-if 'page.route("**/__expressive_provider_state"' in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive journey must not depend on a Playwright provider-state callback")
-if 'fetch("http://127.0.0.1:18790' in expressive_journey_driver:
-    raise SystemExit("Owner Lab Expressive in-page journey must not bypass same-origin CSP")
 
 for required in (
     'const port = 18_792;',
@@ -399,12 +390,13 @@ for driver in (voice_journey_driver, expressive_journey_driver):
     if "http://127.0.0.1:18792" in driver or 'mode: "no-cors"' in driver:
         raise SystemExit("Owner Lab media journey reports must remain same-origin and CSP-compatible")
 for required in (
-    "expect(llmRequests.length).toBeGreaterThanOrEqual(1)",
-    "expect(llmRequests.length).toBeLessThanOrEqual(2)",
-    'commands.some((command) => command.topic === "did.interrupt")',
+    '"/api/text/turn"',
+    '"/api/avatar/speak"',
+    '"X-VPR-Evidence-Request"',
+    '"canonical_playback_proven"',
 ):
     if required not in expressive_e2e:
-        raise SystemExit(f"Owner Lab Expressive browser boundary proof missing: {required}")
+        raise SystemExit(f"Owner Lab Echo server delivery proof missing: {required}")
 for required in (
     "streaming_voice_interrupt_cancels_remaining_llm_tail_after_first_segment",
     "handle.interrupt().unwrap()",
