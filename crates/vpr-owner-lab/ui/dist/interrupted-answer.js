@@ -62,7 +62,7 @@ export const resumeWordOffset = (reply, utf16Cursor) => {
     if (!Number.isInteger(utf16Cursor) || utf16Cursor < 0 || utf16Cursor >= reply.length)
         return null;
     let cursor = utf16Cursor;
-    while (cursor > 0 && !/[\\s.,!?…:;—–()«»]/u.test(reply[cursor - 1] ?? "")) {
+    while (cursor > 0 && !/[\s.,!?…:;—–()«»]/u.test(reply[cursor - 1] ?? "")) {
         cursor -= 1;
     }
     return Array.from(reply.slice(0, cursor)).length;
