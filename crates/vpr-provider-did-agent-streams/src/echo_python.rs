@@ -90,6 +90,8 @@ struct SessionWorker {
     command_tx: mpsc::SyncSender<Vec<u8>>,
     // Protect only producer ordering and STOP fencing, never blocking pipe I/O.
     enqueue_gate: Mutex<()>,
+    stop_gate: Mutex<()>,
+    stop_receipt: Mutex<Option<bool>>,
     pending: Arc<Mutex<HashMap<u64, mpsc::SyncSender<bool>>>>,
     next_id: AtomicU64,
     stopped: AtomicBool,
@@ -140,6 +142,8 @@ impl SessionWorker {
             child: Mutex::new(child),
             command_tx,
             enqueue_gate: Mutex::new(()),
+            stop_gate: Mutex::new(()),
+            stop_receipt: Mutex::new(None),
             pending: Arc::clone(&pending),
             next_id: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
@@ -352,16 +356,25 @@ impl DidEchoBackend for EchoPythonBackend {
             false,
         );
         if result.is_err() {
-            // A failed STOP is never followed by a still-authorized publisher.
+            // Preserve the unconfirmed STOP outcome for the later canonical
+            // close. Do not fabricate success when the child has been killed.
+            let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
             let _ = worker.mark_stopped();
             let _ = worker.terminate();
-            let _ = self.sessions.lock().map(|mut sessions| sessions.remove(session_id));
+            let mut receipt = worker.stop_receipt.lock().map_err(|_| unavailable())?;
+            if receipt.is_none() {
+                *receipt = Some(false);
+            }
         }
         result
     }
 
     fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
+        let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
+        if let Some(confirmed) = *worker.stop_receipt.lock().map_err(|_| unavailable())? {
+            return if confirmed { Ok(()) } else { Err(unavailable()) };
+        }
         worker.mark_stopped()?;
         // STOP must clear already queued avatar speech, not merely disconnect
         // the private publisher and leave D-ID playing its queued audio.
@@ -374,13 +387,22 @@ impl DidEchoBackend for EchoPythonBackend {
         // Even on timeout or a disconnected pipe, terminate the only private
         // publisher. Never return success when the interrupt receipt was absent.
         let terminated = worker.terminate();
-        if terminated.is_ok() {
-            self.sessions
-                .lock()
-                .map_err(|_| unavailable())?
-                .remove(session_id);
-        }
+        let success = interrupted.is_ok() && terminated.is_ok();
+        *worker.stop_receipt.lock().map_err(|_| unavailable())? = Some(success);
+        // Retain only the stop receipt until canonical close explicitly forgets
+        // this publisher. A second STOP must reproduce the SAME result.
         interrupted.and(terminated)
+    }
+
+    fn forget(&self, session_id: &str) -> Result<(), ProviderError> {
+        let worker = self.worker(session_id)?;
+        let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
+        worker.terminate()?;
+        self.sessions
+            .lock()
+            .map_err(|_| unavailable())?
+            .remove(session_id);
+        Ok(())
     }
 }
 
@@ -455,6 +477,11 @@ done
             elapsed < Duration::from_millis(1800),
             "STOP was blocked by a nonresponsive private worker: {elapsed:?}"
         );
-        assert!(backend.worker("hung-session").is_err(), "dead publisher must be unregistered");
+        assert!(backend.stop("hung-session").is_err(), "unconfirmed STOP must remain unconfirmed");
+        backend.forget("hung-session").unwrap();
+        assert!(
+            backend.worker("hung-session").is_err(),
+            "dead publisher must be unregistered"
+        );
     }
 }
