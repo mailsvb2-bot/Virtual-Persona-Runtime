@@ -665,16 +665,22 @@ for source, required in (
 # Provider-media journeys share one test-only pre-navigation DOM harness. It waits
 # for the application's visible ready state and then exercises the real consent and Connect controls.
 # Production exposes no bootstrap event or alternate transport path for the harness.
-for provider_e2e, label in (
-    (voice_e2e, "Owner Lab voice"),
-    (expressive_e2e, "Owner Lab Expressive"),
+for required in (
+    'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
+    "await installProviderAutoConnect(page);",
 ):
-    for required in (
-        'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
-        "await installProviderAutoConnect(page);",
-    ):
-        if required not in provider_e2e:
-            raise SystemExit(f"{label} provider E2E pre-navigation connect harness missing: {required}")
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice provider E2E connect harness missing: {required}")
+# Expressive Echo starts through the canonical HTTP API and then navigates a
+# real browser. It must not inject the old browser-publishing LiveKit harness.
+for required in (
+    '"/api/avatar/start"',
+    "await page.goto(\"/\");",
+    "client_control",
+    "text_input",
+):
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab server Echo E2E startup missing: {required}")
 if 'root.dataset.vprProviderAutoConnect === "clicked"' not in expressive_journey_driver:
     raise SystemExit("Owner Lab Expressive in-page journey must wait for the provider autoconnect checkpoint")
 
