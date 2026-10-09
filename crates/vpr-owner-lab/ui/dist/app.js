@@ -1177,6 +1177,7 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
     const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
+    broadcastSessionEgressFence();
     closePeerTransport();
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
@@ -1996,6 +1997,7 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
     catch (error) {
         interruptEvidenceWatch = null;
+        broadcastSessionEgressFence();
         closePeerTransport();
         let cleanupFailed = false;
         try {

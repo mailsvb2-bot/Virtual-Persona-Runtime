@@ -1542,6 +1542,10 @@ const handleUnexpectedLiveKitDisconnect = async (
   // An unexpected provider disconnect must invalidate all pending speech
   // dispatches and release their playback barriers, not just remove the
   // visible audio/video elements. closePeerTransport performs that full fence.
+  // Fence the local generation synchronously: late TURN_CANCELLED from a
+  // finishing voice stream must not revive an orphaned publisher or overwrite
+  // the confirmed transport-loss diagnosis while backend teardown is pending.
+  broadcastSessionEgressFence();
   closePeerTransport();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
@@ -2433,7 +2437,9 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     // A failed or unavailable STOP leaves the browser's LiveKit publish token
     // capable of reaching D-ID. Disconnect it synchronously, before awaiting
     // anything, and revoke the canonical session. Never offer an unconfirmed
-    // interrupted answer for replay.
+    // interrupted answer for replay. Notify peer tabs synchronously so a
+    // delayed voice-stream completion cannot resume speech while STOP failed.
+    broadcastSessionEgressFence();
     closePeerTransport();
     let cleanupFailed = false;
     try {
