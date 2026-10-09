@@ -37,7 +37,6 @@ impl SessionSecurityConfig {
     }
 }
 
-#[derive(Debug)]
 /// A revocation-only authority handle for HTTP termination paths that cannot wait
 /// for a voice worker holding the Owner Lab engine mutex.
 #[derive(Debug, Clone)]
@@ -57,6 +56,7 @@ impl SessionRevocationHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct ActiveSession {
     pub(crate) session: RealtimeSession,
     pub(crate) authorization: AuthorizationController,
