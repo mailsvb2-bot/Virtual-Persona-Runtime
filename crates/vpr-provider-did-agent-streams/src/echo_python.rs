@@ -51,7 +51,11 @@ impl EchoPythonConfig {
             tts_voice: tts_voice.into(),
         };
         let url = reqwest::Url::parse(&config.tts_endpoint).map_err(|_| invalid_response())?;
-        if url.scheme() != "https"
+        let loopback = url.host_str().is_some_and(|host| {
+            host.eq_ignore_ascii_case("localhost")
+                || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+        });
+        if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
             || url.host_str().is_none()
             || !url.username().is_empty()
             || url.password().is_some()
