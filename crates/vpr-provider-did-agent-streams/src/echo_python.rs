@@ -334,7 +334,7 @@ impl DidEchoBackend for EchoPythonBackend {
             // A timed-out or disconnected receipt is an UNKNOWN provider
             // outcome: the subprocess may still publish audio after the
             // canonical request has ended. Fence it before returning.
-            let _ = worker.mark_stopped();
+            worker.mark_stopped()?;
             let stopped = worker.request(
                 json!({"command": "interrupt"}),
                 INTERRUPT_TIMEOUT,
