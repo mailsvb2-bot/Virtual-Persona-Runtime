@@ -16,7 +16,8 @@ fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
     let registry = VoiceStreamRegistry::default();
     assert!(registry.begin(1, 1));
     registry.finish(
-        1, 1,
+        1,
+        1,
         VoiceStreamEvent::Failed {
             code: "PROVIDER_TIMEOUT".into(),
             diagnostic: None,
@@ -32,7 +33,8 @@ fn terminal_reply_survives_next_request_and_cannot_be_silently_evicted() {
     assert!(!registry.begin(1, 3));
 
     registry.finish(
-        1, 2,
+        1,
+        2,
         VoiceStreamEvent::Failed {
             code: "TURN_CANCELLED".into(),
             diagnostic: None,
@@ -62,7 +64,8 @@ fn pending_stream_is_never_evicted_and_event_queue_is_bounded() {
     ));
 
     registry.finish(
-        1, 10,
+        1,
+        10,
         VoiceStreamEvent::Failed {
             code: "INVALID_STATE_TRANSITION".into(),
             diagnostic: None,
@@ -81,7 +84,8 @@ fn quiescence_does_not_require_terminal_stream_polling() {
     let registry = VoiceStreamRegistry::default();
     assert!(registry.begin(1, 1));
     registry.finish(
-        1, 1,
+        1,
+        1,
         VoiceStreamEvent::Failed {
             code: "PROVIDER_TIMEOUT".into(),
             diagnostic: None,
@@ -103,7 +107,8 @@ fn terminal_handoff_releases_voice_gate_only_once_even_after_next_turn_starts() 
     // The previous stream must become terminal while the registry is locked,
     // and the same owner releases busy before any consumer is notified.
     registry.finish_with_unlock(
-        1, 1,
+        1,
+        1,
         VoiceStreamEvent::Failed {
             code: "TURN_CANCELLED".into(),
             diagnostic: None,
@@ -143,7 +148,8 @@ fn two_unconsumed_terminal_events_apply_backpressure_without_evidence_loss() {
     let registry = VoiceStreamRegistry::default();
     assert!(registry.begin(1, 1));
     registry.finish(
-        1, 1,
+        1,
+        1,
         VoiceStreamEvent::Failed {
             code: "PROVIDER_TIMEOUT".into(),
             diagnostic: None,
@@ -151,7 +157,8 @@ fn two_unconsumed_terminal_events_apply_backpressure_without_evidence_loss() {
     );
     assert!(registry.begin(1, 2));
     registry.finish(
-        1, 2,
+        1,
+        2,
         VoiceStreamEvent::Failed {
             code: "TURN_CANCELLED".into(),
             diagnostic: None,
@@ -174,19 +181,29 @@ fn identical_request_numbers_from_different_session_epochs_never_cross_streams()
     let registry = VoiceStreamRegistry::default();
     assert!(registry.begin(41, 1));
     registry.finish(
-        41, 1,
+        41,
+        1,
         VoiceStreamEvent::Failed {
             code: "OLD_EPOCH".into(),
             diagnostic: None,
         },
     );
     assert!(registry.begin(42, 1), "new session may reuse request one");
-    assert!(registry.wait_events(41, 2).is_none(), "wrong request cannot consume old");
-    let old = registry.wait_events(41, 1).expect("old terminal remains scoped");
+    assert!(
+        registry.wait_events(41, 2).is_none(),
+        "wrong request cannot consume old"
+    );
+    let old = registry
+        .wait_events(41, 1)
+        .expect("old terminal remains scoped");
     assert!(old.terminal);
-    assert!(!registry.begin(42, 1), "duplicate current request is denied");
+    assert!(
+        !registry.begin(42, 1),
+        "duplicate current request is denied"
+    );
     registry.finish(
-        42, 1,
+        42,
+        1,
         VoiceStreamEvent::Failed {
             code: "NEW_EPOCH".into(),
             diagnostic: None,
@@ -194,5 +211,8 @@ fn identical_request_numbers_from_different_session_epochs_never_cross_streams()
     );
     let newest = registry.wait_events(42, 1).expect("new response");
     assert!(newest.terminal);
-    assert!(registry.wait_events(41, 1).is_none(), "old stream was consumed");
+    assert!(
+        registry.wait_events(41, 1).is_none(),
+        "old stream was consumed"
+    );
 }
