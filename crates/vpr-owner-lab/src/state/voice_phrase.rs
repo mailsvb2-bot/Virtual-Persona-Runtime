@@ -1,6 +1,6 @@
-const FIRST_CLAUSE_MIN_CHARS: usize = 24;
+const FIRST_CLAUSE_MIN_CHARS: usize = 20;
 const NEXT_CLAUSE_MIN_CHARS: usize = 48;
-const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 48;
+const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 36;
 const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
 #[derive(Default)]
@@ -104,6 +104,17 @@ mod tests {
             buffer.finish().as_deref(),
             Some("Да, конечно, отвечу подробно")
         );
+    }
+
+    #[test]
+    fn streams_first_audible_clause_before_llm_full_sentence() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        let phrase = "Довольно интересный вопрос который заслуживает объяснения";
+        let emitted = buffer.push(phrase);
+        assert_eq!(emitted.len(), 1, "first phrase must not wait for 48+ characters");
+        assert!(emitted[0].ends_with(' ' ) == false);
+        assert!(emitted[0].chars().count() <= 36);
+        assert!(!buffer.finish().unwrap().is_empty());
     }
 
     #[test]
