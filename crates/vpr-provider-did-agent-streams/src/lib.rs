@@ -567,10 +567,8 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
                 if let Some(backend) = &self.echo_backend {
-                    if self.echo_sessions.contains(&session.provider_session_id)? {
-                        backend.stop(&session.provider_session_id)?;
-                        self.echo_sessions.remove(&session.provider_session_id)?;
-                    }
+                    self.echo_sessions
+                        .close_session(backend.as_ref(), &session.provider_session_id)?;
                     return Ok(());
                 }
                 // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects

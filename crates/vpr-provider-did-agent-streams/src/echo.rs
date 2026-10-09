@@ -47,6 +47,16 @@ pub trait DidEchoBackend: Send + Sync {
     /// # Errors
     /// Rejects failures to stop the sender; cleanup must never be assumed.
     fn stop(&self, session_id: &str) -> Result<(), ProviderError>;
+
+    /// Release the private, already-fenced sender after canonical close.
+    /// STOP can be issued earlier than close; it must remain idempotent until
+    /// the final teardown has consumed its original acknowledgement.
+    ///
+    /// # Errors
+    /// Reports a failure to release the private sender; cleanup is never assumed.
+    fn forget(&self, _session_id: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }
 
 /// Registrations are server-private; ids are opaque and no publisher grant is
@@ -77,9 +87,10 @@ impl DidEchoRegistry {
         }
         if cancellation.is_cancelled() {
             let cleanup = backend.stop(id);
+            let forgotten = backend.forget(id);
             self.remove(id)?;
             // Report failed teardown, never successful revocation.
-            return Err(cleanup.err().unwrap_or(super::cancelled()));
+            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
         }
         Ok(())
     }
@@ -109,6 +120,24 @@ impl DidEchoRegistry {
         }
         sessions.insert(id.to_owned());
         Ok(())
+    }
+
+    /// Canonical finalizer: STOP acknowledgement is preserved until the
+    /// publisher is forgotten, including when interrupt ran earlier.
+    pub(crate) fn close_session(
+        &self,
+        backend: &dyn DidEchoBackend,
+        id: &str,
+    ) -> Result<(), ProviderError> {
+        if !self.contains(id)? {
+            return Ok(());
+        }
+        let stopped = backend.stop(id);
+        let forgotten = backend.forget(id);
+        if forgotten.is_ok() {
+            self.remove(id)?;
+        }
+        stopped.and(forgotten)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {

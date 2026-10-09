@@ -238,11 +238,13 @@ fn post_binary(
     host: &str,
     csrf: &str,
     path: &str,
+    session_sequence: Option<u64>,
     request_sequence: Option<u64>,
     body: &[u8],
 ) -> HttpResult {
     let origin = format!("http://{host}");
     let request_sequence = request_sequence.map(|value| value.to_string());
+    let session_sequence = session_sequence.map(|value| value.to_string());
     let mut headers = vec![
         ("Content-Type", "application/octet-stream"),
         ("Origin", origin.as_str()),
@@ -251,15 +253,26 @@ fn post_binary(
     if let Some(value) = request_sequence.as_deref() {
         headers.push(("X-VPR-Evidence-Request", value));
     }
+    if let Some(value) = session_sequence.as_deref() {
+        headers.push(("X-VPR-Session-Sequence", value));
+    }
     http_bytes(port, "POST", path, host, &headers, body)
 }
 
-fn start_voice_turn(port: u16, host: &str, csrf: &str, request_sequence: u64, pcm: &[u8]) -> u64 {
+fn start_voice_turn(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    session_sequence: u64,
+    request_sequence: u64,
+    pcm: &[u8],
+) -> u64 {
     let started = post_binary(
         port,
         host,
         csrf,
         "/api/voice/turn",
+        Some(session_sequence),
         Some(request_sequence),
         pcm,
     );
@@ -271,7 +284,13 @@ fn start_voice_turn(port: u16, host: &str, csrf: &str, request_sequence: u64, pc
     accepted
 }
 
-fn collect_voice_events(port: u16, host: &str, csrf: &str, request_sequence: u64) -> Vec<Value> {
+fn collect_voice_events(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    session_sequence: u64,
+    request_sequence: u64,
+) -> Vec<Value> {
     let mut collected = Vec::new();
     for _ in 0..16 {
         let response = post(
@@ -279,7 +298,9 @@ fn collect_voice_events(port: u16, host: &str, csrf: &str, request_sequence: u64
             host,
             csrf,
             "/api/voice/events",
-            &format!(r#"{{"request_sequence":{request_sequence}}}"#),
+            &format!(
+                r#"{{"session_sequence":{session_sequence},"request_sequence":{request_sequence}}}"#
+            ),
         );
         assert_eq!(response.status, 200, "{}", response.body);
         let payload: Value = serde_json::from_str(&response.body).unwrap();
@@ -613,6 +634,39 @@ fn launch_owner_lab_voice(
     }
 }
 
+fn assert_voice_epoch_rejections(
+    port: u16,
+    host: &str,
+    csrf: &str,
+    evidence_session: u64,
+    pcm: &[u8],
+) {
+    let missing_correlation = post_binary(
+        port,
+        host,
+        csrf,
+        "/api/voice/turn",
+        Some(evidence_session),
+        None,
+        pcm,
+    );
+    assert_eq!(missing_correlation.status, 400);
+    assert!(missing_correlation.body.contains("INVALID_INPUT"));
+
+    let missing_epoch = post_binary(port, host, csrf, "/api/voice/turn", None, Some(1), pcm);
+    assert_eq!(missing_epoch.status, 400);
+    let stale_epoch = post_binary(
+        port,
+        host,
+        csrf,
+        "/api/voice/turn",
+        Some(evidence_session + 1),
+        Some(1),
+        pcm,
+    );
+    assert_eq!(stale_epoch.status, 409);
+}
+
 #[test]
 fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     let _serial = serialize_owner_lab_http_contract();
@@ -666,12 +720,9 @@ fn loopback_voice_turn_uses_real_stt_llm_and_avatar_adapters() {
     );
 
     let pcm = vec![0_u8; 3_200];
-    let missing_correlation = post_binary(port, &host, &csrf, "/api/voice/turn", None, &pcm);
-    assert_eq!(missing_correlation.status, 400);
-    assert!(missing_correlation.body.contains("INVALID_INPUT"));
-
-    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &pcm);
-    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    assert_voice_epoch_rejections(port, &host, &csrf, evidence_session, &pcm);
+    let request_sequence = start_voice_turn(port, &host, &csrf, evidence_session, 1, &pcm);
+    let voice_events = collect_voice_events(port, &host, &csrf, evidence_session, request_sequence);
     assert_completed_voice_contract(&voice_events);
 
     assert_session_evidence_contract(port, &host, &csrf, evidence_session);
@@ -889,19 +940,21 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
     let host = format!("127.0.0.1:{port}");
     let _guard = launch_owner_lab_voice(port, &did_endpoint, &stt_endpoint, &llm_endpoint);
     let csrf = bootstrap(port, &host);
-    assert_eq!(
-        post(
-            port,
-            &host,
-            &csrf,
-            "/api/avatar/start",
-            r#"{"consent":true}"#,
-        )
-        .status,
-        200
+    let started = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/start",
+        r#"{"consent":true}"#,
     );
+    assert_eq!(started.status, 200, "{}", started.body);
+    let evidence_session =
+        serde_json::from_str::<Value>(&started.body).unwrap()["evidence_session_sequence"]
+            .as_u64()
+            .unwrap();
 
-    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &vec![0_u8; 3_200]);
+    let request_sequence =
+        start_voice_turn(port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let revoke_started = Instant::now();
@@ -911,7 +964,7 @@ fn revoke_preempts_active_voice_before_any_avatar_output() {
         revoke_started.elapsed() < Duration::from_millis(1_500),
         "revoke waited for the provider instead of preempting the voice turn"
     );
-    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    let voice_events = collect_voice_events(port, &host, &csrf, evidence_session, request_sequence);
     assert_cancelled_voice_events(&voice_events);
     // Neither an interruption confirmation nor a fresh provider speech command
     // can be prepared after the backend has revoked the canonical session.
@@ -967,19 +1020,21 @@ fn close_preempts_active_voice_before_any_avatar_output() {
     let host = format!("127.0.0.1:{port}");
     let _guard = launch_owner_lab_voice(port, &did_endpoint, &stt_endpoint, &llm_endpoint);
     let csrf = bootstrap(port, &host);
-    assert_eq!(
-        post(
-            port,
-            &host,
-            &csrf,
-            "/api/avatar/start",
-            r#"{"consent":true}"#,
-        )
-        .status,
-        200
+    let started = post(
+        port,
+        &host,
+        &csrf,
+        "/api/avatar/start",
+        r#"{"consent":true}"#,
     );
+    assert_eq!(started.status, 200, "{}", started.body);
+    let evidence_session =
+        serde_json::from_str::<Value>(&started.body).unwrap()["evidence_session_sequence"]
+            .as_u64()
+            .unwrap();
 
-    let request_sequence = start_voice_turn(port, &host, &csrf, 1, &vec![0_u8; 3_200]);
+    let request_sequence =
+        start_voice_turn(port, &host, &csrf, evidence_session, 1, &vec![0_u8; 3_200]);
     llm_started.recv_timeout(Duration::from_secs(2)).unwrap();
 
     let close_started = Instant::now();
@@ -989,7 +1044,7 @@ fn close_preempts_active_voice_before_any_avatar_output() {
         close_started.elapsed() < Duration::from_millis(1_500),
         "close waited for the provider instead of preempting the voice turn"
     );
-    let voice_events = collect_voice_events(port, &host, &csrf, request_sequence);
+    let voice_events = collect_voice_events(port, &host, &csrf, evidence_session, request_sequence);
     assert_cancelled_voice_events(&voice_events);
 
     let status = http(port, "GET", "/api/status", &host, &[], "");
