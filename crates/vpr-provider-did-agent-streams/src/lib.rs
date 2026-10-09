@@ -17,11 +17,13 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 mod client_control;
 mod diagnostics;
 mod echo;
+mod echo_python;
 mod protocol;
 mod provider_error;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
+pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use echo::DidEchoRegistry;
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
