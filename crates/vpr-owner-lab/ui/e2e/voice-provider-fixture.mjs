@@ -111,6 +111,38 @@ const server = http.createServer(async (request, response) => {
   }
 
   const body = await readBody(request);
+  if (request.method === "POST" && url.pathname === "/v1/audio/speech") {
+    record("tts", request, url, body);
+    const input = JSON.parse(body.toString("utf8"));
+    if (request.headers.authorization !== "Bearer expressive-tts-e2e-secret"
+        || typeof input.input !== "string" || !input.input.trim()
+        || input.response_format !== "wav") {
+      return sendJson(response, 400, { code: "INVALID_TTS_FIXTURE_INPUT" });
+    }
+    // Uncompressed mono 16-bit PCM WAV (16 kHz), bounded fixture sample.
+    const pcm = Buffer.alloc(640);
+    const wav = Buffer.alloc(44 + pcm.length);
+    wav.write("RIFF", 0);
+    wav.writeUInt32LE(wav.length - 8, 4);
+    wav.write("WAVEfmt ", 8);
+    wav.writeUInt32LE(16, 16);
+    wav.writeUInt16LE(1, 20);
+    wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(16000, 24);
+    wav.writeUInt32LE(32000, 28);
+    wav.writeUInt16LE(2, 32);
+    wav.writeUInt16LE(16, 34);
+    wav.write("data", 36);
+    wav.writeUInt32LE(pcm.length, 40);
+    pcm.copy(wav, 44);
+    response.writeHead(200, {
+      "content-type": "audio/wav",
+      "content-length": wav.length,
+      "cache-control": "no-store",
+    });
+    return response.end(wav);
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/audio/transcriptions") {
     sttSequence += 1;
     record("stt", request, url, body);
