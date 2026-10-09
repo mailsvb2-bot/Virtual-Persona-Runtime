@@ -206,10 +206,10 @@ pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>
         let _ = fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
         return response;
     }
-    if !state.voice_streams.begin(request_sequence) {
+    if !state.voice_streams.begin(session_sequence, request_sequence) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
-    spawn_voice_worker(state, request_sequence, input);
+    spawn_voice_worker(state, session_sequence, request_sequence, input);
     json_response(
         202,
         &serde_json::json!({"ok": true, "request_sequence": request_sequence}),
@@ -319,11 +319,11 @@ pub(super) fn voice_turn_response(request: &mut Request, state: &Arc<AppState>) 
         let _ = fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
         return response;
     }
-    if !state.voice_streams.begin(request_sequence) {
+    if !state.voice_streams.begin(session_sequence, request_sequence) {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
 
-    spawn_voice_worker(state, request_sequence, input);
+    spawn_voice_worker(state, session_sequence, request_sequence, input);
 
     json_response(
         202,
@@ -370,7 +370,12 @@ fn stream_voice_body(request: &mut Request, input: &mut LabVoiceInput) -> Result
     }
     Ok(())
 }
-fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVoiceInput) {
+fn spawn_voice_worker(
+    state: &Arc<AppState>,
+    session_sequence: u64,
+    request_sequence: u64,
+    input: LabVoiceInput,
+) {
     let worker_state = Arc::clone(state);
     thread::spawn(move || {
         let mut busy = http_evidence::VoiceBusyGuard::new(
@@ -386,7 +391,7 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
                     .map_err(map_evidence_error)?;
                 worker_state
                     .voice_streams
-                    .push(request_sequence, VoiceStreamEvent::Segment { segment })
+                    .push(session_sequence, request_sequence, VoiceStreamEvent::Segment { segment })
             }),
             Err(_) => Err(LabError::Internal),
         };
@@ -394,7 +399,7 @@ fn spawn_voice_worker(state: &Arc<AppState>, request_sequence: u64, input: LabVo
         let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
         worker_state
             .voice_streams
-            .finish_with_unlock(request_sequence, terminal, || busy.release());
+            .finish_with_unlock(session_sequence, request_sequence, terminal, || busy.release());
     });
 }
 const fn map_evidence_error(error: LabEvidenceError) -> LabError {
@@ -462,10 +467,15 @@ pub(super) fn events_response(
     state: &AppState,
 ) -> Result<HttpResponse, HttpResponse> {
     let body = super::parse_json::<VoiceEventsBody>(request)?;
-    http_evidence::require_voice_session_sequence(state, body.session_sequence)?;
+    if body.session_sequence == 0 || body.request_sequence == 0 {
+        return Err(error_response(400, "INVALID_INPUT"));
+    }
+    // Terminal cancellation must remain pollable after revoke/close; never
+    // promote that session to active again. The compound registry key
+    // prevents an old tab consuming a different generation's reply.
     let response = state
         .voice_streams
-        .wait_events(body.request_sequence)
+        .wait_events(body.session_sequence, body.request_sequence)
         .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
     Ok(json_response(200, &response))
 }
