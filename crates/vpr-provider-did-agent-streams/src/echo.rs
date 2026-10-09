@@ -47,6 +47,13 @@ pub trait DidEchoBackend: Send + Sync {
     /// # Errors
     /// Rejects failures to stop the sender; cleanup must never be assumed.
     fn stop(&self, session_id: &str) -> Result<(), ProviderError>;
+
+    /// Release the private, already-fenced sender after canonical close.
+    /// STOP can be issued earlier than close; it must remain idempotent until
+    /// the final teardown has consumed its original acknowledgement.
+    fn forget(&self, _session_id: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
 }
 
 /// Registrations are server-private; ids are opaque and no publisher grant is
