@@ -51,6 +51,9 @@ pub trait DidEchoBackend: Send + Sync {
     /// Release the private, already-fenced sender after canonical close.
     /// STOP can be issued earlier than close; it must remain idempotent until
     /// the final teardown has consumed its original acknowledgement.
+    ///
+    /// # Errors
+    /// Reports a failure to release the private sender; cleanup is never assumed.
     fn forget(&self, _session_id: &str) -> Result<(), ProviderError> {
         Ok(())
     }
