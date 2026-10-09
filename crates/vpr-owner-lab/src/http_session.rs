@@ -1,4 +1,6 @@
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::LabError;
@@ -24,7 +26,7 @@ struct SessionEndBody {
 
 pub(super) fn end_session_response(
     request: &mut tiny_http::Request,
-    state: &AppState,
+    state: &Arc<AppState>,
     close: bool,
 ) -> Result<HttpResponse, HttpResponse> {
     let body: SessionEndBody = super::parse_json(request)?;
@@ -132,45 +134,83 @@ pub(super) fn fence_session_response(
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
-fn end_session(
+// The HTTP request must never wait indefinitely for a vendor STT/LLM socket.
+// A timed-out worker is already fenced from new canonical egress. Carry its
+// local provider teardown to completion once the *same generation* quiesces.
+// The bounded worker cannot close a later session; no fake "closed" status is
+// published while the old provider resource has not actually been released.
+fn complete_deferred_session(
     state: &AppState,
     close: bool,
-    expected_session_sequence: Option<u64>,
-) -> Result<HttpResponse, HttpResponse> {
-    fence_authority(state, expected_session_sequence)?;
-    if !state.voice_streams.wait_until_quiescent() {
-        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    expected_generation: u64,
+) -> Result<(), HttpResponse> {
+    if expected_generation == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != expected_generation
+        || !state.session_end_requested.load(Ordering::Acquire)
+    {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
-    // A worker may have finished after the initial cache clear. Teardown is
-    // authoritative: no completed response survives this quiescent boundary.
-    *state.replay_source.lock() = None;
-    state.evidence.lock().seal_session();
     let mut engine = state
         .engine
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    let result = if close {
+    if state.active_session_sequence.load(Ordering::Acquire) != expected_generation {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    if close {
         engine.close()
     } else {
         engine.revoke()
-    };
-    match result {
-        Ok(()) => {
-            if close {
-                *state.active_voice_interrupt.lock() = None;
-                state.voice_cancel_requested.store(false, Ordering::Release);
-                state.voice_busy.store(false, Ordering::Release);
-                *state.session_revocation.lock() = None;
-                state.active_session_sequence.store(0, Ordering::Release);
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Ok(json_response(200, &serde_json::json!({"ok": true})))
+    }
+    .map_err(|error| lab_error_response(&error))?;
+
+    *state.replay_source.lock() = None;
+    state.evidence.lock().seal_session();
+    if close {
+        *state.active_voice_interrupt.lock() = None;
+        state.voice_cancel_requested.store(false, Ordering::Release);
+        state.voice_busy.store(false, Ordering::Release);
+        *state.session_revocation.lock() = None;
+        state.active_session_sequence.store(0, Ordering::Release);
+        state.session_end_requested.store(false, Ordering::Release);
+    }
+    Ok(())
+}
+
+fn finish_after_quiescence(state: Arc<AppState>, close: bool, expected_generation: u64) {
+    // A single request can time out after the canonical authority has already
+    // been revoked. Finish only when the voice worker has released its output
+    // stream. Do not evict a live stream or claim provider cleanup succeeded.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline {
+        if state.active_session_sequence.load(Ordering::Acquire) != expected_generation
+            || !state.session_end_requested.load(Ordering::Acquire)
+        {
+            return;
         }
-        Err(error) => {
-            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Err(lab_error_response(&error))
+        if state.voice_streams.wait_until_quiescent() {
+            let _ = complete_deferred_session(&state, close, expected_generation);
+            return;
         }
     }
+    // Remain fenced and visibly unfinished. A later explicit Close can retry;
+    // automatic success would be false if a provider refuses to quiesce.
+}
+
+fn end_session(
+    state: &Arc<AppState>,
+    close: bool,
+    expected_session_sequence: Option<u64>,
+) -> Result<HttpResponse, HttpResponse> {
+    fence_authority(state, expected_session_sequence)?;
+    let expected_generation = state.active_session_sequence.load(Ordering::Acquire);
+    if !state.voice_streams.wait_until_quiescent() {
+        let worker_state = Arc::clone(state);
+        thread::spawn(move || {
+            finish_after_quiescence(worker_state, close, expected_generation);
+        });
+        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    }
+    complete_deferred_session(state, close, expected_generation)?;
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
