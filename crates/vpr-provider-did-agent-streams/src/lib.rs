@@ -459,6 +459,17 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         expect_success(response).map(|_| ())
     }
 
+    fn interrupt(&self, session: &RealtimeAvatarSession, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        if let Some(backend) = &self.echo_backend {
+            if self.echo_sessions.contains(&session.provider_session_id)? {
+                return backend.interrupt(&session.provider_session_id);
+            }
+        }
+        Err(unavailable())
+    }
+
     fn client_control(
         &self,
         session: &RealtimeAvatarSession,
