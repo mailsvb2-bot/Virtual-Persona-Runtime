@@ -11,8 +11,8 @@ use vpr_integration::{
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionRevocationHandle,
-    SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle,
+    SessionRevocationHandle, SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
