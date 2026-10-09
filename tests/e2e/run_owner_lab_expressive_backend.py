@@ -30,6 +30,9 @@ ENV = {
 def main() -> None:
     env = os.environ.copy()
     env.update(ENV)
+    # Only this hermetic fixture loads the local LiveKit stand-in; production
+    # private Echo uses the installed LiveKit SDK and real provider transport.
+    env["PYTHONPATH"] = str(ROOT / "tests/e2e/echo_fixture_site")
     os.chdir(ROOT)
     os.execvpe(
         "cargo",
