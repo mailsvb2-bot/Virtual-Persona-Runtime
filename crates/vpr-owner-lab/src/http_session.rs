@@ -30,6 +30,16 @@ fn request_voice_cancel(state: &AppState) {
 pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
     state.session_end_requested.store(true, Ordering::Release);
     request_voice_cancel(state);
+    // Voice workers may still be terminating. Revoke canonical authority and
+    // attempt remote-provider closure BEFORE the bounded quiescence wait. A
+    // subsequent 504 must never leave the server's authority active.
+    {
+        let mut engine = state
+            .engine
+            .lock()
+            .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
+        engine.revoke().map_err(|error| lab_error_response(&error))?;
+    }
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
     }
