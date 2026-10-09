@@ -330,20 +330,18 @@ impl DidEchoBackend for EchoPythonBackend {
             Some(cancellation),
             false,
         );
-        if result.as_ref().err() == Some(&cancelled()) {
-            // Turn cancellation can occur independently of the browser STOP.
-            // The private sender must be interrupted even if the Rust caller
-            // stopped waiting while its previously accepted utterance plays.
-            if worker
-                .request(
-                    json!({"command": "interrupt"}),
-                    INTERRUPT_TIMEOUT,
-                    None,
-                    true,
-                )
-                .is_err()
-            {
-                // Never leave an unconfirmed private audio publisher running.
+        if result.is_err() {
+            // A timed-out or disconnected receipt is an UNKNOWN provider
+            // outcome: the subprocess may still publish audio after the
+            // canonical request has ended. Fence it before returning.
+            let _ = worker.mark_stopped();
+            let stopped = worker.request(
+                json!({"command": "interrupt"}),
+                INTERRUPT_TIMEOUT,
+                None,
+                true,
+            );
+            if stopped.is_err() {
                 let _ = worker.terminate();
                 return Err(unavailable());
             }
