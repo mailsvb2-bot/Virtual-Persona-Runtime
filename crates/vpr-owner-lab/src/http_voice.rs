@@ -571,8 +571,7 @@ fn finish_voice_stream(
                 }
             }
             Err(error) => VoiceStreamEvent::Failed {
-                code: error.code().to_owned(),
-                diagnostic: None,
+                code: error.code().to_owned(), diagnostic: None,
             },
         },
         Err(error) => {
@@ -586,8 +585,7 @@ fn finish_voice_stream(
             };
             VoiceStreamEvent::Failed {
                 code: code.to_owned(),
-                diagnostic: matches!(error, LabError::SpeechNotRecognized)
-                    .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
+                diagnostic: matches!(error, LabError::SpeechNotRecognized).then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
             }
         }
     };
