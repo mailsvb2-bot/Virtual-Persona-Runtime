@@ -19,18 +19,18 @@ struct VoiceStreamState {
 }
 
 #[derive(Default)]
-pub(super) struct VoiceStreamRegistry {
+pub(crate) struct VoiceStreamRegistry {
     streams: Mutex<BTreeMap<u64, VoiceStreamState>>,
     changed: Condvar,
 }
 
 impl VoiceStreamRegistry {
-    pub(super) fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.streams.lock().clear();
         self.changed.notify_all();
     }
 
-    pub(super) fn wait_until_quiescent(&self) -> bool {
+    pub(crate) fn wait_until_quiescent(&self) -> bool {
         let started = std::time::Instant::now();
         let mut streams = self.streams.lock();
         loop {
@@ -51,7 +51,7 @@ impl VoiceStreamRegistry {
         }
     }
 
-    pub(super) fn begin(&self, request_sequence: u64) -> bool {
+    pub(crate) fn begin(&self, request_sequence: u64) -> bool {
         let mut streams = self.streams.lock();
         streams.retain(|_, stream| !stream.terminal);
         if streams.len() >= MAX_RETAINED_VOICE_STREAMS || streams.contains_key(&request_sequence) {
@@ -61,7 +61,7 @@ impl VoiceStreamRegistry {
         true
     }
 
-    pub(super) fn push(&self, request_sequence: u64, event: VoiceStreamEvent) -> Result<(), LabError> {
+    pub(crate) fn push(&self, request_sequence: u64, event: VoiceStreamEvent) -> Result<(), LabError> {
         let mut streams = self.streams.lock();
         let stream = streams
             .get_mut(&request_sequence)
