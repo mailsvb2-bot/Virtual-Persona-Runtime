@@ -2114,11 +2114,15 @@ const resumeInterruptedAnswer = async () => {
         if (sessionState.backend.session_state !== "active") {
             throw new Error("INVALID_STATE_TRANSITION");
         }
-        await dispatchClientCommand(prepared.client_command);
-        await api("/api/avatar/client-delivery-sent", {
-            evidence_turn_sequence: prepared.evidence_turn_sequence,
-            evidence_output_sequence: prepared.evidence_output_sequence,
-        });
+        // Server-owned Echo already delivered and marked Sent in the Rust turn.
+        // Never send a browser did.speak or duplicate its delivery ACK.
+        if (prepared.client_command !== null) {
+            await dispatchClientCommand(prepared.client_command);
+            await api("/api/avatar/client-delivery-sent", {
+                evidence_turn_sequence: prepared.evidence_turn_sequence,
+                evidence_output_sequence: prepared.evidence_output_sequence,
+            });
+        }
         resumeFromIndex = index;
         resumedSpeechStartedAt = performance.now();
         providerPlaybackInFlight = true;
