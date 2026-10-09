@@ -69,9 +69,10 @@ class FakeRoom:
 
 
 class DelayedInput:
-    def __init__(self, records, delay_after_speak):
+    def __init__(self, records, delay_after_speak, delay_before_close=0):
         self.records = list(records)
         self.delay_after_speak = delay_after_speak
+        self.delay_before_close = delay_before_close
 
     def readline(self):
         if not self.records:
@@ -79,10 +80,12 @@ class DelayedInput:
         line = self.records.pop(0)
         if self.delay_after_speak and '"command": "interrupt"' in line:
             time.sleep(0.12)
+        if self.delay_before_close and '"command": "close"' in line:
+            time.sleep(self.delay_before_close)
         return line
 
 
-def run_worker(delay_after_speak):
+def run_worker(delay_after_speak, records=None, delay_before_close=0):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -101,7 +104,7 @@ def run_worker(delay_after_speak):
     sys.modules["livekit"] = mock_livekit
     old_input, old_output = sys.stdin, sys.stdout
     response = io.StringIO()
-    records = [
+    default_records = [
         {"id": 0, "command": "open",
          "session_url": "wss://livekit.example.test/room/agent-1",
          "echo_token": "private-echo-token"},
@@ -112,8 +115,9 @@ def run_worker(delay_after_speak):
     FakeRoom.instances.clear()
     try:
         sys.stdin = DelayedInput(
-            [json.dumps(record, ensure_ascii=False) + "\n" for record in records],
-            delay_after_speak,
+            [json.dumps(record, ensure_ascii=False) + "\n"
+             for record in (records if records is not None else default_records)],
+            delay_after_speak, delay_before_close,
         )
         sys.stdout = response
         asyncio.run(module.run())
@@ -150,6 +154,29 @@ class EchoWorkerTests(unittest.TestCase):
                          [("{}", "did.interrupt"), ("{}", "did.interrupt")])
         self.assertFalse(any(item["id"] == 1 and item["ok"] for item in receipts))
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
+
+
+    def test_duplicate_utterance_id_does_not_replace_active_task(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 7, "command": "speak", "text": "Первый ответ"},
+            {"id": 7, "command": "speak", "text": "Второй ответ"},
+            {"id": 8, "command": "close"},
+        ]
+        # Hold the close input until the first TTS has completed. Both speech
+        # commands arrive without awaiting synthesis; the duplicate must fail.
+        trace, receipts = run_worker(
+            False, records=records, delay_before_close=0.25,
+        )
+        self.assertEqual(len(trace["stream_options"]), 1)
+        self.assertIn(b"Первый ответ", b"".join(trace["audio"]))
+        self.assertNotIn(b"Второй ответ", b"".join(trace["audio"]))
+        self.assertEqual(
+            sorted(item["ok"] for item in receipts if item["id"] == 7),
+            [False, True],
+        )
 
 
 if __name__ == "__main__":
