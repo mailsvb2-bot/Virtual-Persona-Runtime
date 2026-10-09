@@ -389,11 +389,14 @@ for required in (
 for driver in (voice_journey_driver, expressive_journey_driver):
     if "http://127.0.0.1:18792" in driver or 'mode: "no-cors"' in driver:
         raise SystemExit("Owner Lab media journey reports must remain same-origin and CSP-compatible")
+# Match API paths independently of quote/template-literal syntax, while still
+# requiring the exact authenticated route and the evidence contract in the
+# real Playwright controller. A URL template literal is not a missing route.
 for required in (
-    '"/api/text/turn"',
-    '"/api/avatar/speak"',
-    '"X-VPR-Evidence-Request"',
-    '"canonical_playback_proven"',
+    "/api/text/turn",
+    "/api/avatar/speak",
+    "X-VPR-Evidence-Request",
+    "canonical_playback_proven",
 ):
     if required not in expressive_e2e:
         raise SystemExit(f"Owner Lab Echo server delivery proof missing: {required}")
