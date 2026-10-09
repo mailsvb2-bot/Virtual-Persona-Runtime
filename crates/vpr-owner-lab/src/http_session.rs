@@ -111,7 +111,9 @@ fn fence_authority(
     // has already been withdrawn even if the provider is still unwinding.
     match state.engine.try_lock() {
         Ok(mut engine) => {
-            engine.revoke().map_err(|error| lab_error_response(&error))?;
+            engine
+                .revoke()
+                .map_err(|error| lab_error_response(&error))?;
             stopped = true;
         }
         Err(std::sync::TryLockError::WouldBlock) => {}
