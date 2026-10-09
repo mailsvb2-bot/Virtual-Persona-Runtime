@@ -441,7 +441,7 @@ fn prepare_voice_terminal_event(
     result: Result<LabVoiceResult, LabError>,
 ) -> VoiceStreamEvent {
     *state.replay_source.lock() = None;
-    let event = match result {
+    match result {
         Ok(value) => match state
             .evidence
             .lock()
@@ -478,8 +478,7 @@ fn prepare_voice_terminal_event(
                     .then(|| "STT_NO_FINAL_TRANSCRIPT".to_owned()),
             }
         }
-    };
-    event
+    }
 }
 
 #[cfg(test)]
