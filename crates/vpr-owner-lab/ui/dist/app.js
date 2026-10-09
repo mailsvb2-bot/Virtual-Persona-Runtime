@@ -588,6 +588,27 @@ const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
         videoIssue,
     };
 };
+const readLiveKitTrackPlayout = async (track, kind, previousPackets) => {
+    const methods = [];
+    const sdkReport = track?.getRTCStatsReport;
+    const receiver = track?.receiver;
+    if (sdkReport && track)
+        methods.push(() => sdkReport.call(track));
+    if (receiver)
+        methods.push(() => receiver.getStats());
+    let best = selectPlayoutTimestamp(undefined, kind, previousPackets);
+    for (const method of methods) {
+        try {
+            const candidate = selectPlayoutTimestamp(await method(), kind, previousPackets);
+            if (candidate.timestamp !== null)
+                return candidate;
+            if (candidate.issue !== "stats_unavailable")
+                best = candidate;
+        }
+        catch { }
+    }
+    return best;
+};
 const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
     let audioSelection;
@@ -598,17 +619,12 @@ const readAvSyncOffsetMillis = async (state) => {
         videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
     }
     else {
-        const audioStats = liveKitAudioTrack?.getRTCStatsReport;
-        const videoStats = liveKitVideoTrack?.getRTCStatsReport;
-        if (!audioStats || !videoStats) {
-            return mediaElementAvSyncFallback("LiveKit track stats method unavailable", "stats_unavailable", "stats_unavailable");
-        }
-        const [audioReport, videoReport] = await Promise.all([
-            audioStats.call(liveKitAudioTrack),
-            videoStats.call(liveKitVideoTrack),
+        const [audio, videoStats] = await Promise.all([
+            readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
+            readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
         ]);
-        audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
-        videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
+        audioSelection = audio;
+        videoSelection = videoStats;
     }
     audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
     videoSelection = requireAdvancingPlayoutClock(videoSelection, state.lastVideoPlayoutTimestamp, "video");
