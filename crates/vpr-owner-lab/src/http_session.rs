@@ -45,11 +45,14 @@ fn request_voice_cancel(state: &AppState) {
     );
 }
 
-fn end_session(
+/// Fences the current generation and revokes server authority/provider resource
+/// without sealing the RT0 evidence recorder. The browser can finish flushing
+/// already queued media diagnostics before invoking the terminal Close endpoint.
+/// A second Close always retries provider cleanup if the first attempt failed.
+fn fence_authority(
     state: &AppState,
-    close: bool,
     expected_session_sequence: Option<u64>,
-) -> Result<HttpResponse, HttpResponse> {
+) -> Result<(), HttpResponse> {
     // The initial identity check must NOT wait on the engine mutex: a voice
     // worker can hold it during LLM streaming, and STOP must preempt that work.
     // Session Start publishes this atomic sequence under the replay-source
@@ -87,6 +90,26 @@ fn end_session(
             .revoke()
             .map_err(|error| lab_error_response(&error))?;
     }
+    Ok(())
+}
+
+/// First phase of user Close: deny new turns and revoke provider authority now.
+/// Unlike Close, this intentionally leaves the bounded evidence recorder open.
+pub(super) fn fence_session_response(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<HttpResponse, HttpResponse> {
+    let body: SessionEndBody = super::parse_json(request)?;
+    fence_authority(state, body.expected_session_sequence)?;
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+fn end_session(
+    state: &AppState,
+    close: bool,
+    expected_session_sequence: Option<u64>,
+) -> Result<HttpResponse, HttpResponse> {
+    fence_authority(state, expected_session_sequence)?;
     if !state.voice_streams.wait_until_quiescent() {
         return Err(error_response(504, "PROVIDER_TIMEOUT"));
     }
