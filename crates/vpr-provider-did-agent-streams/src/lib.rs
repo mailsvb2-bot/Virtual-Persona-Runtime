@@ -277,13 +277,22 @@ impl DidAgentStreamsAvatar {
                 .to_owned();
             let session_url = body.session_url.clone();
             let session: RealtimeAvatarSession = body.try_into()?;
-            backend.open(
+            // Reserve the vendor session identity BEFORE opening a backend
+            // publisher. A duplicate ID must not replace or stop the sender
+            // already serving the earlier canonical session.
+            self.echo_sessions.insert(&session.provider_session_id)?;
+            if let Err(error) = backend.open(
                 &session.provider_session_id,
                 &session_url,
                 &secret,
                 cancellation,
-            )?;
-            self.echo_sessions.insert(&session.provider_session_id)?;
+            ) {
+                // A failed open cannot leave a falsely sendable registry entry.
+                // Concrete implementations must undo partial transport setup
+                // before returning Err from open.
+                self.echo_sessions.remove(&session.provider_session_id)?;
+                return Err(error);
+            }
             Ok(session)
         } else {
             body.try_into()
