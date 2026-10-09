@@ -13,7 +13,9 @@ mod session;
 mod turn;
 mod turn_state;
 
-pub use avatar_runtime::{RealtimeAvatarHandle, RealtimeAvatarOutputError, RealtimeAvatarStopHandle};
+pub use avatar_runtime::{
+    RealtimeAvatarHandle, RealtimeAvatarOutputError, RealtimeAvatarStopHandle,
+};
 pub use delivery::{OutputDeliveryError, OutputDeliveryHandle};
 pub use error::{ProviderExecutionError, RuntimeDenyReason, provider_reason_code};
 pub use output::{OutputSegmentEvidence, OutputSegmentId};
