@@ -32,6 +32,25 @@ pub struct EchoPythonConfig {
 }
 
 impl EchoPythonConfig {
+    /// PCM-only Echo transport. The canonical runtime owns TTS authorization
+    /// and synthesis; the Echo subprocess is only a private audio publisher.
+    ///
+    /// # Errors
+    /// Rejects a missing Python interpreter.
+    pub fn pcm_only(python_executable: impl Into<String>) -> Result<Self, ProviderError> {
+        let python_executable = python_executable.into();
+        if python_executable.trim().is_empty() {
+            return Err(invalid_response());
+        }
+        Ok(Self {
+            python_executable,
+            tts_endpoint: String::new(),
+            tts_api_key: String::new(),
+            tts_model: String::new(),
+            tts_voice: String::new(),
+        })
+    }
+
     /// Creates an explicitly configured and credentialed private Echo backend.
     ///
     /// # Errors
@@ -323,6 +342,9 @@ impl DidEchoBackend for EchoPythonBackend {
         text: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        if self.config.tts_endpoint.is_empty() {
+            return Err(super::policy_denied());
+        }
         if text.trim().is_empty() || text.len() > MAX_PHRASE_BYTES {
             return Err(invalid_response());
         }
