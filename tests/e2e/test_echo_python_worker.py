@@ -156,7 +156,7 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
     def test_canonical_pcm_is_published_as_private_wav_without_worker_tts(self):
-        pcm = b"\\x00\\x00" * 160
+        pcm = bytes(320)
         records = [
             {"id": 0, "command": "open",
              "session_url": "wss://livekit.example.test/room/agent-1",
