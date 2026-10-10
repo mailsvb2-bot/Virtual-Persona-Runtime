@@ -51,7 +51,7 @@ def make_synthesizer(checkout: Path, engine: str):
         with lock, tempfile.TemporaryDirectory(prefix="vpr-metrotrance-") as temp:
             files = provider.synthesize_chunks(
                 [text], Path(temp), reference, reference_text,
-                performance={"natural_takes": 1},
+                performance={"takes_per_chunk": 1},
             )
             if len(files) != 1:
                 raise RuntimeError("MetroTrance did not generate exactly one phrase")
