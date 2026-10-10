@@ -35,6 +35,9 @@ pub struct ProviderBundle {
     pub stt: Option<Box<dyn SttPort>>,
     pub llm: Option<Box<dyn LlmPort>>,
     pub tts: Option<Box<dyn TtsPort>>,
+    pub tts_name: Option<String>,
+    pub tts_fallback: Option<Box<dyn TtsPort>>,
+    pub tts_fallback_name: Option<String>,
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
@@ -104,14 +107,27 @@ impl ProviderBundle {
                 return Err("voice mode requires both STT and LLM provider configuration".into());
             }
         };
-        let tts = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
-            .map(|name| build_tts(&name))
+        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER");
+        let tts = tts_name.as_deref().map(build_tts).transpose()?;
+        let tts_fallback_name = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
+        if tts_fallback_name.is_some() && tts_name.is_none() {
+            return Err("TTS fallback requires a primary canonical TTS provider".into());
+        }
+        if tts_fallback_name == tts_name && tts_name.is_some() {
+            return Err("TTS fallback must use a distinct provider identifier".into());
+        }
+        let tts_fallback = tts_fallback_name
+            .as_deref()
+            .map(build_tts_fallback)
             .transpose()?;
         Ok(Self {
             avatar,
             stt,
             llm,
             tts: tts.map(|(port, _)| port),
+            tts_name,
+            tts_fallback: tts_fallback.map(|(port, _)| port),
+            tts_fallback_name,
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
@@ -169,10 +185,32 @@ fn matching_llm_profile<'a>(
 }
 
 fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
-    let endpoint = required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?;
-    let api_key = required_value("VPR_OWNER_LAB_TTS_API_KEY", None)?;
-    let model = required_value("VPR_OWNER_LAB_TTS_MODEL", None)?;
-    let voice = required_value("VPR_OWNER_LAB_TTS_VOICE", None)?;
+    build_tts_configured(
+        name,
+        required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?,
+        required_value("VPR_OWNER_LAB_TTS_API_KEY", None)?,
+        required_value("VPR_OWNER_LAB_TTS_MODEL", None)?,
+        required_value("VPR_OWNER_LAB_TTS_VOICE", None)?,
+    )
+}
+
+fn build_tts_fallback(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    build_tts_configured(
+        name,
+        required_value("VPR_OWNER_LAB_TTS_ALT_ENDPOINT", None)?,
+        required_value("VPR_OWNER_LAB_TTS_ALT_API_KEY", None)?,
+        required_value("VPR_OWNER_LAB_TTS_ALT_MODEL", None)?,
+        required_value("VPR_OWNER_LAB_TTS_ALT_VOICE", None)?,
+    )
+}
+
+fn build_tts_configured(
+    name: &str,
+    endpoint: String,
+    api_key: String,
+    model: String,
+    voice: String,
+) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     let provider: Box<dyn TtsPort> = match name {
         "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
