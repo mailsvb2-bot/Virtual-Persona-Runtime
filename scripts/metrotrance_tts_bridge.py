@@ -7,7 +7,6 @@ Do not expose this listener to a network or mistake it for production Echo.
 from __future__ import annotations
 
 import hmac
-import io
 import json
 import os
 import sys
@@ -70,6 +69,8 @@ def make_handler(token: str, synthesizer):
     if not token or len(token) < 24:
         raise ValueError("VPR_METROTRANCE_TTS_TOKEN must contain at least 24 characters")
 
+    inference_slot = threading.BoundedSemaphore(value=1)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, _format, *_args):
             # No phrases or credentials in HTTP logs.
@@ -101,7 +102,14 @@ def make_handler(token: str, synthesizer):
                     return self.send_error_code(400, "invalid_input")
                 if payload.get("response_format", "wav") != "wav":
                     return self.send_error_code(400, "wav_required")
-                wav = synthesizer(phrase)
+                # Never queue unbounded callers behind a slow GPU/CPU inference.
+                # Busy requests fail immediately; callers may retry under runtime policy.
+                if not inference_slot.acquire(blocking=False):
+                    return self.send_error_code(429, "synthesizer_busy")
+                try:
+                    wav = synthesizer(phrase)
+                finally:
+                    inference_slot.release()
                 if not isinstance(wav, bytes) or len(wav) > MAX_WAV_BYTES:
                     return self.send_error_code(502, "invalid_audio")
             except (ValueError, TypeError, UnicodeDecodeError):
