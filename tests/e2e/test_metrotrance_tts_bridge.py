@@ -70,6 +70,40 @@ class SpeechBridgeContract(unittest.TestCase):
             self.assertEqual(status, 400)
         self.assertEqual(self.phrases, [])
 
+    def test_parallel_speech_rejected_without_queuing(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow_synthesis(text):
+            entered.set()
+            if not release.wait(timeout=3):
+                raise RuntimeError("test timed out")
+            return WAV
+
+        self.server.shutdown()
+        self.server.server_close()
+        self.worker.join(timeout=2)
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0), module.make_handler(TOKEN, slow_synthesis)
+        )
+        self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.worker.start()
+        first = []
+
+        def request_first():
+            first.append(self.post())
+
+        sender = threading.Thread(target=request_first)
+        sender.start()
+        try:
+            self.assertTrue(entered.wait(timeout=2))
+            status, _, _ = self.post()
+            self.assertEqual(status, 429)
+        finally:
+            release.set()
+            sender.join(timeout=3)
+        self.assertEqual(first[0][0], 200)
+
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
             module.make_handler("abc", lambda _: WAV)
