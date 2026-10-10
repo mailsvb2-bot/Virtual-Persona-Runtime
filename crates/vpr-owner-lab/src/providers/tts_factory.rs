@@ -1,9 +1,9 @@
 //! Provider-neutral compatibility gate and configured speech adapter construction.
 //! A valid TTS provider is not sufficient: the selected avatar must accept private PCM.
+use super::{ProviderDescriptor, descriptor, required_value};
 use vpr_integration::{RealtimeAvatarCapability, RealtimeAvatarPort, TtsPort};
 use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
-use super::{ProviderDescriptor, descriptor, required_value};
 
 pub(super) fn ensure_avatar_pcm_compatible(avatar: &dyn RealtimeAvatarPort) -> Result<(), String> {
     if avatar.capabilities().supports(RealtimeAvatarCapability::AudioPcmInput) {
@@ -13,7 +13,7 @@ pub(super) fn ensure_avatar_pcm_compatible(avatar: &dyn RealtimeAvatarPort) -> R
     }
 }
 
-fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+pub(super) fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     build_tts_configured(
         name,
         &required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?,
@@ -23,7 +23,7 @@ fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), Strin
     )
 }
 
-fn build_tts_fallback(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+pub(super) fn build_tts_fallback(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     build_tts_configured(
         name,
         &required_value("VPR_OWNER_LAB_TTS_ALT_ENDPOINT", None)?,
@@ -42,12 +42,15 @@ fn build_tts_configured(
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     let provider: Box<dyn TtsPort> = match name {
         "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
-            OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
-                endpoint.to_owned(),
-                api_key,
-                model.to_owned(),
-                voice.to_owned(),
-            ).with_provider_name(name))
+            OpenAiSpeechTts::new(
+                OpenAiSpeechConfig::new(
+                    endpoint.to_owned(),
+                    api_key,
+                    model.to_owned(),
+                    voice.to_owned(),
+                )
+                .with_provider_name(name),
+            )
             .map_err(|_| "OpenAI-compatible speech provider configuration rejected")?,
         ),
         "elevenlabs" => Box::new(
@@ -72,7 +75,6 @@ fn build_tts_configured(
         descriptor("tts", name, model, &[endpoint, model, voice]),
     ))
 }
-
 
 #[cfg(test)]
 mod tests {
