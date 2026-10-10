@@ -94,6 +94,8 @@ def make_handler(token: str, synthesizer):
                 return self.send_error_code(413, "invalid_request_size")
             try:
                 payload = json.loads(self.rfile.read(int(size)))
+                if not isinstance(payload, dict):
+                    return self.send_error_code(400, "invalid_request")
                 phrase = payload.get("input")
                 if not isinstance(phrase, str) or not phrase.strip() or len(phrase.encode("utf-8")) > MAX_TEXT:
                     return self.send_error_code(400, "invalid_input")
