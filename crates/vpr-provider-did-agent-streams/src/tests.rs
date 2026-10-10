@@ -507,6 +507,33 @@ fn expressive_without_server_echo_fails_closed_before_session_creation() {
 }
 
 #[test]
+fn stale_expressive_session_rejects_speech_without_reopening_legacy_transport() {
+    let provider = adapter("http://127.0.0.1:1".to_owned());
+    let stale = RealtimeAvatarSession {
+        provider_resource_id: "old-livekit".to_owned(),
+        provider_session_id: "old-livekit".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let error = provider
+        .speak_text(&stale, "Stale audio cannot be sent", &Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+}
+
+#[test]
+fn configured_echo_rejects_legacy_webrtc_speech_instead_of_falling_back() {
+    let provider = adapter("http://127.0.0.1:1".to_owned())
+        .with_echo_backend(Arc::new(MockEchoBackend::default()));
+    let error = provider
+        .speak_text(&session(), "Wrong transport", &Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+}
+
+#[test]
 fn pre_cancelled_session_creation_never_starts_network_work() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let error = provider
