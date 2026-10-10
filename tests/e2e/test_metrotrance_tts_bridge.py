@@ -2,6 +2,8 @@
 import http.client
 import importlib.util
 import json
+import io
+import wave
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -14,7 +16,17 @@ SPEC.loader.exec_module(module)
 
 TOKEN = "local-secret-for-contract-testing-only"
 DEFAULT_PAYLOAD = object()
-WAV = b"RIFF" + bytes(4) + b"WAVE" + bytes(24)
+def fixture_wav(channels=1, sample_rate=16000, frames=160):
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(channels)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\x00\x00" * channels * frames)
+    return output.getvalue()
+
+
+WAV = fixture_wav()
 
 
 class SpeechBridgeContract(unittest.TestCase):
@@ -134,6 +146,14 @@ class SpeechBridgeContract(unittest.TestCase):
             self.post(payload={"input": "Привет", "model": "metrotrance-chatterbox"})[0],
             200,
         )
+
+    def test_echo_audio_format_rejected_at_source(self):
+        self.assertFalse(module.validate_echo_wav(b"RIFF" + bytes(16)))
+        self.assertFalse(module.validate_echo_wav(fixture_wav(channels=3)))
+        self.assertFalse(module.validate_echo_wav(fixture_wav(sample_rate=7000)))
+        self.assertFalse(module.validate_echo_wav(fixture_wav(frames=16000 * 61)))
+        self.assertTrue(module.validate_echo_wav(WAV))
+        self.assertEqual(module.MAX_WAV_BYTES, 8 * 1024 * 1024)
 
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
