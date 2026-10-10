@@ -225,6 +225,54 @@ impl ActiveTurn {
         Ok(delivery)
     }
 
+    fn authorized_realtime_pcm(
+        &self,
+        tts: &dyn TtsPort,
+        text: &str,
+    ) -> Result<GeneratedAudioBuffer, ProviderExecutionError> {
+        let mut audio = GeneratedAudioBuffer::default();
+        self.execute_tts(
+            tts,
+            &TtsRequest {
+                text: text.to_owned(),
+                locale_hint: Some("ru".to_owned()),
+            },
+            &mut audio,
+        )?;
+        if audio.sample_format() != Some(PcmSampleFormat::S16Le) {
+            return Err(ProviderExecutionError::from(vpr_integration::ProviderError {
+                kind: vpr_integration::ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            }));
+        }
+        Ok(audio)
+    }
+
+    /// Direct avatar speaking through the same canonical TTS permit as
+    /// streaming voice, without a browser-controlled D-ID speech route.
+    ///
+    /// # Errors
+    /// Rejects revoked authority and unsupported private audio publishers.
+    pub fn speak_realtime_avatar_text_with_tts(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let audio = self.authorized_realtime_pcm(tts, text)?;
+        let permit = self.avatar_permit()?;
+        port.speak_pcm(
+            &handle.provider_session,
+            audio.pcm(),
+            audio.sample_rate_hz().unwrap_or(0),
+            audio.channels().unwrap_or(0),
+            &permit.cancellation,
+        )
+        .map_err(ProviderExecutionError::from)
+    }
+
     /// Executes TTS under the canonical turn permit, then sends authorized
     /// PCM directly to a private avatar publisher. Never synthesizes inside
     /// the avatar adapter or exposes audio to browser JavaScript.
@@ -241,24 +289,9 @@ impl ActiveTurn {
     ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
         self.validate_avatar_handle(port, handle)
             .map_err(RealtimeAvatarOutputError::Provider)?;
-        let mut audio = GeneratedAudioBuffer::default();
-        self.execute_tts(
-            tts,
-            &TtsRequest {
-                text: text.to_owned(),
-                locale_hint: Some("ru".to_owned()),
-            },
-            &mut audio,
-        )
-        .map_err(RealtimeAvatarOutputError::Provider)?;
-        if audio.sample_format() != Some(PcmSampleFormat::S16Le) {
-            return Err(RealtimeAvatarOutputError::Provider(
-                ProviderExecutionError::from(vpr_integration::ProviderError {
-                    kind: vpr_integration::ProviderErrorKind::InvalidResponse,
-                    retryable: false,
-                }),
-            ));
-        }
+        let audio = self
+            .authorized_realtime_pcm(tts, text)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
         // A fresh permit is mandatory AFTER potentially slow synthesis.
         let permit = self.avatar_permit().map_err(RealtimeAvatarOutputError::Provider)?;
         let segment_id = self
