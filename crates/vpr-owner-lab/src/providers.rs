@@ -12,12 +12,14 @@ use sha2::{Digest, Sha256};
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
-use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
+use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
 use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
+use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
+use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 
 const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
 
@@ -32,6 +34,7 @@ pub struct ProviderBundle {
     pub avatar: Box<dyn RealtimeAvatarPort>,
     pub stt: Option<Box<dyn SttPort>>,
     pub llm: Option<Box<dyn LlmPort>>,
+    pub tts: Option<Box<dyn TtsPort>>,
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
@@ -101,10 +104,14 @@ impl ProviderBundle {
                 return Err("voice mode requires both STT and LLM provider configuration".into());
             }
         };
+        let tts = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
+            .map(|name| build_tts(&name))
+            .transpose()?;
         Ok(Self {
             avatar,
             stt,
             llm,
+            tts: tts.map(|(port, _)| port),
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
@@ -159,6 +166,44 @@ fn matching_llm_profile<'a>(
     profile: Option<&'a ProviderCredentialProfile>,
 ) -> Option<&'a ProviderCredentialProfile> {
     profile.filter(|profile| profile.llm_provider.eq_ignore_ascii_case(name))
+}
+
+fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    let endpoint = required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?;
+    let api_key = required_value("VPR_OWNER_LAB_TTS_API_KEY", None)?;
+    let model = required_value("VPR_OWNER_LAB_TTS_MODEL", None)?;
+    let voice = required_value("VPR_OWNER_LAB_TTS_VOICE", None)?;
+    let provider: Box<dyn TtsPort> = match name {
+        "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
+            OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
+                endpoint.clone(),
+                api_key,
+                model.clone(),
+                voice.clone(),
+            ))
+            .map_err(|_| "OpenAI-compatible speech provider configuration rejected")?,
+        ),
+        "elevenlabs" => Box::new(
+            ElevenLabsTts::new(ElevenLabsTtsConfig::new(
+                endpoint.clone(),
+                api_key,
+                model.clone(),
+                voice.clone(),
+            ))
+            .map_err(|_| "ElevenLabs speech provider configuration rejected")?,
+        ),
+        _ => return Err(format!("unsupported TTS provider: {name}")),
+    };
+    if name.starts_with("metrotrance-")
+        && !(endpoint.starts_with("http://127.0.0.1:")
+            || endpoint.starts_with("http://localhost:"))
+    {
+        return Err("MetroTrance TTS must use a loopback endpoint".into());
+    }
+    Ok((
+        provider,
+        descriptor("tts", name, &model, &[&endpoint, &model, &voice]),
+    ))
 }
 
 fn build_stt(
