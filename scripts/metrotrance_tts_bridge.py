@@ -7,17 +7,19 @@ Do not expose this listener to a network or mistake it for production Echo.
 from __future__ import annotations
 
 import hmac
+import io
 import json
 import os
 import sys
 import tempfile
+import wave
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 MAX_REQUEST = 8192
 MAX_TEXT = 4096
-MAX_WAV_BYTES = 12 * 1024 * 1024
+MAX_WAV_BYTES = 8 * 1024 * 1024
 
 
 def make_synthesizer(checkout: Path, engine: str):
@@ -58,11 +60,30 @@ def make_synthesizer(checkout: Path, engine: str):
             if path.stat().st_size > MAX_WAV_BYTES:
                 raise RuntimeError("generated audio exceeds size limit")
             data = path.read_bytes()
-            if not data.startswith(b"RIFF") or data[8:12] != b"WAVE":
-                raise RuntimeError("MetroTrance returned non-WAV audio")
+            if not validate_echo_wav(data):
+                raise RuntimeError("MetroTrance returned Echo-incompatible WAV audio")
             return data
 
     return synthesize
+
+
+def validate_echo_wav(data: bytes) -> bool:
+    """Match the actual Echo receiver contract before reporting TTS success."""
+    if not isinstance(data, bytes) or not 0 < len(data) <= MAX_WAV_BYTES:
+        return False
+    if not data.startswith(b"RIFF") or data[8:12] != b"WAVE":
+        return False
+    try:
+        with wave.open(io.BytesIO(data), "rb") as audio:
+            return (
+                audio.getcomptype() == "NONE"
+                and audio.getsampwidth() == 2
+                and audio.getnchannels() in (1, 2)
+                and audio.getframerate() >= 8000
+                and 0 < audio.getnframes() <= audio.getframerate() * 60
+            )
+    except (wave.Error, EOFError, ValueError):
+        return False
 
 
 def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen"):
@@ -114,7 +135,7 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen")
                     wav = synthesizer(phrase)
                 finally:
                     inference_slot.release()
-                if not isinstance(wav, bytes) or len(wav) > MAX_WAV_BYTES:
+                if not validate_echo_wav(wav):
                     return self.send_error_code(502, "invalid_audio")
             except (ValueError, TypeError, UnicodeDecodeError):
                 return self.send_error_code(400, "invalid_request")
