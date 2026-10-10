@@ -17,6 +17,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 mod client_control;
 mod diagnostics;
 mod echo;
+mod echo_pcm;
 mod echo_python;
 mod protocol;
 mod provider_error;
