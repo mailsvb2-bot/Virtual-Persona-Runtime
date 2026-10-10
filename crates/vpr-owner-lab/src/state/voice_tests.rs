@@ -583,3 +583,62 @@ fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
     assert_eq!(stats.avatar_creates.load(Ordering::SeqCst), 1);
 }
 
+
+
+struct BlockingCanonicalTts {
+    started: mpsc::Sender<()>,
+}
+
+impl TtsPort for BlockingCanonicalTts {
+    fn descriptor(&self) -> ProviderDescriptor {
+        descriptor("blocking-canonical-tts")
+    }
+
+    fn synthesize(
+        &self,
+        _request: &TtsRequest,
+        cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        self.started.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if cancellation.is_cancelled() {
+                return Err(cancelled());
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        Err(ProviderError {
+            kind: ProviderErrorKind::Timeout,
+            retryable: false,
+        })
+    }
+}
+
+#[test]
+fn interrupt_during_canonical_tts_never_publishes_pcm_to_avatar() {
+    let (engine, stats, _) = voice_engine(false);
+    let (tts_started_tx, tts_started_rx) = mpsc::channel();
+    let mut engine = engine.with_named_tts(
+        "metrotrance-qwen".to_owned(),
+        Box::new(BlockingCanonicalTts {
+            started: tts_started_tx,
+        }),
+    );
+    let (handle_tx, handle_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        engine.voice_turn(sample_pcm(), |handle| {
+            handle_tx.send(handle).unwrap();
+        })
+    });
+    let interrupt = handle_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    tts_started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    interrupt.interrupt().unwrap();
+    let result = worker.join().unwrap();
+    assert_eq!(
+        result,
+        Err(LabError::Runtime(vpr_domain::Rt0ReasonCode::TurnCancelled))
+    );
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+}
