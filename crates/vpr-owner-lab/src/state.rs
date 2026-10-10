@@ -145,6 +145,9 @@ pub struct OwnerLabEngine {
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
     tts: Option<Box<dyn TtsPort>>,
+    tts_name: Option<String>,
+    tts_fallback: Option<Box<dyn TtsPort>>,
+    tts_fallback_name: Option<String>,
     session: Option<ActiveSession>,
     avatar: Option<RealtimeAvatarHandle>,
     session_audience: Option<LabSessionAudience>,
@@ -173,6 +176,9 @@ impl OwnerLabEngine {
             stt: None,
             llm: None,
             tts: None,
+            tts_name: None,
+            tts_fallback: None,
+            tts_fallback_name: None,
             session: None,
             avatar: None,
             session_audience: None,
@@ -181,6 +187,35 @@ impl OwnerLabEngine {
             voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
+    }
+
+    /// Lists configured server-owned TTS routes without disclosing credentials.
+    #[must_use]
+    pub fn tts_selection(&self) -> serde_json::Value {
+        serde_json::json!({
+            "active": self.tts_name,
+            "alternate": self.tts_fallback_name,
+        })
+    }
+
+    /// Switches the configured TTS engine for the NEXT turn. The HTTP boundary
+    /// must reject changes while voice generation is in flight.
+    ///
+    /// # Errors
+    /// Refuses unknown engines and visitor-initiated configuration changes.
+    pub fn select_tts_provider(&mut self, name: &str) -> Result<(), LabError> {
+        if self.session_audience == Some(LabSessionAudience::Visitor) {
+            return Err(LabError::InvalidState);
+        }
+        if self.tts_name.as_deref() == Some(name) && self.tts.is_some() {
+            return Ok(());
+        }
+        if self.tts_fallback_name.as_deref() != Some(name) || self.tts_fallback.is_none() {
+            return Err(LabError::InvalidInput);
+        }
+        std::mem::swap(&mut self.tts, &mut self.tts_fallback);
+        std::mem::swap(&mut self.tts_name, &mut self.tts_fallback_name);
+        Ok(())
     }
 
     /// Returns an isolated stop-only capability only for a server-owned
