@@ -148,6 +148,9 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if let Some(stt) = providers.stt.take() {
         engine = engine.with_stt(stt);
     }
+    if let Some(tts) = providers.tts.take() {
+        engine = engine.with_tts(tts);
+    }
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
