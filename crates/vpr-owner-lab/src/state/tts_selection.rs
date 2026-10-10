@@ -41,9 +41,11 @@ impl OwnerLabEngine {
             .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
     }
 
+    /// Identifies the current canonical session for conditional client teardown.
+    /// The sequence is stable across revoke/close and changes on every new start.
     #[must_use]
-    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
-        self.voice_playback.clone()
+    pub fn current_session_sequence(&self) -> Option<u64> {
+        self.session.as_ref().map(|_| self.session_counter)
     }
 
 }
