@@ -286,7 +286,7 @@ for required in (
     "audio_stream_closed",
     "provider_stop_sent",
     "provider_stop_sent",
-    "expect(await echoEvents(request)).toEqual(fenced);
+    "expect(await echoEvents(request)).toEqual(fenced);",
     "canonical_playback_proven",
     "/api/avatar/speak",
     "/api/avatar/interrupt",
