@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, RealtimeAvatarClientCommand,
+    CancellationProbe, GeneratedAudioBuffer, PcmSampleFormat, ProviderDescriptor,
+    TtsPort, TtsRequest, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
     RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
 };
@@ -219,6 +220,60 @@ impl ActiveTurn {
         port.speak_text(&handle.provider_session, text, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
             .map_err(RealtimeAvatarOutputError::Provider)?;
+        self.acknowledge_output_sent(&delivery)
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        Ok(delivery)
+    }
+
+    /// Executes TTS under the canonical turn permit, then sends authorized
+    /// PCM directly to a private avatar publisher. Never synthesizes inside
+    /// the avatar adapter or exposes audio to browser JavaScript.
+    ///
+    /// # Errors
+    /// Fails closed if either authorization epoch changed, TTS failed, or
+    /// the selected avatar does not support private PCM publication.
+    pub fn synthesize_and_deliver_realtime_avatar_audio(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        self.validate_avatar_handle(port, handle)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let mut audio = GeneratedAudioBuffer::default();
+        self.execute_tts(
+            tts,
+            &TtsRequest {
+                text: text.to_owned(),
+                locale_hint: Some("ru".to_owned()),
+            },
+            &mut audio,
+        )
+        .map_err(RealtimeAvatarOutputError::Provider)?;
+        if audio.sample_format() != Some(PcmSampleFormat::S16Le) {
+            return Err(RealtimeAvatarOutputError::Provider(
+                ProviderExecutionError::from(vpr_integration::ProviderError {
+                    kind: vpr_integration::ProviderErrorKind::InvalidResponse,
+                    retryable: false,
+                }),
+            ));
+        }
+        // A fresh permit is mandatory AFTER potentially slow synthesis.
+        let permit = self.avatar_permit().map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
+        port.speak_pcm(
+            &handle.provider_session,
+            audio.pcm(),
+            audio.sample_rate_hz().unwrap_or(0),
+            audio.channels().unwrap_or(0),
+            &permit.cancellation,
+        )
+        .map_err(ProviderExecutionError::from)
+        .map_err(RealtimeAvatarOutputError::Provider)?;
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
         Ok(delivery)
