@@ -145,6 +145,15 @@
       </div>
     </section>
 
+    <section id="tts-switch-panel" class="panel" hidden aria-label="Голосовой движок">
+      <label for="tts-switch-provider">Движок озвучивания аватара</label>
+      <div class="row">
+        <select id="tts-switch-provider"></select>
+        <button id="tts-switch-apply">Применить голос</button>
+      </div>
+      <p class="hint" id="tts-switch-status" role="status"></p>
+    </section>
+
     <section class="panel">
       <label for="microphone-device">Микрофон</label>
       <select id="microphone-device">
@@ -188,6 +197,7 @@
     </section>
   </main>
   <script type="module" src="/app.js"></script>
+  <script type="module" src="/tts-selector.js"></script>
   <script type="module" src="/evidence-export.js"></script>
   <script type="module" src="/reference-capture.js"></script>
 </body>
