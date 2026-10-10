@@ -123,13 +123,50 @@ fn build_did_avatar(
 /// per avatar. Legacy Echo configuration is accepted during migration, but a
 /// conflict must fail closed instead of unpredictably choosing a voice.
 fn shared_voice_value(canonical: &str, legacy: &str) -> Result<String, String> {
-    let preferred = optional_env(canonical);
-    let old = optional_env(legacy);
-    match (preferred, old) {
+    resolve_shared_voice_value(canonical, optional_env(canonical), optional_env(legacy))
+}
+
+fn resolve_shared_voice_value(
+    canonical: &str,
+    preferred: Option<String>,
+    legacy: Option<String>,
+) -> Result<String, String> {
+    match (preferred, legacy) {
         (Some(value), Some(old_value)) if value != old_value => Err(format!(
             "conflicting shared voice engine and legacy Echo setting for {canonical}"
         )),
         (Some(value), _) | (None, Some(value)) => Ok(value),
         (None, None) => Err(format!("shared voice engine setting {canonical} is required")),
+    }
+}
+
+#[cfg(test)]
+mod shared_voice_tests {
+    use super::resolve_shared_voice_value;
+
+    #[test]
+    fn canonical_voice_engine_is_usable_without_legacy_echo_settings() {
+        assert_eq!(
+            resolve_shared_voice_value("VPR_VOICE_ENGINE_VOICE", Some("voice-a".into()), None),
+            Ok("voice-a".into())
+        );
+    }
+
+    #[test]
+    fn legacy_voice_settings_remain_usable_during_migration() {
+        assert_eq!(
+            resolve_shared_voice_value("VPR_VOICE_ENGINE_MODEL", None, Some("model-a".into())),
+            Ok("model-a".into())
+        );
+    }
+
+    #[test]
+    fn mismatched_voice_engine_config_fails_closed() {
+        assert!(resolve_shared_voice_value(
+            "VPR_VOICE_ENGINE_ENDPOINT",
+            Some("https://a.example".into()),
+            Some("https://b.example".into()),
+        ).is_err());
+        assert!(resolve_shared_voice_value("VPR_VOICE_ENGINE_VOICE", None, None).is_err());
     }
 }
