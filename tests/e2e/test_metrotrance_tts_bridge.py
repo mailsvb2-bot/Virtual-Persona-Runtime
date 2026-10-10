@@ -13,6 +13,7 @@ module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(module)
 
 TOKEN = "local-secret-for-contract-testing-only"
+DEFAULT_PAYLOAD = object()
 WAV = b"RIFF" + bytes(4) + b"WAVE" + bytes(24)
 
 
@@ -32,9 +33,9 @@ class SpeechBridgeContract(unittest.TestCase):
         self.phrases.append(text)
         return WAV
 
-    def post(self, path="/v1/audio/speech", payload=None, token=TOKEN):
+    def post(self, path="/v1/audio/speech", payload=DEFAULT_PAYLOAD, token=TOKEN):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
-        data = json.dumps(payload if payload is not None else {"input": "Привет", "response_format": "wav"}).encode()
+        data = json.dumps(payload if payload is not DEFAULT_PAYLOAD else {"input": "Привет", "response_format": "wav"}).encode()
         connection.request("POST", path, data, {"Content-Type": "application/json", "Authorization": "Bearer " + token})
         response = connection.getresponse()
         result = (response.status, response.read(), response.getheader("Content-Type"))
