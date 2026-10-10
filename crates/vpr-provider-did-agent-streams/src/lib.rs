@@ -18,6 +18,7 @@ mod client_control;
 mod diagnostics;
 mod echo;
 mod echo_python;
+mod echo_voice;
 mod protocol;
 mod provider_error;
 
