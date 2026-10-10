@@ -189,20 +189,6 @@ impl OwnerLabEngine {
         })
     }
 
-    /// Returns an isolated stop-only capability only for a server-owned
-    /// `LiveKit` avatar. No arbitrary content publisher is copied to the caller.
-    #[must_use]
-    pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
-        self.avatar
-            .as_ref()
-            .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
-    }
-
-    #[must_use]
-    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
-        self.voice_playback.clone()
-    }
-
     /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
     /// subsequent turns. The profile's Persona identity/version becomes the turn snapshot source.
     ///
