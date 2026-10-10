@@ -187,46 +187,46 @@ fn matching_llm_profile<'a>(
 fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     build_tts_configured(
         name,
-        required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?,
         required_value("VPR_OWNER_LAB_TTS_API_KEY", None)?,
-        required_value("VPR_OWNER_LAB_TTS_MODEL", None)?,
-        required_value("VPR_OWNER_LAB_TTS_VOICE", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_MODEL", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_VOICE", None)?,
     )
 }
 
 fn build_tts_fallback(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     build_tts_configured(
         name,
-        required_value("VPR_OWNER_LAB_TTS_ALT_ENDPOINT", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_ALT_ENDPOINT", None)?,
         required_value("VPR_OWNER_LAB_TTS_ALT_API_KEY", None)?,
-        required_value("VPR_OWNER_LAB_TTS_ALT_MODEL", None)?,
-        required_value("VPR_OWNER_LAB_TTS_ALT_VOICE", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_ALT_MODEL", None)?,
+        &required_value("VPR_OWNER_LAB_TTS_ALT_VOICE", None)?,
     )
 }
 
 fn build_tts_configured(
     name: &str,
-    endpoint: String,
+    endpoint: &str,
     api_key: String,
-    model: String,
-    voice: String,
+    model: &str,
+    voice: &str,
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     let provider: Box<dyn TtsPort> = match name {
         "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
-                endpoint.clone(),
+                endpoint.to_owned(),
                 api_key,
-                model.clone(),
-                voice.clone(),
+                model.to_owned(),
+                voice.to_owned(),
             ))
             .map_err(|_| "OpenAI-compatible speech provider configuration rejected")?,
         ),
         "elevenlabs" => Box::new(
             ElevenLabsTts::new(ElevenLabsTtsConfig::new(
-                endpoint.clone(),
+                endpoint.to_owned(),
                 api_key,
-                model.clone(),
-                voice.clone(),
+                model.to_owned(),
+                voice.to_owned(),
             ))
             .map_err(|_| "ElevenLabs speech provider configuration rejected")?,
         ),
