@@ -463,8 +463,14 @@ mod expressive_echo_preflight_tests {
     #[test]
     fn expressive_without_private_echo_is_rejected_before_ui_launch() {
         assert!(expressive_echo_preflight_denied("expressive", None));
-        assert!(expressive_echo_preflight_denied("Expressive", Some("false")));
-        assert!(!expressive_echo_preflight_denied("expressive", Some("true")));
+        assert!(expressive_echo_preflight_denied(
+            "Expressive",
+            Some("false")
+        ));
+        assert!(!expressive_echo_preflight_denied(
+            "expressive",
+            Some("true")
+        ));
     }
 
     #[test]
