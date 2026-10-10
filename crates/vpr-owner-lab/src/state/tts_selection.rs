@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use vpr_runtime::RealtimeAvatarStopHandle;
-use super::{LabError, LabSessionAudience, OwnerLabEngine, LabVoicePlaybackRegistry};
+use super::{LabError, LabSessionAudience, OwnerLabEngine};
 
 impl OwnerLabEngine {
     /// Lists configured server-owned TTS routes without disclosing credentials.
