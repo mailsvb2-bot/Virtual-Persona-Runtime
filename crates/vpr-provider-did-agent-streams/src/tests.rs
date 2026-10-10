@@ -518,7 +518,11 @@ fn stale_expressive_session_rejects_speech_without_reopening_legacy_transport() 
         },
     };
     let error = provider
-        .speak_text(&stale, "Stale audio cannot be sent", &Probe(AtomicBool::new(false)))
+        .speak_text(
+            &stale,
+            "Stale audio cannot be sent",
+            &Probe(AtomicBool::new(false)),
+        )
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
 }
@@ -528,7 +532,11 @@ fn configured_echo_rejects_legacy_webrtc_speech_instead_of_falling_back() {
     let provider = adapter("http://127.0.0.1:1".to_owned())
         .with_echo_backend(Arc::new(MockEchoBackend::default()));
     let error = provider
-        .speak_text(&session(), "Wrong transport", &Probe(AtomicBool::new(false)))
+        .speak_text(
+            &session(),
+            "Wrong transport",
+            &Probe(AtomicBool::new(false)),
+        )
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
 }
