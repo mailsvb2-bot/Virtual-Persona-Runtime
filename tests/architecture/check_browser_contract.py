@@ -272,29 +272,31 @@ for required in (
     if required not in voice_journey_contract:
         raise SystemExit(f"Owner Lab Voice evidence contract missing proof: {required}")
 
-expressive_proof = expressive_e2e + "\n" + expressive_journey_driver
+# Expressive R0 now publishes speech through a credentialed server Echo
+# process. Legacy browser did.speak checks cannot attest server audio delivery.
+# Require canonical API journeys and independently observed private-worker events.
+expressive_proof = expressive_e2e + "\\n" + expressive_journey_driver
 for required in (
-    "LiveKit согласован",
+    "Expressive Echo keeps its sender credentials private",
+    "fixture-private-echo-token",
+    "client_control",
+    "text_input",
+    "audio_stream_opened",
+    "audio_bytes_written",
+    "audio_stream_closed",
+    "provider_stop_sent",
+    "provider_stop_sent",
+    "expect(await echoEvents(request)).toEqual(fenced);",
     "canonical_playback_proven",
-    "av_sync_proven",
+    "/api/avatar/speak",
+    "/api/avatar/interrupt",
+    "/api/avatar/resume-answer",
+    "/api/session/revoke",
+    "X-VPR-Evidence-Request",
     "did.speak",
-    "did.interrupt",
-    "__vprExpressiveDisconnect",
-    "/v2/agents/voice-e2e-expressive-agent/sessions",
-    "metric-stt",
-    "metric-llm-first",
-    "metric-av-sync",
-    "metric-playback",
-    "metric-cost",
-    '"/v1/listen"',
-    '"model=nova-3"',
-    '"language=ru"',
-    '"reasoning_effort":"none"',
-    '"max_tokens":96',
-    '"model":"deepseek-flash"',
 ):
     if required not in expressive_proof:
-        raise SystemExit(f"Owner Lab Expressive browser proof missing: {required}")
+        raise SystemExit(f"Owner Lab server Echo browser proof missing: {required}")
 
 
 def require_pre_navigation_media_runtime(source: str, installer: str, fixture_path: str, label: str) -> None:
@@ -332,33 +334,24 @@ for forbidden in (
         raise SystemExit(
             f"Owner Lab Expressive runtime must be owned by the fake LiveKit SDK boundary, not {forbidden}"
         )
-if 'await page.addInitScript({ path: "e2e/fake-livekit-client.js" });' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must load the fake SDK before navigation without network routing")
-if 'await page.addInitScript({ path: "e2e/expressive-journey-driver.js" });' not in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive E2E must install its in-page journey driver before navigation")
+# The backend-owned Echo proof uses a real private worker with a hermetic
+# LiveKit stand-in. Require its actual provider-observed receipts, not the
+# retired browser-published did.speak simulation.
 for required in (
-    'const reportUrl = "/__journey/report/expressive";',
-    'postPhase("driver-started")',
-    'postPhase("connected")',
-    'postPhase("interrupt-complete")',
-    'postPhase("disconnect-complete")',
-):
-    if required not in expressive_journey_driver:
-        raise SystemExit(f"Owner Lab Expressive in-page journey driver missing lifecycle proof: {required}")
-for required in (
-    'const mailboxUrl = "http://127.0.0.1:18792/__journey/report/expressive";',
-    "request.delete(mailboxUrl)",
-    "request.get(mailboxUrl)",
+    "startEcho(request)",
+    "submitOwnerTurn(request",
+    "echoEvents(request)",
+    'await page.goto("/")',
+    '"audio_stream_opened"',
+    '"audio_bytes_written"',
+    '"provider_stop_sent"',
+    'expect(await echoEvents(request)).toEqual(fenced);',
+    '"/api/session/revoke"',
 ):
     if required not in expressive_e2e:
-        raise SystemExit(f"Owner Lab Expressive controller missing independent mailbox contract: {required}")
+        raise SystemExit(f"Owner Lab private Echo E2E missing canonical proof: {required}")
 if 'page.route("**/__expressive_journey_report"' in expressive_e2e:
     raise SystemExit("Owner Lab Expressive terminal reporting must not depend on Playwright page routing")
-
-if 'page.route("**/__expressive_provider_state"' in expressive_e2e:
-    raise SystemExit("Owner Lab Expressive journey must not depend on a Playwright provider-state callback")
-if 'fetch("http://127.0.0.1:18790' in expressive_journey_driver:
-    raise SystemExit("Owner Lab Expressive in-page journey must not bypass same-origin CSP")
 
 for required in (
     'const port = 18_792;',
@@ -397,13 +390,17 @@ for required in (
 for driver in (voice_journey_driver, expressive_journey_driver):
     if "http://127.0.0.1:18792" in driver or 'mode: "no-cors"' in driver:
         raise SystemExit("Owner Lab media journey reports must remain same-origin and CSP-compatible")
+# Match API paths independently of quote/template-literal syntax, while still
+# requiring the exact authenticated route and the evidence contract in the
+# real Playwright controller. A URL template literal is not a missing route.
 for required in (
-    "expect(llmRequests.length).toBeGreaterThanOrEqual(1)",
-    "expect(llmRequests.length).toBeLessThanOrEqual(2)",
-    'commands.some((command) => command.topic === "did.interrupt")',
+    "/api/text/turn",
+    "/api/avatar/speak",
+    "X-VPR-Evidence-Request",
+    "canonical_playback_proven",
 ):
     if required not in expressive_e2e:
-        raise SystemExit(f"Owner Lab Expressive browser boundary proof missing: {required}")
+        raise SystemExit(f"Owner Lab Echo server delivery proof missing: {required}")
 for required in (
     "streaming_voice_interrupt_cancels_remaining_llm_tail_after_first_segment",
     "handle.interrupt().unwrap()",
@@ -571,10 +568,17 @@ for required in (
     'let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;',
     "textRequestInFlight = false;",
     "voiceRequestInFlight = false;",
-    "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);",
+    'if (terminalStatus && sessionState.backend.session_state === "active"',
 ):
     if required not in app:
         raise SystemExit(f"Owner Lab turn completion must publish terminal status after unlocking controls: {required}")
+if app.count('if (terminalStatus && sessionState.backend.session_state === "active"') < 2:
+    raise SystemExit(
+        "Owner Lab text and voice must both suppress late status after cross-tab fence or canonical revoke"
+    )
+if "if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);" in app:
+    raise SystemExit("Owner Lab late completion must not overwrite a revoked/closed session")
+
 if "realtimeTransportReady" in app:
     raise SystemExit("Owner Lab must not collapse control/audio/video readiness into one flag")
 if 'const voiceReady = sessionState.backend.conversation_readiness === "text_and_voice";' not in app:
@@ -665,16 +669,22 @@ for source, required in (
 # Provider-media journeys share one test-only pre-navigation DOM harness. It waits
 # for the application's visible ready state and then exercises the real consent and Connect controls.
 # Production exposes no bootstrap event or alternate transport path for the harness.
-for provider_e2e, label in (
-    (voice_e2e, "Owner Lab voice"),
-    (expressive_e2e, "Owner Lab Expressive"),
+for required in (
+    'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
+    "await installProviderAutoConnect(page);",
 ):
-    for required in (
-        'import { installProviderAutoConnect } from "./provider-bootstrap.js";',
-        "await installProviderAutoConnect(page);",
-    ):
-        if required not in provider_e2e:
-            raise SystemExit(f"{label} provider E2E pre-navigation connect harness missing: {required}")
+    if required not in voice_e2e:
+        raise SystemExit(f"Owner Lab voice provider E2E connect harness missing: {required}")
+# Expressive Echo starts through the canonical HTTP API and then navigates a
+# real browser. It must not inject the old browser-publishing LiveKit harness.
+for required in (
+    '"/api/avatar/start"',
+    "await page.goto(\"/\");",
+    "client_control",
+    "text_input",
+):
+    if required not in expressive_e2e:
+        raise SystemExit(f"Owner Lab server Echo E2E startup missing: {required}")
 if 'root.dataset.vprProviderAutoConnect === "clicked"' not in expressive_journey_driver:
     raise SystemExit("Owner Lab Expressive in-page journey must wait for the provider autoconnect checkpoint")
 

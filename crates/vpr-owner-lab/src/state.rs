@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 #[cfg(test)]
 use vpr_domain::{ClaimId, ClaimKind};
@@ -12,7 +14,7 @@ use vpr_integration::{
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle,
-    SessionRevocationHandle, SessionSecurityConfig,
+    RealtimeAvatarStopHandle, SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -111,6 +113,8 @@ pub enum LabError {
     EgressDisabled,
     ConsentRequired,
     InvalidInput,
+    /// STT finished normally without a usable final transcript.
+    SpeechNotRecognized,
     InvalidState,
     Runtime(Rt0ReasonCode),
     Provider(Rt0ReasonCode),
@@ -124,7 +128,7 @@ impl LabError {
         match self {
             Self::EgressDisabled => "EGRESS_DENIED",
             Self::ConsentRequired => "CONSENT_REQUIRED",
-            Self::InvalidInput => "INVALID_INPUT",
+            Self::InvalidInput | Self::SpeechNotRecognized => "INVALID_INPUT",
             Self::InvalidState => "INVALID_STATE_TRANSITION",
             Self::Runtime(reason) | Self::Provider(reason) => reason.as_str(),
             Self::PersistenceFailed => "PERSONA_PERSISTENCE_FAILED",
@@ -137,7 +141,7 @@ pub struct OwnerLabEngine {
     persona: PersonaIdentity,
     reviewed_owner_context: Option<ReviewedOwnerContext>,
     readiness: LabReadinessState,
-    provider: Box<dyn RealtimeAvatarPort>,
+    provider: Arc<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
     session: Option<ActiveSession>,
@@ -164,7 +168,7 @@ impl OwnerLabEngine {
             persona: PersonaIdentity::new(persona_id, version, PersonaMode::DigitalTwin),
             reviewed_owner_context: None,
             readiness: LabReadinessState::default(),
-            provider,
+            provider: Arc::from(provider),
             stt: None,
             llm: None,
             session: None,
@@ -175,6 +179,15 @@ impl OwnerLabEngine {
             voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
+    }
+
+    /// Returns an isolated stop-only capability only for a server-owned
+    /// `LiveKit` avatar. No arbitrary content publisher is copied to the caller.
+    #[must_use]
+    pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
+        self.avatar
+            .as_ref()
+            .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
     }
 
     #[must_use]
@@ -209,6 +222,13 @@ impl OwnerLabEngine {
         self.readiness.reset_for_profile(context.profile())?;
         self.reviewed_owner_context = Some(context);
         Ok(())
+    }
+
+    /// Identifies the current canonical session for conditional client teardown.
+    /// The sequence is stable across revoke/close and changes on every new start.
+    #[must_use]
+    pub fn current_session_sequence(&self) -> Option<u64> {
+        self.session.as_ref().map(|_| self.session_counter)
     }
 
     #[must_use]
@@ -386,27 +406,12 @@ impl OwnerLabEngine {
         .map_err(map_provider_execution)
     }
 
-    /// Returns a revoke-only capability tied to this exact runtime session.
-    /// It can invalidate provider permits without waiting for the Owner Lab engine mutex.
-    #[must_use]
-    pub fn session_revocation_handle(&self) -> Option<SessionRevocationHandle> {
-        self.session.as_ref().map(ActiveSession::revocation_handle)
-    }
-
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
     /// Returns a stable runtime/provider reason while preserving retryable cleanup state.
     pub fn revoke(&mut self) -> Result<(), LabError> {
-        let session = self.session.as_mut().ok_or(LabError::InvalidState)?;
-        match session.state() {
-            RealtimeSessionState::Active => session.revoke().map_err(LabError::Runtime)?,
-            RealtimeSessionState::Revoked => {}
-            RealtimeSessionState::Created
-            | RealtimeSessionState::Draining
-            | RealtimeSessionState::Closed => return Err(LabError::InvalidState),
-        }
-        self.cancel_avatar_preparation();
+        self.revoke_authority()?;
         self.close_avatar_resource()
     }
 
@@ -566,6 +571,7 @@ const fn map_owner_context_error(error: OwnerContextError) -> LabError {
 mod client_control;
 mod persistence;
 mod readiness;
+mod session_revocation;
 mod status;
 mod text;
 mod voice;

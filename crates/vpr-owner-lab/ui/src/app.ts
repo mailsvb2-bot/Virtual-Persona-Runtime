@@ -1,6 +1,6 @@
 import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
-import { authorizedSpeakText, replayTextFrom, resumeSentences, suggestedResumeSentence } from "./interrupted-answer.js";
+import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import {
@@ -28,13 +28,14 @@ type ClientRoute =
   | { kind: "web_rtc_data_channel"; label: string }
   | { kind: "live_kit_text_topic"; topic: string };
 type ClientCommand = { route: ClientRoute; payload: string };
+type ResumedSpeech = { client_command: ClientCommand | null; evidence_turn_sequence: number; evidence_output_sequence: number };
 type VoiceResult = { transcript: string; reply: string; locale: string; evidence_turn_sequence: number; evidence_output_sequence: number; stt_millis: number; llm_millis: number; llm_first_meaningful_millis: number; avatar_millis: number; total_millis: number; client_command: ClientCommand | null };
 type VoiceStartAck = { ok: true; request_sequence: number };
 type VoiceSegment = { evidence_turn_sequence: number; evidence_output_sequence: number; client_command: ClientCommand | null };
 type VoiceStreamEvent =
   | { kind: "segment"; segment: VoiceSegment }
   | { kind: "complete"; result: VoiceResult }
-  | { kind: "failed"; code: string };
+  | { kind: "failed"; code: string; diagnostic?: string | null };
 type VoiceEventsResponse = { events: VoiceStreamEvent[]; terminal: boolean };
 type SessionDescription = { kind: RTCSdpType; sdp: string };
 type IceServer = { urls: string[]; username: string | null; credential: string | null };
@@ -80,6 +81,7 @@ type MediaEvidenceKind =
   | "provider_event_parse_failed"
   | "provider_playback_done_received"
   | "playback_recovery_triggered"
+  | "browser_audio_tail_observed"
   | "playback_completed"
   | "interruption_stopped"
   | "reconnect_restored";
@@ -118,7 +120,7 @@ type AvSyncReadState = {
   lastAudioPlayoutTimestamp: number | null;
   lastVideoPlayoutTimestamp: number | null;
 };
-type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
+type ActiveVoiceEvidence = { requestSequence: number; startedAt: number; audioStarted: boolean; audioStartedElapsed: number | null; audioStartedEvidence: Promise<void> | null; avSyncEvidence: Promise<void> | null; playbackCompletionEvidence: Promise<void> | null; providerDataReceived: boolean; providerIgnoredEventPosted: boolean; providerEventKindsPosted: Set<string>; providerParseFailurePosted: boolean; providerPlaybackExpectedCount: number; providerPlaybackDoneCount: number; providerPlaybackDoneEvidencePosted: boolean; providerPlaybackDone: boolean; responseComplete: boolean; interrupted: boolean; speaking: boolean; silentFrames: number; audibleDurationMillis: number; lastAudioTickAt: number | null; playbackSilenceStartedAt: number | null; playbackRecoveryTriggered: boolean };
 type InterruptEvidenceWatch = { requestSequence: number; startedAt: number; silentFrames: number };
 
 type UsageEvidence = {
@@ -180,6 +182,7 @@ type LiveKitTrack = {
   attach: (element: HTMLMediaElement) => HTMLMediaElement;
   detach?: (element?: HTMLMediaElement) => HTMLMediaElement[];
   getRTCStatsReport?: () => Promise<RTCStatsReport | undefined>;
+  receiver?: RTCRtpReceiver;
 };
 type LiveKitParticipant = {
   sendText: (text: string, options: { topic: string }) => Promise<void>;
@@ -245,6 +248,7 @@ const interruptButton = byId<HTMLButtonElement>("interrupt");
 const resumeAnswerRow = byId<HTMLElement>("resume-answer-row");
 const resumeAnswerButton = byId<HTMLButtonElement>("resume-answer");
 const resumeAnswerFrom = byId<HTMLSelectElement>("resume-answer-from");
+const resumeAnswerCursor = byId<HTMLTextAreaElement>("resume-answer-cursor");
 const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
@@ -294,6 +298,7 @@ let audioContext: AudioContext | null = null;
 let micSource: MediaStreamAudioSourceNode | null = null;
 let micWorklet: AudioWorkletNode | null = null;
 let micRequestSequence: number | null = null;
+let micSessionSequence: number | null = null;
 let micSamplesSent = 0;
 let voiceDeliveryGeneration = 0;
 let micPendingPcm = new Uint8Array(0);
@@ -304,6 +309,13 @@ let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+// This fence is a same-origin, same-browser fast path, NOT a provider-atomic
+// substitute for a backend-owned LiveKit sender and receiver-only token.
+const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
+const sessionEgressFence = typeof BroadcastChannel === "undefined"
+  ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
+let locallyFencedSessionSequence = 0;
+let observedBackendSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
@@ -327,6 +339,7 @@ const authorizedDeliveredParts = new Map<number, string>();
 let completedAuthorizedReply: string | null = null;
 let interruptedAnswerSentences: string[] = [];
 let resumeFromIndex = 0;
+let resumeCursorEdited = false;
 let resumedSpeechStartedAt: number | null = null;
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 let avSyncCollectionPending = false;
@@ -348,6 +361,8 @@ const clearInterruptedAnswer = (): void => {
   completedAuthorizedReply = null;
   interruptedAnswerSentences = [];
   resumeFromIndex = 0;
+  resumeCursorEdited = false;
+  resumeAnswerCursor.value = "";
   resumedSpeechStartedAt = null;
   resumeAnswerFrom.replaceChildren();
   resumeAnswerRow.hidden = true;
@@ -365,6 +380,16 @@ const offerInterruptedAnswer = (sentences: string[], elapsedMillis: number, offs
   resumeFromIndex = Math.min(sentences.length - 1,
     offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
   resumeAnswerFrom.value = String(resumeFromIndex);
+  resumeAnswerCursor.value = sentences.join(" ");
+  // Default to a WORD boundary estimated from actual audible speech duration.
+  // Keep a short overlap and allow the user to correct the pointer; the
+  // provider does not supply an exact last-spoken-word timestamp.
+  const guessedPosition = Math.min(Math.max(0, resumeAnswerCursor.value.length - 1),
+    Math.max(0, Math.round(elapsedMillis / 1000 * 11 - 10)));
+  const guessedOffset = resumeWordOffset(resumeAnswerCursor.value, guessedPosition) ?? 0;
+  const utf16Cursor = Array.from(resumeAnswerCursor.value).slice(0, guessedOffset).join("").length;
+  resumeAnswerCursor.setSelectionRange(utf16Cursor, utf16Cursor);
+  resumeCursorEdited = guessedOffset > 0;
   resumeAnswerRow.hidden = false;
   resumeAnswerButton.disabled = false;
 };
@@ -478,7 +503,7 @@ const renderTelemetry = (snapshot: SessionEvidenceSnapshot): void => {
     ? "подтверждён"
     : voice && snapshot.media_events.some((event) =>
       event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered"
-    ) ? "не подтверждён" : voice ? "ожидание" : "—";
+    ) ? "конец слышимого звука обнаружен; подтверждения D-ID нет" : voice ? "ожидание" : "—";
 
   const usages: Array<UsageEvidence | null> = [
     ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
@@ -521,13 +546,17 @@ const api = async <T>(path: string, body?: unknown): Promise<T> => {
   return payload as T;
 };
 
-const apiEvidenceJson = async <T>(path: string, body: unknown, requestSequence: number): Promise<T> => {
+const apiEvidenceJson = async <T>(
+  path: string, body: unknown, requestSequence: number,
+  sessionSequence = evidenceSessionSequence,
+): Promise<T> => {
   const response = await runtimeFetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-VPR-CSRF": csrfToken,
       "X-VPR-Evidence-Request": String(requestSequence),
+      "X-VPR-Session-Sequence": String(sessionSequence),
     },
     body: JSON.stringify(body),
     credentials: "same-origin",
@@ -545,6 +574,7 @@ const apiBinary = async <T>(
   path: string,
   body: ArrayBuffer,
   requestSequence: number,
+  sessionSequence = evidenceSessionSequence,
 ): Promise<T> => {
   const response = await runtimeFetch(path, {
     method: "POST",
@@ -552,6 +582,7 @@ const apiBinary = async <T>(
       "Content-Type": "application/octet-stream",
       "X-VPR-CSRF": csrfToken,
       "X-VPR-Evidence-Request": String(requestSequence),
+      "X-VPR-Session-Sequence": String(sessionSequence),
     },
     body,
     credentials: "same-origin",
@@ -567,12 +598,14 @@ const apiBinary = async <T>(
 
 const waitForVoiceEvents = async (
   requestSequence: number,
+  sessionSequence: number,
   onSegment: (segment: VoiceSegment) => void,
 ): Promise<VoiceResult> => {
   let finalResult: VoiceResult | null = null;
   while (true) {
     const batch = await api<VoiceEventsResponse>("/api/voice/events", {
       request_sequence: requestSequence,
+      session_sequence: sessionSequence,
     });
     for (const event of batch.events) {
       if (event.kind === "segment") {
@@ -580,7 +613,12 @@ const waitForVoiceEvents = async (
       } else if (event.kind === "complete") {
         finalResult = event.result;
       } else {
-        throw new Error(event.code);
+        if (event.diagnostic === "STT_NO_FINAL_TRANSCRIPT") {
+          throw new Error("STT_NO_FINAL_TRANSCRIPT: Распознавание завершилось без текста. Проверьте микрофон, говорите 2–3 секунды отчётливо и завершите запись.");
+        }
+        throw new Error(event.code === "INVALID_INPUT"
+          ? "INVALID_INPUT: голосовой фрагмент пустой, слишком короткий или неверного формата; попробуйте записать вопрос ещё раз."
+          : event.code);
       }
     }
     if (batch.terminal) {
@@ -847,6 +885,31 @@ const mediaElementAvSyncFallback = (
   };
 };
 
+// LiveKit's wrapper can provide a scoped report with fewer fields than the
+// native receiver. Try BOTH genuine receiver reports; never derive an A/V
+// offset from packet arrival times, mediaElement.currentTime or remoteTimestamp.
+const readLiveKitTrackPlayout = async (
+  track: LiveKitTrack | null,
+  kind: "audio" | "video",
+  previousPackets: Map<string, number> | null,
+): Promise<AvSyncTrackSelection> => {
+  const methods: Array<() => Promise<RTCStatsReport | undefined>> = [];
+  const sdkReport = track?.getRTCStatsReport;
+  const receiver = track?.receiver;
+  if (sdkReport && track) methods.push(() => sdkReport.call(track));
+  if (receiver) methods.push(() => receiver.getStats());
+  let best = selectPlayoutTimestamp(undefined, kind, previousPackets);
+  for (const method of methods) {
+    try {
+      const candidate = selectPlayoutTimestamp(await method(), kind, previousPackets);
+      if (candidate.timestamp !== null) return candidate;
+      // Preserve an actionable reason when neither genuine source has playout timestamps.
+      if (candidate.issue !== "stats_unavailable") best = candidate;
+    } catch { /* failed source is not a fabricated sample */ }
+  }
+  return best;
+};
+
 const readAvSyncOffsetMillis = async (
   state: AvSyncReadState,
 ): Promise<{
@@ -864,21 +927,12 @@ const readAvSyncOffsetMillis = async (
     audioSelection = selectPlayoutTimestamp(stats, "audio", state.audioPackets);
     videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
   } else {
-    const audioStats = liveKitAudioTrack?.getRTCStatsReport;
-    const videoStats = liveKitVideoTrack?.getRTCStatsReport;
-    if (!audioStats || !videoStats) {
-      return mediaElementAvSyncFallback(
-        "LiveKit track stats method unavailable",
-        "stats_unavailable",
-        "stats_unavailable",
-      );
-    }
-    const [audioReport, videoReport] = await Promise.all([
-      audioStats.call(liveKitAudioTrack),
-      videoStats.call(liveKitVideoTrack),
+    const [audio, videoStats] = await Promise.all([
+      readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
+      readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
     ]);
-    audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
-    videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
+    audioSelection = audio;
+    videoSelection = videoStats;
   }
 
   audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
@@ -1010,6 +1064,13 @@ const stopRemoteEvidence = (): void => {
   baselineRms = 0.002;
 };
 
+// Cut audible output locally before network STOP, while the independent media
+// analyser continues measuring whether the PROVIDER actually stopped.
+const setLocalAudioMuted = (muted: boolean): void => {
+  avatarAudio.muted = muted;
+  video.muted = muted; // WebRTC may carry its audio inside the video element.
+};
+
 const monitorRemoteAudio = (): void => {
   const analyser = remoteAudioAnalyser;
   if (!analyser) return;
@@ -1023,6 +1084,11 @@ const monitorRemoteAudio = (): void => {
     const voice = activeVoiceEvidence;
     const speechThreshold = Math.max(0.015, baselineRms * 3 + 0.003);
     if (voice && level > speechThreshold) {
+      const now = performance.now();
+      if (voice.lastAudioTickAt !== null) {
+        voice.audibleDurationMillis += Math.min(100, Math.max(0, now - voice.lastAudioTickAt));
+      }
+      voice.lastAudioTickAt = now;
       voice.speaking = true;
       voice.silentFrames = 0;
       voice.playbackSilenceStartedAt = null;
@@ -1047,6 +1113,7 @@ const monitorRemoteAudio = (): void => {
           .catch(() => undefined);
       }
     } else if (voice?.speaking) {
+      voice.lastAudioTickAt = null;
       voice.silentFrames += 1;
       if (voice.silentFrames >= 6) {
         voice.speaking = false;
@@ -1064,10 +1131,16 @@ const monitorRemoteAudio = (): void => {
       && !voice.speaking
       && voice.playbackSilenceStartedAt !== null
       && !voice.playbackRecoveryTriggered
+      && !avatarAudio.muted && !video.muted
+      && voice.audibleDurationMillis >= 500
       && performance.now() - voice.playbackSilenceStartedAt
         >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS
     ) {
       voice.playbackRecoveryTriggered = true;
+      // Real decoded audio was observed, then at least three seconds of silence.
+      // This is browser OBSERVATION only; it is never a provider playback ACK.
+      void postMediaEvidence("browser_audio_tail_observed",
+        performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
       void postMediaEvidence(
         "playback_recovery_triggered",
         performance.now() - voice.startedAt,
@@ -1160,6 +1233,29 @@ const syncStatus = (): Promise<LabStatus> => {
     .then(async () => {
       const status = await api<LabStatus>("/api/status");
       sessionState.applyBackend(status);
+      // A second tab can revoke an existing backend session without ever
+      // running its own Connect flow. Hydrate its canonical session sequence
+      // before enabling the revoke control, so it fences the original tab.
+      if (status.session_state === "active" && evidenceSessionSequence === 0) {
+        // Session lookup is an optional SAME-ORIGIN browser hardening path:
+        // failure must not prevent this tab from revoking the real server
+        // session. If unknown, never broadcast a possibly stale session ID.
+        const snapshot = await runtimeFetch("/api/evidence/session", {
+          method: "GET", credentials: "same-origin", cache: "no-store",
+        }).then(async (response) => response.ok
+          ? await response.json() as { session_sequence?: unknown }
+          : null).catch(() => null);
+        observedBackendSessionSequence = snapshot
+          && typeof snapshot.session_sequence === "number"
+          && Number.isSafeInteger(snapshot.session_sequence)
+          && snapshot.session_sequence > 0
+          ? snapshot.session_sequence : 0;
+      }
+      if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
+          && locallyFencedSessionSequence !== evidenceSessionSequence) {
+        broadcastSessionEgressFence();
+        closePeerTransport();
+      }
       renderModalityReadiness(status.modality_readiness);
       updateControls();
       showEvidence(status);
@@ -1247,9 +1343,15 @@ const handleProviderClientEvent = (raw: string): void => {
         voiceCommandScheduler.playbackDone();
         if (voice) {
           voice.providerPlaybackDoneCount += 1;
-          await maybeFinalizeProviderPlayback(voice);
+          // The authoritative playback receipt must update local controls before
+          // awaiting potentially slow media-evidence storage. Otherwise a new
+          // microphone click races the stale providerPlaybackInFlight flag and
+          // mistakenly revokes an already finished WebRTC session.
+          const completion = maybeFinalizeProviderPlayback(voice);
           syncRt0PlaybackPending(voice);
           providerPlaybackInFlight = !voice.interrupted && !voice.providerPlaybackDone;
+          updateControls();
+          await completion;
         } else {
           providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
           if (rt0EvidenceMode) rt0PlaybackPending = false;
@@ -1298,6 +1400,18 @@ const handleProviderClientEvent = (raw: string): void => {
 };
 
 const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
+  // Expressive speech is owned by the server-only Echo sender. A browser
+  // command must never publish did.speak, even if an obsolete or malformed
+  // backend response accidentally requests it. This is defense-in-depth;
+  // provider token permissions must still be verified independently.
+  if (command.route.kind !== "web_rtc_data_channel"
+      && command.route.topic === "did.speak") {
+    throw new Error("BROWSER_SPEECH_EGRESS_DENIED");
+  }
+  if (evidenceSessionSequence > 0
+      && locallyFencedSessionSequence === evidenceSessionSequence) {
+    throw new Error("SESSION_EGRESS_FENCED");
+  }
   if (command.route.kind === "web_rtc_data_channel") {
     const channel = providerDataChannel;
     if (
@@ -1458,31 +1572,94 @@ const closePeerTransport = (): void => {
   capabilities.clear();
 };
 
+const sessionEndRequest = (): { expected_session_sequence?: number } => {
+  const sequence = evidenceSessionSequence > 0
+    ? evidenceSessionSequence : observedBackendSessionSequence;
+  return sequence > 0 ? { expected_session_sequence: sequence } : {};
+};
+
+const broadcastSessionEgressFence = (): void => {
+  const sequence = evidenceSessionSequence > 0
+    ? evidenceSessionSequence : observedBackendSessionSequence;
+  if (sequence <= 0) return;
+  locallyFencedSessionSequence = sequence;
+  sessionEgressFence?.postMessage({
+    kind: "session-egress-revoked",
+    evidence_session_sequence: sequence,
+  });
+};
+
+// A revoke in a second same-origin tab must close this tab's publisher
+// without awaiting fetch(), vendor STOP, an evidence flush or server cleanup.
+// The backend remains the authority; this is a best-effort latency hardening.
+sessionEgressFence?.addEventListener("message", (event: MessageEvent) => {
+  const signal = event.data as { kind?: unknown; evidence_session_sequence?: unknown } | null;
+  if (!signal || signal.kind !== "session-egress-revoked"
+      || typeof signal.evidence_session_sequence !== "number"
+      || !Number.isSafeInteger(signal.evidence_session_sequence)
+      || signal.evidence_session_sequence !== (evidenceSessionSequence > 0
+        ? evidenceSessionSequence : observedBackendSessionSequence)
+      || signal.evidence_session_sequence <= 0) return;
+  locallyFencedSessionSequence = signal.evidence_session_sequence;
+  closePeerTransport();
+  setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
+  updateControls();
+});
+
+const waitForCanonicalTerminal = async (
+  states: ReadonlySet<string>,
+  timeoutMillis: number,
+): Promise<boolean> => {
+  const deadline = performance.now() + timeoutMillis;
+  do {
+    const status = await syncStatus().catch(() => null);
+    if (status && states.has(status.session_state)) return true;
+    if (performance.now() >= deadline) return false;
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 250));
+  } while (true);
+};
+
 const handleUnexpectedLiveKitDisconnect = async (
   room: LiveKitRoom,
   reason?: unknown,
 ): Promise<void> => {
   if (liveKitRoom !== room) return;
   const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
-  liveKitRoom = null;
-  clearInterruptedAnswer();
-  stopMicrophoneCapture();
-  stopRemoteEvidence();
-  clearRealtimeMedia();
+  // An unexpected provider disconnect must invalidate all pending speech
+  // dispatches and release their playback barriers, not just remove the
+  // visible audio/video elements. closePeerTransport performs that full fence.
+  // Fence the local generation synchronously: late TURN_CANCELLED from a
+  // finishing voice stream must not revive an orphaned publisher or overwrite
+  // the confirmed transport-loss diagnosis while backend teardown is pending.
+  broadcastSessionEgressFence();
+  closePeerTransport();
   setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
   if (!backendSessionPresent()) return;
-  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+  // Start the best-effort evidence flush, but NEVER wait for it before
+  // fencing canonical provider authority. The LiveKit publish transport
+  // is already disconnected above. Revoke is the first awaited operation.
+  const evidenceFlush = tryFlushConnectionMediaEvidence();
+  let revokeError: unknown = null;
+  try {
+    await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
+  } catch (error) {
+    revokeError = error;
+  }
+  const connectionEvidenceError = await evidenceFlush.catch((error: unknown) =>
+    error instanceof Error ? error : new Error(String(error)));
   const evidenceWarning = connectionEvidenceError
     ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
     : "";
   try {
-    await api<{ ok: true }>("/api/session/close", {});
+    // Close also retries provider teardown if revoke completed only the
+    // authority transition. Never claim evidence was exported on failure.
+    await api<{ ok: true }>("/api/session/close", sessionEndRequest());
     await syncStatus();
     await refreshSessionEvidence();
     try {
       await downloadSessionEvidence();
       setStatus(
-        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`,
+        `LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}${revokeError ? "; первоначальный отзыв потребовал повторного закрытия" : ""}. Подключитесь снова.`,
         "error",
       );
     } catch (exportError) {
@@ -1494,13 +1671,28 @@ const handleUnexpectedLiveKitDisconnect = async (
       );
     }
   } catch (error) {
-    await syncStatus().catch(() => undefined);
-    setStatus(
-      error instanceof Error
-        ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
-        : `LiveKit отключен${reasonSuffix}; cleanup failed`,
-      "error",
-    );
+    const terminal = await waitForCanonicalTerminal(new Set(["closed"]), 45_000);
+    if (terminal && sessionState.backend.avatar_open === false) {
+      await refreshSessionEvidence().catch(() => undefined);
+      try {
+        await downloadSessionEvidence();
+        setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
+      } catch (exportError) {
+        setStatus(
+          exportError instanceof Error
+            ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+            : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`,
+          "error",
+        );
+      }
+    } else {
+      setStatus(
+        error instanceof Error
+          ? `LiveKit отключен${reasonSuffix}; canonical cleanup pending: ${error.message}`
+          : `LiveKit отключен${reasonSuffix}; canonical cleanup pending`,
+        "error",
+      );
+    }
   }
 };
 
@@ -1649,6 +1841,7 @@ const connectAvatar = async (): Promise<void> => {
     setStatus("Нужно явное согласие", "error");
     return;
   }
+  setLocalAudioMuted(false);
   connectButton.disabled = true;
   connectEvidenceStartedAt = 0;
   connectJourneyStartedAt = performance.now();
@@ -1672,6 +1865,8 @@ const connectAvatar = async (): Promise<void> => {
     // first-useful-video clock starts only after the realtime transport itself is connected.
     const backendReadyAt = performance.now();
     evidenceSessionSequence = start.evidence_session_sequence;
+    observedBackendSessionSequence = start.evidence_session_sequence;
+    locallyFencedSessionSequence = 0;
     queueConnectionMediaEvidence(
       "backend_start_ready",
       backendReadyAt - connectJourneyStartedAt,
@@ -1732,7 +1927,7 @@ const connectAvatar = async (): Promise<void> => {
     closePeerTransport();
     if (backendSessionStarted || backendSessionPresent()) {
       try {
-        await api<{ ok: true }>("/api/session/close", {});
+        await api<{ ok: true }>("/api/session/close", sessionEndRequest());
         backendSessionStarted = false;
         await syncStatus();
       } catch (cleanupError) {
@@ -1750,6 +1945,7 @@ const connectAvatar = async (): Promise<void> => {
 
 const resetMicrophoneUpload = (): void => {
   micRequestSequence = null;
+  micSessionSequence = null;
   micSamplesSent = 0;
   micPendingPcm = new Uint8Array(0);
   micChunkTail = Promise.resolve();
@@ -1758,11 +1954,13 @@ const resetMicrophoneUpload = (): void => {
 
 const cancelMicrophoneInput = async (): Promise<void> => {
   const requestSequence = micRequestSequence;
-  if (requestSequence !== null) {
+  const sessionSequence = micSessionSequence;
+  if (requestSequence !== null && sessionSequence !== null) {
     await apiEvidenceJson<{ ok: true }>(
       "/api/voice/input/cancel",
       {},
       requestSequence,
+      sessionSequence,
     ).catch(() => undefined);
   }
   resetMicrophoneUpload();
@@ -1799,12 +1997,13 @@ const encodeS16Le = (input: Float32Array): ArrayBuffer => {
 
 const queueMicrophoneChunk = (chunk: Uint8Array): void => {
   const requestSequence = micRequestSequence;
-  if (requestSequence === null || chunk.length === 0 || micUploadFailure) return;
+  const sessionSequence = micSessionSequence;
+  if (requestSequence === null || sessionSequence === null || chunk.length === 0 || micUploadFailure) return;
   const body = chunk.slice().buffer;
   micChunkTail = micChunkTail.then(async () => {
     if (micUploadFailure) return;
     try {
-      await apiBinary<{ ok: true }>("/api/voice/input/chunk", body, requestSequence);
+      await apiBinary<{ ok: true }>("/api/voice/input/chunk", body, requestSequence, sessionSequence);
     } catch (error) {
       micUploadFailure = error instanceof Error ? error : new Error("VOICE_UPLOAD_FAILED");
     }
@@ -1934,7 +2133,10 @@ const startMicrophone = async (): Promise<void> => {
 
   nextVoiceRequestSequence += 1;
   const requestSequence = nextVoiceRequestSequence;
+  const sessionSequence = evidenceSessionSequence;
+  if (sessionSequence === 0) throw new Error("VOICE_SESSION_UNAVAILABLE");
   micRequestSequence = requestSequence;
+  micSessionSequence = sessionSequence;
   micSamplesSent = 0;
   micPendingPcm = new Uint8Array(0);
   micChunkTail = Promise.resolve();
@@ -1944,6 +2146,7 @@ const startMicrophone = async (): Promise<void> => {
     "/api/voice/input/start",
     {},
     requestSequence,
+    sessionSequence,
   );
   if (started.request_sequence !== requestSequence) {
     throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
@@ -1984,10 +2187,11 @@ const startMicrophone = async (): Promise<void> => {
 const finishMicrophoneTurn = async (): Promise<void> => {
   if (!recording) return;
   const requestSequence = micRequestSequence;
+  const sessionSequence = micSessionSequence;
   const samplesSent = micSamplesSent;
   stopMicrophoneCapture();
 
-  if (requestSequence === null) {
+  if (requestSequence === null || sessionSequence === null) {
     resetMicrophoneUpload();
     setStatus("Поток микрофона не был создан", "error");
     return;
@@ -2037,6 +2241,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     silentFrames: 0,
     playbackSilenceStartedAt: null,
     playbackRecoveryTriggered: false,
+    audibleDurationMillis: 0,
+    lastAudioTickAt: null,
   };
 
   let terminalStatus: { text: string; kind: "ready" | "error" } | null = null;
@@ -2045,6 +2251,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       "/api/voice/input/finish",
       {},
       requestSequence,
+      sessionSequence,
     );
     if (started.request_sequence !== requestSequence) throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
     finishAccepted = true;
@@ -2056,6 +2263,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     // playback completion before sending the next phrase (the provider may only
     // publish its completion event after the queued batch has been submitted).
     let liveKitSendTail: Promise<void> = Promise.resolve();
+    let serverDeliveredSpeechObserved = false;
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
       const voiceForSegment = activeVoiceEvidence;
@@ -2066,7 +2274,15 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         updateControls();
       }
       const command = segment.client_command;
-      if (!command) return;
+      // A new authorized output may be heard only after the preceding turn's
+      // provider STOP returned. Never unmute a stale cancelled generation.
+      if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
+      if (!command) {
+        // Server-owned delivery has already passed the canonical provider
+        // boundary and recorded Sent; there is no browser command to publish.
+        serverDeliveredSpeechObserved = true;
+        return;
+      }
       let commandSent = false;
       const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
       const dispatch: Promise<boolean> = nativeLiveKitQueue
@@ -2129,7 +2345,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
           voiceCommandScheduler.interrupt();
           rt0PlaybackPending = false;
           updateControls();
-          await api<{ ok: true }>("/api/avatar/interrupt", {}).catch(() => undefined);
+          await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest()).catch(() => undefined);
         }
         if (activeVoiceEvidence?.requestSequence === requestSequence) {
           setStatus(deliveryFailure.message, "error");
@@ -2140,7 +2356,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       if (!rt0EvidenceMode) void task.catch(() => undefined);
     };
 
-    const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+    const result = await waitForVoiceEvents(requestSequence, sessionSequence, scheduleSegmentDelivery);
     const voiceAtBackendComplete = activeVoiceEvidence;
     const backendCompleteElapsed =
       voiceAtBackendComplete?.requestSequence === requestSequence
@@ -2163,7 +2379,8 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     const voice = activeVoiceEvidence;
     if (voice?.requestSequence === requestSequence) {
       voice.responseComplete = true;
-      if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+      if ((authorizedDeliveredParts.size > 0 || serverDeliveredSpeechObserved)
+          && result.reply.trim().length <= 16_000)
         completedAuthorizedReply = result.reply.trim();
       await maybeFinalizeProviderPlayback(voice);
       if (voice.audioStartedEvidence) {
@@ -2183,6 +2400,7 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         "/api/voice/input/cancel",
         {},
         requestSequence,
+        sessionSequence,
       ).catch(() => undefined);
     }
     if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence) activeVoiceEvidence = null;
@@ -2195,7 +2413,12 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     resetMicrophoneUpload();
     voiceRequestInFlight = false;
     updateControls();
-    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
+    // A late STT/LLM result must not replace the more important terminal
+    // revoke/close or provider-STOP-failure status after the session has ended.
+    if (terminalStatus && sessionState.backend.session_state === "active"
+        && locallyFencedSessionSequence !== evidenceSessionSequence) {
+      setStatus(terminalStatus.text, terminalStatus.kind);
+    }
   }
 };
 
@@ -2209,14 +2432,18 @@ const toggleVoice = async (): Promise<void> => {
       }
       clearInterruptedAnswer();
       if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
-        await interruptAvatar();
+        if (!await interruptAvatar()) {
+          throw new Error("PROVIDER_STOP_UNCONFIRMED");
+        }
       }
       await startMicrophone();
     }
   } catch (error) {
     stopMicrophoneCapture();
     await cancelMicrophoneInput();
-    setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+    if (sessionState.backend.session_state === "active") {
+      setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+    }
   }
 };
 
@@ -2245,7 +2472,10 @@ const speak = async (): Promise<void> => {
   } finally {
     textRequestInFlight = false;
     updateControls();
-    if (terminalStatus) setStatus(terminalStatus.text, terminalStatus.kind);
+    if (terminalStatus && sessionState.backend.session_state === "active"
+        && locallyFencedSessionSequence !== evidenceSessionSequence) {
+      setStatus(terminalStatus.text, terminalStatus.kind);
+    }
   }
 };
 
@@ -2260,6 +2490,10 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     };
   }
 
+  // Immediate user-visible silence is independent of the remote STOP receipt.
+  // It must NOT create interruption_stopped or playback_completed evidence.
+  setLocalAudioMuted(true);
+
   const playbackId = sessionState.playbackId;
   const playbackReady = activeClientControl?.interrupt_requires_playback_id
     ? playbackId !== null
@@ -2269,6 +2503,8 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     && activeClientControl?.interrupt === true
     && playbackReady;
   const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
+  // Clearing the scheduler is not proof that provider output stopped.
+  const providerStopRequired = providerPlaybackInFlight || voiceCommandScheduler.hasPendingPlayback;
 
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
@@ -2282,9 +2518,24 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     : null;
 
   try {
+    if (providerStopRequired && !clientReady) {
+      // Echo's viewer never publishes did.interrupt. An independent
+      // server-owned STOP can run while STT/LLM holds the engine mutex.
+      // A missing/failed server STOP throws and triggers fail-closed revoke.
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
+      rt0PlaybackPending = false;
+      sessionState.setPlaybackId(null);
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
+    }
     const canonicalStop = voiceRequestInFlight
-      ? api<{ ok: true }>("/api/avatar/interrupt", {})
+      ? api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest())
       : null;
+    // STOP and canonical cancellation run concurrently for interrupt latency.
+    // If provider STOP rejects first, the pending cancellation promise still
+    // needs its own rejection observer before the revoke path takes over.
+    void canonicalStop?.catch(() => undefined);
 
     if (fastProviderStop) {
       await fastProviderStop;
@@ -2310,7 +2561,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       return true;
     }
     if (!voiceRequestInFlight) {
-      await api<{ ok: true }>("/api/avatar/interrupt", {});
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
       updateControls();
       await refreshSessionEvidence();
@@ -2320,7 +2571,38 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     return false;
   } catch (error) {
     interruptEvidenceWatch = null;
-    setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
+    // A failed or unavailable STOP leaves the browser's LiveKit publish token
+    // capable of reaching D-ID. Disconnect it synchronously, before awaiting
+    // anything, and revoke the canonical session. Never offer an unconfirmed
+    // interrupted answer for replay. Notify peer tabs synchronously so a
+    // delayed voice-stream completion cannot resume speech while STOP failed.
+    broadcastSessionEgressFence();
+    closePeerTransport();
+    let cleanupFailed = false;
+    try {
+      await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
+    } catch {
+      cleanupFailed = true;
+    }
+    // 504 may mean STT/LLM quiescence timed out AFTER authority and remote
+    // provider were already revoked. Always refresh the canonical state;
+    // do not confuse incomplete cleanup with permission still being active.
+    if (cleanupFailed) {
+      setStatus("PROVIDER_STOP_UNCONFIRMED: canonical cleanup pending", "error");
+      await waitForCanonicalTerminal(new Set(["revoked", "closed"]), 45_000);
+    } else {
+      await syncStatus().catch(() => undefined);
+    }
+    const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+    const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
+    setStatus(
+      !canonicalRevoked
+        ? `PROVIDER_STOP_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+        : cleanupFailed
+          ? `PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+          : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
+      "error",
+    );
     updateControls();
     return false;
   }
@@ -2340,17 +2622,33 @@ const interruptAndOfferResume = async (): Promise<void> => {
     ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
     : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
       ? 0
-      : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+      : voice.audibleDurationMillis;
   const offset = replaying ? resumeFromIndex : 0;
   const interrupted = await interruptAvatar();
   resumedSpeechStartedAt = null;
   if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-    offerInterruptedAnswer(sentences, elapsed, offset);
-    setStatus(
-      "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-        + "Точное слово остановки D-ID не сообщает.",
-      "ready",
-    );
+    try {
+      if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
+      // Stop dispatch already succeeded. Confirm that interrupted state against
+      // the server-held original request before exposing replay to the owner.
+      // This is NOT proof that the provider finished audible playback.
+      await api<{ ok: true }>("/api/avatar/confirm-interruption", {
+        request_sequence: resumeSourceRequest,
+      });
+      offerInterruptedAnswer(sentences, elapsed, offset);
+      setStatus(
+        "Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+          + "Точное слово остановки D-ID не сообщает.",
+        "ready",
+      );
+    } catch (error) {
+      clearInterruptedAnswer();
+      setStatus(
+        error instanceof Error ? `Продолжение недоступно: ${error.message}`
+          : "Продолжение не подтверждено сервером.",
+        "error",
+      );
+    }
   } else {
     clearInterruptedAnswer();
     if (interrupted) {
@@ -2366,17 +2664,43 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     return;
   }
   const index = Number(resumeAnswerFrom.value);
-  const text = replayTextFrom(interruptedAnswerSentences, index);
+  const manualCursorOffset = resumeCursorEdited
+    ? resumeWordOffset(resumeAnswerCursor.value, resumeAnswerCursor.selectionStart)
+    : null;
+  const text = manualCursorOffset === null
+    ? replayTextFrom(interruptedAnswerSentences, index)
+    : Array.from(resumeAnswerCursor.value).slice(manualCursorOffset).join("").trim();
   if (!text) {
     setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
     return;
   }
   resumeAnswerButton.disabled = true;
+  let prepared: ResumedSpeech | null = null;
   try {
-    await dispatchClientCommand({
-      route: { kind: "live_kit_text_topic", topic: "did.speak" },
-      payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+    if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
+    // The Rust runtime authorizes EACH playback replay under the current epoch.
+    // The browser sends no text to the backend: suffix selection uses the original
+    // canonical response retained only in per-session server memory.
+    prepared = await api<ResumedSpeech>("/api/avatar/resume-answer", {
+      request_sequence: resumeSourceRequest,
+      sentence_index: index,
+      ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
     });
+    await syncStatus();
+    if (sessionState.backend.session_state !== "active") {
+      throw new Error("INVALID_STATE_TRANSITION");
+    }
+    // Re-enable audible output only for a freshly authorized resume.
+    setLocalAudioMuted(false);
+    // Server-owned Echo already delivered and marked Sent in the Rust turn.
+    // Never send a browser did.speak or duplicate its delivery ACK.
+    if (prepared.client_command !== null) {
+      await dispatchClientCommand(prepared.client_command);
+      await api<{ ok: true }>("/api/avatar/client-delivery-sent", {
+        evidence_turn_sequence: prepared.evidence_turn_sequence,
+        evidence_output_sequence: prepared.evidence_output_sequence,
+      });
+    }
     resumeFromIndex = index;
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
@@ -2387,24 +2711,73 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       "ready",
     );
   } catch (error) {
+    // Provider transport may have accepted a command before throwing.
+    // Any failure after preparation therefore requires fail-closed revoke.
+    if (prepared !== null) {
+      closePeerTransport();
+      let cleanupFailed = false;
+      try {
+        await api<{ ok: true }>("/api/session/revoke", sessionEndRequest());
+      } catch {
+        cleanupFailed = true;
+      }
+      // An HTTP 504 can follow successful authority revoke if a voice
+      // worker has not yet become quiescent. The canonical status, not the
+      // request result alone, decides whether additional speech is possible.
+      await syncStatus().catch(() => undefined);
+      const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+      const cause = error instanceof Error ? error.message : "RESUME_DELIVERY_UNCONFIRMED";
+      setStatus(
+        !canonicalRevoked
+          ? `RESUME_DELIVERY_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+          : cleanupFailed
+            ? `RESUME_DELIVERY_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+            : `RESUME_DELIVERY_UNCONFIRMED_SESSION_REVOKED: ${cause}`,
+        "error",
+      );
+      updateControls();
+      return;
+    }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
   }
   updateControls();
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
-  const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
-  if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
-    setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
+  // A stale tab with no known canonical generation must not issue an
+  // unscoped legacy revoke/close that could terminate another owner's turn.
+  if (!sessionEndRequest().expected_session_sequence) {
+    closePeerTransport();
+    setStatus("SESSION_GENERATION_UNKNOWN: завершение отклонено для защиты другой сессии", "error");
     return;
   }
-  if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
+  // Tell every same-origin tab to fence its publisher BEFORE any await.
+  // Stop media on Close as well: waiting for evidence must not prolong speech.
+  broadcastSessionEgressFence();
+  closePeerTransport();
+  // Revoke canonical authority and remote provider before any potentially
+  // stalled media-evidence flush. Fence does not seal the recorder, so already
+  // observed connection diagnostics can still be submitted before final Close.
+  let fenceError: Error | null = null;
+  if (kind === "close") {
+    try {
+      await api<{ ok: true }>("/api/session/fence", sessionEndRequest());
+    } catch (error) {
+      fenceError = error instanceof Error ? error : new Error("CANONICAL_FENCE_FAILED");
+    }
+  }
+  // If fencing failed, never wait for evidence before retrying terminal Close.
+  const connectionEvidenceError = kind === "revoke"
+    ? null : fenceError ?? await tryFlushConnectionMediaEvidence();
+  // Failed evidence writing must not turn Close into a silently ACTIVE
+  // remote D-ID session. Complete canonical teardown and visibly report the
+  // missing proof instead of treating it as a successful RT0 measurement.
+  if (kind === "close" && !fenceError && rt0EvidenceMode && pendingAvSyncEvidence) {
     setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
     await pendingAvSyncEvidence.catch(() => undefined);
   }
-  closePeerTransport();
   try {
-    await api<{ ok: true }>(`/api/session/${kind}`, {});
+    await api<{ ok: true }>(`/api/session/${kind}`, sessionEndRequest());
     await syncStatus();
     await refreshSessionEvidence();
     if (kind === "revoke") {
@@ -2417,7 +2790,12 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
     } else {
       try {
         await downloadSessionEvidence();
-        setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+        setStatus(
+          connectionEvidenceError
+            ? `Сессия закрыта. Evidence snapshot сохранён. Connection evidence incomplete: ${connectionEvidenceError.message}`
+            : "Сессия закрыта. Evidence snapshot сохранён.",
+          connectionEvidenceError ? "error" : "idle",
+        );
       } catch (exportError) {
         setStatus(
           exportError instanceof Error
@@ -2437,15 +2815,18 @@ const endSession = async (kind: "revoke" | "close"): Promise<void> => {
 
 const closeBackendOnUnload = (): void => {
   if (!backendSessionPresent() || !csrfToken) return;
+  // An unknown or stale session must never issue an unscoped keepalive close.
+  if (!sessionEndRequest().expected_session_sequence) return;
+  broadcastSessionEgressFence();
+  closePeerTransport();
   void runtimeFetch("/api/session/close", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
-    body: "{}",
+    body: JSON.stringify(sessionEndRequest()),
     credentials: "same-origin",
     cache: "no-store",
     keepalive: true,
   }).catch(() => undefined);
-  closePeerTransport();
 };
 
 audienceSelect.addEventListener("change", () => {
@@ -2466,6 +2847,10 @@ connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
+// A deliberate caret placement takes precedence over the estimated sentence.
+resumeAnswerCursor.addEventListener("mouseup", () => { resumeCursorEdited = true; });
+resumeAnswerCursor.addEventListener("keyup", () => { resumeCursorEdited = true; });
+resumeAnswerFrom.addEventListener("change", () => { resumeCursorEdited = false; });
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());

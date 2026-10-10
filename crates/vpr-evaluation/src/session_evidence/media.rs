@@ -84,6 +84,7 @@ pub(super) fn validate_and_collect_media(
             | LabMediaEvidenceKind::ProviderEventParseFailed
             | LabMediaEvidenceKind::ProviderPlaybackDoneReceived
             | LabMediaEvidenceKind::PlaybackRecoveryTriggered
+            | LabMediaEvidenceKind::BrowserAudioTailObserved
             | LabMediaEvidenceKind::BackendCompleteReceived
             | LabMediaEvidenceKind::ClientDeliverySent => {}
         }

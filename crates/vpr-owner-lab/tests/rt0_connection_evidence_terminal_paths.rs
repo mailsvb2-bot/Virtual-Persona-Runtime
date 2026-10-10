@@ -16,7 +16,7 @@ fn assert_flush_before_close(label: &str, body: &str) {
         .find("await tryFlushConnectionMediaEvidence()")
         .unwrap_or_else(|| panic!("{label}: missing connection-evidence flush"));
     let close = body
-        .find("await api<{ ok: true }>(\"/api/session/close\", {})")
+        .find("await api<{ ok: true }>(\"/api/session/close\", sessionEndRequest())")
         .unwrap_or_else(|| panic!("{label}: missing canonical backend close"));
     assert!(
         flush < close,
@@ -30,7 +30,25 @@ fn automatic_terminal_paths_flush_connection_evidence_before_close() {
         "const handleUnexpectedLiveKitDisconnect = async",
         "const connectWebRtcTransport = async",
     );
-    assert_flush_before_close("unexpected LiveKit disconnect", unexpected_disconnect);
+    // Unexpected disconnect prioritizes immediate revoke over telemetry. The
+    // flush starts before revoke, then must be awaited before backend Close
+    // seals the evidence session. Do not require the obsolete inline await.
+    let flush_started = unexpected_disconnect
+        .find("const evidenceFlush = tryFlushConnectionMediaEvidence()")
+        .expect("unexpected LiveKit disconnect: missing evidence flush start");
+    let revoke = unexpected_disconnect
+        .find("await api<{ ok: true }>(\"/api/session/revoke\", sessionEndRequest())")
+        .expect("unexpected LiveKit disconnect: missing immediate revoke");
+    let flush_awaited = unexpected_disconnect
+        .find("await evidenceFlush.catch(")
+        .expect("unexpected LiveKit disconnect: missing evidence flush await");
+    let close = unexpected_disconnect
+        .find("await api<{ ok: true }>(\"/api/session/close\", sessionEndRequest())")
+        .expect("unexpected LiveKit disconnect: missing final close");
+    assert!(
+        flush_started < revoke && revoke < flush_awaited && flush_awaited < close,
+        "unexpected disconnect must revoke first, then drain evidence before final Close"
+    );
     assert!(
         unexpected_disconnect.contains("connection evidence incomplete:"),
         "unexpected disconnect must surface incomplete connection evidence"
@@ -50,15 +68,19 @@ fn automatic_terminal_paths_flush_connection_evidence_before_close() {
 #[test]
 fn revoke_is_never_blocked_by_connection_evidence_failure() {
     assert!(
-        APP.contains("if (rt0EvidenceMode && connectionEvidenceError && kind === \"close\")"),
-        "explicit close may remain fail-closed on evidence failure"
+        !APP.contains("if (rt0EvidenceMode && connectionEvidenceError && kind === \"close\")"),
+        "failed telemetry must never skip canonical close and leave D-ID active"
+    );
+    assert!(
+        APP.contains("Connection evidence incomplete:"),
+        "a teardown with failed telemetry must disclose missing proof"
     );
     assert!(
         !APP.contains("if (rt0EvidenceMode && connectionEvidenceError && kind === \"revoke\")"),
         "revocation must not be blocked by telemetry failure"
     );
     assert!(
-        APP.contains(r"await api<{ ok: true }>(`/api/session/${kind}`, {});"),
+        APP.contains(r"await api<{ ok: true }>(`/api/session/${kind}`, sessionEndRequest());"),
         "revoke must still reach the canonical session endpoint"
     );
 }

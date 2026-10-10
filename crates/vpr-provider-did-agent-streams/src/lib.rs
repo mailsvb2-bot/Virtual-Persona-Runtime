@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
@@ -15,14 +16,19 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
 mod client_control;
 mod diagnostics;
+mod echo;
+mod echo_python;
 mod protocol;
 mod provider_error;
 
 use client_control::DidClientControlRegistry;
+pub use echo::DidEchoBackend;
+use echo::DidEchoRegistry;
+pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
-    CreateV2SessionResponse, IceRequest, LiveKitSpeakRequest, LiveKitSpeakScript, SdpRequest,
-    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+    CreateV2SessionResponse, IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
+    SpeakScript, parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
@@ -96,6 +102,8 @@ pub struct DidAgentStreamsAvatar {
     config: DidAgentStreamsConfig,
     base_url: reqwest::Url,
     client_control: DidClientControlRegistry,
+    echo_backend: Option<Arc<dyn DidEchoBackend>>,
+    echo_sessions: DidEchoRegistry,
 }
 
 impl DidAgentStreamsAvatar {
@@ -115,7 +123,17 @@ impl DidAgentStreamsAvatar {
             config,
             base_url,
             client_control: DidClientControlRegistry::default(),
+            echo_backend: None,
+            echo_sessions: DidEchoRegistry::default(),
         })
+    }
+
+    /// Enable Echo only with a real server-owned audio sender. Ordinary
+    /// browser did.speak is then forbidden by the D-ID session contract.
+    #[must_use]
+    pub fn with_echo_backend(mut self, backend: Arc<dyn DidEchoBackend>) -> Self {
+        self.echo_backend = Some(backend);
+        self
     }
 
     fn agent_url(&self) -> Result<reqwest::Url, ProviderError> {
@@ -241,13 +259,43 @@ impl DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
-        let response = self
-            .authorized(self.client.post(self.v2_sessions_url()?))
+        // A viewer-side LiveKit token cannot be atomically revoked with a
+        // browser-published did.speak. No expressive session is issued without
+        // a separately credentialed server-owned Echo audio publisher.
+        if self.echo_backend.is_none() {
+            return Err(policy_denied());
+        }
+        let request = self.authorized(self.client.post(self.v2_sessions_url()?));
+        let request = if self.echo_backend.is_some() {
+            request.json(&serde_json::json!({"session_type": "echo"}))
+        } else {
+            request
+        };
+        let response = request
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
         let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
-        body.try_into()
+        if let Some(backend) = &self.echo_backend {
+            let secret = body
+                .echo_token
+                .as_deref()
+                .filter(|token| !token.trim().is_empty())
+                .ok_or_else(invalid_response)?
+                .to_owned();
+            let session_url = body.session_url.clone();
+            let session: RealtimeAvatarSession = body.try_into()?;
+            self.echo_sessions.open_session(
+                backend.as_ref(),
+                &session.provider_session_id,
+                &session_url,
+                &secret,
+                cancellation,
+            )?;
+            Ok(session)
+        } else {
+            body.try_into()
+        }
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
@@ -293,6 +341,9 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         match self.presenter_type() {
             Ok(presenter) if presenter == "expressive" => self.create_livekit_session(cancellation),
             Ok(_) | Err(PresenterLookupError::MetadataForbidden) => {
+                if self.echo_backend.is_some() {
+                    return Err(unavailable());
+                }
                 self.create_webrtc_session(cancellation)
             }
             Err(PresenterLookupError::Unauthorized) => Err(policy_denied()),
@@ -369,6 +420,10 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         if text.trim().is_empty() {
             return Err(invalid_response());
         }
+        if self.echo_sessions.contains(&session.provider_session_id)? {
+            let backend = self.echo_backend.as_ref().ok_or_else(unavailable)?;
+            return backend.speak(&session.provider_session_id, text, cancellation);
+        }
         if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
             return Err(unavailable());
         }
@@ -412,18 +467,34 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         expect_success(response).map(|_| ())
     }
 
+    fn interrupt(
+        &self,
+        session: &RealtimeAvatarSession,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        self.echo_sessions
+            .interrupt_session(self.echo_backend.as_deref(), &session.provider_session_id)
+    }
+
     fn client_control(
         &self,
         session: &RealtimeAvatarSession,
     ) -> Option<RealtimeAvatarClientControl> {
         Self::validate_session(session).ok()?;
         match session.transport {
-            RealtimeAvatarTransport::LiveKit { .. } => Some(RealtimeAvatarClientControl {
-                event_route: None,
-                interrupt: true,
-                interrupt_requires_playback_id: false,
-                text_input: true,
-            }),
+            RealtimeAvatarTransport::LiveKit { .. } => {
+                // Viewer tokens are never given a browser speech-command route,
+                // even for stale sessions constructed before Echo enforcement.
+                self.echo_backend.as_ref()?;
+                Some(RealtimeAvatarClientControl {
+                    event_route: None,
+                    interrupt: false,
+                    interrupt_requires_playback_id: false,
+                    text_input: false,
+                })
+            }
             RealtimeAvatarTransport::WebRtc { .. } => self.client_control.control(session),
         }
     }
@@ -444,33 +515,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
 
     fn prepare_client_text(
         &self,
-        session: &RealtimeAvatarSession,
-        text: &str,
-        cancellation: &dyn CancellationProbe,
+        _session: &RealtimeAvatarSession,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        Self::validate_session(session)?;
-        let text = text.trim();
-        if text.is_empty() {
-            return Err(invalid_response());
-        }
-        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. }) {
-            return Err(unavailable());
-        }
-        let payload = serde_json::to_string(&LiveKitSpeakRequest {
-            script: LiveKitSpeakScript {
-                kind: "text",
-                input: text,
-                should_queue_speaks: true,
-            },
-        })
-        .map_err(|_| invalid_response())?;
-        Ok(RealtimeAvatarClientCommand {
-            route: RealtimeAvatarClientRoute::LiveKitTextTopic {
-                topic: "did.speak".to_owned(),
-            },
-            payload,
-        })
+        // No browser did.speak: cross-tab revocation cannot atomically
+        // invalidate a queued LiveKit data publish from an existing viewer.
+        Err(policy_denied())
     }
 
     fn prepare_client_interrupt(
@@ -481,6 +532,9 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     ) -> Result<RealtimeAvatarClientCommand, ProviderError> {
         Self::ensure_active(cancellation)?;
         Self::validate_session(session)?;
+        if self.echo_backend.is_some() {
+            return Err(unavailable());
+        }
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => Ok(RealtimeAvatarClientCommand {
                 route: RealtimeAvatarClientRoute::LiveKitTextTopic {
@@ -498,6 +552,11 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session)?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
+                if let Some(backend) = &self.echo_backend {
+                    self.echo_sessions
+                        .close_session(backend.as_ref(), &session.provider_session_id)?;
+                    return Ok(());
+                }
                 // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
                 // from the room and D-ID closes the unused session after its inactivity timeout.
                 Ok(())

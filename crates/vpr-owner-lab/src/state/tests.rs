@@ -7,8 +7,8 @@ use vpr_domain::{
 };
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarCapabilities, RealtimeAvatarClientControl, RealtimeAvatarSession,
+    RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 
 use super::readiness::LabModalityState;
@@ -21,12 +21,14 @@ struct Stats {
     ice: AtomicUsize,
     text: AtomicUsize,
     close: AtomicUsize,
+    stop: AtomicUsize,
     fail_create: AtomicUsize,
     fail_close: AtomicUsize,
 }
 
 struct FakeAvatar {
     stats: Arc<Stats>,
+    server_echo: bool,
 }
 
 impl RealtimeAvatarPort for FakeAvatar {
@@ -53,6 +55,16 @@ impl RealtimeAvatarPort for FakeAvatar {
             return Err(ProviderError {
                 kind: ProviderErrorKind::Unavailable,
                 retryable: true,
+            });
+        }
+        if self.server_echo {
+            return Ok(RealtimeAvatarSession {
+                provider_resource_id: "echo-resource".into(),
+                provider_session_id: "echo-session".into(),
+                transport: RealtimeAvatarTransport::LiveKit {
+                    server_url: "wss://livekit.example.test".into(),
+                    token: "viewer-test-token".into(),
+                },
             });
         }
         Ok(RealtimeAvatarSession {
@@ -114,6 +126,34 @@ impl RealtimeAvatarPort for FakeAvatar {
         Ok(())
     }
 
+    fn client_control(
+        &self,
+        _session: &RealtimeAvatarSession,
+    ) -> Option<RealtimeAvatarClientControl> {
+        self.server_echo.then_some(RealtimeAvatarClientControl {
+            event_route: None,
+            interrupt: false,
+            interrupt_requires_playback_id: false,
+            text_input: false,
+        })
+    }
+
+    fn interrupt(
+        &self,
+        _session: &RealtimeAvatarSession,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        assert!(!cancellation.is_cancelled());
+        if !self.server_echo {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: false,
+            });
+        }
+        self.stats.stop.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
     fn close_session(&self, _session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         self.stats.close.fetch_add(1, Ordering::SeqCst);
         if self.stats.fail_close.load(Ordering::SeqCst) > 0 {
@@ -137,6 +177,7 @@ fn engine_with_failures(
     stats.fail_close.store(close_failures, Ordering::SeqCst);
     let provider = FakeAvatar {
         stats: Arc::clone(&stats),
+        server_echo: false,
     };
     (
         OwnerLabEngine::new(Box::new(provider), egress_enabled).unwrap(),
@@ -242,6 +283,60 @@ fn browser_signaling_and_text_each_use_fresh_authorized_turns() {
 }
 
 #[test]
+fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_speech() {
+    let (mut engine, stats) = engine(true);
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+
+    // This provider has no browser text publisher. Resume must therefore use
+    // the existing canonical server-side delivery path, not be forbidden or
+    // manufacture a did.speak payload.
+    let resumed = engine.prepare_resumed_speech("Продолжаю ответ.").unwrap();
+    assert!(resumed.client_command.is_none());
+    assert!(resumed.evidence_turn_sequence > 0);
+    assert!(resumed.evidence_output_sequence > 0);
+    assert_eq!(stats.text.load(Ordering::SeqCst), 1);
+
+    // The server has accepted delivery, not a browser playback receipt.
+    // Do not fabricate an acknowledge_voice_playback_complete call here.
+
+    engine.revoke_authority().unwrap();
+    assert!(engine.prepare_resumed_speech("Поздний ответ.").is_err());
+    assert_eq!(stats.text.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn echo_server_stop_works_while_engine_is_locked_and_after_authority_revoke() {
+    let stats = Arc::new(Stats::default());
+    let mut engine = OwnerLabEngine::new(
+        Box::new(FakeAvatar {
+            stats: Arc::clone(&stats),
+            server_echo: true,
+        }),
+        true,
+    )
+    .unwrap();
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    let stop_only = engine.backend_stop_handle().expect("server Echo STOP");
+    // The real HTTP voice worker holds this mutex during STT/LLM.
+    // The stop-only controller has no dependency on that lock.
+    let locked_engine = std::sync::Mutex::new(engine);
+    let mut busy = locked_engine.lock().unwrap();
+    busy.revoke_authority().unwrap();
+    std::thread::spawn(move || stop_only.stop().unwrap())
+        .join()
+        .unwrap();
+    assert_eq!(stats.stop.load(Ordering::SeqCst), 1);
+    assert!(busy.apply(OwnerLabTurnInput::Text("stale".into())).is_err());
+    assert_eq!(stats.text.load(Ordering::SeqCst), 0);
+    busy.revoke().unwrap();
+    assert_eq!(stats.close.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn revocation_handle_fences_egress_while_engine_mutex_is_held_and_is_session_scoped() {
     let (mut lab, stats) = engine(true);
     lab.start(OwnerLabStartRequest { consent: true }).unwrap();
@@ -308,6 +403,38 @@ fn failed_provider_create_does_not_publish_a_poisoned_session() {
     assert_eq!(engine.status().session_state, "active");
     assert!(engine.status().avatar_open);
     assert_eq!(stats.create.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn early_authority_revoke_fences_new_turns_before_provider_cleanup() {
+    let (mut engine, stats) = engine_with_failures(true, 0, 1);
+    engine
+        .start(OwnerLabStartRequest { consent: true })
+        .unwrap();
+
+    // No remote I/O is allowed to delay this authority transition.
+    engine.revoke_authority().unwrap();
+    engine.revoke_authority().unwrap();
+    assert_eq!(engine.status().session_state, "revoked");
+    assert!(engine.status().avatar_open);
+    assert_eq!(stats.close.load(Ordering::SeqCst), 0);
+    assert!(
+        engine
+            .apply(OwnerLabTurnInput::Text("late".into()))
+            .is_err()
+    );
+    assert_eq!(stats.text.load(Ordering::SeqCst), 0);
+
+    // Even a failed cleanup can never bring the authority back.
+    assert!(matches!(
+        engine.revoke(),
+        Err(LabError::Provider(Rt0ReasonCode::ProviderUnavailable))
+    ));
+    assert_eq!(engine.status().session_state, "revoked");
+    assert_eq!(stats.close.load(Ordering::SeqCst), 1);
+    engine.revoke().unwrap();
+    assert!(!engine.status().avatar_open);
+    assert_eq!(stats.close.load(Ordering::SeqCst), 2);
 }
 
 #[test]

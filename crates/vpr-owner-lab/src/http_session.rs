@@ -1,4 +1,6 @@
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, atomic::Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use vpr_domain::Rt0ReasonCode;
 use vpr_owner_lab::LabError;
@@ -11,6 +13,24 @@ pub(super) fn reject_if_session_ending(state: &AppState) -> Result<(), HttpRespo
     } else {
         Ok(())
     }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionEndBody {
+    // Legacy internal callers may still send {}. Browsers must include their
+    // observed session sequence to prevent stale tabs closing a newer session.
+    #[serde(default)]
+    expected_session_sequence: Option<u64>,
+}
+
+pub(super) fn end_session_response(
+    request: &mut tiny_http::Request,
+    state: &Arc<AppState>,
+    close: bool,
+) -> Result<HttpResponse, HttpResponse> {
+    let body: SessionEndBody = super::parse_json(request)?;
+    end_session(state, close, body.expected_session_sequence)
 }
 
 fn request_voice_cancel(state: &AppState) {
@@ -48,64 +68,159 @@ pub(super) fn register_started_session(
             .session_revocation_handle()
             .ok_or(LabError::InvalidState)?,
     );
+    *state.backend_stop.lock() = engine.backend_stop_handle();
     Ok(())
 }
 
-pub(super) fn end_session(state: &AppState, close: bool) -> Result<HttpResponse, HttpResponse> {
-    // Linearize start registration against revoke without acquiring the engine
-    // mutex: a blocked STT/LLM worker may hold that lock for much longer than
-    // the bounded HTTP teardown deadline.
-    let revoker = {
+/// Fences the exact session generation before audio/provider work. This
+/// invalidates the *shared Rust authorization epoch* without waiting for the
+/// engine mutex held by a slow STT/LLM worker. Diagnostics may still be flushed
+/// before the final close, but no new canonical provider permits can be issued.
+fn fence_authority(
+    state: &AppState,
+    expected_session_sequence: Option<u64>,
+) -> Result<bool, HttpResponse> {
+    // Start holds replay_source through the new-session registration. This
+    // ordering ensures an old tab cannot fence a newer generation.
+    let (revoker, backend_stop) = {
+        let mut replay = state.replay_source.lock();
         let registered = state.session_revocation.lock();
-        state.session_end_requested.store(true, Ordering::Release);
-        registered.clone()
-    };
-    let Some(revoker) = revoker else {
-        // No active session has registered any canonical authority.
-        // If a concurrent start is opening the provider, its engine mutex is
-        // busy; keep the fence set until registration rejects that new session.
-        // Only clear the fence when no start/worker holds the engine.
-        if state.engine.try_lock().is_ok() {
-            state.session_end_requested.store(false, Ordering::Release);
+        let current = state.active_session_sequence.load(Ordering::Acquire);
+        if current == 0 || expected_session_sequence.is_some_and(|id| id == 0 || id != current) {
+            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
         }
-        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+        let Some(revoker) = registered.clone() else {
+            return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+        };
+        state.session_end_requested.store(true, Ordering::Release);
+        *replay = None;
+        (revoker, state.backend_stop.lock().clone())
     };
-    // This is the actual shared runtime authorization owner, not an HTTP-only
-    // flag. It invalidates in-flight provider permits BEFORE any wait or
-    // provider-specific cleanup. The engine mutex is deliberately untouched.
+    // Canonical revoke is FIRST. Do not take engine.lock() on this path:
+    // the in-flight voice worker may hold it beyond the teardown deadline.
     revoker
         .revoke_authority()
-        .map_err(|error| lab_error_response(&LabError::Runtime(error)))?;
+        .map_err(|code| lab_error_response(&LabError::Runtime(code)))?;
     request_voice_cancel(state);
-    if !state.voice_streams.wait_until_quiescent() {
-        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    // Independent of engine.lock(): an STT/LLM worker cannot delay the
+    // private LiveKit sender STOP after the authority epoch has been revoked.
+    let mut stopped = backend_stop.is_none_or(|handle| handle.stop().is_ok());
+    // When the engine is idle, also complete the normal remote-provider cleanup
+    // immediately. This preserves the existing /fence user-visible "revoked"
+    // state while keeping the busy-worker path strictly NON-BLOCKING: authority
+    // has already been withdrawn even if the provider is still unwinding.
+    match state.engine.try_lock() {
+        Ok(mut engine) => {
+            engine
+                .revoke()
+                .map_err(|error| lab_error_response(&error))?;
+            stopped = true;
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {}
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            return Err(error_response(500, "INTERNAL_ERROR"));
+        }
     }
-    state.evidence.lock().seal_session();
+    Ok(stopped)
+}
+
+/// First phase of user Close: deny new turns and revoke provider authority now.
+/// Unlike Close, this intentionally leaves the bounded evidence recorder open.
+pub(super) fn fence_session_response(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<HttpResponse, HttpResponse> {
+    let body: SessionEndBody = super::parse_json(request)?;
+    // Unlike legacy revoke/close, the new pre-flush fence is always strictly
+    // generation-bound. An unscoped stale tab must not fence another session.
+    let sequence = body
+        .expected_session_sequence
+        .filter(|sequence| *sequence > 0)
+        .ok_or_else(|| error_response(400, "INVALID_INPUT"))?;
+    if !fence_authority(state, Some(sequence))? {
+        return Err(error_response(502, "PROVIDER_STOP_UNCONFIRMED"));
+    }
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+// The HTTP request must never wait indefinitely for a vendor STT/LLM socket.
+// A timed-out worker is already fenced from new canonical egress. Carry its
+// local provider teardown to completion once the *same generation* quiesces.
+// The bounded worker cannot close a later session; no fake "closed" status is
+// published while the old provider resource has not actually been released.
+fn complete_deferred_session(
+    state: &AppState,
+    close: bool,
+    expected_generation: u64,
+) -> Result<(), HttpResponse> {
+    if expected_generation == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != expected_generation
+        || !state.session_end_requested.load(Ordering::Acquire)
+    {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
     let mut engine = state
         .engine
         .lock()
         .map_err(|_| error_response(500, "INTERNAL_ERROR"))?;
-    let result = if close {
+    if state.active_session_sequence.load(Ordering::Acquire) != expected_generation {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    if close {
         engine.close()
     } else {
         engine.revoke()
-    };
-    match result {
-        Ok(()) => {
-            if close {
-                *state.active_voice_interrupt.lock() = None;
-                state.voice_cancel_requested.store(false, Ordering::Release);
-                state.voice_busy.store(false, Ordering::Release);
-                *state.session_revocation.lock() = None;
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Ok(json_response(200, &serde_json::json!({"ok": true})))
+    }
+    .map_err(|error| lab_error_response(&error))?;
+
+    *state.replay_source.lock() = None;
+    *state.backend_stop.lock() = None;
+    state.evidence.lock().seal_session();
+    if close {
+        *state.active_voice_interrupt.lock() = None;
+        state.voice_cancel_requested.store(false, Ordering::Release);
+        state.voice_busy.store(false, Ordering::Release);
+        *state.session_revocation.lock() = None;
+        state.active_session_sequence.store(0, Ordering::Release);
+        state.session_end_requested.store(false, Ordering::Release);
+    }
+    Ok(())
+}
+
+fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u64) {
+    // A single request can time out after the canonical authority has already
+    // been revoked. Finish only when the voice worker has released its output
+    // stream. Do not evict a live stream or claim provider cleanup succeeded.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline {
+        if state.active_session_sequence.load(Ordering::Acquire) != expected_generation
+            || !state.session_end_requested.load(Ordering::Acquire)
+        {
+            return;
         }
-        Err(error) => {
-            if matches!(engine.status().session_state.as_str(), "none" | "closed") {
-                state.session_end_requested.store(false, Ordering::Release);
-            }
-            Err(lab_error_response(&error))
+        if state.voice_streams.wait_until_quiescent() {
+            let _ = complete_deferred_session(state, close, expected_generation);
+            return;
         }
     }
+    // Remain fenced and visibly unfinished. A later explicit Close can retry;
+    // automatic success would be false if a provider refuses to quiesce.
+}
+
+fn end_session(
+    state: &Arc<AppState>,
+    close: bool,
+    expected_session_sequence: Option<u64>,
+) -> Result<HttpResponse, HttpResponse> {
+    let _stopped = fence_authority(state, expected_session_sequence)?;
+    let expected_generation = state.active_session_sequence.load(Ordering::Acquire);
+    if !state.voice_streams.wait_until_quiescent() {
+        let worker_state = Arc::clone(state);
+        thread::spawn(move || {
+            finish_after_quiescence(&worker_state, close, expected_generation);
+        });
+        return Err(error_response(504, "PROVIDER_TIMEOUT"));
+    }
+    complete_deferred_session(state, close, expected_generation)?;
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
 }

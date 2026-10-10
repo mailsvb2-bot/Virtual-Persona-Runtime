@@ -1,10 +1,11 @@
 use std::fmt::{Debug, Formatter, Result as FmtResult};
+use std::sync::Arc;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    ProviderDescriptor, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    CancellationProbe, ProviderDescriptor, RealtimeAvatarClientCommand,
+    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -46,6 +47,30 @@ impl Debug for RealtimeAvatarHandle {
 }
 
 impl RealtimeAvatarHandle {
+    /// Private stop-only capability for server-controlled `LiveKit` avatars.
+    #[must_use]
+    pub fn backend_stop_handle(
+        &self,
+        provider: Arc<dyn RealtimeAvatarPort>,
+    ) -> Option<RealtimeAvatarStopHandle> {
+        if self.closed
+            || !matches!(
+                self.provider_session.transport,
+                RealtimeAvatarTransport::LiveKit { .. }
+            )
+            || !self
+                .client_control
+                .as_ref()
+                .is_some_and(|control| !control.interrupt && !control.text_input)
+        {
+            return None;
+        }
+        Some(RealtimeAvatarStopHandle {
+            provider,
+            session: self.provider_session.clone(),
+        })
+    }
+
     #[must_use]
     pub const fn transport(&self) -> &RealtimeAvatarTransport {
         &self.provider_session.transport
@@ -59,6 +84,33 @@ impl RealtimeAvatarHandle {
     #[must_use]
     pub fn client_control(&self) -> Option<&RealtimeAvatarClientControl> {
         self.client_control.as_ref()
+    }
+}
+
+/// Stop-only capability independent of the engine mutex. A revoked session
+/// can still send a provider STOP, but can never use this handle to speak.
+#[derive(Clone)]
+pub struct RealtimeAvatarStopHandle {
+    provider: Arc<dyn RealtimeAvatarPort>,
+    session: RealtimeAvatarSession,
+}
+
+struct StopCleanup;
+impl CancellationProbe for StopCleanup {
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+impl RealtimeAvatarStopHandle {
+    /// Transmits only a provider interruption; no content can be published.
+    ///
+    /// # Errors
+    /// Reports a typed provider error when STOP is not confirmed.
+    pub fn stop(&self) -> Result<(), ProviderExecutionError> {
+        self.provider
+            .interrupt(&self.session, &StopCleanup)
+            .map_err(ProviderExecutionError::from)
     }
 }
 

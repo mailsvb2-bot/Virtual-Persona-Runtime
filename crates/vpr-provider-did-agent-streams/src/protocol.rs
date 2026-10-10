@@ -22,19 +22,10 @@ pub(super) struct CreateV2SessionResponse {
     pub(super) id: String,
     pub(super) session_url: String,
     pub(super) session_token: String,
-}
-
-#[derive(Serialize)]
-pub(super) struct LiveKitSpeakRequest<'a> {
-    pub(super) script: LiveKitSpeakScript<'a>,
-}
-
-#[derive(Serialize)]
-pub(super) struct LiveKitSpeakScript<'a> {
-    #[serde(rename = "type")]
-    pub(super) kind: &'static str,
-    pub(super) input: &'a str,
-    pub(super) should_queue_speaks: bool,
+    /// Only in Echo sessions. Must stay on the server; the browser receives
+    /// the ordinary `session_token` and is not authorized as speech sender.
+    #[serde(default)]
+    pub(super) echo_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -132,17 +123,15 @@ impl TryFrom<CreateV2SessionResponse> for RealtimeAvatarSession {
 
     fn try_from(value: CreateV2SessionResponse) -> Result<Self, Self::Error> {
         let session_id = value.id.trim();
-        if session_id.is_empty()
-            || value.session_token.trim().is_empty()
-            || !valid_livekit_url(&value.session_url)
-        {
+        if session_id.is_empty() || value.session_token.trim().is_empty() {
             return Err(invalid_response());
         }
+        let server_url = livekit_connection_url(&value.session_url)?;
         Ok(Self {
             provider_resource_id: session_id.to_owned(),
             provider_session_id: session_id.to_owned(),
             transport: RealtimeAvatarTransport::LiveKit {
-                server_url: value.session_url,
+                server_url,
                 token: value.session_token,
             },
         })
@@ -225,12 +214,22 @@ pub(super) fn parse_livekit_event(
     }
 }
 
-fn valid_livekit_url(value: &str) -> bool {
-    reqwest::Url::parse(value).is_ok_and(|url| {
-        url.scheme() == "wss"
-            && url.host_str().is_some()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.fragment().is_none()
-    })
+fn livekit_connection_url(value: &str) -> Result<String, ProviderError> {
+    let mut url = reqwest::Url::parse(value).map_err(|_| invalid_response())?;
+    if url.scheme() != "wss"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.query().is_some()
+    {
+        return Err(invalid_response());
+    }
+    // D-ID Echo returns a session_url with /room/<identity>. LiveKit's
+    // Room.connect needs the websocket SERVER origin, not that room path.
+    // The room identity is already carried by the signed session token.
+    if url.path().starts_with("/room/") {
+        url.set_path("/");
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
 }

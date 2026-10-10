@@ -16,7 +16,10 @@ const installTransportFakes = async (page: Page): Promise<void> => {
       async resume(): Promise<void> {}
       async close(): Promise<void> {}
     }
+    const peers: FakePeerConnection[] = [];
+    (window as typeof window & { __vprFakePeers?: FakePeerConnection[] }).__vprFakePeers = peers;
     class FakePeerConnection {
+      constructor() { peers.push(this); }
       connectionState = "new";
       ontrack: ((event: unknown) => void) | null = null;
       onconnectionstatechange: (() => void) | null = null;
@@ -140,7 +143,19 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   });
   expect(injectedSpeech.status()).toBe(403);
   expect(await injectedSpeech.json()).toMatchObject({ code: "AUTH_SCOPE_DENIED" });
-  await page.getByRole("button", { name: "Отозвать доступ" }).click();
+  // Revoke is a safety boundary: close the browser transport synchronously,
+  // before any awaited connection-evidence HTTP flush or backend confirmation.
+  await expect(page.getByRole("button", { name: "Отозвать доступ" })).toBeVisible();
+  const stoppedImmediately = await page.evaluate(() => {
+    const peers = (window as typeof window & {
+      __vprFakePeers?: Array<{ connectionState: string }>;
+    }).__vprFakePeers ?? [];
+    const revoke = document.getElementById("revoke");
+    if (!revoke || peers.length < 2) return false;
+    revoke.click();
+    return peers.every((peer) => peer.connectionState === "closed");
+  });
+  expect(stoppedImmediately).toBe(true);
   await expect(page.locator("#status")).toContainText("Доступ отозван");
 
   const providerBeforeRevokedCall = await request.get(`${providerUrl}/__state`);

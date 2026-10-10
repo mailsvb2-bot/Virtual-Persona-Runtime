@@ -2,6 +2,7 @@ mod evidence_provenance;
 mod http_avatar_input;
 mod http_client_control;
 mod http_evidence;
+mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
 mod http_references;
@@ -15,12 +16,12 @@ mod launch;
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use http_json::{parse_empty_json, parse_json, read_body};
-use http_session::{end_session, reject_if_session_ending};
+use http_session::reject_if_session_ending;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
@@ -31,8 +32,7 @@ use vpr_owner_lab::{
     OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
     restore_reviewed_persona,
 };
-use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
-
+use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 const HTTP_WORKERS: usize = 4;
@@ -53,9 +53,7 @@ const LIVEKIT_CLIENT_SHA256: &str = include_str!("../ui/dist/vendor/livekit-clie
 const REFERENCE_CAPTURE_JS: &str = include_str!("../ui/reference-capture.js");
 const STYLES_CSS: &str = include_str!("../ui/styles.css");
 const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
-
 type HttpResponse = Response<Cursor<Vec<u8>>>;
-
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
     rt0_evidence_mode: bool,
@@ -67,21 +65,22 @@ struct AppState {
     voice_inputs: http_voice::VoiceInputRegistry,
     voice_streams: http_voice::VoiceStreamRegistry,
     voice_playback: LabVoicePlaybackRegistry,
+    replay_source: ParkingMutex<Option<http_client_control::AuthorizedReply>>,
     session_end_requested: AtomicBool,
     session_revocation: ParkingMutex<Option<SessionRevocationHandle>>,
+    backend_stop: ParkingMutex<Option<RealtimeAvatarStopHandle>>,
+    active_session_sequence: AtomicU64,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
     csrf_token: String,
     port: u16,
 }
-
 #[derive(Serialize)]
 struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
     rt0_evidence_mode: bool,
 }
-
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
     ok: bool,
@@ -138,7 +137,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
-
     let mut providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
 
@@ -177,14 +175,16 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_inputs: http_voice::VoiceInputRegistry::default(),
         voice_streams: http_voice::VoiceStreamRegistry::default(),
         voice_playback,
+        replay_source: ParkingMutex::new(None),
         session_end_requested: AtomicBool::new(false),
         session_revocation: ParkingMutex::new(None),
+        backend_stop: ParkingMutex::new(None),
+        active_session_sequence: AtomicU64::new(0),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
         csrf_token: generate_csrf_token()?,
         port,
     });
-
     let address = format!("127.0.0.1:{port}");
     let server = Arc::new(Server::http(&address)?);
     println!("VPR Owner Lab: http://{address}");
@@ -335,7 +335,7 @@ fn route_request(
     }
 }
 
-fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpResponse {
+fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
@@ -362,6 +362,8 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         .and_then(|()| reject_if_session_ending(state))
         .and_then(|()| {
             parse_json::<StartBody>(request).and_then(|body| {
+                let mut replay_source = state.replay_source.lock();
+                reject_if_session_ending(state)?;
                 with_engine_result(state, |engine| {
                     let start_request = OwnerLabStartRequest {
                         consent: body.consent,
@@ -376,11 +378,16 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
                             _ => return Err(LabError::InvalidInput),
                         };
                     http_session::register_started_session(state, engine)?;
+                    *replay_source = None;
                     state
                         .evidence
                         .lock()
                         .begin_session(bundle.evidence_session_sequence, participant_role)
                         .map_err(|_| LabError::Internal)?;
+                    let sequence = bundle.evidence_session_sequence;
+                    state
+                        .active_session_sequence
+                        .store(sequence, Ordering::Release);
                     state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
@@ -407,28 +414,13 @@ fn route_post(path: &str, request: &mut Request, state: &AppState) -> HttpRespon
         }),
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
-        "/api/avatar/interrupt" => {
-            parse_empty_json(request).and_then(|()| interrupt_active_turn(state))
-        }
-        "/api/session/revoke" => parse_empty_json(request).and_then(|()| end_session(state, false)),
-        "/api/session/close" => parse_empty_json(request).and_then(|()| end_session(state, true)),
+        "/api/avatar/interrupt" => http_interrupt::interrupt_response(request, state),
+        "/api/session/fence" => http_session::fence_session_response(request, state),
+        "/api/session/revoke" => http_session::end_session_response(request, state, false),
+        "/api/session/close" => http_session::end_session_response(request, state, true),
         _ => Ok(error_response(404, "NOT_FOUND")),
     }
     .unwrap_or_else(|response| response)
-}
-
-fn interrupt_active_turn(state: &AppState) -> Result<HttpResponse, HttpResponse> {
-    if state.voice_busy.load(Ordering::Acquire) {
-        state.voice_cancel_requested.store(true, Ordering::Release);
-        if let Some(handle) = state.active_voice_interrupt.lock().clone() {
-            return handle
-                .interrupt()
-                .map(|()| json_response(200, &serde_json::json!({"ok": true})))
-                .map_err(|reason| lab_error_response(&LabError::Runtime(reason)));
-        }
-        return Ok(json_response(200, &serde_json::json!({"ok": true})));
-    }
-    apply_input(state, OwnerLabTurnInput::Interrupt)
 }
 
 fn apply_input(state: &AppState, input: OwnerLabTurnInput) -> Result<HttpResponse, HttpResponse> {
@@ -535,7 +527,7 @@ fn lab_error_response(error: &LabError) -> HttpResponse {
             | Rt0ReasonCode::AuthExpired
             | Rt0ReasonCode::AuthScopeDenied,
         ) => 403,
-        LabError::InvalidInput => 400,
+        LabError::InvalidInput | LabError::SpeechNotRecognized => 400,
         LabError::InvalidState | LabError::Runtime(_) => 409,
         LabError::Provider(Rt0ReasonCode::BudgetExhausted) => 402,
         LabError::Provider(Rt0ReasonCode::ProviderRateLimited) => 429,

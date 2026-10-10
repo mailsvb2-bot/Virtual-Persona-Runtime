@@ -260,8 +260,24 @@
         throw new Error("EXPRESSIVE_RESUME_MUST_HAVE_ORIGINAL_SENTENCE_BOUNDARIES");
       }
       resumeSelect.value = "1";
+      // Exercise the REAL browser -> canonical Rust -> D-ID route with a
+      // manually chosen word, not the old first-sentence bookmark.
+      const cursor = element("resume-answer-cursor", HTMLTextAreaElement);
+      const wordAt = cursor.value.lastIndexOf("фраза.");
+      if (wordAt < 0) throw new Error("EXPRESSIVE_RESUME_WORD_NOT_VISIBLE");
+      cursor.setSelectionRange(wordAt, wordAt);
+      cursor.dispatchEvent(new MouseEvent("mouseup"));
       const resumeButton = element("resume-answer", HTMLButtonElement);
       const interruptsBeforeReplay = commands().filter((command) => command.topic === "did.interrupt").length;
+      // The first backend preparation is intentionally denied. No D-ID command
+      // is allowed to escape; the same authorized reply may be retried.
+      resumeButton.click();
+      await waitStatus("INVALID_STATE_TRANSITION");
+      await waitFor(() => !resumeButton.disabled, "resume-control-recovers-after-server-denial");
+      if (resumeRow.hidden || commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
+        throw new Error("EXPRESSIVE_RESUME_DENIAL_LEAKED_PROVIDER_EGRESS");
+      }
+      await postPhase("resume-denied-no-egress");
       resumeButton.click();
       await waitFor(
         () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,
@@ -270,10 +286,14 @@
       const resumed = JSON.parse(commands().filter(
         (command) => command.topic === "did.speak",
       ).at(-1)?.text ?? "{}");
-      if (resumed.script?.input !== "Третья фраза." || resumed.script?.should_queue_speaks !== true) {
+      if (resumed.script?.input !== "фраза." || resumed.script?.should_queue_speaks !== true) {
         throw new Error("EXPRESSIVE_RESUME_GENERATED_NEW_OR_WRONG_ANSWER");
       }
-      if (!resumeRow.hidden || interruptsBeforeReplay < 1) {
+      // Provider sendText may accept the command before the canonical
+      // /api/avatar/client-delivery-sent receipt reaches the backend. Do not
+      // mistake that normal ordering for a permanently visible Resume control.
+      await waitFor(() => resumeRow.hidden, "resume-ack-hidden");
+      if (interruptsBeforeReplay < 1) {
         throw new Error("EXPRESSIVE_RESUME_UI_OR_INTERRUPT_INVALID");
       }
       await postPhase("same-answer-resume-complete");

@@ -180,6 +180,10 @@
       this.videoTrack = null;
       this.localParticipant = {
         sendText: async (text, options) => {
+          if (options.topic === "did.interrupt" && window.__vprExpressiveFailNextInterrupt === true) {
+            window.__vprExpressiveFailNextInterrupt = false;
+            throw new Error("SIMULATED_PROVIDER_STOP_FAILED");
+          }
           commands.push({ topic: options.topic, text });
           if (options.topic === "did.speak") window.__vprExpressiveRemoteSpeech = true;
           if (options.topic === "did.interrupt") window.__vprExpressiveRemoteSpeech = false;
@@ -244,9 +248,12 @@
       this.emit(roomEvents.TrackSubscribed, this.videoTrack);
       this.emit(roomEvents.TrackSubscribed, this.audioTrack);
     }
-    async disconnect() {}
+    async disconnect() {
+      window.__vprExpressiveRoomDisconnectCount += 1;
+    }
   }
 
+  window.__vprExpressiveRoomDisconnectCount = 0;
   window.__vprLiveKitCommands = commands;
   window.__vprExpressiveRemoteSpeech = false;
   const installMediaRuntime = () => {

@@ -1,6 +1,6 @@
 import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
-import { authorizedSpeakText, replayTextFrom, resumeSentences, suggestedResumeSentence } from "./interrupted-answer.js";
+import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject, } from "./media-runtime.js";
@@ -50,6 +50,7 @@ const interruptButton = byId("interrupt");
 const resumeAnswerRow = byId("resume-answer-row");
 const resumeAnswerButton = byId("resume-answer");
 const resumeAnswerFrom = byId("resume-answer-from");
+const resumeAnswerCursor = byId("resume-answer-cursor");
 const revokeButton = byId("revoke");
 const closeButton = byId("close");
 const voiceButton = byId("voice");
@@ -98,6 +99,7 @@ let audioContext = null;
 let micSource = null;
 let micWorklet = null;
 let micRequestSequence = null;
+let micSessionSequence = null;
 let micSamplesSent = 0;
 let voiceDeliveryGeneration = 0;
 let micPendingPcm = new Uint8Array(0);
@@ -108,6 +110,11 @@ let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
+const sessionEgressFence = typeof BroadcastChannel === "undefined"
+    ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
+let locallyFencedSessionSequence = 0;
+let observedBackendSessionSequence = 0;
 let nextTextRequestSequence = 0;
 let nextVoiceRequestSequence = 0;
 let connectEvidenceStartedAt = 0;
@@ -131,6 +138,7 @@ const authorizedDeliveredParts = new Map();
 let completedAuthorizedReply = null;
 let interruptedAnswerSentences = [];
 let resumeFromIndex = 0;
+let resumeCursorEdited = false;
 let resumedSpeechStartedAt = null;
 let interruptEvidenceWatch = null;
 let avSyncCollectionPending = false;
@@ -151,6 +159,8 @@ const clearInterruptedAnswer = () => {
     completedAuthorizedReply = null;
     interruptedAnswerSentences = [];
     resumeFromIndex = 0;
+    resumeCursorEdited = false;
+    resumeAnswerCursor.value = "";
     resumedSpeechStartedAt = null;
     resumeAnswerFrom.replaceChildren();
     resumeAnswerRow.hidden = true;
@@ -167,6 +177,12 @@ const offerInterruptedAnswer = (sentences, elapsedMillis, offset = 0) => {
     });
     resumeFromIndex = Math.min(sentences.length - 1, offset + suggestedResumeSentence(sentences.slice(offset), elapsedMillis));
     resumeAnswerFrom.value = String(resumeFromIndex);
+    resumeAnswerCursor.value = sentences.join(" ");
+    const guessedPosition = Math.min(Math.max(0, resumeAnswerCursor.value.length - 1), Math.max(0, Math.round(elapsedMillis / 1000 * 11 - 10)));
+    const guessedOffset = resumeWordOffset(resumeAnswerCursor.value, guessedPosition) ?? 0;
+    const utf16Cursor = Array.from(resumeAnswerCursor.value).slice(0, guessedOffset).join("").length;
+    resumeAnswerCursor.setSelectionRange(utf16Cursor, utf16Cursor);
+    resumeCursorEdited = guessedOffset > 0;
     resumeAnswerRow.hidden = false;
     resumeAnswerButton.disabled = false;
 };
@@ -257,7 +273,7 @@ const renderTelemetry = (snapshot) => {
     }
     metricPlayback.textContent = snapshot.canonical_playback_proven
         ? "подтверждён"
-        : voice && snapshot.media_events.some((event) => event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered") ? "не подтверждён" : voice ? "ожидание" : "—";
+        : voice && snapshot.media_events.some((event) => event.request_sequence === voice.request_sequence && event.kind === "playback_recovery_triggered") ? "конец слышимого звука обнаружен; подтверждения D-ID нет" : voice ? "ожидание" : "—";
     const usages = [
         ...snapshot.text_attempts.map((attempt) => attempt.llm_usage),
         ...snapshot.voice_attempts.flatMap((attempt) => [attempt.stt_usage, attempt.llm_usage]),
@@ -299,13 +315,14 @@ const api = async (path, body) => {
     }
     return payload;
 };
-const apiEvidenceJson = async (path, body, requestSequence) => {
+const apiEvidenceJson = async (path, body, requestSequence, sessionSequence = evidenceSessionSequence) => {
     const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             "X-VPR-CSRF": csrfToken,
             "X-VPR-Evidence-Request": String(requestSequence),
+            "X-VPR-Session-Sequence": String(sessionSequence),
         },
         body: JSON.stringify(body),
         credentials: "same-origin",
@@ -318,13 +335,14 @@ const apiEvidenceJson = async (path, body, requestSequence) => {
     }
     return payload;
 };
-const apiBinary = async (path, body, requestSequence) => {
+const apiBinary = async (path, body, requestSequence, sessionSequence = evidenceSessionSequence) => {
     const response = await runtimeFetch(path, {
         method: "POST",
         headers: {
             "Content-Type": "application/octet-stream",
             "X-VPR-CSRF": csrfToken,
             "X-VPR-Evidence-Request": String(requestSequence),
+            "X-VPR-Session-Sequence": String(sessionSequence),
         },
         body,
         credentials: "same-origin",
@@ -337,11 +355,12 @@ const apiBinary = async (path, body, requestSequence) => {
     }
     return payload;
 };
-const waitForVoiceEvents = async (requestSequence, onSegment) => {
+const waitForVoiceEvents = async (requestSequence, sessionSequence, onSegment) => {
     let finalResult = null;
     while (true) {
         const batch = await api("/api/voice/events", {
             request_sequence: requestSequence,
+            session_sequence: sessionSequence,
         });
         for (const event of batch.events) {
             if (event.kind === "segment") {
@@ -351,7 +370,12 @@ const waitForVoiceEvents = async (requestSequence, onSegment) => {
                 finalResult = event.result;
             }
             else {
-                throw new Error(event.code);
+                if (event.diagnostic === "STT_NO_FINAL_TRANSCRIPT") {
+                    throw new Error("STT_NO_FINAL_TRANSCRIPT: Распознавание завершилось без текста. Проверьте микрофон, говорите 2–3 секунды отчётливо и завершите запись.");
+                }
+                throw new Error(event.code === "INVALID_INPUT"
+                    ? "INVALID_INPUT: голосовой фрагмент пустой, слишком короткий или неверного формата; попробуйте записать вопрос ещё раз."
+                    : event.code);
             }
         }
         if (batch.terminal) {
@@ -572,6 +596,27 @@ const mediaElementAvSyncFallback = (diagnostic, audioIssue, videoIssue) => {
         videoIssue,
     };
 };
+const readLiveKitTrackPlayout = async (track, kind, previousPackets) => {
+    const methods = [];
+    const sdkReport = track?.getRTCStatsReport;
+    const receiver = track?.receiver;
+    if (sdkReport && track)
+        methods.push(() => sdkReport.call(track));
+    if (receiver)
+        methods.push(() => receiver.getStats());
+    let best = selectPlayoutTimestamp(undefined, kind, previousPackets);
+    for (const method of methods) {
+        try {
+            const candidate = selectPlayoutTimestamp(await method(), kind, previousPackets);
+            if (candidate.timestamp !== null)
+                return candidate;
+            if (candidate.issue !== "stats_unavailable")
+                best = candidate;
+        }
+        catch { }
+    }
+    return best;
+};
 const readAvSyncOffsetMillis = async (state) => {
     const currentPeer = peer;
     let audioSelection;
@@ -582,17 +627,12 @@ const readAvSyncOffsetMillis = async (state) => {
         videoSelection = selectPlayoutTimestamp(stats, "video", state.videoPackets);
     }
     else {
-        const audioStats = liveKitAudioTrack?.getRTCStatsReport;
-        const videoStats = liveKitVideoTrack?.getRTCStatsReport;
-        if (!audioStats || !videoStats) {
-            return mediaElementAvSyncFallback("LiveKit track stats method unavailable", "stats_unavailable", "stats_unavailable");
-        }
-        const [audioReport, videoReport] = await Promise.all([
-            audioStats.call(liveKitAudioTrack),
-            videoStats.call(liveKitVideoTrack),
+        const [audio, videoStats] = await Promise.all([
+            readLiveKitTrackPlayout(liveKitAudioTrack, "audio", state.audioPackets),
+            readLiveKitTrackPlayout(liveKitVideoTrack, "video", state.videoPackets),
         ]);
-        audioSelection = selectPlayoutTimestamp(audioReport, "audio", state.audioPackets);
-        videoSelection = selectPlayoutTimestamp(videoReport, "video", state.videoPackets);
+        audioSelection = audio;
+        videoSelection = videoStats;
     }
     audioSelection = requireAdvancingPlayoutClock(audioSelection, state.lastAudioPlayoutTimestamp, "audio");
     videoSelection = requireAdvancingPlayoutClock(videoSelection, state.lastVideoPlayoutTimestamp, "video");
@@ -717,6 +757,10 @@ const stopRemoteEvidence = () => {
     interruptEvidenceWatch = null;
     baselineRms = 0.002;
 };
+const setLocalAudioMuted = (muted) => {
+    avatarAudio.muted = muted;
+    video.muted = muted;
+};
 const monitorRemoteAudio = () => {
     const analyser = remoteAudioAnalyser;
     if (!analyser)
@@ -733,6 +777,11 @@ const monitorRemoteAudio = () => {
         const voice = activeVoiceEvidence;
         const speechThreshold = Math.max(0.015, baselineRms * 3 + 0.003);
         if (voice && level > speechThreshold) {
+            const now = performance.now();
+            if (voice.lastAudioTickAt !== null) {
+                voice.audibleDurationMillis += Math.min(100, Math.max(0, now - voice.lastAudioTickAt));
+            }
+            voice.lastAudioTickAt = now;
             voice.speaking = true;
             voice.silentFrames = 0;
             voice.playbackSilenceStartedAt = null;
@@ -756,6 +805,7 @@ const monitorRemoteAudio = () => {
             }
         }
         else if (voice?.speaking) {
+            voice.lastAudioTickAt = null;
             voice.silentFrames += 1;
             if (voice.silentFrames >= 6) {
                 voice.speaking = false;
@@ -772,9 +822,12 @@ const monitorRemoteAudio = () => {
             && !voice.speaking
             && voice.playbackSilenceStartedAt !== null
             && !voice.playbackRecoveryTriggered
+            && !avatarAudio.muted && !video.muted
+            && voice.audibleDurationMillis >= 500
             && performance.now() - voice.playbackSilenceStartedAt
                 >= UNCONFIRMED_PLAYBACK_SILENCE_RECOVERY_MILLIS) {
             voice.playbackRecoveryTriggered = true;
+            void postMediaEvidence("browser_audio_tail_observed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void postMediaEvidence("playback_recovery_triggered", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void interruptAvatar(false).then((recovered) => {
                 if (recovered) {
@@ -854,6 +907,23 @@ const syncStatus = () => {
         .then(async () => {
         const status = await api("/api/status");
         sessionState.applyBackend(status);
+        if (status.session_state === "active" && evidenceSessionSequence === 0) {
+            const snapshot = await runtimeFetch("/api/evidence/session", {
+                method: "GET", credentials: "same-origin", cache: "no-store",
+            }).then(async (response) => response.ok
+                ? await response.json()
+                : null).catch(() => null);
+            observedBackendSessionSequence = snapshot
+                && typeof snapshot.session_sequence === "number"
+                && Number.isSafeInteger(snapshot.session_sequence)
+                && snapshot.session_sequence > 0
+                ? snapshot.session_sequence : 0;
+        }
+        if (evidenceSessionSequence > 0 && ["revoked", "closed"].includes(status.session_state)
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
+            broadcastSessionEgressFence();
+            closePeerTransport();
+        }
         renderModalityReadiness(status.modality_readiness);
         updateControls();
         showEvidence(status);
@@ -935,9 +1005,11 @@ const handleProviderClientEvent = (raw) => {
             voiceCommandScheduler.playbackDone();
             if (voice) {
                 voice.providerPlaybackDoneCount += 1;
-                await maybeFinalizeProviderPlayback(voice);
+                const completion = maybeFinalizeProviderPlayback(voice);
                 syncRt0PlaybackPending(voice);
                 providerPlaybackInFlight = !voice.interrupted && !voice.providerPlaybackDone;
+                updateControls();
+                await completion;
             }
             else {
                 providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
@@ -983,6 +1055,14 @@ const handleProviderClientEvent = (raw) => {
     });
 };
 const dispatchClientCommand = async (command) => {
+    if (command.route.kind !== "web_rtc_data_channel"
+        && command.route.topic === "did.speak") {
+        throw new Error("BROWSER_SPEECH_EGRESS_DENIED");
+    }
+    if (evidenceSessionSequence > 0
+        && locallyFencedSessionSequence === evidenceSessionSequence) {
+        throw new Error("SESSION_EGRESS_FENCED");
+    }
     if (command.route.kind === "web_rtc_data_channel") {
         const channel = providerDataChannel;
         if (!channel
@@ -1115,29 +1195,75 @@ const closePeerTransport = () => {
     pendingIce = [];
     capabilities.clear();
 };
+const sessionEndRequest = () => {
+    const sequence = evidenceSessionSequence > 0
+        ? evidenceSessionSequence : observedBackendSessionSequence;
+    return sequence > 0 ? { expected_session_sequence: sequence } : {};
+};
+const broadcastSessionEgressFence = () => {
+    const sequence = evidenceSessionSequence > 0
+        ? evidenceSessionSequence : observedBackendSessionSequence;
+    if (sequence <= 0)
+        return;
+    locallyFencedSessionSequence = sequence;
+    sessionEgressFence?.postMessage({
+        kind: "session-egress-revoked",
+        evidence_session_sequence: sequence,
+    });
+};
+sessionEgressFence?.addEventListener("message", (event) => {
+    const signal = event.data;
+    if (!signal || signal.kind !== "session-egress-revoked"
+        || typeof signal.evidence_session_sequence !== "number"
+        || !Number.isSafeInteger(signal.evidence_session_sequence)
+        || signal.evidence_session_sequence !== (evidenceSessionSequence > 0
+            ? evidenceSessionSequence : observedBackendSessionSequence)
+        || signal.evidence_session_sequence <= 0)
+        return;
+    locallyFencedSessionSequence = signal.evidence_session_sequence;
+    closePeerTransport();
+    setStatus("Доступ отозван в другой вкладке. Отправка речи остановлена.", "error");
+    updateControls();
+});
+const waitForCanonicalTerminal = async (states, timeoutMillis) => {
+    const deadline = performance.now() + timeoutMillis;
+    do {
+        const status = await syncStatus().catch(() => null);
+        if (status && states.has(status.session_state))
+            return true;
+        if (performance.now() >= deadline)
+            return false;
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+    } while (true);
+};
 const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
     if (liveKitRoom !== room)
         return;
     const reasonSuffix = reason === undefined ? "" : ` (reason=${String(reason)})`;
-    liveKitRoom = null;
-    clearInterruptedAnswer();
-    stopMicrophoneCapture();
-    stopRemoteEvidence();
-    clearRealtimeMedia();
+    broadcastSessionEgressFence();
+    closePeerTransport();
     setStatus(`LiveKit отключен${reasonSuffix}. Завершаю зависшую сессию…`, "error");
     if (!backendSessionPresent())
         return;
-    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
+    const evidenceFlush = tryFlushConnectionMediaEvidence();
+    let revokeError = null;
+    try {
+        await api("/api/session/revoke", sessionEndRequest());
+    }
+    catch (error) {
+        revokeError = error;
+    }
+    const connectionEvidenceError = await evidenceFlush.catch((error) => error instanceof Error ? error : new Error(String(error)));
     const evidenceWarning = connectionEvidenceError
         ? `; connection evidence incomplete: ${connectionEvidenceError.message}`
         : "";
     try {
-        await api("/api/session/close", {});
+        await api("/api/session/close", sessionEndRequest());
         await syncStatus();
         await refreshSessionEvidence();
         try {
             await downloadSessionEvidence();
-            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
+            setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}${revokeError ? "; первоначальный отзыв потребовал повторного закрытия" : ""}. Подключитесь снова.`, "error");
         }
         catch (exportError) {
             setStatus(exportError instanceof Error
@@ -1146,10 +1272,24 @@ const handleUnexpectedLiveKitDisconnect = async (room, reason) => {
         }
     }
     catch (error) {
-        await syncStatus().catch(() => undefined);
-        setStatus(error instanceof Error
-            ? `LiveKit отключен${reasonSuffix}; cleanup: ${error.message}`
-            : `LiveKit отключен${reasonSuffix}; cleanup failed`, "error");
+        const terminal = await waitForCanonicalTerminal(new Set(["closed"]), 45_000);
+        if (terminal && sessionState.backend.avatar_open === false) {
+            await refreshSessionEvidence().catch(() => undefined);
+            try {
+                await downloadSessionEvidence();
+                setStatus(`LiveKit отключен${reasonSuffix}. Сессия закрыта, evidence snapshot сохранён${evidenceWarning}. Подключитесь снова.`, "error");
+            }
+            catch (exportError) {
+                setStatus(exportError instanceof Error
+                    ? `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export: ${exportError.message}`
+                    : `LiveKit отключен${reasonSuffix}. Сессия закрыта; evidence export failed`, "error");
+            }
+        }
+        else {
+            setStatus(error instanceof Error
+                ? `LiveKit отключен${reasonSuffix}; canonical cleanup pending: ${error.message}`
+                : `LiveKit отключен${reasonSuffix}; canonical cleanup pending`, "error");
+        }
     }
 };
 const connectWebRtcTransport = async (transport, clientControl) => {
@@ -1288,6 +1428,7 @@ const connectAvatar = async () => {
         setStatus("Нужно явное согласие", "error");
         return;
     }
+    setLocalAudioMuted(false);
     connectButton.disabled = true;
     connectEvidenceStartedAt = 0;
     connectJourneyStartedAt = performance.now();
@@ -1309,6 +1450,8 @@ const connectAvatar = async () => {
         backendSessionStarted = true;
         const backendReadyAt = performance.now();
         evidenceSessionSequence = start.evidence_session_sequence;
+        observedBackendSessionSequence = start.evidence_session_sequence;
+        locallyFencedSessionSequence = 0;
         queueConnectionMediaEvidence("backend_start_ready", backendReadyAt - connectJourneyStartedAt);
         capabilities = new Set(start.capabilities);
         activeClientControl = start.client_control;
@@ -1353,7 +1496,7 @@ const connectAvatar = async () => {
         closePeerTransport();
         if (backendSessionStarted || backendSessionPresent()) {
             try {
-                await api("/api/session/close", {});
+                await api("/api/session/close", sessionEndRequest());
                 backendSessionStarted = false;
                 await syncStatus();
             }
@@ -1371,6 +1514,7 @@ const connectAvatar = async () => {
 };
 const resetMicrophoneUpload = () => {
     micRequestSequence = null;
+    micSessionSequence = null;
     micSamplesSent = 0;
     micPendingPcm = new Uint8Array(0);
     micChunkTail = Promise.resolve();
@@ -1378,8 +1522,9 @@ const resetMicrophoneUpload = () => {
 };
 const cancelMicrophoneInput = async () => {
     const requestSequence = micRequestSequence;
-    if (requestSequence !== null) {
-        await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+    const sessionSequence = micSessionSequence;
+    if (requestSequence !== null && sessionSequence !== null) {
+        await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence, sessionSequence).catch(() => undefined);
     }
     resetMicrophoneUpload();
 };
@@ -1414,14 +1559,15 @@ const encodeS16Le = (input) => {
 };
 const queueMicrophoneChunk = (chunk) => {
     const requestSequence = micRequestSequence;
-    if (requestSequence === null || chunk.length === 0 || micUploadFailure)
+    const sessionSequence = micSessionSequence;
+    if (requestSequence === null || sessionSequence === null || chunk.length === 0 || micUploadFailure)
         return;
     const body = chunk.slice().buffer;
     micChunkTail = micChunkTail.then(async () => {
         if (micUploadFailure)
             return;
         try {
-            await apiBinary("/api/voice/input/chunk", body, requestSequence);
+            await apiBinary("/api/voice/input/chunk", body, requestSequence, sessionSequence);
         }
         catch (error) {
             micUploadFailure = error instanceof Error ? error : new Error("VOICE_UPLOAD_FAILED");
@@ -1552,12 +1698,16 @@ const startMicrophone = async () => {
     micWorklet = createRuntimeAudioWorkletNode(audioContext, "vpr-mic-capture");
     nextVoiceRequestSequence += 1;
     const requestSequence = nextVoiceRequestSequence;
+    const sessionSequence = evidenceSessionSequence;
+    if (sessionSequence === 0)
+        throw new Error("VOICE_SESSION_UNAVAILABLE");
     micRequestSequence = requestSequence;
+    micSessionSequence = sessionSequence;
     micSamplesSent = 0;
     micPendingPcm = new Uint8Array(0);
     micChunkTail = Promise.resolve();
     micUploadFailure = null;
-    const started = await apiEvidenceJson("/api/voice/input/start", {}, requestSequence);
+    const started = await apiEvidenceJson("/api/voice/input/start", {}, requestSequence, sessionSequence);
     if (started.request_sequence !== requestSequence) {
         throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
     }
@@ -1597,9 +1747,10 @@ const finishMicrophoneTurn = async () => {
     if (!recording)
         return;
     const requestSequence = micRequestSequence;
+    const sessionSequence = micSessionSequence;
     const samplesSent = micSamplesSent;
     stopMicrophoneCapture();
-    if (requestSequence === null) {
+    if (requestSequence === null || sessionSequence === null) {
         resetMicrophoneUpload();
         setStatus("Поток микрофона не был создан", "error");
         return;
@@ -1647,10 +1798,12 @@ const finishMicrophoneTurn = async () => {
         silentFrames: 0,
         playbackSilenceStartedAt: null,
         playbackRecoveryTriggered: false,
+        audibleDurationMillis: 0,
+        lastAudioTickAt: null,
     };
     let terminalStatus = null;
     try {
-        const started = await apiEvidenceJson("/api/voice/input/finish", {}, requestSequence);
+        const started = await apiEvidenceJson("/api/voice/input/finish", {}, requestSequence, sessionSequence);
         if (started.request_sequence !== requestSequence)
             throw new Error("VOICE_STREAM_SEQUENCE_MISMATCH");
         finishAccepted = true;
@@ -1658,6 +1811,7 @@ const finishMicrophoneTurn = async () => {
         let clientDeliverySentElapsed = null;
         const deliveryTasks = [];
         let liveKitSendTail = Promise.resolve();
+        let serverDeliveredSpeechObserved = false;
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
@@ -1669,8 +1823,12 @@ const finishMicrophoneTurn = async () => {
                 updateControls();
             }
             const command = segment.client_command;
-            if (!command)
+            if (deliveryGeneration === voiceDeliveryGeneration)
+                setLocalAudioMuted(false);
+            if (!command) {
+                serverDeliveredSpeechObserved = true;
                 return;
+            }
             let commandSent = false;
             const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
             const dispatch = nativeLiveKitQueue
@@ -1733,7 +1891,7 @@ const finishMicrophoneTurn = async () => {
                     voiceCommandScheduler.interrupt();
                     rt0PlaybackPending = false;
                     updateControls();
-                    await api("/api/avatar/interrupt", {}).catch(() => undefined);
+                    await api("/api/avatar/interrupt", sessionEndRequest()).catch(() => undefined);
                 }
                 if (activeVoiceEvidence?.requestSequence === requestSequence) {
                     setStatus(deliveryFailure.message, "error");
@@ -1744,7 +1902,7 @@ const finishMicrophoneTurn = async () => {
             if (!rt0EvidenceMode)
                 void task.catch(() => undefined);
         };
-        const result = await waitForVoiceEvents(requestSequence, scheduleSegmentDelivery);
+        const result = await waitForVoiceEvents(requestSequence, sessionSequence, scheduleSegmentDelivery);
         const voiceAtBackendComplete = activeVoiceEvidence;
         const backendCompleteElapsed = voiceAtBackendComplete?.requestSequence === requestSequence
             ? performance.now() - voiceAtBackendComplete.startedAt
@@ -1764,7 +1922,8 @@ const finishMicrophoneTurn = async () => {
         const voice = activeVoiceEvidence;
         if (voice?.requestSequence === requestSequence) {
             voice.responseComplete = true;
-            if (authorizedDeliveredParts.size > 0 && result.reply.trim().length <= 16_000)
+            if ((authorizedDeliveredParts.size > 0 || serverDeliveredSpeechObserved)
+                && result.reply.trim().length <= 16_000)
                 completedAuthorizedReply = result.reply.trim();
             await maybeFinalizeProviderPlayback(voice);
             if (voice.audioStartedEvidence) {
@@ -1782,7 +1941,7 @@ const finishMicrophoneTurn = async () => {
     }
     catch (error) {
         if (!finishAccepted) {
-            await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence).catch(() => undefined);
+            await apiEvidenceJson("/api/voice/input/cancel", {}, requestSequence, sessionSequence).catch(() => undefined);
         }
         if (activeVoiceEvidence?.requestSequence === attemptedRequestSequence)
             activeVoiceEvidence = null;
@@ -1796,8 +1955,10 @@ const finishMicrophoneTurn = async () => {
         resetMicrophoneUpload();
         voiceRequestInFlight = false;
         updateControls();
-        if (terminalStatus)
+        if (terminalStatus && sessionState.backend.session_state === "active"
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
             setStatus(terminalStatus.text, terminalStatus.kind);
+        }
     }
 };
 const toggleVoice = async () => {
@@ -1811,7 +1972,9 @@ const toggleVoice = async () => {
             }
             clearInterruptedAnswer();
             if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
-                await interruptAvatar();
+                if (!await interruptAvatar()) {
+                    throw new Error("PROVIDER_STOP_UNCONFIRMED");
+                }
             }
             await startMicrophone();
         }
@@ -1819,7 +1982,9 @@ const toggleVoice = async () => {
     catch (error) {
         stopMicrophoneCapture();
         await cancelMicrophoneInput();
-        setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+        if (sessionState.backend.session_state === "active") {
+            setStatus(error instanceof Error ? error.message : "Ошибка микрофона", "error");
+        }
     }
 };
 const speak = async () => {
@@ -1850,8 +2015,10 @@ const speak = async () => {
     finally {
         textRequestInFlight = false;
         updateControls();
-        if (terminalStatus)
+        if (terminalStatus && sessionState.backend.session_state === "active"
+            && locallyFencedSessionSequence !== evidenceSessionSequence) {
             setStatus(terminalStatus.text, terminalStatus.kind);
+        }
     }
 };
 const interruptAvatar = async (recordEvidence = true) => {
@@ -1865,6 +2032,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             silentFrames: 0,
         };
     }
+    setLocalAudioMuted(true);
     const playbackId = sessionState.playbackId;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
         ? playbackId !== null
@@ -1874,6 +2042,7 @@ const interruptAvatar = async (recordEvidence = true) => {
         && activeClientControl?.interrupt === true
         && playbackReady;
     const preparedInterrupt = activeClientControl?.prepared_interrupt ?? null;
+    const providerStopRequired = providerPlaybackInFlight || voiceCommandScheduler.hasPendingPlayback;
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     providerPlaybackInFlight = false;
@@ -1881,9 +2050,18 @@ const interruptAvatar = async (recordEvidence = true) => {
         ? dispatchClientCommand(preparedInterrupt)
         : null;
     try {
+        if (providerStopRequired && !clientReady) {
+            await api("/api/avatar/interrupt", sessionEndRequest());
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
+        }
         const canonicalStop = voiceRequestInFlight
-            ? api("/api/avatar/interrupt", {})
+            ? api("/api/avatar/interrupt", sessionEndRequest())
             : null;
+        void canonicalStop?.catch(() => undefined);
         if (fastProviderStop) {
             await fastProviderStop;
             if (canonicalStop)
@@ -1908,7 +2086,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             return true;
         }
         if (!voiceRequestInFlight) {
-            await api("/api/avatar/interrupt", {});
+            await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
             updateControls();
             await refreshSessionEvidence();
@@ -1919,7 +2097,29 @@ const interruptAvatar = async (recordEvidence = true) => {
     }
     catch (error) {
         interruptEvidenceWatch = null;
-        setStatus(error instanceof Error ? error.message : "Ошибка прерывания", "error");
+        broadcastSessionEgressFence();
+        closePeerTransport();
+        let cleanupFailed = false;
+        try {
+            await api("/api/session/revoke", sessionEndRequest());
+        }
+        catch {
+            cleanupFailed = true;
+        }
+        if (cleanupFailed) {
+            setStatus("PROVIDER_STOP_UNCONFIRMED: canonical cleanup pending", "error");
+            await waitForCanonicalTerminal(new Set(["revoked", "closed"]), 45_000);
+        }
+        else {
+            await syncStatus().catch(() => undefined);
+        }
+        const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+        const cause = error instanceof Error ? error.message : "PROVIDER_STOP_UNCONFIRMED";
+        setStatus(!canonicalRevoked
+            ? `PROVIDER_STOP_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+            : cleanupFailed
+                ? `PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+                : `PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED: ${cause}`, "error");
         updateControls();
         return false;
     }
@@ -1936,14 +2136,26 @@ const interruptAndOfferResume = async () => {
         ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
         : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
             ? 0
-            : performance.now() - voice.startedAt - voice.audioStartedElapsed;
+            : voice.audibleDurationMillis;
     const offset = replaying ? resumeFromIndex : 0;
     const interrupted = await interruptAvatar();
     resumedSpeechStartedAt = null;
     if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-        offerInterruptedAnswer(sentences, elapsed, offset);
-        setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-            + "Точное слово остановки D-ID не сообщает.", "ready");
+        try {
+            if (resumeSourceRequest === null)
+                throw new Error("RESUME_SOURCE_UNAVAILABLE");
+            await api("/api/avatar/confirm-interruption", {
+                request_sequence: resumeSourceRequest,
+            });
+            offerInterruptedAnswer(sentences, elapsed, offset);
+            setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+                + "Точное слово остановки D-ID не сообщает.", "ready");
+        }
+        catch (error) {
+            clearInterruptedAnswer();
+            setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
+                : "Продолжение не подтверждено сервером.", "error");
+        }
     }
     else {
         clearInterruptedAnswer();
@@ -1959,17 +2171,38 @@ const resumeInterruptedAnswer = async () => {
         return;
     }
     const index = Number(resumeAnswerFrom.value);
-    const text = replayTextFrom(interruptedAnswerSentences, index);
+    const manualCursorOffset = resumeCursorEdited
+        ? resumeWordOffset(resumeAnswerCursor.value, resumeAnswerCursor.selectionStart)
+        : null;
+    const text = manualCursorOffset === null
+        ? replayTextFrom(interruptedAnswerSentences, index)
+        : Array.from(resumeAnswerCursor.value).slice(manualCursorOffset).join("").trim();
     if (!text) {
         setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
         return;
     }
     resumeAnswerButton.disabled = true;
+    let prepared = null;
     try {
-        await dispatchClientCommand({
-            route: { kind: "live_kit_text_topic", topic: "did.speak" },
-            payload: JSON.stringify({ script: { type: "text", input: text, should_queue_speaks: true } }),
+        if (resumeSourceRequest === null)
+            throw new Error("RESUME_SOURCE_UNAVAILABLE");
+        prepared = await api("/api/avatar/resume-answer", {
+            request_sequence: resumeSourceRequest,
+            sentence_index: index,
+            ...(manualCursorOffset !== null ? { character_offset: manualCursorOffset } : {}),
         });
+        await syncStatus();
+        if (sessionState.backend.session_state !== "active") {
+            throw new Error("INVALID_STATE_TRANSITION");
+        }
+        setLocalAudioMuted(false);
+        if (prepared.client_command !== null) {
+            await dispatchClientCommand(prepared.client_command);
+            await api("/api/avatar/client-delivery-sent", {
+                evidence_turn_sequence: prepared.evidence_turn_sequence,
+                evidence_output_sequence: prepared.evidence_output_sequence,
+            });
+        }
         resumeFromIndex = index;
         resumedSpeechStartedAt = performance.now();
         providerPlaybackInFlight = true;
@@ -1978,23 +2211,55 @@ const resumeInterruptedAnswer = async () => {
             + "Это повторная отправка текста, а не подтверждение полного playback.", "ready");
     }
     catch (error) {
+        if (prepared !== null) {
+            closePeerTransport();
+            let cleanupFailed = false;
+            try {
+                await api("/api/session/revoke", sessionEndRequest());
+            }
+            catch {
+                cleanupFailed = true;
+            }
+            await syncStatus().catch(() => undefined);
+            const canonicalRevoked = ["revoked", "closed"].includes(sessionState.backend.session_state);
+            const cause = error instanceof Error ? error.message : "RESUME_DELIVERY_UNCONFIRMED";
+            setStatus(!canonicalRevoked
+                ? `RESUME_DELIVERY_UNCONFIRMED_REVOKE_FAILED: ${cause}`
+                : cleanupFailed
+                    ? `RESUME_DELIVERY_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING: ${cause}`
+                    : `RESUME_DELIVERY_UNCONFIRMED_SESSION_REVOKED: ${cause}`, "error");
+            updateControls();
+            return;
+        }
         setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
     }
     updateControls();
 };
 const endSession = async (kind) => {
-    const connectionEvidenceError = await tryFlushConnectionMediaEvidence();
-    if (rt0EvidenceMode && connectionEvidenceError && kind === "close") {
-        setStatus(`Connection evidence flush: ${connectionEvidenceError.message}`, "error");
+    if (!sessionEndRequest().expected_session_sequence) {
+        closePeerTransport();
+        setStatus("SESSION_GENERATION_UNKNOWN: завершение отклонено для защиты другой сессии", "error");
         return;
     }
-    if (kind === "close" && rt0EvidenceMode && pendingAvSyncEvidence) {
+    broadcastSessionEgressFence();
+    closePeerTransport();
+    let fenceError = null;
+    if (kind === "close") {
+        try {
+            await api("/api/session/fence", sessionEndRequest());
+        }
+        catch (error) {
+            fenceError = error instanceof Error ? error : new Error("CANONICAL_FENCE_FAILED");
+        }
+    }
+    const connectionEvidenceError = kind === "revoke"
+        ? null : fenceError ?? await tryFlushConnectionMediaEvidence();
+    if (kind === "close" && !fenceError && rt0EvidenceMode && pendingAvSyncEvidence) {
         setStatus("RT0 evidence: завершаю ограниченный сбор A/V-sync перед закрытием…", "idle");
         await pendingAvSyncEvidence.catch(() => undefined);
     }
-    closePeerTransport();
     try {
-        await api(`/api/session/${kind}`, {});
+        await api(`/api/session/${kind}`, sessionEndRequest());
         await syncStatus();
         await refreshSessionEvidence();
         if (kind === "revoke") {
@@ -2005,7 +2270,9 @@ const endSession = async (kind) => {
         else {
             try {
                 await downloadSessionEvidence();
-                setStatus("Сессия закрыта. Evidence snapshot сохранён.", "idle");
+                setStatus(connectionEvidenceError
+                    ? `Сессия закрыта. Evidence snapshot сохранён. Connection evidence incomplete: ${connectionEvidenceError.message}`
+                    : "Сессия закрыта. Evidence snapshot сохранён.", connectionEvidenceError ? "error" : "idle");
             }
             catch (exportError) {
                 setStatus(exportError instanceof Error
@@ -2025,15 +2292,18 @@ const endSession = async (kind) => {
 const closeBackendOnUnload = () => {
     if (!backendSessionPresent() || !csrfToken)
         return;
+    if (!sessionEndRequest().expected_session_sequence)
+        return;
+    broadcastSessionEgressFence();
+    closePeerTransport();
     void runtimeFetch("/api/session/close", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrfToken },
-        body: "{}",
+        body: JSON.stringify(sessionEndRequest()),
         credentials: "same-origin",
         cache: "no-store",
         keepalive: true,
     }).catch(() => undefined);
-    closePeerTransport();
 };
 audienceSelect.addEventListener("change", () => {
     if (audienceSelect.value === "visitor" && !ownerCaptureReviewed) {
@@ -2051,6 +2321,9 @@ connectButton.addEventListener("click", () => void connectAvatar());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
+resumeAnswerCursor.addEventListener("mouseup", () => { resumeCursorEdited = true; });
+resumeAnswerCursor.addEventListener("keyup", () => { resumeCursorEdited = true; });
+resumeAnswerFrom.addEventListener("change", () => { resumeCursorEdited = false; });
 revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());

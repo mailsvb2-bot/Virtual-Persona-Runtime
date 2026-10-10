@@ -25,6 +25,36 @@ pub fn request_sequence(request: &Request) -> Result<u64, LabEvidenceError> {
         .ok_or(LabEvidenceError::InvalidInput)
 }
 
+/// Require an exact browser-observed session generation on all voice I/O.
+/// A request sequence is only unique within one session; it cannot authorize
+/// upload, cancellation or event consumption after a new session starts.
+pub fn require_active_voice_session(
+    request: &Request,
+    state: &AppState,
+) -> Result<u64, HttpResponse> {
+    let sequence = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("X-VPR-Session-Sequence"))
+        .map(|header| header.value.as_str())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| error_response(400, "INVALID_INPUT"))?;
+    require_voice_session_sequence(state, sequence)?;
+    Ok(sequence)
+}
+
+/// Verifies the epoch a second time after potentially blocking I/O.
+pub fn require_voice_session_sequence(state: &AppState, sequence: u64) -> Result<(), HttpResponse> {
+    if sequence == 0
+        || state.active_session_sequence.load(Ordering::Acquire) != sequence
+        || state.session_end_requested.load(Ordering::Acquire)
+    {
+        return Err(error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    Ok(())
+}
+
 pub fn snapshot(
     recorder: &Mutex<LabSessionEvidenceRecorder>,
 ) -> Result<LabSessionEvidenceSnapshot, LabEvidenceError> {
@@ -185,7 +215,7 @@ impl MediaRecordError {
                     | Rt0ReasonCode::AuthScopeDenied,
                 ),
             ) => 403,
-            Self::Lab(LabError::InvalidInput) => 400,
+            Self::Lab(LabError::InvalidInput | LabError::SpeechNotRecognized) => 400,
             Self::Lab(LabError::InvalidState | LabError::Runtime(_)) => 409,
             Self::Lab(LabError::Provider(Rt0ReasonCode::BudgetExhausted)) => 402,
             Self::Lab(LabError::Provider(Rt0ReasonCode::ProviderRateLimited)) => 429,
@@ -221,18 +251,27 @@ pub fn record_media(
         .lock()
         .record_media(input)
         .map_err(MediaRecordError::Evidence)?;
-    if input.kind == LabMediaEvidenceKind::AudioStarted {
-        engine
+    if matches!(
+        input.kind,
+        LabMediaEvidenceKind::AudioStarted | LabMediaEvidenceKind::VideoReady
+    ) {
+        let mut runtime = engine
             .lock()
-            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
-            .mark_voice_ready_from_media()
-            .map_err(MediaRecordError::Lab)?;
-    } else if input.kind == LabMediaEvidenceKind::VideoReady {
-        engine
-            .lock()
-            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?
-            .mark_video_ready_from_media()
-            .map_err(MediaRecordError::Lab)?;
+            .map_err(|_| MediaRecordError::Lab(LabError::Internal))?;
+        // After an early Close fence, previously observed media can still be
+        // recorded without reviving a revoked Persona preparation state.
+        // Readiness promotion is only meaningful for an active session.
+        if runtime.status().session_state == "active" {
+            if input.kind == LabMediaEvidenceKind::AudioStarted {
+                runtime
+                    .mark_voice_ready_from_media()
+                    .map_err(MediaRecordError::Lab)?;
+            } else {
+                runtime
+                    .mark_video_ready_from_media()
+                    .map_err(MediaRecordError::Lab)?;
+            }
+        }
     }
     Ok(())
 }
@@ -260,9 +299,13 @@ pub const fn error_status(error: LabEvidenceError) -> u16 {
     }
 }
 
+/// Sole owner of a voice turn's busy flag. A terminal stream can release
+/// ownership explicitly before waking clients; Drop must never release the
+/// flag a second time after another turn has acquired it.
 pub struct VoiceBusyGuard<'a> {
     busy: &'a AtomicBool,
     cancel_requested: &'a AtomicBool,
+    released: bool,
 }
 
 impl<'a> VoiceBusyGuard<'a> {
@@ -270,14 +313,23 @@ impl<'a> VoiceBusyGuard<'a> {
         Self {
             busy,
             cancel_requested,
+            released: false,
         }
+    }
+
+    pub fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        self.cancel_requested.store(false, Ordering::Release);
+        self.busy.store(false, Ordering::Release);
     }
 }
 
 impl Drop for VoiceBusyGuard<'_> {
     fn drop(&mut self) {
-        self.cancel_requested.store(false, Ordering::Release);
-        self.busy.store(false, Ordering::Release);
+        self.release();
     }
 }
 

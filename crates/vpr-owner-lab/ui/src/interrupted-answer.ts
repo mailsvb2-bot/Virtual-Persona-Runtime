@@ -43,7 +43,10 @@ export const resumeSentences = (parts: string[]): string[] => {
 // D-ID LiveKit does not expose a timestamp linked to a spoken word.
 export const suggestedResumeSentence = (sentences: string[], heardMillis: number): number => {
   if (sentences.length === 0 || !Number.isFinite(heardMillis)) return 0;
-  const conservativeCharacters = Math.max(0, heardMillis / 1000 * 6 - 60);
+  // Estimate from the actually audible portion, not time spent waiting for the LLM.
+  // A small overlap is safer than the historic 60-character rewind (which
+  // restarted most short answers at the beginning).
+  const conservativeCharacters = Math.max(0, heardMillis / 1000 * 11 - 16);
   let passed = 0;
   let selected = 0;
   for (let index = 0; index < sentences.length - 1; index += 1) {
@@ -58,4 +61,15 @@ export const replayTextFrom = (sentences: string[], index: number): string | nul
   if (!Number.isInteger(index) || index < 0 || index >= sentences.length) return null;
   const text = sentences.slice(index).join(" ").trim();
   return text.length > 0 && text.length <= 16_000 ? text : null;
+};
+
+// Map a user-selected caret into a safe Unicode word boundary of the exact
+// normalized reply retained by the server. Never send reply text as authority.
+export const resumeWordOffset = (reply: string, utf16Cursor: number): number | null => {
+  if (!Number.isInteger(utf16Cursor) || utf16Cursor < 0 || utf16Cursor >= reply.length) return null;
+  let cursor = utf16Cursor;
+  while (cursor > 0 && !/[\s.,!?…:;—–()«»]/u.test(reply[cursor - 1] ?? "")) {
+    cursor -= 1;
+  }
+  return Array.from(reply.slice(0, cursor)).length;
 };

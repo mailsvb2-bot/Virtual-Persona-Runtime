@@ -54,6 +54,8 @@ pub enum LabMediaEvidenceKind {
     ProviderEventParseFailed,
     ProviderPlaybackDoneReceived,
     PlaybackRecoveryTriggered,
+    /// Browser media analyser observed the audible tail; this is NOT a provider EOS receipt.
+    BrowserAudioTailObserved,
     PlaybackCompleted,
     InterruptionStopped,
     ReconnectRestored,
@@ -82,6 +84,7 @@ impl LabMediaEvidenceKind {
                 | Self::ProviderEventParseFailed
                 | Self::ProviderPlaybackDoneReceived
                 | Self::PlaybackRecoveryTriggered
+                | Self::BrowserAudioTailObserved
                 | Self::PlaybackCompleted
                 | Self::InterruptionStopped
         )
