@@ -1,15 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde::de::DeserializeOwned;
 use vpr_integration::{
-    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
+    CancellationProbe, ProviderDescriptor, ProviderError,
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
     RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcSessionDescription, build_provider_http_client, read_bounded_provider_body,
+    WebRtcSessionDescription, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -21,6 +20,7 @@ mod echo_pcm;
 mod echo_python;
 mod protocol;
 mod provider_error;
+mod response_json;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
@@ -36,6 +36,7 @@ use provider_error::{
     cancelled, expect_success, invalid_response, map_transport_error, policy_denied, unavailable,
     validate_audio_url, validate_endpoint,
 };
+use response_json::decode_json_response;
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -314,24 +315,18 @@ impl DidAgentStreamsAvatar {
     }
 }
 
-fn decode_json_response<T: DeserializeOwned>(
-    response: Response,
-    cancellation: Option<&dyn CancellationProbe>,
-) -> Result<T, ProviderError> {
-    let body = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
-    serde_json::from_slice(&body).map_err(|_| invalid_response())
-}
-
 impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     fn descriptor(&self) -> ProviderDescriptor {
         self.config.descriptor()
     }
 
     fn capabilities(&self) -> RealtimeAvatarCapabilities {
-        RealtimeAvatarCapabilities::new([
-            RealtimeAvatarCapability::TextInput,
-            RealtimeAvatarCapability::AudioUrlInput,
-        ])
+        let audio_input = if self.echo_backend.is_some() {
+            RealtimeAvatarCapability::AudioPcmInput
+        } else {
+            RealtimeAvatarCapability::AudioUrlInput
+        };
+        RealtimeAvatarCapabilities::new([RealtimeAvatarCapability::TextInput, audio_input])
     }
 
     fn create_session(

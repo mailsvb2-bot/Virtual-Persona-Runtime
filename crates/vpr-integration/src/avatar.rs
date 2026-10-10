@@ -108,6 +108,8 @@ impl Debug for RealtimeAvatarSession {
 pub enum RealtimeAvatarCapability {
     TextInput,
     AudioUrlInput,
+    /// Accepts private PCM created through the canonical TTS execution permit.
+    AudioPcmInput,
     Interrupt,
 }
 

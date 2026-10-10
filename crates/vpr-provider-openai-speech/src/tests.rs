@@ -206,3 +206,16 @@ fn descriptor_does_not_expose_secret() {
     assert_eq!(descriptor.model, "model-x");
     assert_eq!(descriptor.representation.as_deref(), Some("voice-x"));
 }
+
+#[test]
+fn configured_wire_compatible_tts_reports_its_actual_provider_identity() {
+    let config = OpenAiSpeechConfig::new(
+        "http://127.0.0.1:8897/v1/audio/speech",
+        "secret",
+        "metrotrance-qwen",
+        "local",
+    )
+    .with_provider_name("metrotrance-qwen");
+    assert_eq!(config.descriptor().provider, "metrotrance-qwen");
+    assert_eq!(OpenAiSpeechTts::new(config).unwrap().descriptor().provider, "metrotrance-qwen");
+}

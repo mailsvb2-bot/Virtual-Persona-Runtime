@@ -14,6 +14,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct OpenAiSpeechConfig {
     endpoint: String,
     api_key: String,
+    provider_name: String,
     model: String,
     voice: String,
     timeout: Duration,
@@ -30,10 +31,18 @@ impl OpenAiSpeechConfig {
         Self {
             endpoint: endpoint.into(),
             api_key: api_key.into(),
+            provider_name: "openai-speech".to_owned(),
             model: model.into(),
             voice: voice.into(),
             timeout: DEFAULT_TIMEOUT,
         }
+    }
+
+    /// Preserve the actual selected provider identity over a compatible HTTP wire protocol.
+    #[must_use]
+    pub fn with_provider_name(mut self, name: impl Into<String>) -> Self {
+        self.provider_name = name.into();
+        self
     }
 
     #[must_use]
@@ -45,7 +54,7 @@ impl OpenAiSpeechConfig {
     #[must_use]
     pub fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
-            provider: "openai-speech".to_owned(),
+            provider: self.provider_name.clone(),
             model: self.model.clone(),
             representation: Some(self.voice.clone()),
         }
@@ -64,7 +73,10 @@ impl OpenAiSpeechTts {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: OpenAiSpeechConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        if config.model.trim().is_empty() || config.voice.trim().is_empty() {
+        if config.provider_name.trim().is_empty()
+            || config.model.trim().is_empty()
+            || config.voice.trim().is_empty()
+        {
             return Err(invalid_response());
         }
         let client = build_provider_http_client(config.timeout)
