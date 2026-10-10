@@ -9,7 +9,7 @@ use vpr_domain::{
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
-    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription, TtsPort,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -144,6 +144,7 @@ pub struct OwnerLabEngine {
     provider: Arc<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
+    tts: Option<Box<dyn TtsPort>>,
     session: Option<ActiveSession>,
     avatar: Option<RealtimeAvatarHandle>,
     session_audience: Option<LabSessionAudience>,
@@ -171,6 +172,7 @@ impl OwnerLabEngine {
             provider: Arc::from(provider),
             stt: None,
             llm: None,
+            tts: None,
             session: None,
             avatar: None,
             session_audience: None,
