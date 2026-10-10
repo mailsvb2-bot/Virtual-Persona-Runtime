@@ -447,6 +447,33 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         expect_success(response).map(|_| ())
     }
 
+    fn speak_pcm(
+        &self,
+        session: &RealtimeAvatarSession,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
+            || !self.echo_sessions.contains(&session.provider_session_id)?
+        {
+            return Err(policy_denied());
+        }
+        self.echo_backend
+            .as_ref()
+            .ok_or_else(policy_denied)?
+            .speak_pcm(
+                &session.provider_session_id,
+                pcm,
+                sample_rate_hz,
+                channels,
+                cancellation,
+            )
+    }
+
     fn speak_audio_url(
         &self,
         session: &RealtimeAvatarSession,
