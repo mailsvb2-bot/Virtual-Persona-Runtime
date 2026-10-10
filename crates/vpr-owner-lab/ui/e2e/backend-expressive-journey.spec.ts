@@ -316,5 +316,11 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
   expect(rejected.status()).toBe(409);
   const rejectedTurn = await submitOwnerTurn(request, csrf, 1, "Несанкционированный ответ");
   expect(rejectedTurn.ok()).toBeFalsy();
+  // A malicious or stale browser may bypass the LLM entirely and call the
+  // avatar endpoint directly. Revocation must fence that route too.
+  const directSpeak = await postJson(request, csrf, "/api/avatar/speak", {
+    text: "Прямая речь после отзыва доступа",
+  });
+  expect(directSpeak.status()).toBe(409);
   expect(await echoEvents(request)).toEqual(before);
 });
