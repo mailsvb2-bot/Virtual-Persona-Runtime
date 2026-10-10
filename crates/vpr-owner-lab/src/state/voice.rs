@@ -76,6 +76,20 @@ impl OwnerLabEngine {
     }
 
     #[must_use]
+    pub fn with_named_tts(mut self, name: String, tts: Box<dyn TtsPort>) -> Self {
+        self.tts_name = Some(name);
+        self.tts = Some(tts);
+        self
+    }
+
+    #[must_use]
+    pub fn with_tts_fallback(mut self, name: String, tts: Box<dyn TtsPort>) -> Self {
+        self.tts_fallback_name = Some(name);
+        self.tts_fallback = Some(tts);
+        self
+    }
+
+    #[must_use]
     pub fn with_llm(mut self, llm: Box<dyn LlmPort>) -> Self {
         self.llm = Some(llm);
         self
