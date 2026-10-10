@@ -134,12 +134,10 @@ impl ProviderBundle {
         })
     }
 }
-
 #[cfg(windows)]
 fn environment_provider_config_complete(require_voice: bool) -> bool {
     provider_config_complete_with(require_voice, optional_env)
 }
-
 #[cfg(any(windows, test))]
 fn provider_config_complete_with(
     require_voice: bool,
@@ -148,7 +146,6 @@ fn provider_config_complete_with(
     if !avatar_provider_config_complete_with(&mut get) {
         return false;
     }
-
     let stt = get("VPR_OWNER_LAB_STT_PROVIDER");
     let llm = get("VPR_OWNER_LAB_LLM_PROVIDER");
     if stt.is_none() && llm.is_none() && !require_voice {
@@ -157,7 +154,6 @@ fn provider_config_complete_with(
     if stt.is_none() || llm.is_none() {
         return false;
     }
-
     [
         "VPR_OWNER_LAB_STT_ENDPOINT",
         "VPR_OWNER_LAB_STT_API_KEY",
