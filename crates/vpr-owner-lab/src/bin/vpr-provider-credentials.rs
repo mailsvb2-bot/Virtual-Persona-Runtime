@@ -453,7 +453,8 @@ fn redact_identifier(value: &str) -> String {
 
 #[cfg(windows)]
 fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
-    presenter.eq_ignore_ascii_case("expressive") && echo_enabled != Some("true")
+    presenter.eq_ignore_ascii_case("expressive")
+        && !echo_enabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
 }
 
 #[cfg(all(test, windows))]
@@ -471,6 +472,8 @@ mod expressive_echo_preflight_tests {
             "expressive",
             Some("true")
         ));
+        assert!(!expressive_echo_preflight_denied("Expressive", Some(" True ")));
+        assert!(expressive_echo_preflight_denied("Expressive", Some(" false ")));
     }
 
     #[test]
