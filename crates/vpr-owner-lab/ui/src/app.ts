@@ -1400,6 +1400,14 @@ const handleProviderClientEvent = (raw: string): void => {
 };
 
 const dispatchClientCommand = async (command: ClientCommand): Promise<void> => {
+  // Expressive speech is owned by the server-only Echo sender. A browser
+  // command must never publish did.speak, even if an obsolete or malformed
+  // backend response accidentally requests it. This is defense-in-depth;
+  // provider token permissions must still be verified independently.
+  if (command.route.kind !== "web_rtc_data_channel"
+      && command.route.topic === "did.speak") {
+    throw new Error("BROWSER_SPEECH_EGRESS_DENIED");
+  }
   if (evidenceSessionSequence > 0
       && locallyFencedSessionSequence === evidenceSessionSequence) {
     throw new Error("SESSION_EGRESS_FENCED");
