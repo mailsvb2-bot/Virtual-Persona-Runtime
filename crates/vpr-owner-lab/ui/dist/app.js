@@ -1055,6 +1055,10 @@ const handleProviderClientEvent = (raw) => {
     });
 };
 const dispatchClientCommand = async (command) => {
+    if (command.route.kind !== "web_rtc_data_channel"
+        && command.route.topic === "did.speak") {
+        throw new Error("BROWSER_SPEECH_EGRESS_DENIED");
+    }
     if (evidenceSessionSequence > 0
         && locallyFencedSessionSequence === evidenceSessionSequence) {
         throw new Error("SESSION_EGRESS_FENCED");
