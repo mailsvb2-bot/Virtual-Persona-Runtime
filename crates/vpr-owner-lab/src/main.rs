@@ -10,6 +10,7 @@ mod http_references;
 mod http_security_tests;
 mod http_session;
 mod http_text;
+mod http_tts;
 mod http_voice;
 mod launch;
 
@@ -241,9 +242,7 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
-        "/tts-selector.js" => {
-            static_response(TTS_SELECTOR_JS, "text/javascript; charset=utf-8")
-        },
+        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, "text/javascript; charset=utf-8"),
         "/interrupted-answer.js" => {
             static_response(INTERRUPTED_ANSWER_JS, "text/javascript; charset=utf-8")
         }
@@ -285,9 +284,7 @@ fn route_request(
 ) -> HttpResponse {
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
-        (&Method::Get, "/api/tts/providers") => {
-            with_engine(state, |engine| json_response(200, &engine.tts_selection()))
-        }
+        (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
@@ -351,12 +348,6 @@ fn route_request(
         }
         _ => error_response(404, "NOT_FOUND"),
     }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TtsSelectBody {
-    provider: String,
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
@@ -436,19 +427,7 @@ fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpR
                 }),
             )
         }),
-        "/api/tts/select" => {
-            if state.voice_busy.load(Ordering::Acquire) {
-                Err(error_response(409, "VOICE_BUSY"))
-            } else {
-                parse_json::<TtsSelectBody>(request).and_then(|body| {
-                    reject_if_session_ending(state)?;
-                    with_engine_result(state, |engine| {
-                        engine.select_tts_provider(&body.provider)?;
-                        Ok(json_response(200, &engine.tts_selection()))
-                    })
-                })
-            }
-        },
+        "/api/tts/select" => http_tts::select(request, state),
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
         "/api/avatar/interrupt" => http_interrupt::interrupt_response(request, state),
