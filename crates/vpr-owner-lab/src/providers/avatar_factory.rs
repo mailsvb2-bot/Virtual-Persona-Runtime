@@ -84,10 +84,10 @@ fn build_did_avatar(
     let echo_settings = if echo_enabled {
         Some((
             required_value("VPR_DID_ECHO_PYTHON", None)?,
-            required_value("VPR_DID_ECHO_TTS_ENDPOINT", None)?,
-            required_value("VPR_DID_ECHO_TTS_API_KEY", None)?,
-            required_value("VPR_DID_ECHO_TTS_MODEL", None)?,
-            required_value("VPR_DID_ECHO_TTS_VOICE", None)?,
+            shared_voice_value("VPR_VOICE_ENGINE_ENDPOINT", "VPR_DID_ECHO_TTS_ENDPOINT")?,
+            shared_voice_value("VPR_VOICE_ENGINE_API_KEY", "VPR_DID_ECHO_TTS_API_KEY")?,
+            shared_voice_value("VPR_VOICE_ENGINE_MODEL", "VPR_DID_ECHO_TTS_MODEL")?,
+            shared_voice_value("VPR_VOICE_ENGINE_VOICE", "VPR_DID_ECHO_TTS_VOICE")?,
         ))
     } else {
         None
@@ -116,4 +116,20 @@ fn build_did_avatar(
             &backend_fingerprint,
         ),
     ))
+}
+
+
+/// The voice provider is selected once for the runtime rather than independently
+/// per avatar. Legacy Echo configuration is accepted during migration, but a
+/// conflict must fail closed instead of unpredictably choosing a voice.
+fn shared_voice_value(canonical: &str, legacy: &str) -> Result<String, String> {
+    let preferred = optional_env(canonical);
+    let old = optional_env(legacy);
+    match (preferred, old) {
+        (Some(value), Some(old_value)) if value != old_value => Err(format!(
+            "conflicting shared voice engine and legacy Echo setting for {canonical}"
+        )),
+        (Some(value), _) | (None, Some(value)) => Ok(value),
+        (None, None) => Err(format!("shared voice engine setting {canonical} is required")),
+    }
 }
