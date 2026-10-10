@@ -295,10 +295,16 @@ test("Expressive server Echo closes privately on session revoke", async ({ reque
   expect(turn.ok()).toBeTruthy();
   const revoke = await postJson(request, csrf, "/api/session/revoke", {});
   expect(revoke.ok()).toBeTruthy();
+  // Canonical revoke deliberately kills the private subprocess after the
+  // provider STOP receipt. A killed process cannot report a graceful LiveKit
+  // disconnect, so asserting that event would falsely require unsafe delay.
+  // The safety property is a confirmed STOP plus no further audio publication.
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
-    .toEqual(expect.arrayContaining(["private_echo_disconnected"]));
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+  const fenced = await echoEvents(request);
   const blocked = await submitOwnerTurn(request, csrf, 2, "Запрещённая речь после отзыва");
   expect(blocked.ok()).toBeFalsy();
+  expect(await echoEvents(request)).toEqual(fenced);
 });
 
 test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
