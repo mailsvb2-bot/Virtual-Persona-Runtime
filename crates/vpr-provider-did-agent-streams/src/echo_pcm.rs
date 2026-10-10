@@ -2,7 +2,8 @@
 //! Never accepts text, tokens, provider selection or browser-originated audio.
 use std::fmt::Write as _;
 use serde_json::{Value, json};
-use vpr_integration::{ProviderError, ProviderErrorKind};
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession, RealtimeAvatarTransport};
+use super::{DidAgentStreamsAvatar, provider_error::policy_denied};
 
 /// Encodes a bounded, already-authorized PCM16 buffer for the private worker.
 ///
@@ -34,4 +35,32 @@ fn invalid_response() -> ProviderError {
         kind: ProviderErrorKind::InvalidResponse,
         retryable: false,
     }
+}
+
+pub(crate) fn send_private_pcm(
+    adapter: &DidAgentStreamsAvatar,
+    session: &RealtimeAvatarSession,
+    pcm: &[u8],
+    sample_rate_hz: u32,
+    channels: u16,
+    cancellation: &dyn CancellationProbe,
+) -> Result<(), ProviderError> {
+    DidAgentStreamsAvatar::ensure_active(cancellation)?;
+    DidAgentStreamsAvatar::validate_session(session)?;
+    if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
+        || !adapter.echo_sessions.contains(&session.provider_session_id)?
+    {
+        return Err(policy_denied());
+    }
+    adapter
+        .echo_backend
+        .as_ref()
+        .ok_or_else(policy_denied)?
+        .speak_pcm(
+            &session.provider_session_id,
+            pcm,
+            sample_rate_hz,
+            channels,
+            cancellation,
+        )
 }
