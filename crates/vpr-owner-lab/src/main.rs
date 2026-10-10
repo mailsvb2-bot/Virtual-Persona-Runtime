@@ -149,7 +149,15 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         engine = engine.with_stt(stt);
     }
     if let Some(tts) = providers.tts.take() {
-        engine = engine.with_tts(tts);
+        let name = providers.tts_name.take().ok_or("missing TTS provider name")?;
+        engine = engine.with_named_tts(name, tts);
+    }
+    if let Some(tts) = providers.tts_fallback.take() {
+        let name = providers
+            .tts_fallback_name
+            .take()
+            .ok_or("missing alternate TTS provider name")?;
+        engine = engine.with_tts_fallback(name, tts);
     }
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
@@ -273,6 +281,9 @@ fn route_request(
 ) -> HttpResponse {
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
+        (&Method::Get, "/api/tts/providers") => {
+            with_engine(state, |engine| json_response(200, &engine.tts_selection()))
+        }
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
@@ -336,6 +347,12 @@ fn route_request(
         }
         _ => error_response(404, "NOT_FOUND"),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TtsSelectBody {
+    provider: String,
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
@@ -415,6 +432,19 @@ fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpR
                 }),
             )
         }),
+        "/api/tts/select" => {
+            if state.voice_busy.load(Ordering::Acquire) {
+                Err(error_response(409, "VOICE_BUSY"))
+            } else {
+                parse_json::<TtsSelectBody>(request).and_then(|body| {
+                    reject_if_session_ending(state)?;
+                    with_engine_result(state, |engine| {
+                        engine.select_tts_provider(&body.provider)?;
+                        Ok(json_response(200, &engine.tts_selection()))
+                    })
+                })
+            }
+        },
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
         "/api/avatar/interrupt" => http_interrupt::interrupt_response(request, state),
