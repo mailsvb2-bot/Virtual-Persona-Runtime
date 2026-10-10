@@ -8,10 +8,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use vpr_integration::{CancellationProbe, GeneratedAudioBuffer, PcmSampleFormat, ProviderError, TtsPort, TtsRequest};
+use vpr_integration::{CancellationProbe, ProviderError, TtsPort};
 
 use super::{DidEchoBackend, cancelled, invalid_response, unavailable};
 
@@ -283,41 +282,6 @@ impl EchoPythonBackend {
         self
     }
 
-    fn encode_private_wav(&self, text: &str, cancellation: &dyn CancellationProbe) -> Result<String, ProviderError> {
-        let tts = self.tts.as_ref().ok_or_else(unavailable)?;
-        let mut output = GeneratedAudioBuffer::default();
-        tts.synthesize(&TtsRequest { text: text.to_owned(), locale_hint: None }, cancellation, &mut output)?;
-        if cancellation.is_cancelled() { return Err(cancelled()); }
-        let rate = output.sample_rate_hz().ok_or_else(invalid_response)?;
-        let channels = output.channels().ok_or_else(invalid_response)?;
-        if output.sample_format() != Some(PcmSampleFormat::S16Le)
-            || !(8_000..=96_000).contains(&rate)
-            || !(1..=2).contains(&channels)
-            || output.pcm().is_empty()
-            || output.pcm().len() > 8 * 1024 * 1024 - 44
-            || output.duration_millis().is_none_or(|ms| ms > 60_000)
-        {
-            return Err(invalid_response());
-        }
-        let byte_len = u32::try_from(output.pcm().len()).map_err(|_| invalid_response())?;
-        let block_align = channels.checked_mul(2).ok_or_else(invalid_response)?;
-        let bytes_per_sec = rate.checked_mul(u32::from(block_align)).ok_or_else(invalid_response)?;
-        let mut wav = Vec::with_capacity(44 + output.pcm().len());
-        wav.extend_from_slice(b"RIFF");
-        wav.extend_from_slice(&(36 + byte_len).to_le_bytes());
-        wav.extend_from_slice(b"WAVEfmt ");
-        wav.extend_from_slice(&16_u32.to_le_bytes());
-        wav.extend_from_slice(&1_u16.to_le_bytes());
-        wav.extend_from_slice(&channels.to_le_bytes());
-        wav.extend_from_slice(&rate.to_le_bytes());
-        wav.extend_from_slice(&bytes_per_sec.to_le_bytes());
-        wav.extend_from_slice(&block_align.to_le_bytes());
-        wav.extend_from_slice(&16_u16.to_le_bytes());
-        wav.extend_from_slice(b"data");
-        wav.extend_from_slice(&byte_len.to_le_bytes());
-        wav.extend_from_slice(output.pcm());
-        Ok(STANDARD.encode(wav))
-    }
 
     fn worker(&self, id: &str) -> Result<Arc<SessionWorker>, ProviderError> {
         self.sessions
@@ -374,7 +338,8 @@ impl DidEchoBackend for EchoPythonBackend {
         let worker = self.worker(session_id)?;
         // Produce audio via the common TtsPort before entering the private
         // sender queue. STOP may fence the session during this operation.
-        let wav_base64 = self.encode_private_wav(text, cancellation)?;
+        let tts = self.tts.as_ref().ok_or_else(unavailable)?;
+        let wav_base64 = super::echo_voice::encode_private_wav(tts.as_ref(), text, cancellation)?;
         let result = worker.request(
             json!({"command": "speak", "audio_wav_base64": wav_base64}),
             SPEECH_TIMEOUT,
