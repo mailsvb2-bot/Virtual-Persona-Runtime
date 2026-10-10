@@ -122,7 +122,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         launch::print_usage();
         return Ok(());
     }
-
     let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
     let egress_enabled = launch::resolve_egress_enabled(&launch_options, egress_env.as_deref());
     let rt0_evidence_mode = match env::var("VPR_OWNER_LAB_RT0_EVIDENCE") {
@@ -141,7 +140,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .unwrap_or(DEFAULT_PORT);
     let mut providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
-
     let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
         .map_err(|_| "owner-lab runtime initialization failed")?;
     if let Some(llm) = providers.llm.take() {
@@ -176,7 +174,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             );
         }
     }
-
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         rt0_evidence_mode,
@@ -226,7 +223,6 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
         return;
     }
-
     let method = request.method().clone();
     let path = request.url().to_owned();
     let response = if method == Method::Get {
