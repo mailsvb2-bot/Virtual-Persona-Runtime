@@ -355,6 +355,50 @@ impl DidEchoBackend for EchoPythonBackend {
         result
     }
 
+    fn speak_pcm(
+        &self,
+        session_id: &str,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        if pcm.is_empty()
+            || pcm.len() > 8 * 1024 * 1024 - 44
+            || !matches!(channels, 1 | 2)
+            || !(8_000..=96_000).contains(&sample_rate_hz)
+            || pcm.len() % (usize::from(channels) * 2) != 0
+        {
+            return Err(invalid_response());
+        }
+        use std::fmt::Write as _;
+        let mut encoded = String::with_capacity(pcm.len() * 2);
+        for byte in pcm {
+            write!(&mut encoded, "{byte:02x}").map_err(|_| invalid_response())?;
+        }
+        let worker = self.worker(session_id)?;
+        let result = worker.request(
+            json!({"command":"pcm","pcm_hex":encoded,"sample_rate_hz":sample_rate_hz,"channels":channels}),
+            SPEECH_TIMEOUT,
+            Some(cancellation),
+            false,
+        );
+        if result.is_err() {
+            worker.mark_stopped()?;
+            if worker
+                .request(json!({"command":"interrupt"}), INTERRUPT_TIMEOUT, None, true)
+                .is_err()
+            {
+                let _ = worker.terminate();
+                return Err(unavailable());
+            }
+        }
+        result
+    }
+
     fn interrupt(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
         let result = worker.request(
