@@ -1345,6 +1345,7 @@ dependencies = [
 name = "vpr-owner-lab"
 version = "0.1.0"
 dependencies = [
+ "vpr-provider-openai-speech",
  "getrandom 0.3.4",
  "keyring",
  "parking_lot",
@@ -1400,6 +1401,7 @@ dependencies = [
 name = "vpr-provider-did-agent-streams"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "reqwest",
  "serde",
  "serde_json",
