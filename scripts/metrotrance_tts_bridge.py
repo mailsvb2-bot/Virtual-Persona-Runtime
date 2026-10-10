@@ -65,9 +65,11 @@ def make_synthesizer(checkout: Path, engine: str):
     return synthesize
 
 
-def make_handler(token: str, synthesizer):
+def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen"):
     if not token or len(token) < 24:
         raise ValueError("VPR_METROTRANCE_TTS_TOKEN must contain at least 24 characters")
+    if provider_id not in ("metrotrance-qwen", "metrotrance-chatterbox"):
+        raise ValueError("unsupported local TTS provider")
 
     inference_slot = threading.BoundedSemaphore(value=1)
 
@@ -100,6 +102,8 @@ def make_handler(token: str, synthesizer):
                 phrase = payload.get("input")
                 if not isinstance(phrase, str) or not phrase.strip() or len(phrase.encode("utf-8")) > MAX_TEXT:
                     return self.send_error_code(400, "invalid_input")
+                if payload.get("model") not in (None, provider_id):
+                    return self.send_error_code(400, "provider_mismatch")
                 if payload.get("response_format", "wav") != "wav":
                     return self.send_error_code(400, "wav_required")
                 # Never queue unbounded callers behind a slow GPU/CPU inference.
@@ -133,7 +137,7 @@ def main():
     if not root:
         raise SystemExit("METROTRANCE_ROOT is required")
     synth = make_synthesizer(Path(root), engine)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, synth))
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, synth, provider_id="metrotrance-" + engine))
     print(f"MetroTrance local TTS listening at http://127.0.0.1:{port}/v1/audio/speech", flush=True)
     try:
         server.serve_forever()
