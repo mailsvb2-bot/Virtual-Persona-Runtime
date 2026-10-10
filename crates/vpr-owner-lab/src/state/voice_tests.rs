@@ -9,9 +9,11 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
+    PcmSampleFormat, ProviderDescriptor, ProviderError,
     ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
+    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, TtsPort,
+    TtsRequest, UsageEvidence,
     WebRtcIceServer, WebRtcSessionDescription,
 };
 
@@ -26,6 +28,10 @@ struct VoiceStats {
     stt: AtomicUsize,
     llm: AtomicUsize,
     avatar_text: AtomicUsize,
+    avatar_pcm: AtomicUsize,
+    avatar_creates: AtomicUsize,
+    tts_qwen: AtomicUsize,
+    tts_chatterbox: AtomicUsize,
     contexts: Mutex<Vec<String>>,
 }
 
@@ -46,6 +52,7 @@ impl RealtimeAvatarPort for VoiceAvatar {
         &self,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
+        self.stats.avatar_creates.fetch_add(1, Ordering::SeqCst);
         Ok(RealtimeAvatarSession {
             provider_resource_id: "stream".into(),
             provider_session_id: "session".into(),
@@ -91,6 +98,21 @@ impl RealtimeAvatarPort for VoiceAvatar {
             return Err(cancelled());
         }
         self.stats.avatar_text.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn speak_pcm(
+        &self,
+        _session: &RealtimeAvatarSession,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() || pcm.is_empty() || sample_rate_hz != 16_000 || channels != 1 {
+            return Err(cancelled());
+        }
+        self.stats.avatar_pcm.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -492,3 +514,72 @@ fn cancelled() -> ProviderError {
         retryable: false,
     }
 }
+
+struct TestCanonicalTts {
+    stats: Arc<VoiceStats>,
+    qwen: bool,
+}
+
+impl TtsPort for TestCanonicalTts {
+    fn descriptor(&self) -> ProviderDescriptor {
+        descriptor(if self.qwen { "metrotrance-qwen" } else { "metrotrance-chatterbox" })
+    }
+
+    fn synthesize(
+        &self,
+        _request: &TtsRequest,
+        cancellation: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        if self.qwen {
+            self.stats.tts_qwen.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.stats.tts_chatterbox.fetch_add(1, Ordering::SeqCst);
+        }
+        sink.push_generated_audio(&[0_u8; 320], 16_000, 1, PcmSampleFormat::S16Le)?;
+        Ok(UsageEvidence::default())
+    }
+}
+
+#[test]
+fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine
+        .with_named_tts(
+            "metrotrance-qwen".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: true,
+            }),
+        )
+        .with_tts_fallback(
+            "metrotrance-chatterbox".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: false,
+            }),
+        );
+    let first = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    engine
+        .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
+        .unwrap();
+    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
+    let second = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    engine
+        .acknowledge_voice_playback(second.evidence_turn_sequence, second.evidence_output_sequence)
+        .unwrap();
+    engine.select_tts_provider("metrotrance-qwen").unwrap();
+    let third = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    engine
+        .acknowledge_voice_playback(third.evidence_turn_sequence, third.evidence_output_sequence)
+        .unwrap();
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 2);
+    assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 3);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_creates.load(Ordering::SeqCst), 1);
+}
+
