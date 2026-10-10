@@ -4,6 +4,7 @@ use vpr_provider_did_agent_streams::{
     DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,
 };
 use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
 
 use super::{
     ProviderCredentialProfile, ProviderDescriptor, RealtimeAvatarPort, descriptor, optional_env,
@@ -96,7 +97,18 @@ fn build_did_avatar(
         backend_fingerprint.extend([tts_endpoint.as_str(), model.as_str(), voice.as_str()]);
         let config = EchoPythonConfig::new(python, tts_endpoint, tts_key, model, voice)
             .map_err(|_| "D-ID Echo TTS configuration rejected".to_string())?;
-        provider.with_echo_backend(Arc::new(EchoPythonBackend::new(config)))
+        // One provider-neutral TTS authority synthesizes audio server-side.
+        // Echo transports only the resulting WAV; it does not invoke its own TTS.
+        let tts = OpenAiSpeechTts::new(OpenAiSpeechConfig::new(
+            tts_endpoint.clone(),
+            tts_key.clone(),
+            model.clone(),
+            voice.clone(),
+        ))
+        .map_err(|_| "shared voice engine configuration rejected".to_string())?;
+        provider.with_echo_backend(Arc::new(
+            EchoPythonBackend::new(config).with_tts_port(Arc::new(tts)),
+        ))
     } else {
         provider
     };
