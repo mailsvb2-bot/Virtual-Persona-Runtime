@@ -240,7 +240,7 @@ fn build_tts_configured(
     }
     Ok((
         provider,
-        descriptor("tts", name, &model, &[&endpoint, &model, &voice]),
+        descriptor("tts", name, model, &[endpoint, model, voice]),
     ))
 }
 
