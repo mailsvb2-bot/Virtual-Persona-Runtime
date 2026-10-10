@@ -1,7 +1,6 @@
 //! Explicitly enabled, backend-only `LiveKit` Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -389,21 +388,10 @@ impl DidEchoBackend for EchoPythonBackend {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        if pcm.is_empty()
-            || pcm.len() > 8 * 1024 * 1024 - 44
-            || !matches!(channels, 1 | 2)
-            || !(8_000..=96_000).contains(&sample_rate_hz)
-            || pcm.len() % (usize::from(channels) * 2) != 0
-        {
-            return Err(invalid_response());
-        }
-        let mut encoded = String::with_capacity(pcm.len() * 2);
-        for byte in pcm {
-            write!(&mut encoded, "{byte:02x}").map_err(|_| invalid_response())?;
-        }
+        let payload = super::echo_pcm::pcm_payload(pcm, sample_rate_hz, channels)?;
         let worker = self.worker(session_id)?;
         let result = worker.request(
-            json!({"command":"pcm","pcm_hex":encoded,"sample_rate_hz":sample_rate_hz,"channels":channels}),
+            payload,
             SPEECH_TIMEOUT,
             Some(cancellation),
             false,
