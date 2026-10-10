@@ -222,7 +222,6 @@ impl SessionWorker {
         }
         Ok(worker)
     }
-
     fn request(
         &self,
         mut payload: Value,
@@ -269,13 +268,11 @@ impl SessionWorker {
             }
         }
     }
-
     fn mark_stopped(&self) -> Result<(), ProviderError> {
         let _enqueue = self.enqueue_gate.lock().map_err(|_| unavailable())?;
         self.stopped.store(true, Ordering::Release);
         Ok(())
     }
-
     fn terminate(&self) -> Result<(), ProviderError> {
         self.mark_stopped()?;
         let mut child = self.child.lock().map_err(|_| unavailable())?;
@@ -286,7 +283,6 @@ impl SessionWorker {
         Ok(())
     }
 }
-
 impl EchoPythonBackend {
     #[must_use]
     pub fn new(config: EchoPythonConfig) -> Self {
@@ -295,7 +291,6 @@ impl EchoPythonBackend {
             sessions: Mutex::new(HashMap::new()),
         }
     }
-
     fn worker(&self, id: &str) -> Result<Arc<SessionWorker>, ProviderError> {
         self.sessions
             .lock()
@@ -305,7 +300,6 @@ impl EchoPythonBackend {
             .ok_or_else(unavailable)
     }
 }
-
 impl DidEchoBackend for EchoPythonBackend {
     fn open(
         &self,
@@ -335,7 +329,6 @@ impl DidEchoBackend for EchoPythonBackend {
         sessions.insert(session_id.to_owned(), worker);
         Ok(())
     }
-
     fn speak(
         &self,
         session_id: &str,
@@ -376,7 +369,6 @@ impl DidEchoBackend for EchoPythonBackend {
         }
         result
     }
-
     fn speak_pcm(
         &self,
         session_id: &str,
@@ -408,7 +400,6 @@ impl DidEchoBackend for EchoPythonBackend {
         }
         result
     }
-
     fn interrupt(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
         let result = worker.request(
@@ -430,7 +421,6 @@ impl DidEchoBackend for EchoPythonBackend {
         }
         result
     }
-
     fn stop(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
         let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
@@ -459,7 +449,6 @@ impl DidEchoBackend for EchoPythonBackend {
         // this publisher. A second STOP must reproduce the SAME result.
         interrupted.and(terminated)
     }
-
     fn forget(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
         let _stop = worker.stop_gate.lock().map_err(|_| unavailable())?;
@@ -471,7 +460,6 @@ impl DidEchoBackend for EchoPythonBackend {
         Ok(())
     }
 }
-
 impl Drop for EchoPythonBackend {
     fn drop(&mut self) {
         if let Ok(sessions) = self.sessions.get_mut() {
@@ -482,7 +470,6 @@ impl Drop for EchoPythonBackend {
         }
     }
 }
-
 #[cfg(all(test, unix))]
 mod bounded_stop_tests {
     use super::*;
