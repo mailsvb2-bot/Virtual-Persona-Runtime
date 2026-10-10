@@ -340,6 +340,16 @@ fn probe_profile_did(
     match provider.probe_runtime_access_detailed() {
         Ok(DidRuntimeAccessProbe::Presenter(presenter)) => {
             println!("D-ID credential probe: OK (presenter={presenter})");
+            // A credential probe is not a realtime-session readiness probe.
+            // Expressive V2 requires a private, server-owned Echo sender.
+            // Do not let the launcher report READY then show a black avatar.
+            if expressive_echo_preflight_denied(&presenter, env::var("VPR_DID_ECHO_ENABLED").ok().as_deref())
+            {
+                return Err(
+                    "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID credentials are valid, but this Expressive presenter cannot open a secure session without server-owned Echo. The current credential profile contains only D-ID/Deepgram/DeepSeek, not a voice provider. The launcher must not claim avatar readiness. Configure server-owned Echo with a voice service; do not disable the revocation guard."
+                        .into(),
+                );
+            }
             Ok(())
         }
         Ok(DidRuntimeAccessProbe::LegacyStreamFallback) => {
@@ -439,4 +449,42 @@ fn redact_identifier(value: &str) -> String {
     let prefix: String = chars.iter().take(4).collect();
     let suffix: String = chars.iter().rev().take(4).rev().collect();
     format!("{prefix}…{suffix}")
+}
+
+#[cfg(windows)]
+fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
+    presenter.eq_ignore_ascii_case("expressive")
+        && !echo_enabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
+}
+
+#[cfg(all(test, windows))]
+mod expressive_echo_preflight_tests {
+    use super::expressive_echo_preflight_denied;
+
+    #[test]
+    fn expressive_without_private_echo_is_rejected_before_ui_launch() {
+        assert!(expressive_echo_preflight_denied("expressive", None));
+        assert!(expressive_echo_preflight_denied(
+            "Expressive",
+            Some("false")
+        ));
+        assert!(!expressive_echo_preflight_denied(
+            "expressive",
+            Some("true")
+        ));
+        assert!(!expressive_echo_preflight_denied(
+            "Expressive",
+            Some(" True ")
+        ));
+        assert!(expressive_echo_preflight_denied(
+            "Expressive",
+            Some(" false ")
+        ));
+    }
+
+    #[test]
+    fn legacy_presenters_remain_compatible_without_echo() {
+        assert!(!expressive_echo_preflight_denied("legacy", None));
+        assert!(!expressive_echo_preflight_denied("talk", None));
+    }
 }
