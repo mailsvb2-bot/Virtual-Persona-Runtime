@@ -1,4 +1,6 @@
-use super::{LabError, LabSessionAudience, OwnerLabEngine};
+use std::sync::Arc;
+use vpr_runtime::RealtimeAvatarStopHandle;
+use super::{LabError, LabSessionAudience, OwnerLabEngine, LabVoicePlaybackRegistry};
 
 impl OwnerLabEngine {
     /// Lists configured server-owned TTS routes without disclosing credentials.
@@ -28,6 +30,20 @@ impl OwnerLabEngine {
         std::mem::swap(&mut self.tts, &mut self.tts_fallback);
         std::mem::swap(&mut self.tts_name, &mut self.tts_fallback_name);
         Ok(())
+    }
+
+    /// Returns an isolated stop-only capability only for a server-owned
+    /// `LiveKit` avatar. No arbitrary content publisher is copied to the caller.
+    #[must_use]
+    pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
+        self.avatar
+            .as_ref()
+            .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
+    }
+
+    #[must_use]
+    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
+        self.voice_playback.clone()
     }
 
 }
