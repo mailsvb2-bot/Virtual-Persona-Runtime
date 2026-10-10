@@ -4,6 +4,7 @@ Only LiveKit and the paid TTS function are fake. The actual Python worker,
 stream_bytes topic/attributes, generation cancellation, and STOP loop execute.
 """
 import asyncio
+import base64
 import importlib.util
 import io
 import json
@@ -94,14 +95,17 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    def synthesize(text):
+    def decode_audio(value):
+        wav = module.__original_decode_audio(value)
+        text = words[value]
         if tts_latency is not None:
             time.sleep(tts_latency(text))
         elif not delay_after_speak:
             time.sleep(0.12)
-        return b"RIFF" + text.encode("utf-8")
+        return wav
 
-    module.synthesize = synthesize
+    module.__original_decode_audio = module.decode_audio
+    module.decode_audio = decode_audio
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
         Room=FakeRoom,
@@ -119,12 +123,36 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
         {"id": 2, "command": "interrupt"},
         {"id": 3, "command": "close"},
     ]
+    # Test input stays human-readable; the real worker receives only
+    # pre-synthesized private WAV from the shared TtsPort.
+    def wav_for(phrase):
+        pcm = phrase.encode("utf-8")
+        pcm += b"\\x00" * ((-len(pcm)) % 2)
+        output = io.BytesIO()
+        with __import__("wave").open(output, "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(16000)
+            writer.writeframes(pcm)
+        return base64.b64encode(output.getvalue()).decode("ascii")
+
+    words = {}
+    input_records = records if records is not None else default_records
+    transformed = []
+    for original in input_records:
+        record = dict(original)
+        if record.get("command") == "speak":
+            phrase = record.pop("text")
+            encoded = wav_for(phrase)
+            words[encoded] = phrase
+            record["audio_wav_base64"] = encoded
+        transformed.append(record)
     FakeRoom.instances.clear()
     FakeRoom.close_latency = close_latency
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
-             for record in (records if records is not None else default_records)],
+             for record in transformed],
             delay_after_speak, delay_before_close,
         )
         sys.stdout = response
