@@ -155,6 +155,39 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 1 and item["ok"] for item in receipts))
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
+    def test_canonical_pcm_is_published_as_private_wav_without_worker_tts(self):
+        pcm = b"\\x00\\x00" * 160
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "pcm", "pcm_hex": pcm.hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 2, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, delay_before_close=0.15)
+        self.assertTrue(any(item["id"] == 1 and item["ok"] for item in receipts))
+        audio = b"".join(trace["audio"])
+        self.assertTrue(audio.startswith(b"RIFF"))
+        self.assertEqual(trace["stream_options"][0]["topic"], "did.audio-stream")
+        with __import__("wave").open(io.BytesIO(audio), "rb") as wav:
+            self.assertEqual(wav.getframerate(), 16000)
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.readframes(160), pcm)
+
+    def test_invalid_pcm_never_reaches_private_publisher(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "pcm", "pcm_hex": "00",
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 2, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records)
+        self.assertFalse(trace["audio"])
+        self.assertTrue(any(item["id"] == 1 and not item["ok"] for item in receipts))
+
     def test_immediate_revoke_discards_unspoken_generation(self):
         trace, receipts = run_worker(False)
         self.assertFalse(trace["audio"], "revoked utterance must not publish audio")
