@@ -50,6 +50,38 @@ Then open `http://127.0.0.1:8787`. `VPR_OWNER_LAB_PORT` is an optional override.
 D-ID and `local-open-source` are peer adapters behind the same `RealtimeAvatarPort`; neither is canonical Persona or Appearance identity, and no adapter may silently take over when another provider is selected.
 
 
+### Shared voice engine configuration (RT0 integration)
+
+The runtime already defines the provider-neutral `TtsPort` and has OpenAI Speech
+and ElevenLabs adapters. D-ID Echo's private sender can now use the **shared**
+OpenAI-compatible WAV speech endpoint configuration. Avatar viewers do not
+configure a voice, download Python or receive a TTS API key; the operator
+configures the voice service once on the backend:
+
+```text
+VPR_VOICE_ENGINE_ENDPOINT=https://speech.example.com/v1/audio/speech
+VPR_VOICE_ENGINE_API_KEY=<server-only credential>
+VPR_VOICE_ENGINE_MODEL=<speech model>
+VPR_VOICE_ENGINE_VOICE=<reviewed voice>
+VPR_DID_ECHO_ENABLED=true
+VPR_DID_ECHO_PYTHON=<server Python with LiveKit RTC>
+```
+
+The selected service must implement the OpenAI-style `POST` body with
+`input`, `model`, `voice`, `response_format: "wav"`, returning bounded
+PCM WAV. A locally hosted compatible service can be addressed via loopback
+HTTP; a remote service requires HTTPS. The older `VPR_DID_ECHO_TTS_*` variables
+remain supported, but if both old and new values exist and disagree, startup
+fails closed rather than picking a different voice silently.
+
+This is **one backend voice configuration**, not a claim that the existing
+D-ID integration has already switched to the general `TtsPort` scheduler.
+The provider-neutral TTS adapters are available for future avatar transports.
+Before promoting RT0, measure naturalness, time to first audible word, A/V
+alignment, interruption and continuation on real D-ID. The shared engine
+does not itself prove audible playback completion or remove provider charges.
+Do not ask end users to configure the voice service.
+
 ### Opt-in D-ID Echo: private LiveKit audio sender (experimental)
 
 The default Expressive/browser `did.speak` path is unchanged. To test the server-owned Echo transport instead, use a D-ID **v4 expressive** agent and explicitly enable all of these process-scoped settings in addition to the usual D-ID, STT/LLM, consent and egress configuration:
