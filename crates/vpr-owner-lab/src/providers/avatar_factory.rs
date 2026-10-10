@@ -122,7 +122,7 @@ fn build_did_avatar(
 /// The voice provider is selected once for the runtime rather than independently
 /// per avatar. Legacy Echo configuration is accepted during migration, but a
 /// conflict must fail closed instead of unpredictably choosing a voice.
-fn shared_voice_value(canonical: &str, legacy: &str) -> Result<String, String> {
+fn shared_voice_value(canonical: &'static str, legacy: &'static str) -> Result<String, String> {
     resolve_shared_voice_value(canonical, optional_env(canonical), optional_env(legacy))
 }
 
