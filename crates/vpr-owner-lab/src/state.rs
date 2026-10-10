@@ -428,7 +428,16 @@ impl OwnerLabEngine {
                 if text.trim().is_empty() {
                     return Err(LabError::InvalidInput);
                 }
-                turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &text)
+                if let Some(tts) = self.tts.as_deref() {
+                    turn.speak_realtime_avatar_text_with_tts(
+                        tts,
+                        self.provider.as_ref(),
+                        handle,
+                        &text,
+                    )
+                } else {
+                    turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &text)
+                }
             }
             OwnerLabTurnInput::AudioUrl(url) => {
                 if url.trim().is_empty() {
