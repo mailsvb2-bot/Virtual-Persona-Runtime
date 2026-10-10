@@ -1,6 +1,7 @@
 //! Explicitly enabled, backend-only `LiveKit` Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -396,7 +397,6 @@ impl DidEchoBackend for EchoPythonBackend {
         {
             return Err(invalid_response());
         }
-        use std::fmt::Write as _;
         let mut encoded = String::with_capacity(pcm.len() * 2);
         for byte in pcm {
             write!(&mut encoded, "{byte:02x}").map_err(|_| invalid_response())?;
