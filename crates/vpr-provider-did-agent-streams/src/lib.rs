@@ -420,12 +420,18 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         if text.trim().is_empty() {
             return Err(invalid_response());
         }
-        if self.echo_sessions.contains(&session.provider_session_id)? {
-            let backend = self.echo_backend.as_ref().ok_or_else(unavailable)?;
+        if matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. }) {
+            // A stale, closed or forged LiveKit session must never fall through
+            // to legacy D-ID speaking. Echo is the sole authorized speech
+            // route for Expressive, even after its sender is revoked.
+            if !self.echo_sessions.contains(&session.provider_session_id)? {
+                return Err(policy_denied());
+            }
+            let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
             return backend.speak(&session.provider_session_id, text, cancellation);
         }
-        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
-            return Err(unavailable());
+        if self.echo_backend.is_some() {
+            return Err(policy_denied());
         }
         let response = self
             .authorized(
