@@ -345,7 +345,7 @@ for required in (
     '"audio_stream_opened"',
     '"audio_bytes_written"',
     '"provider_stop_sent"',
-    '"private_echo_disconnected"',
+    'expect(await echoEvents(request)).toEqual(fenced);',
     '"/api/session/revoke"',
 ):
     if required not in expressive_e2e:
