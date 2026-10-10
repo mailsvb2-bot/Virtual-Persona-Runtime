@@ -63,6 +63,12 @@ class SpeechBridgeContract(unittest.TestCase):
         self.assertEqual(self.post(payload={"input": "x", "response_format": "mp3"})[0], 400)
         self.assertEqual(self.phrases, [])
 
+    def test_non_object_json_is_client_error_not_provider_failure(self):
+        for payload in (None, [], "hello", 5):
+            status, _, _ = self.post(payload=payload)
+            self.assertEqual(status, 400)
+        self.assertEqual(self.phrases, [])
+
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
             module.make_handler("abc", lambda _: WAV)
