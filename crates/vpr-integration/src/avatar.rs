@@ -229,6 +229,26 @@ pub trait RealtimeAvatarPort: Send + Sync {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError>;
 
+    /// Sends PCM16 created by a separately authorized backend TTS turn.
+    /// Implementations must not perform any hidden text-to-speech synthesis.
+    /// Unsupported providers fail closed rather than falling back to text.
+    ///
+    /// # Errors
+    /// Returns a typed denial for unsupported audio publication or stale authority.
+    fn speak_pcm(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _pcm: &[u8],
+        _sample_rate_hz: u32,
+        _channels: u16,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
     /// Sends an externally hosted audio asset for avatar rendering.
     ///
     /// # Errors
