@@ -472,8 +472,14 @@ mod expressive_echo_preflight_tests {
             "expressive",
             Some("true")
         ));
-        assert!(!expressive_echo_preflight_denied("Expressive", Some(" True ")));
-        assert!(expressive_echo_preflight_denied("Expressive", Some(" false ")));
+        assert!(!expressive_echo_preflight_denied(
+            "Expressive",
+            Some(" True ")
+        ));
+        assert!(expressive_echo_preflight_denied(
+            "Expressive",
+            Some(" false ")
+        ));
     }
 
     #[test]
