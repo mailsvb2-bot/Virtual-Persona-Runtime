@@ -79,20 +79,25 @@ fn build_did_avatar(
         DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone()).with_fluent(fluent),
     )
     .map_err(|_| "D-ID provider configuration rejected".to_string())?;
-    let echo_enabled = resolved_bool("VPR_DID_ECHO_ENABLED", None, false)?;
+    let pcm_tts_enabled = optional_env("VPR_OWNER_LAB_TTS_PROVIDER").is_some();
+    let echo_enabled = resolved_bool("VPR_DID_ECHO_ENABLED", None, pcm_tts_enabled)?;
+    if pcm_tts_enabled && !echo_enabled {
+        return Err("canonical TTS requires server-owned D-ID Echo; do not disable Echo".into());
+    }
     let mut backend_fingerprint = vec![endpoint.as_str(), agent_id.as_str()];
-    let echo_settings = if echo_enabled {
-        Some((
-            required_value("VPR_DID_ECHO_PYTHON", None)?,
-            required_value("VPR_DID_ECHO_TTS_ENDPOINT", None)?,
-            required_value("VPR_DID_ECHO_TTS_API_KEY", None)?,
-            required_value("VPR_DID_ECHO_TTS_MODEL", None)?,
-            required_value("VPR_DID_ECHO_TTS_VOICE", None)?,
-        ))
-    } else {
-        None
-    };
-    let provider = if let Some((python, tts_endpoint, tts_key, model, voice)) = &echo_settings {
+    let provider = if echo_enabled && pcm_tts_enabled {
+        let python = resolved_value("VPR_DID_ECHO_PYTHON", None)
+            .unwrap_or_else(|| "python".to_owned());
+        let config = EchoPythonConfig::pcm_only(python)
+            .map_err(|_| "PCM-only D-ID Echo configuration rejected".to_string())?;
+        backend_fingerprint.push("runtime-tts-authorized-pcm");
+        provider.with_echo_backend(Arc::new(EchoPythonBackend::new(config)))
+    } else if echo_enabled {
+        let python = required_value("VPR_DID_ECHO_PYTHON", None)?;
+        let tts_endpoint = required_value("VPR_DID_ECHO_TTS_ENDPOINT", None)?;
+        let tts_key = required_value("VPR_DID_ECHO_TTS_API_KEY", None)?;
+        let model = required_value("VPR_DID_ECHO_TTS_MODEL", None)?;
+        let voice = required_value("VPR_DID_ECHO_TTS_VOICE", None)?;
         backend_fingerprint.extend([tts_endpoint.as_str(), model.as_str(), voice.as_str()]);
         let config = EchoPythonConfig::new(python, tts_endpoint, tts_key, model, voice)
             .map_err(|_| "D-ID Echo TTS configuration rejected".to_string())?;
