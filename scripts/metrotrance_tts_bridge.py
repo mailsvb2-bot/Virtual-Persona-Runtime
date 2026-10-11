@@ -89,7 +89,7 @@ def validate_echo_wav(data: bytes) -> bool:
 def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen"):
     if not token or len(token) < 24:
         raise ValueError("VPR_METROTRANCE_TTS_TOKEN must contain at least 24 characters")
-    if provider_id not in ("metrotrance-qwen", "metrotrance-chatterbox"):
+    if provider_id not in ("metrotrance-qwen", "metrotrance-chatterbox", "piper"):
         raise ValueError("unsupported local TTS provider")
 
     inference_slot = threading.BoundedSemaphore(value=1)
