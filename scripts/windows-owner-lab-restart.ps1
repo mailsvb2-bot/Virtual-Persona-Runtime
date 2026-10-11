@@ -61,17 +61,22 @@ function Assert-SafeToRestart {
 }
 
 function Stop-PortListener {
+    param([Parameter(Mandatory = $true)][string]$ExpectedExe)
+
     $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-    $pids = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)
-    foreach ($processId in $pids) {
-        if ($processId -and $processId -ne $PID) {
-            Write-Host "Stopping stale Owner Lab listener PID $processId on port $Port."
-            Stop-Process -Id $processId -Force -ErrorAction Stop
-        }
+    if ($listeners.Count -eq 0) {
+        return
     }
-    if ($pids.Count -gt 0) {
-        Wait-LabDown
+
+    # Never kill an unrelated service just because it occupies Owner Lab's port.
+    # This also rejects ambiguous/multiple listeners and unknown executable paths.
+    $listenerPid = Assert-ExpectedListener -ExpectedExe $ExpectedExe
+    if ($listenerPid -eq $PID) {
+        throw "Refusing to stop the current PowerShell process"
     }
+    Write-Host "Stopping verified stale Owner Lab listener PID $listenerPid on port $Port."
+    Stop-Process -Id $listenerPid -Force -ErrorAction Stop
+    Wait-LabDown
 }
 
 function Assert-ExpectedListener {
@@ -176,8 +181,9 @@ if ($Rt0Evidence) {
     }
 }
 
+$exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
 Assert-SafeToRestart
-Stop-PortListener
+Stop-PortListener -ExpectedExe $exe
 
 try {
 
@@ -195,7 +201,6 @@ try {
         Pop-Location
     }
 
-    $exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
     $credentialsExe = Join-Path $repoRoot 'target\debug\vpr-provider-credentials.exe'
     if (-not (Test-Path -LiteralPath $exe)) {
         throw "Owner Lab executable was not produced: $exe"
