@@ -55,6 +55,7 @@ const revokeButton = byId("revoke");
 const closeButton = byId("close");
 const voiceButton = byId("voice");
 const microphoneSelect = byId("microphone-device");
+const microphoneRefreshButton = byId("microphone-refresh");
 const microphoneLevel = byId("microphone-level");
 const microphoneLevelText = byId("microphone-level-text");
 const statusNode = byId("status");
@@ -84,6 +85,7 @@ const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
 let microphoneDeviceListenerInstalled = false;
+let microphoneSwitchGeneration = 0;
 let statusSyncTail = Promise.resolve();
 let peer = null;
 let liveKitRoom = null;
@@ -1529,6 +1531,8 @@ const cancelMicrophoneInput = async () => {
     resetMicrophoneUpload();
 };
 const stopMicrophoneCapture = () => {
+    microphoneSwitchGeneration += 1;
+    microphoneSelect.disabled = false;
     if (recordingTimer !== null)
         window.clearTimeout(recordingTimer);
     recordingTimer = null;
@@ -1662,6 +1666,82 @@ const microphoneCaptureError = (error) => {
             return new Error(`MIC_CAPTURE_FAILED:${error.name}`);
     }
 };
+const discoverMicrophones = async () => {
+    const devices = runtimeMediaDevices();
+    if (!devices?.getUserMedia) {
+        setStatus("Браузер не предоставляет доступ к микрофонам", "error");
+        return;
+    }
+    if (recording) {
+        await refreshMicrophoneDevices(microphoneSelect.value);
+        return;
+    }
+    microphoneRefreshButton.disabled = true;
+    try {
+        const permissionStream = await devices.getUserMedia({ audio: true });
+        try {
+            await refreshMicrophoneDevices(microphoneSelect.value || storedMicrophoneDeviceId());
+            setStatus("Микрофоны найдены. Выберите встроенный или системный.", "ready");
+        }
+        finally {
+            permissionStream.getTracks().forEach((track) => track.stop());
+        }
+    }
+    catch (error) {
+        const failure = microphoneCaptureError(error);
+        setStatus(`Список микрофонов: ${failure.message}`, "error");
+    }
+    finally {
+        microphoneRefreshButton.disabled = false;
+    }
+};
+const switchRecordingMicrophone = async (selectedDeviceId) => {
+    rememberMicrophoneDeviceId(selectedDeviceId);
+    if (!recording || !micStream || !micSource || !micWorklet || !audioContext)
+        return;
+    const devices = runtimeMediaDevices();
+    if (!devices?.getUserMedia)
+        return;
+    const generation = ++microphoneSwitchGeneration;
+    const previousStream = micStream;
+    const previousSource = micSource;
+    const previousId = previousStream.getAudioTracks()[0]?.getSettings().deviceId ?? "";
+    microphoneSelect.disabled = true;
+    let replacementStream = null;
+    try {
+        replacementStream = await devices.getUserMedia({
+            audio: {
+                ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+                channelCount: 1, sampleRate: 16_000,
+                echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+            },
+        });
+        if (generation !== microphoneSwitchGeneration || !recording
+            || micStream !== previousStream || !audioContext || !micWorklet)
+            return;
+        const nextSource = audioContext.createMediaStreamSource(replacementStream);
+        nextSource.connect(micWorklet);
+        previousSource.disconnect();
+        micStream = replacementStream;
+        micSource = nextSource;
+        replacementStream = null;
+        previousStream.getTracks().forEach((track) => track.stop());
+        await refreshMicrophoneDevices(selectedDeviceId);
+        setStatus("Микрофон переключён без прерывания текущей реплики", "ready");
+    }
+    catch (error) {
+        if (generation === microphoneSwitchGeneration && recording) {
+            await refreshMicrophoneDevices(previousId);
+            const failure = microphoneCaptureError(error);
+            setStatus(`Не удалось сменить микрофон: ${failure.message}`, "error");
+        }
+    }
+    finally {
+        replacementStream?.getTracks().forEach((track) => track.stop());
+        if (generation === microphoneSwitchGeneration)
+            microphoneSelect.disabled = false;
+    }
+};
 const startMicrophone = async () => {
     const mediaDevices = runtimeMediaDevices();
     if (!mediaDevices?.getUserMedia)
@@ -1678,12 +1758,9 @@ const startMicrophone = async () => {
                 autoGainControl: true,
             },
         });
-        const activeDeviceId = micStream.getAudioTracks()[0]?.getSettings().deviceId ?? selectedDeviceId;
-        await refreshMicrophoneDevices(activeDeviceId);
-        if (activeDeviceId) {
-            microphoneSelect.value = activeDeviceId;
-            rememberMicrophoneDeviceId(activeDeviceId);
-        }
+        await refreshMicrophoneDevices(selectedDeviceId);
+        if (selectedDeviceId)
+            rememberMicrophoneDeviceId(selectedDeviceId);
     }
     catch (error) {
         throw microphoneCaptureError(error);
@@ -2328,8 +2405,9 @@ revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
-    rememberMicrophoneDeviceId(microphoneSelect.value.trim());
+    void switchRecordingMicrophone(microphoneSelect.value.trim());
 });
+microphoneRefreshButton.addEventListener("click", () => void discoverMicrophones());
 window.addEventListener("pagehide", closeBackendOnUnload);
 void api("/api/bootstrap")
     .then(async (bootstrap) => {
