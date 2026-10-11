@@ -64,11 +64,19 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   });
   await installTransportFakes(page);
   try {
-    await page.goto("/", { waitUntil: "load", timeout: 20_000 });
+    // "load" waits for EVERY static script and subresource. On an overloaded CI
+    // runner an otherwise usable Owner Lab can remain stuck at that browser
+    // milestone even while its bootstrap and canonical API path are healthy.
+    // Check that the real app executes and finishes bootstrap instead.
+    await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
+    await expect(
+      page.locator("#status"),
+      "Owner Lab must run its JavaScript and finish backend bootstrap",
+    ).not.toHaveText("Загрузка…", { timeout: 20_000 });
   } catch (error) {
     throw new Error(
-      `Owner Lab page failed to load; pending=${JSON.stringify([...pending])}; ` +
-      `failed=${JSON.stringify(failed)}; navigation=${String(error)}`,
+      `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
+      `failed=${JSON.stringify(failed)}; readiness=${String(error)}`,
     );
   }
 
