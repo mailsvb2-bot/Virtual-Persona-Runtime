@@ -312,6 +312,7 @@ let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
 let greetingRequestedSequence = 0;
+let greetingPlaybackPending = false;
 // This fence is a same-origin, same-browser fast path, NOT a provider-atomic
 // substitute for a backend-owned LiveKit sender and receiver-only token.
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
@@ -1204,6 +1205,7 @@ const greetAfterFirstVideoFrame = async (): Promise<void> => {
       || greetingRequestedSequence === sequence || textRequestInFlight
       || voiceRequestInFlight || recording) return;
   greetingRequestedSequence = sequence;
+  greetingPlaybackPending = true;
   const generation = voiceDeliveryGeneration;
   providerPlaybackInFlight = true;
   if (rt0EvidenceMode) rt0PlaybackPending = true;
@@ -1223,6 +1225,7 @@ const greetAfterFirstVideoFrame = async (): Promise<void> => {
     const stopped = await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest())
       .then(() => true, () => false);
     providerPlaybackInFlight = false;
+    greetingPlaybackPending = false;
     rt0PlaybackPending = false;
     if (!stopped) {
       broadcastSessionEgressFence();
@@ -1352,7 +1355,8 @@ const updateControls = (): void => {
     || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
   voiceButton.disabled = recording
     ? false
-    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
+    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
+      || (strictPlaybackBlocked && !greetingPlaybackPending);
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
@@ -1600,6 +1604,7 @@ const closePeerTransport = (): void => {
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
   rt0PlaybackPending = false;
+  greetingPlaybackPending = false;
   providerPlaybackInFlight = false;
   stopMicrophoneCapture();
   stopRemoteEvidence();
@@ -1899,6 +1904,7 @@ const connectAvatar = async (): Promise<void> => {
   connectionEvidenceFailure = null;
   evidenceSessionSequence = 0;
   greetingRequestedSequence = 0;
+  greetingPlaybackPending = false;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
   setStatus("Создаю защищённую сессию…");
@@ -2548,14 +2554,16 @@ const toggleVoice = async (): Promise<void> => {
     if (recording) {
       await finishMicrophoneTurn();
     } else {
-      if (rt0EvidenceMode && rt0PlaybackPending) {
+      if (rt0EvidenceMode && rt0PlaybackPending && !greetingPlaybackPending) {
         throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
       }
       clearInterruptedAnswer();
-      if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
+      if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight
+          || greetingPlaybackPending) {
         if (!await interruptAvatar()) {
           throw new Error("PROVIDER_STOP_UNCONFIRMED");
         }
+        greetingPlaybackPending = false;
       }
       await startMicrophone();
     }
@@ -2746,6 +2754,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
       : voice.audibleDurationMillis;
   const offset = replaying ? resumeFromIndex : 0;
   const interrupted = await interruptAvatar();
+  if (interrupted) greetingPlaybackPending = false;
   resumedSpeechStartedAt = null;
   if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
     try {
