@@ -76,6 +76,7 @@ struct AppState {
     session_revocation: ParkingMutex<Option<SessionRevocationHandle>>,
     backend_stop: ParkingMutex<Option<RealtimeAvatarStopHandle>>,
     active_session_sequence: AtomicU64,
+    greeting_session_sequence: AtomicU64,
     evidence: ParkingMutex<LabSessionEvidenceRecorder>,
     evidence_export: http_evidence::EvidenceExportTracker,
     csrf_token: String,
@@ -176,6 +177,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         session_revocation: ParkingMutex::new(None),
         backend_stop: ParkingMutex::new(None),
         active_session_sequence: AtomicU64::new(0),
+        greeting_session_sequence: AtomicU64::new(0),
         evidence: ParkingMutex::new(evidence_recorder),
         evidence_export: http_evidence::EvidenceExportTracker::default(),
         csrf_token: generate_csrf_token()?,
@@ -385,6 +387,9 @@ fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpR
                     state
                         .active_session_sequence
                         .store(sequence, Ordering::Release);
+                    // Reset only on a successfully created, canonically
+                    // consented new session. Old tabs cannot greet this one.
+                    state.greeting_session_sequence.store(0, Ordering::Release);
                     state.voice_streams.clear();
                     Ok(json_response(200, &bundle))
                 })
