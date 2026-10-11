@@ -59,7 +59,11 @@ fn build_tts_configured(
         return Err("Piper requires model=piper and voice=local".into());
     }
     let provider: Box<dyn TtsPort> = match name {
-        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
+        "piper"
+        | "windows-sapi"
+        | "metrotrance-qwen"
+        | "metrotrance-chatterbox"
+        | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(
                 OpenAiSpeechConfig::new(
                     endpoint.to_owned(),
@@ -136,7 +140,12 @@ mod tests {
             "http://127.0.0.1:8897/other",
             "http://localhost:0/v1/audio/speech",
         ] {
-            for provider in ["piper", "windows-sapi", "metrotrance-qwen", "metrotrance-chatterbox"] {
+            for provider in [
+                "piper",
+                "windows-sapi",
+                "metrotrance-qwen",
+                "metrotrance-chatterbox",
+            ] {
                 let result = build_tts_configured(
                     provider,
                     endpoint,
@@ -168,13 +177,16 @@ mod tests {
         .unwrap();
         assert_eq!(tts.descriptor().provider, "windows-sapi");
         assert_eq!(descriptor.provider, "windows-sapi");
-        assert!(build_tts_configured(
-            "windows-sapi",
-            "http://127.0.0.1:8897/v1/audio/speech",
-            "private-token".into(),
-            "windows-sapi",
-            "speaker-custom",
-        ).is_err());
+        assert!(
+            build_tts_configured(
+                "windows-sapi",
+                "http://127.0.0.1:8897/v1/audio/speech",
+                "private-token".into(),
+                "windows-sapi",
+                "speaker-custom",
+            )
+            .is_err()
+        );
     }
 
     #[test]
