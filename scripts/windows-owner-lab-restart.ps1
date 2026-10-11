@@ -278,6 +278,8 @@ $exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
 Assert-SafeToRestart
 Stop-PortListener -ExpectedExe $exe
 
+$piperProcess = $null
+$labProcess = $null
 try {
 
     Push-Location $repoRoot
@@ -309,8 +311,26 @@ try {
     }
 
     $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
-    $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && set `"VPR_OWNER_LAB_RT0_EVIDENCE=$rt0EvidenceValue`" && `"$exe`" --allow-egress"
-    Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
+    if ($Piper) {
+        $env:VPR_PIPER_MODEL = $piperModel
+        $env:VPR_METROTRANCE_TTS_TOKEN = New-PiperPrivateToken
+        $env:VPR_METROTRANCE_TTS_PORT = '8897'
+        $env:VPR_OWNER_LAB_TTS_PROVIDER = 'piper'
+        $env:VPR_OWNER_LAB_TTS_ENDPOINT = 'http://127.0.0.1:8897/v1/audio/speech'
+        $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
+        $env:VPR_OWNER_LAB_TTS_MODEL = 'piper'
+        $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
+        $piperBridge = Join-Path $repoRoot 'scripts\piper_tts_bridge.py'
+        $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
+        Wait-PiperReady -Process $piperProcess
+        $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
+        $env:VPR_OWNER_LAB_PORT = [string]$Port
+        $env:VPR_OWNER_LAB_RT0_EVIDENCE = $rt0EvidenceValue
+        $labProcess = Start-Process -FilePath $exe -ArgumentList '--allow-egress' -WorkingDirectory $repoRoot -PassThru
+    } else {
+        $cmd = "set `"VPR_OWNER_LAB_ALLOW_EGRESS=true`" && set `"VPR_OWNER_LAB_PORT=$Port`" && set `"VPR_OWNER_LAB_RT0_EVIDENCE=$rt0EvidenceValue`" && `"$exe`" --allow-egress"
+        Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $cmd -WorkingDirectory $repoRoot | Out-Null
+    }
     Wait-LabUp
 
     $listenerPid = Assert-ExpectedListener -ExpectedExe $exe
@@ -335,6 +355,19 @@ try {
             Start-Process $baseUrl
         }
     }
-} catch {
-    throw
+    if ($Piper) {
+        Write-Host 'Piper-managed Owner Lab is running. Keep this window open until you finish.'
+        $labProcess.WaitForExit()
+    }
+} finally {
+    # Stop only the child started by this exact process handle; never a PID
+    # recovered from an untrusted file, nor a service owning somebody else's port.
+    if ($null -ne $piperProcess) {
+        try { if (-not $piperProcess.HasExited) { $piperProcess.Kill() } }
+        finally { $piperProcess.Close() }
+    }
+    if ($null -ne $labProcess) { $labProcess.Close() }
+    foreach ($secretVar in @('VPR_METROTRANCE_TTS_TOKEN', 'VPR_OWNER_LAB_TTS_API_KEY')) {
+        Remove-Item -Path "Env:$secretVar" -ErrorAction SilentlyContinue
+    }
 }
