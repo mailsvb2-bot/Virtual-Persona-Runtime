@@ -46,6 +46,7 @@ VOICE_URL = (
 MAX_MODEL_BYTES = 80 * 1024 * 1024
 MAX_CONFIG_BYTES = 32 * 1024
 PIPER_VERSION = "1.3.0"
+ECHO_LIVEKIT_VERSION = "1.1.19"
 
 
 def model_is_verified(path: Path) -> bool:
@@ -133,6 +134,24 @@ def provision_runtime(data_dir: Path) -> Path:
             "import importlib.metadata as m; import piper; "
             "assert m.version('piper-tts') == '1.3.0'",
         ], check=True)
+    # Private D-ID Echo runs as a separate worker process, but it needs the
+    # real LiveKit RTC SDK. Keep it in this isolated local runtime and verify
+    # the exact PCM byte-stream API before allowing an RT0 launch.
+    echo_probe = (
+        "import importlib.metadata as m; from livekit import rtc; "
+        f"assert m.version('livekit') == '{ECHO_LIVEKIT_VERSION}'; "
+        "assert hasattr(rtc.LocalParticipant, 'stream_bytes')"
+    )
+    echo_ready = subprocess.run(
+        [str(python), "-c", echo_probe],
+        check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+    if not echo_ready:
+        subprocess.run([
+            str(python), "-m", "pip", "install", "--disable-pip-version-check",
+            "--only-binary=:all:", "livekit==" + ECHO_LIVEKIT_VERSION,
+        ], check=True)
+        subprocess.run([str(python), "-c", echo_probe], check=True)
     return python
 
 
