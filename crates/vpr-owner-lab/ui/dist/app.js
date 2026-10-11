@@ -2305,9 +2305,7 @@ const interruptAndOfferResume = async () => {
     else {
         clearInterruptedAnswer();
         if (interrupted) {
-            setStatus(completedAuthorizedReply === null
-                ? "Ответ остановлен. Продолжение недоступно: сервер не подтвердил полный текст ответа."
-                : "Ответ остановлен. Продолжение недоступно: необходим подтверждённый исходный голосовой запрос.", "idle");
+            setStatus("Ответ остановлен. Продолжение недоступно: нет подтверждённого полного голосового ответа.", "idle");
         }
     }
     updateControls();
