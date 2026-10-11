@@ -332,6 +332,8 @@ try {
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
         $env:VPR_OWNER_LAB_TTS_MODEL = 'piper'
         $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
+        # Echo's private PCM sender must use the verified LiveKit interpreter.
+        $env:VPR_DID_ECHO_PYTHON = $piperPython
         $piperBridge = Join-Path $repoRoot 'scripts\piper_tts_bridge.py'
         $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
         Wait-PiperReady -Process $piperProcess
