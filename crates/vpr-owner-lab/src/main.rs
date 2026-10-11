@@ -139,7 +139,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
-    let mut providers = ProviderBundle::from_env(false)?;
+    let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
     let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
