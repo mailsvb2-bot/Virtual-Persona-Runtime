@@ -43,13 +43,19 @@ const csrfHeaders = (csrf: string) => ({
 });
 
 test("built UI drives the real Owner Lab backend and provider adapter", async ({ page, request }) => {
-  // Readiness of /api/bootstrap alone does not prove that the HTML and built
-  // modules can actually be served. Check the same assets consumed by the UI.
-  for (const path of ["/", "/styles.css", "/app.js", "/tts-selector.js",
-    "/evidence-export.js", "/reference-capture.js"]) {
-    const response = await request.get(`${ownerLabUrl}${path}`);
+  // Bootstrap probes alone miss starvation in the real browser's concurrent
+  // ES-module graph. Fetch the embedded modules in parallel, as Chromium does.
+  const appAssets = [
+    "/", "/styles.css", "/app.js", "/tts-selector.js",
+    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
+    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
+    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
+  ];
+  await Promise.all(appAssets.map(async (path) => {
+    const response = await request.get(`${ownerLabUrl}${path}`, { timeout: 15_000 });
     expect(response.status(), `Owner Lab static asset unavailable: ${path}`).toBe(200);
-  }
+    expect((await response.body()).byteLength, `Owner Lab returned an empty asset: ${path}`).toBeGreaterThan(0);
+  }));
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
