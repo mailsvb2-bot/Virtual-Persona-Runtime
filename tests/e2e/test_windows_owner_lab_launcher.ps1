@@ -122,6 +122,11 @@ foreach ($required in @(
     'function New-PiperPrivateToken',
     '[System.Security.Cryptography.RandomNumberGenerator]::Create()',
     'function Wait-PiperReady',
+    'function Test-VerifiedPiperListener',
+    '$owner.ParentProcessId -ne $Process.Id',
+    '$owner.CommandLine.IndexOf($BridgeScript, $compare)',
+    'Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $piperListenerPid',
+    'Stop-Process -Id $piperListenerPid',
     'VPR_OWNER_LAB_TTS_PROVIDER',
     'VPR_OWNER_LAB_TTS_MODEL',
     'VPR_OWNER_LAB_TTS_VOICE',
@@ -153,3 +158,23 @@ if ($piperBinding -lt 0 -or $credentialProbe -lt 0 -or $piperLaunch -lt 0 -or
     throw 'Expressive Echo preflight must see selected Piper provider before spawning it'
 }
 Write-Host 'Windows Piper one-click provisioning and process ownership: PASS'
+
+# Virtualenv Windows python.exe can create a direct child base interpreter.
+# Never weaken identity validation to owning PID alone (or just localhost).
+$guardStart = $source.IndexOf('function Test-VerifiedPiperListener')
+$warmupStart = $source.IndexOf('function Wait-PiperReady')
+if ($guardStart -lt 0 -or $warmupStart -le $guardStart) {
+    throw 'The verified direct-child identity function must precede bearer warmup'
+}
+$guard = $source.Substring($guardStart, $warmupStart - $guardStart)
+foreach ($proof in @(
+    'ParentProcessId -ne $Process.Id',
+    'ExecutablePath -ne $BasePython',
+    'ExecutablePath -eq $VenvPython',
+    'CommandLine.IndexOf($BridgeScript, $compare)'
+)) {
+    if (-not $guard.Contains($proof)) {
+        throw "Refusing to accept a different Python process without identity proof: $proof"
+    }
+}
+Write-Host 'Windows Piper virtualenv direct-child binding and cleanup: PASS'
