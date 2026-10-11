@@ -45,8 +45,16 @@ fn build_tts_configured(
     model: &str,
     voice: &str,
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    if matches!(name, "piper" | "metrotrance-qwen" | "metrotrance-chatterbox")
+        && !is_loopback_speech_endpoint(endpoint)
+    {
+        return Err("local TTS must use a loopback HTTP speech endpoint".into());
+    }
+    if name == "piper" && (model != "piper" || voice != "local") {
+        return Err("Piper requires model=piper and voice=local".into());
+    }
     let provider: Box<dyn TtsPort> = match name {
-        "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
+        "piper" | "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(
                 OpenAiSpeechConfig::new(
                     endpoint.to_owned(),
@@ -69,15 +77,27 @@ fn build_tts_configured(
         ),
         _ => return Err(format!("unsupported TTS provider: {name}")),
     };
-    if name.starts_with("metrotrance-")
-        && !(endpoint.starts_with("http://127.0.0.1:") || endpoint.starts_with("http://localhost:"))
-    {
-        return Err("MetroTrance TTS must use a loopback endpoint".into());
-    }
     Ok((
         provider,
         descriptor("tts", name, model, &[endpoint, model, voice]),
     ))
+}
+
+
+/// Fail closed: an opaque URL containing credentials, DNS aliases, fragments or
+/// redirectable paths must not make a local speech engine an external egress.
+fn is_loopback_speech_endpoint(endpoint: &str) -> bool {
+    let host_port_path = endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .or_else(|| endpoint.strip_prefix("http://localhost:"));
+    let Some(host_port_path) = host_port_path else {
+        return false;
+    };
+    let Some((port, path)) = host_port_path.split_once('/') else {
+        return false;
+    };
+    port.parse::<u16>().is_ok_and(|port| port > 0)
+        && path == "v1/audio/speech"
 }
 
 #[cfg(test)]
@@ -88,6 +108,59 @@ mod tests {
         DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,
     };
     use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+
+    #[test]
+    fn piper_uses_server_owned_openai_wire_without_cloning_a_provider() {
+        let (tts, descriptor) = build_tts_configured(
+            "piper",
+            "http://127.0.0.1:8897/v1/audio/speech",
+            "test-local-bearer".into(),
+            "piper",
+            "local",
+        )
+        .expect("Piper must be a first-class local TTS provider");
+        assert_eq!(descriptor.provider, "piper");
+        assert_eq!(tts.descriptor().provider, "piper");
+    }
+
+    #[test]
+    fn local_speech_never_allows_non_loopback_or_ambiguous_endpoints() {
+        for endpoint in [
+            "https://example.test/v1/audio/speech",
+            "http://example.test:8897/v1/audio/speech",
+            "http://127.0.0.1:8897@evil.test/v1/audio/speech",
+            "http://127.0.0.1:8897/v1/audio/speech?remote=1",
+            "http://127.0.0.1:8897/other",
+            "http://localhost:0/v1/audio/speech",
+        ] {
+            for provider in ["piper", "metrotrance-qwen", "metrotrance-chatterbox"] {
+                let result = build_tts_configured(
+                    provider,
+                    endpoint,
+                    "private-key".into(),
+                    if provider == "piper" { "piper" } else { provider },
+                    "local",
+                );
+                assert!(result.is_err(), "unsafe {provider} endpoint: {endpoint}");
+            }
+        }
+        assert!(is_loopback_speech_endpoint(
+            "http://localhost:8897/v1/audio/speech"
+        ));
+    }
+
+    #[test]
+    fn piper_mismatched_model_or_voice_fails_before_session_start() {
+        assert!(build_tts_configured(
+            "piper", "http://127.0.0.1:8897/v1/audio/speech",
+            "private".into(), "metrotrance-qwen", "local"
+        ).is_err());
+        assert!(build_tts_configured(
+            "piper", "http://127.0.0.1:8897/v1/audio/speech",
+            "private".into(), "piper", "speaker-clone"
+        ).is_err());
+    }
 
     #[test]
     fn rejects_unsupported_avatar_before_any_tts_or_session_side_effect() {
