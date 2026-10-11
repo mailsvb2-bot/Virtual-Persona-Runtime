@@ -196,10 +196,8 @@ fn greeting_response(
     {
         return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
     }
-    let _busy = super::http_evidence::VoiceBusyGuard::new(
-        &state.voice_busy,
-        &state.voice_cancel_requested,
-    );
+    let _busy =
+        super::http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
     reject_if_session_ending(state)?;
     if state
         .greeting_session_sequence
