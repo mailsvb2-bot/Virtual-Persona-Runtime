@@ -1,7 +1,8 @@
 param(
     [int]$Port = 8787,
     [switch]$NoBrowser,
-    [switch]$Rt0Evidence
+    [switch]$Rt0Evidence,
+    [switch]$Piper
 )
 
 $ErrorActionPreference = 'Stop'
@@ -150,6 +151,36 @@ function Clear-ProviderEnvironmentOverrides {
     }
     Write-Host "Cleared inherited provider env overrides; canonical Windows credential profile is authoritative."
 }
+
+function New-PiperPrivateToken {
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return [Convert]::ToBase64String($bytes)
+}
+
+function Wait-PiperReady {
+    param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
+    $deadline = [DateTime]::UtcNow.AddSeconds(75)
+    $headers = @{ Authorization = "Bearer $env:VPR_METROTRANCE_TTS_TOKEN" }
+    $body = '{"input":"Проверка голоса.","model":"piper","voice":"local","response_format":"wav"}'
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Process.HasExited) {
+            throw 'Piper exited before its authenticated speech endpoint became ready'
+        }
+        try {
+            $result = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http://127.0.0.1:8897/v1/audio/speech' -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 10
+            if ($result.StatusCode -eq 200 -and $result.Headers['Content-Type'] -like 'audio/wav*') {
+                return
+            }
+        } catch {
+            # Connection can be refused while the model loads.
+        }
+        Start-Sleep -Milliseconds 750
+    }
+    throw 'Piper did not pass authenticated local speech warmup'
+}
+
 function Resolve-Rt0EvidenceBrowser {
     $programFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86')
     $candidates = @()
@@ -215,6 +246,31 @@ if ($Rt0Evidence) {
         Write-Host "Frozen RT0 candidate: $candidate (no Git switch or pull)"
     } finally {
         Pop-Location
+    }
+}
+
+
+# Explicit opt-in download happens before stopping any existing session.
+$piperPython = $null
+$piperModel = $null
+if ($Piper) {
+    if (-not $env:LOCALAPPDATA) {
+        throw 'LocalAppData is required for the private Piper runtime'
+    }
+    $piperRoot = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\Piper'
+    $preparer = Join-Path $repoRoot 'scripts\windows_piper_prepare.py'
+    Write-Host 'Preparing small Russian Piper voice; only first use needs a download...'
+    & py -3.11 $preparer --data-dir $piperRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Piper setup failed before any Owner Lab session was stopped'
+    }
+    $piperPython = Join-Path $piperRoot 'venv\Scripts\python.exe'
+    $piperModel = Join-Path $piperRoot 'voices\ru_RU-denis-medium.onnx'
+    if (-not (Test-Path -LiteralPath $piperPython) -or -not (Test-Path -LiteralPath $piperModel)) {
+        throw 'Piper setup returned without validated runtime and model files'
+    }
+    if (@(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
+        throw 'Piper loopback port 8897 is occupied; refusing to use or terminate an unknown listener'
     }
 }
 
