@@ -70,17 +70,26 @@ function Stop-PortListener {
 
     # Never kill an unrelated service just because it occupies Owner Lab's port.
     # This also rejects ambiguous/multiple listeners and unknown executable paths.
-    $listenerPid = Assert-ExpectedListener -ExpectedExe $ExpectedExe
-    if ($listenerPid -eq $PID) {
-        throw "Refusing to stop the current PowerShell process"
+    $verifiedProcess = Assert-ExpectedListener -ExpectedExe $ExpectedExe -PassThruProcess
+    try {
+        if ($verifiedProcess.Id -eq $PID) {
+            throw "Refusing to stop the current PowerShell process"
+        }
+        Write-Host "Stopping verified stale Owner Lab listener PID $($verifiedProcess.Id) on port $Port."
+        # The acquired process Handle pins its Windows process object across
+        # verification and Kill; a recycled numeric PID must never be resolved.
+        $verifiedProcess.Kill()
+    } finally {
+        $verifiedProcess.Close()
     }
-    Write-Host "Stopping verified stale Owner Lab listener PID $listenerPid on port $Port."
-    Stop-Process -Id $listenerPid -Force -ErrorAction Stop
     Wait-LabDown
 }
 
 function Assert-ExpectedListener {
-    param([Parameter(Mandatory = $true)][string]$ExpectedExe)
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedExe,
+        [switch]$PassThruProcess
+    )
 
     $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
     if ($listeners.Count -ne 1) {
@@ -89,17 +98,32 @@ function Assert-ExpectedListener {
 
     $listenerPid = $listeners[0].OwningProcess
     $process = Get-Process -Id $listenerPid -ErrorAction Stop
-    $actualExe = $process.Path
-    if ([string]::IsNullOrWhiteSpace($actualExe)) {
-        throw "Could not resolve executable for listener PID $listenerPid"
-    }
+    $handedOff = $false
+    try {
+        # Acquire a real process handle BEFORE reading its executable identity.
+        # Retaining that handle prevents Windows from recycling the PID while
+        # the checked process is being stopped.
+        $null = $process.Handle
+        $actualExe = $process.Path
+        if ([string]::IsNullOrWhiteSpace($actualExe)) {
+            throw "Could not resolve executable for listener PID $listenerPid"
+        }
 
-    $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
-    $actualPath = [System.IO.Path]::GetFullPath($actualExe)
-    if (-not [string]::Equals($expectedPath, $actualPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Port $Port is owned by unexpected process: $actualPath"
+        $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
+        $actualPath = [System.IO.Path]::GetFullPath($actualExe)
+        if (-not [string]::Equals($expectedPath, $actualPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Port $Port is owned by unexpected process: $actualPath"
+        }
+        if ($PassThruProcess) {
+            $handedOff = $true
+            return $process
+        }
+        return $listenerPid
+    } finally {
+        if (-not $handedOff) {
+            $process.Close()
+        }
     }
-    return $listenerPid
 }
 
 function Clear-ProviderEnvironmentOverrides {

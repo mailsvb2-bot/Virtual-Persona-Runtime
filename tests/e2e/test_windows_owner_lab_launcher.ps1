@@ -30,14 +30,28 @@ function Get-NetTCPConnection {
     param($LocalPort, $State, $ErrorAction)
     if ($script:listenerPresent) { [pscustomobject]@{ OwningProcess = 51773 } }
 }
+$script:processLookups = 0
+$script:closed = 0
 function Get-Process {
     param($Id, $ErrorAction)
-    [pscustomobject]@{ Path = $script:runningExe }
+    $script:processLookups += 1
+    $process = [pscustomobject]@{
+        Id = $Id
+        Path = $script:runningExe
+        Handle = 12345
+    }
+    $process | Add-Member -MemberType ScriptMethod -Name Kill -Value {
+        $script:stopped += $this.Id
+        # After the verified process exits, Windows could recycle its numeric
+        # PID. The production shutdown must not query that PID again.
+        $script:runningExe = 'C:\Windows\System32\replacement.exe'
+    }
+    $process | Add-Member -MemberType ScriptMethod -Name Close -Value {
+        $script:closed += 1
+    }
+    return $process
 }
-function Stop-Process {
-    param($Id, [switch]$Force, $ErrorAction)
-    $script:stopped += $Id
-}
+function Stop-Process { throw 'Unsafe PID-only Stop-Process must never be called' }
 function Wait-LabDown { $script:waited = $true }
 
 $rejected = $false
@@ -68,5 +82,11 @@ $script:runningExe = $script:expectedExe
 Stop-PortListener -ExpectedExe $script:expectedExe
 if ($script:stopped.Count -ne 1 -or $script:stopped[0] -ne 51773 -or -not $script:waited) {
     throw 'Verified stale Owner Lab listener was not stopped exactly once'
+}
+if ($script:runningExe -ne 'C:\Windows\System32\replacement.exe' -or $script:processLookups -ne 3) {
+    throw 'Shutdown re-resolved a numeric PID instead of keeping the verified Process handle'
+}
+if ($script:closed -ne 3) {
+    throw 'Verified and rejected process handles were not consistently closed'
 }
 Write-Host 'Windows launcher listener ownership regression: PASS'
