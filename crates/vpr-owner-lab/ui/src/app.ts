@@ -311,6 +311,7 @@ let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+let greetingRequestedSequence = 0;
 // This fence is a same-origin, same-browser fast path, NOT a provider-atomic
 // substitute for a backend-owned LiveKit sender and receiver-only token.
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
@@ -1195,6 +1196,47 @@ const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void>
   if (remoteEvidenceFrame === null) monitorRemoteAudio();
 };
 
+
+const greetAfterFirstVideoFrame = async (): Promise<void> => {
+  const sequence = evidenceSessionSequence;
+  if (!videoEvidencePosted || !sessionState.realtime.control
+      || sessionState.backend.session_state !== "active" || sequence <= 0
+      || greetingRequestedSequence === sequence || textRequestInFlight
+      || voiceRequestInFlight || recording) return;
+  greetingRequestedSequence = sequence;
+  const generation = voiceDeliveryGeneration;
+  providerPlaybackInFlight = true;
+  if (rt0EvidenceMode) rt0PlaybackPending = true;
+  updateControls();
+  try {
+    // Server owns the fixed welcome phrase and verifies consent / session epoch.
+    const result = await api<ResumedSpeech>("/api/avatar/greeting", {
+      expected_session_sequence: sequence,
+    });
+    if (result.client_command !== null) throw new Error("GREETING_MUST_USE_PRIVATE_PCM");
+    if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence
+        || sessionState.backend.session_state !== "active") return;
+    setStatus("Аватар приветствует вас", "ready");
+  } catch {
+    if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence) return;
+    // Even after a failed HTTP response, private Echo may have accepted audio.
+    const stopped = await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest())
+      .then(() => true, () => false);
+    providerPlaybackInFlight = false;
+    rt0PlaybackPending = false;
+    if (!stopped) {
+      broadcastSessionEgressFence();
+      closePeerTransport();
+      await api<{ ok: true }>("/api/session/revoke", sessionEndRequest()).catch(() => undefined);
+      await syncStatus().catch(() => undefined);
+      setStatus("Приветствие: STOP Echo не подтверждён, сессия отозвана", "error");
+    } else {
+      setStatus("Сессия подключена, приветствие недоступно", "idle");
+    }
+    updateControls();
+  }
+};
+
 const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
@@ -1206,6 +1248,7 @@ const recordFirstVideoFrame = (): void => {
   void connectionEvidenceTail
     .then(() => syncStatus())
     .catch(() => undefined);
+  void greetAfterFirstVideoFrame();
 };
 
 const modalityLabel = (state: ModalityReadiness): string => {
@@ -1855,6 +1898,7 @@ const connectAvatar = async (): Promise<void> => {
   connectionEvidenceTail = Promise.resolve();
   connectionEvidenceFailure = null;
   evidenceSessionSequence = 0;
+  greetingRequestedSequence = 0;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
   setStatus("Создаю защищённую сессию…");
@@ -1912,6 +1956,7 @@ const connectAvatar = async (): Promise<void> => {
     ensureMicrophoneDeviceMonitoring();
     await refreshMicrophoneDevices(storedMicrophoneDeviceId());
     await syncStatus();
+    if (videoEvidencePosted) void greetAfterFirstVideoFrame();
     const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
     setStatus(
       selectedAudience() === "visitor"
