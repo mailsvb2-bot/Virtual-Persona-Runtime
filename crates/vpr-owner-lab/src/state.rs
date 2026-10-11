@@ -100,6 +100,8 @@ pub struct LabStatus {
     pub avatar_open: bool,
     pub egress_enabled: bool,
     pub conversation_readiness: ConversationReadiness,
+    /// Only an installed, canonical server-owned TTS may greet automatically.
+    pub greeting_available: bool,
     pub modality_readiness: LabModalityReadiness,
     pub session_audience: Option<LabSessionAudience>,
     pub owner_context_state: OwnerContextState,
@@ -243,6 +245,7 @@ impl OwnerLabEngine {
                     (false, _) => ConversationReadiness::None,
                 }
             },
+            greeting_available: self.tts.is_some(),
             modality_readiness: self.readiness.snapshot(),
             session_audience: self.session_audience,
             owner_context_state: if self.reviewed_owner_context.is_some() {
