@@ -100,6 +100,19 @@ pub struct LabResumedSpeech {
 }
 
 impl OwnerLabEngine {
+    /// One fixed Russian greeting after video becomes visible. Consent, active
+    /// session authority and the private server-owned TTS path are mandatory;
+    /// no browser-provided script, no implicit LLM turn, no fake playback ACK.
+    ///
+    /// # Errors
+    /// Rejects an unavailable TTS engine or any inactive/unauthorized session.
+    pub fn prepare_connection_greeting(&mut self) -> Result<LabResumedSpeech, LabError> {
+        if self.tts.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.prepare_resumed_speech("Здравствуйте! Чем могу помочь?")
+    }
+
     /// Re-authorizes a suffix of a previously generated answer against the CURRENT
     /// session epoch, Persona and egress/consent policies before browser-provider delivery.
     ///
