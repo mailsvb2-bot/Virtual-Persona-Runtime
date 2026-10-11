@@ -32,8 +32,6 @@ impl TtsPort for TestCanonicalTts {
     }
 }
 
-
-
 #[test]
 fn connection_greeting_uses_one_fresh_authorized_pcm_turn_without_browser_command() {
     let (engine, stats, _) = voice_engine(false);
@@ -69,7 +67,10 @@ fn interrupted_reply_resume_uses_same_tts_pcm_owner_and_no_browser_did_speak() {
     let pcm_before = stats.avatar_pcm.load(Ordering::SeqCst);
     let tts_before = stats.tts_qwen.load(Ordering::SeqCst);
     let result = engine.prepare_resumed_speech("Продолжаю ответ.").unwrap();
-    assert!(result.client_command.is_none(), "Echo never creates browser did.speak");
+    assert!(
+        result.client_command.is_none(),
+        "Echo never creates browser did.speak"
+    );
     assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), pcm_before + 1);
     assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), tts_before + 1);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
