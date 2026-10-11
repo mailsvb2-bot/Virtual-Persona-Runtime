@@ -22,6 +22,43 @@ MAX_TEXT = 4096
 MAX_WAV_BYTES = 8 * 1024 * 1024
 
 
+
+def make_custom_voice_synthesizer():
+    """Qwen built-in speaker synthesis, without reference voice or transcript."""
+    import soundfile as sf
+    import torch
+    from qwen_tts import Qwen3TTSModel
+
+    speaker = os.environ.get("VPR_QWEN_PRESET_SPEAKER", "Ryan")
+    allowed = {"Ryan", "Aiden", "Vivian", "Serena", "Uncle_Fu",
+               "Dylan", "Eric", "Ono_Anna", "Sohee"}
+    if speaker not in allowed:
+        raise ValueError("unsupported preset speaker")
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    model = Qwen3TTSModel.from_pretrained(
+        "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+        device_map=device,
+        dtype=torch.float16 if device.startswith("cuda") else torch.float32,
+    )
+    lock = threading.Lock()
+
+    def synthesize(text: str) -> bytes:
+        with lock:
+            wavs, sample_rate = model.generate_custom_voice(
+                text=text, language="Russian", speaker=speaker
+            )
+            if len(wavs) != 1:
+                raise RuntimeError("preset synthesis returned unexpected output")
+            output = io.BytesIO()
+            sf.write(output, wavs[0], sample_rate, format="WAV", subtype="PCM_16")
+            audio = output.getvalue()
+            if not validate_echo_wav(audio):
+                raise RuntimeError("preset synthesis returned invalid WAV")
+            return audio
+
+    return synthesize
+
+
 def make_synthesizer(checkout: Path, engine: str):
     checkout = checkout.resolve(strict=True)
     if not (checkout / "metrotrance" / "providers" / "qwen_tts.py").is_file():
@@ -155,10 +192,13 @@ def main():
     token = os.environ.get("VPR_METROTRANCE_TTS_TOKEN", "")
     engine = os.environ.get("VPR_METROTRANCE_ENGINE", "qwen")
     port = int(os.environ.get("VPR_METROTRANCE_TTS_PORT", "8897"))
-    if not root:
-        raise SystemExit("METROTRANCE_ROOT is required")
-    synth = make_synthesizer(Path(root), engine)
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, synth, provider_id="metrotrance-" + engine))
+    if engine == "qwen-preset":
+        synth = make_custom_voice_synthesizer()
+    else:
+        if not root:
+            raise SystemExit("METROTRANCE_ROOT is required for clone mode")
+        synth = make_synthesizer(Path(root), engine)
+    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(token, synth, provider_id="metrotrance-qwen" if engine == "qwen-preset" else "metrotrance-" + engine))
     print(f"MetroTrance local TTS listening at http://127.0.0.1:{port}/v1/audio/speech", flush=True)
     try:
         server.serve_forever()
