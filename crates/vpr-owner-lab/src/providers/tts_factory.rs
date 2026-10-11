@@ -150,11 +150,7 @@ mod tests {
                     provider,
                     endpoint,
                     "private-key".into(),
-                    if provider == "piper" || provider == "windows-sapi" {
-                        provider
-                    } else {
-                        provider
-                    },
+                    provider,
                     "local",
                 );
                 assert!(result.is_err(), "unsafe {provider} endpoint: {endpoint}");
