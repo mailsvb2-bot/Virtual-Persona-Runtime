@@ -80,17 +80,18 @@ class PiperContract(unittest.TestCase):
             model = Path(d) / "ru_RU-test.onnx"
             model.write_bytes(b"test")
             Path(str(model) + ".json").write_text("{}")
+            test_case = self
             class FakeVoice:
                 @staticmethod
                 def load(path):
-                    self.assertEqual(path, str(model))
+                    test_case.assertEqual(path, str(model))
                     return FakeVoice()
                 def synthesize_wav(self, text, out):
-                    self.assertEqual(text, "Привет")
+                    test_case.assertEqual(text, "Привет")
                     out.setnchannels(1)
                     out.setsampwidth(2)
                     out.setframerate(22050)
-                    out.writeframes(b"\\0\\0" * 100)
+                    out.writeframes(bytes(200))
             with patch.dict(sys.modules, {"piper": types.SimpleNamespace(PiperVoice=FakeVoice)}):
                 audio = bridge.make_piper_synthesizer(str(model))("Привет")
             with wave.open(io.BytesIO(audio)) as wav:
