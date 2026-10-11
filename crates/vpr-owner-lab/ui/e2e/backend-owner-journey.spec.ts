@@ -43,12 +43,34 @@ const csrfHeaders = (csrf: string) => ({
 });
 
 test("built UI drives the real Owner Lab backend and provider adapter", async ({ page, request }) => {
-  await installTransportFakes(page);
-  await page.goto("/");
-
+  // Readiness of /api/bootstrap alone does not prove that the HTML and built
+  // modules can actually be served. Check the same assets consumed by the UI.
+  for (const path of ["/", "/styles.css", "/app.js", "/tts-selector.js",
+    "/evidence-export.js", "/reference-capture.js"]) {
+    const response = await request.get(`${ownerLabUrl}${path}`);
+    expect(response.status(), `Owner Lab static asset unavailable: ${path}`).toBe(200);
+  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
+
+  const pending = new Set<string>();
+  const failed: string[] = [];
+  page.on("request", (outgoing) => pending.add(outgoing.url()));
+  page.on("requestfinished", (outgoing) => pending.delete(outgoing.url()));
+  page.on("requestfailed", (outgoing) => {
+    pending.delete(outgoing.url());
+    failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
+  });
+  await installTransportFakes(page);
+  try {
+    await page.goto("/", { waitUntil: "load", timeout: 20_000 });
+  } catch (error) {
+    throw new Error(
+      `Owner Lab page failed to load; pending=${JSON.stringify([...pending])}; ` +
+      `failed=${JSON.stringify(failed)}; navigation=${String(error)}`,
+    );
+  }
 
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
   await page.getByLabel("Идентификатор Persona").fill("owner-backend-e2e");
