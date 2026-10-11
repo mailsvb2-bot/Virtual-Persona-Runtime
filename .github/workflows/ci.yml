@@ -139,6 +139,16 @@ jobs:
         run: cargo test --locked -p vpr-owner-lab --test http_contract
       - name: Windows owner-lab library tests
         run: cargo test --locked -p vpr-owner-lab --lib
+      - name: Real Windows Piper voice and authenticated PCM E2E
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'vpr-piper-windows-ci'
+          py -3.11 scripts/windows_piper_prepare.py --data-dir $root
+          if ($LASTEXITCODE -ne 0) { throw 'Piper first-use preparation failed on Windows' }
+          $python = Join-Path $root 'venv\Scripts\python.exe'
+          $model = Join-Path $root 'voices\ru_RU-denis-medium.onnx'
+          & $python tests/e2e/test_windows_piper_real_voice.py --model $model
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows Piper PCM E2E failed' }
 
   owner-lab-ui:
     runs-on: ubuntu-24.04
