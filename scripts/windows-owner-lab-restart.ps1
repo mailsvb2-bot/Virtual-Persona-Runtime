@@ -159,6 +159,34 @@ function New-PiperPrivateToken {
     return [Convert]::ToBase64String($bytes)
 }
 
+function Test-VerifiedPiperListener {
+    param(
+        [Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)][int]$OwnerPid,
+        [Parameter(Mandatory = $true)][string]$VenvPython,
+        [Parameter(Mandatory = $true)][string]$BasePython,
+        [Parameter(Mandatory = $true)][string]$BridgeScript
+    )
+    if ($Process.HasExited) { return $false }
+    # On Windows, a Python venv python.exe may be a redirector which creates
+    # a child process running the base interpreter. Bind either case to the
+    # original live process handle AND its expected executable / bridge path.
+    $owner = Get-CimInstance Win32_Process -Filter "ProcessId = $OwnerPid" -ErrorAction SilentlyContinue
+    if ($null -eq $owner) { return $false }
+    $compare = [StringComparison]::OrdinalIgnoreCase
+    if ($OwnerPid -eq $Process.Id) {
+        return $owner.ExecutablePath -eq $VenvPython -and
+            $owner.CommandLine -and $owner.CommandLine.IndexOf($BridgeScript, $compare) -ge 0
+    }
+    if ($owner.ParentProcessId -ne $Process.Id -or $owner.ExecutablePath -ne $BasePython -or
+        -not $owner.CommandLine -or $owner.CommandLine.IndexOf($BridgeScript, $compare) -lt 0) {
+        return $false
+    }
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction SilentlyContinue
+    return $null -ne $parent -and $parent.ExecutablePath -eq $VenvPython -and
+        $parent.CommandLine -and $parent.CommandLine.IndexOf($BridgeScript, $compare) -ge 0
+}
+
 function Wait-PiperReady {
     param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
     $deadline = [DateTime]::UtcNow.AddSeconds(75)
@@ -172,9 +200,11 @@ function Wait-PiperReady {
         # token. A foreign process racing the bind must never receive secrets.
         $listeners = @(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue)
         if ($listeners.Count -gt 0) {
-            if ($listeners.Count -ne 1 -or $listeners[0].OwningProcess -ne $Process.Id -or $listeners[0].LocalAddress -ne '127.0.0.1') {
-                throw 'Piper port owner does not match the exact spawned Python process'
+            if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne '127.0.0.1' -or
+                -not (Test-VerifiedPiperListener -Process $Process -OwnerPid $listeners[0].OwningProcess -VenvPython $piperPython -BasePython $piperBasePython -BridgeScript $piperBridge)) {
+                throw 'Piper port owner is not the verified spawned Python interpreter or its direct child'
             }
+            $script:piperListenerPid = [int]$listeners[0].OwningProcess
         } else {
             Start-Sleep -Milliseconds 750
             continue
@@ -277,6 +307,10 @@ if ($Piper) {
     }
     $piperPython = Join-Path $piperRoot 'venv\Scripts\python.exe'
     $piperModel = Join-Path $piperRoot 'voices\ru_RU-denis-medium.onnx'
+    $piperBasePython = (& $piperPython -c 'import sys; print(sys._base_executable)').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $piperBasePython)) {
+        throw 'Piper base Python interpreter is unavailable'
+    }
     if (-not (Test-Path -LiteralPath $piperPython) -or -not (Test-Path -LiteralPath $piperModel)) {
         throw 'Piper setup returned without validated runtime and model files'
     }
@@ -290,6 +324,7 @@ Assert-SafeToRestart
 Stop-PortListener -ExpectedExe $exe
 
 $piperProcess = $null
+$piperListenerPid = 0
 $labProcess = $null
 $labReady = $false
 try {
@@ -389,8 +424,13 @@ try {
     # Stop only the child started by this exact process handle; never a PID
     # recovered from an untrusted file, nor a service owning somebody else's port.
     if ($null -ne $piperProcess) {
-        try { if (-not $piperProcess.HasExited) { $piperProcess.Kill() } }
-        finally { $piperProcess.Close() }
+        try {
+            if ($piperListenerPid -gt 0 -and $piperListenerPid -ne $piperProcess.Id -and
+                (Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $piperListenerPid -VenvPython $piperPython -BasePython $piperBasePython -BridgeScript $piperBridge)) {
+                Stop-Process -Id $piperListenerPid -ErrorAction SilentlyContinue
+            }
+            if (-not $piperProcess.HasExited) { $piperProcess.Kill() }
+        } finally { $piperProcess.Close() }
     }
     if ($null -ne $labProcess) {
         try {
