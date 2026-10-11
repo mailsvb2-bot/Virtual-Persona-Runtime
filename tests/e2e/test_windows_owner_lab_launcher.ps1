@@ -163,7 +163,7 @@ if (-not $delegate.Contains('-Piper -Rt0Evidence')) {
 }
 # Expressive credentials are validated only after canonical Piper/Echo is
 # declared. A misplaced probe used to reject fully configured D-ID accounts.
-$piperBinding = $source.IndexOf("$"+"env:VPR_OWNER_LAB_TTS_PROVIDER = 'piper'")
+$piperBinding = $source.IndexOf('$env:VPR_OWNER_LAB_TTS_PROVIDER = if ($SystemVoice)')
 $credentialProbe = $source.IndexOf('& $credentialsExe probe-avatar')
 $piperLaunch = $source.IndexOf('$piperProcess = Start-Process')
 if ($piperBinding -lt 0 -or $credentialProbe -lt 0 -or $piperLaunch -lt 0 -or
