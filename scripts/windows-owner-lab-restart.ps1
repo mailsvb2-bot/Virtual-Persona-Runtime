@@ -2,10 +2,12 @@ param(
     [int]$Port = 8787,
     [switch]$NoBrowser,
     [switch]$Rt0Evidence,
-    [switch]$Piper
+    [switch]$Piper,
+    [switch]$SystemVoice
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Piper -and $SystemVoice) { throw 'Select exactly one local speech engine' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $baseUrl = "http://127.0.0.1:$Port"
 
@@ -191,7 +193,8 @@ function Wait-PiperReady {
     param([Parameter(Mandatory = $true)][System.Diagnostics.Process]$Process)
     $deadline = [DateTime]::UtcNow.AddSeconds(75)
     $headers = @{ Authorization = "Bearer $env:VPR_METROTRANCE_TTS_TOKEN" }
-    $body = '{"input":"Проверка голоса.","model":"piper","voice":"local","response_format":"wav"}'
+    $selectedModel = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
+    $body = '{"input":"Проверка голоса.","model":"' + $selectedModel + '","voice":"local","response_format":"wav"}'
     while ([DateTime]::UtcNow -lt $deadline) {
         if ($Process.HasExited) {
             throw 'Piper exited before its authenticated speech endpoint became ready'
@@ -294,13 +297,17 @@ if ($Rt0Evidence) {
 # Explicit opt-in download happens before stopping any existing session.
 $piperPython = $null
 $piperModel = $null
-if ($Piper) {
+if ($Piper -or $SystemVoice) {
     if (-not $env:LOCALAPPDATA) {
         throw 'LocalAppData is required for the private Piper runtime'
     }
-    $piperRoot = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\Piper'
-    $preparer = Join-Path $repoRoot 'scripts\windows_piper_prepare.py'
-    Write-Host 'Preparing small Russian Piper voice; only first use needs a download...'
+    $piperRoot = if ($SystemVoice) {
+        Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\Sapi'
+    } else {
+        Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\Piper'
+    }
+    $preparer = Join-Path $repoRoot $(if ($SystemVoice) { 'scripts\windows_sapi_prepare.py' } else { 'scripts\windows_piper_prepare.py' })
+    Write-Host $(if ($SystemVoice) { 'Preparing native Russian female voice and private Echo...' } else { 'Preparing small Russian Piper voice; only first use needs a download...' })
     & py -3.11 $preparer --data-dir $piperRoot
     if ($LASTEXITCODE -ne 0) {
         throw 'Piper setup failed before any Owner Lab session was stopped'
@@ -320,8 +327,9 @@ if ($Piper) {
     if (-not (Test-Path -LiteralPath $piperBasePython)) {
         throw 'Piper base Python interpreter is unavailable'
     }
-    if (-not (Test-Path -LiteralPath $piperPython) -or -not (Test-Path -LiteralPath $piperModel)) {
-        throw 'Piper setup returned without validated runtime and model files'
+    if (-not (Test-Path -LiteralPath $piperPython) -or
+        ($Piper -and -not (Test-Path -LiteralPath $piperModel))) {
+        throw 'Local voice setup returned without validated runtime and model files'
     }
     if (@(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
         throw 'Piper loopback port 8897 is occupied; refusing to use or terminate an unknown listener'
@@ -361,7 +369,7 @@ try {
     }
 
     Clear-ProviderEnvironmentOverrides
-    if ($Piper) {
+    if ($Piper -or $SystemVoice) {
         # The D-ID Expressive credential probe must see the actual selected
         # server-owned TTS path BEFORE evaluating its Echo safety gate.
         # Clear stale fallback/provider overrides without changing legacy mode.
@@ -372,13 +380,14 @@ try {
         )) {
             Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
         }
-        $env:VPR_PIPER_MODEL = $piperModel
+        if ($Piper) { $env:VPR_PIPER_MODEL = $piperModel }
+        else { Remove-Item Env:VPR_PIPER_MODEL -ErrorAction SilentlyContinue }
         $env:VPR_METROTRANCE_TTS_TOKEN = New-PiperPrivateToken
         $env:VPR_METROTRANCE_TTS_PORT = '8897'
-        $env:VPR_OWNER_LAB_TTS_PROVIDER = 'piper'
+        $env:VPR_OWNER_LAB_TTS_PROVIDER = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
         $env:VPR_OWNER_LAB_TTS_ENDPOINT = 'http://127.0.0.1:8897/v1/audio/speech'
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
-        $env:VPR_OWNER_LAB_TTS_MODEL = 'piper'
+        $env:VPR_OWNER_LAB_TTS_MODEL = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
         $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
         $env:VPR_DID_ECHO_PYTHON = $piperPython
     }
@@ -388,8 +397,8 @@ try {
     }
 
     $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
-    if ($Piper) {
-        $piperBridge = Join-Path $repoRoot 'scripts\piper_tts_bridge.py'
+    if ($Piper -or $SystemVoice) {
+        $piperBridge = Join-Path $repoRoot $(if ($SystemVoice) { 'scripts\windows_sapi_tts_bridge.py' } else { 'scripts\piper_tts_bridge.py' })
         $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
         Wait-PiperReady -Process $piperProcess
         $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
@@ -425,8 +434,8 @@ try {
             Start-Process $baseUrl
         }
     }
-    if ($Piper) {
-        Write-Host 'Piper-managed Owner Lab is running. Keep this window open until you finish.'
+    if ($Piper -or $SystemVoice) {
+        Write-Host 'Private voice-managed Owner Lab is running. Keep this window open until you finish.'
         $labProcess.WaitForExit()
     }
 } finally {
