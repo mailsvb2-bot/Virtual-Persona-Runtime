@@ -126,7 +126,10 @@ foreach ($required in @(
     '$owner.ParentProcessId -ne $Process.Id',
     '$owner.CommandLine.IndexOf($BridgeScript, $compare)',
     'Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $piperListenerPid',
-    'Stop-Process -Id $piperListenerPid',
+    '$ownedChild.Handle',
+    '$ownedChild.Path -eq $piperBasePython',
+    '$ownedChild.Kill()',
+    '$ownedChild.Close()',
     'VPR_OWNER_LAB_TTS_PROVIDER',
     'VPR_OWNER_LAB_TTS_MODEL',
     'VPR_OWNER_LAB_TTS_VOICE',
@@ -180,5 +183,8 @@ foreach ($proof in @(
 $venvResolution = $source.IndexOf("Get-Content -LiteralPath $venvConfig -Encoding UTF8")
 if ($venvResolution -lt 0 -or -not $source.Contains("Substring('executable = '.Length)")) {
     throw 'The virtualenv base Python path must be read in UTF-8, not mangled via native stdout'
+}
+if ($source.Contains('Stop-Process -Id $piperListenerPid')) {
+    throw 'Piper cleanup must use the verified child process handle, not a recyclable PID'
 }
 Write-Host 'Windows Piper virtualenv direct-child binding and cleanup: PASS'
