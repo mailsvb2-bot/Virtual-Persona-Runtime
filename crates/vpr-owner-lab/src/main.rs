@@ -1,3 +1,4 @@
+mod engine_bootstrap;
 mod evidence_provenance;
 mod http_avatar_input;
 mod http_client_control;
@@ -140,28 +141,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .unwrap_or(DEFAULT_PORT);
     let mut providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
-    let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
-        .map_err(|_| "owner-lab runtime initialization failed")?;
-    if let Some(llm) = providers.llm.take() {
-        engine = engine.with_llm(llm);
-    }
-    if let Some(stt) = providers.stt.take() {
-        engine = engine.with_stt(stt);
-    }
-    if let Some(tts) = providers.tts.take() {
-        let name = providers
-            .tts_name
-            .take()
-            .ok_or("missing TTS provider name")?;
-        engine = engine.with_named_tts(name, tts);
-    }
-    if let Some(tts) = providers.tts_fallback.take() {
-        let name = providers
-            .tts_fallback_name
-            .take()
-            .ok_or("missing alternate TTS provider name")?;
-        engine = engine.with_tts_fallback(name, tts);
-    }
+    let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
