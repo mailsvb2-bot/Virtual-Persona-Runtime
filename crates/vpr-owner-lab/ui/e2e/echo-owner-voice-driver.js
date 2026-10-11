@@ -24,7 +24,13 @@
   const run = async () => {
     try {
       await waitFor(() => document.documentElement.dataset.vprProviderAutoConnect === "clicked", "consent");
-      await waitFor(() => (control("status").textContent || "").includes("LiveKit согласован"), "connected");
+      await waitFor(() => {
+        const status = control("status").textContent || "";
+        // A consented, TTS-capable server now greets after its first video frame.
+        // Test the actual real-voice handoff, rather than assume the old
+        // transient "LiveKit согласован" label remains visible forever.
+        return status.includes("LiveKit согласован") || status.includes("Аватар приветствует вас");
+      }, "connected");
       const voice = control("voice");
       await waitFor(() => !voice.disabled, "voice-ready");
       voice.click();
