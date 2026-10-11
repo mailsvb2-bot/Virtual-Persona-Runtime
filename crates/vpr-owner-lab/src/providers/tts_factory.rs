@@ -45,8 +45,10 @@ fn build_tts_configured(
     model: &str,
     voice: &str,
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
-    if matches!(name, "piper" | "metrotrance-qwen" | "metrotrance-chatterbox")
-        && !is_loopback_speech_endpoint(endpoint)
+    if matches!(
+        name,
+        "piper" | "metrotrance-qwen" | "metrotrance-chatterbox"
+    ) && !is_loopback_speech_endpoint(endpoint)
     {
         return Err("local TTS must use a loopback HTTP speech endpoint".into());
     }
@@ -83,7 +85,6 @@ fn build_tts_configured(
     ))
 }
 
-
 /// Fail closed: an opaque URL containing credentials, DNS aliases, fragments or
 /// redirectable paths must not make a local speech engine an external egress.
 fn is_loopback_speech_endpoint(endpoint: &str) -> bool {
@@ -96,8 +97,7 @@ fn is_loopback_speech_endpoint(endpoint: &str) -> bool {
     let Some((port, path)) = host_port_path.split_once('/') else {
         return false;
     };
-    port.parse::<u16>().is_ok_and(|port| port > 0)
-        && path == "v1/audio/speech"
+    port.parse::<u16>().is_ok_and(|port| port > 0) && path == "v1/audio/speech"
 }
 
 #[cfg(test)]
@@ -108,7 +108,6 @@ mod tests {
         DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,
     };
     use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
-
 
     #[test]
     fn piper_uses_server_owned_openai_wire_without_cloning_a_provider() {
@@ -139,7 +138,11 @@ mod tests {
                     provider,
                     endpoint,
                     "private-key".into(),
-                    if provider == "piper" { "piper" } else { provider },
+                    if provider == "piper" {
+                        "piper"
+                    } else {
+                        provider
+                    },
                     "local",
                 );
                 assert!(result.is_err(), "unsafe {provider} endpoint: {endpoint}");
@@ -152,14 +155,26 @@ mod tests {
 
     #[test]
     fn piper_mismatched_model_or_voice_fails_before_session_start() {
-        assert!(build_tts_configured(
-            "piper", "http://127.0.0.1:8897/v1/audio/speech",
-            "private".into(), "metrotrance-qwen", "local"
-        ).is_err());
-        assert!(build_tts_configured(
-            "piper", "http://127.0.0.1:8897/v1/audio/speech",
-            "private".into(), "piper", "speaker-clone"
-        ).is_err());
+        assert!(
+            build_tts_configured(
+                "piper",
+                "http://127.0.0.1:8897/v1/audio/speech",
+                "private".into(),
+                "metrotrance-qwen",
+                "local"
+            )
+            .is_err()
+        );
+        assert!(
+            build_tts_configured(
+                "piper",
+                "http://127.0.0.1:8897/v1/audio/speech",
+                "private".into(),
+                "piper",
+                "speaker-clone"
+            )
+            .is_err()
+        );
     }
 
     #[test]
