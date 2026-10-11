@@ -9,12 +9,11 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest,
-    PcmSampleFormat, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, TtsPort,
-    TtsRequest, UsageEvidence,
-    WebRtcIceServer, WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities,
+    RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence, WebRtcIceServer,
+    WebRtcSessionDescription,
 };
 
 use super::readiness::{LabModalityReadiness, LabModalityState};
@@ -109,7 +108,11 @@ impl RealtimeAvatarPort for VoiceAvatar {
         channels: u16,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
-        if cancellation.is_cancelled() || pcm.is_empty() || sample_rate_hz != 16_000 || channels != 1 {
+        if cancellation.is_cancelled()
+            || pcm.is_empty()
+            || sample_rate_hz != 16_000
+            || channels != 1
+        {
             return Err(cancelled());
         }
         self.stats.avatar_pcm.fetch_add(1, Ordering::SeqCst);
@@ -514,7 +517,6 @@ fn cancelled() -> ProviderError {
         retryable: false,
     }
 }
-
 
 #[path = "voice_tts_tests.rs"]
 mod voice_tts_tests;

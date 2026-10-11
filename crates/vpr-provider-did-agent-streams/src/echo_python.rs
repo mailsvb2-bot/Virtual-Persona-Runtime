@@ -382,16 +382,16 @@ impl DidEchoBackend for EchoPythonBackend {
         }
         let payload = super::echo_pcm::pcm_payload(pcm, sample_rate_hz, channels)?;
         let worker = self.worker(session_id)?;
-        let result = worker.request(
-            payload,
-            SPEECH_TIMEOUT,
-            Some(cancellation),
-            false,
-        );
+        let result = worker.request(payload, SPEECH_TIMEOUT, Some(cancellation), false);
         if result.is_err() {
             worker.mark_stopped()?;
             if worker
-                .request(json!({"command":"interrupt"}), INTERRUPT_TIMEOUT, None, true)
+                .request(
+                    json!({"command":"interrupt"}),
+                    INTERRUPT_TIMEOUT,
+                    None,
+                    true,
+                )
                 .is_err()
             {
                 let _ = worker.terminate();

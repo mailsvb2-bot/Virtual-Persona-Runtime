@@ -1,6 +1,6 @@
+use super::{LabError, LabSessionAudience, OwnerLabEngine};
 use std::sync::Arc;
 use vpr_runtime::RealtimeAvatarStopHandle;
-use super::{LabError, LabSessionAudience, OwnerLabEngine};
 
 impl OwnerLabEngine {
     /// Lists configured server-owned TTS routes without disclosing credentials.
@@ -47,5 +47,4 @@ impl OwnerLabEngine {
     pub fn current_session_sequence(&self) -> Option<u64> {
         self.session.as_ref().map(|_| self.session_counter)
     }
-
 }

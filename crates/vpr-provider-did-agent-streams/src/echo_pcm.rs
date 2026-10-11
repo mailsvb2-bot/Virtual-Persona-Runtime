@@ -1,9 +1,12 @@
 //! Canonical PCM16 speech payload for the private Echo worker.
 //! Never accepts text, tokens, provider selection or browser-originated audio.
-use std::fmt::Write as _;
-use serde_json::{Value, json};
-use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession, RealtimeAvatarTransport};
 use super::{DidAgentStreamsAvatar, provider_error::policy_denied};
+use serde_json::{Value, json};
+use std::fmt::Write as _;
+use vpr_integration::{
+    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
+    RealtimeAvatarTransport,
+};
 
 /// Encodes a bounded, already-authorized PCM16 buffer for the private worker.
 ///
@@ -48,7 +51,9 @@ pub(crate) fn send_private_pcm(
     DidAgentStreamsAvatar::ensure_active(cancellation)?;
     DidAgentStreamsAvatar::validate_session(session)?;
     if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
-        || !adapter.echo_sessions.contains(&session.provider_session_id)?
+        || !adapter
+            .echo_sessions
+            .contains(&session.provider_session_id)?
     {
         return Err(policy_denied());
     }

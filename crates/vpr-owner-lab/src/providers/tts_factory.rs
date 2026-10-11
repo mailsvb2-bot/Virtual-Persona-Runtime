@@ -6,7 +6,10 @@ use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
 
 pub(super) fn ensure_avatar_pcm_compatible(avatar: &dyn RealtimeAvatarPort) -> Result<(), String> {
-    if avatar.capabilities().supports(RealtimeAvatarCapability::AudioPcmInput) {
+    if avatar
+        .capabilities()
+        .supports(RealtimeAvatarCapability::AudioPcmInput)
+    {
         Ok(())
     } else {
         Err("canonical TTS requires an avatar adapter with private PCM input; choose a compatible avatar provider before starting a session".into())
@@ -23,7 +26,9 @@ pub(super) fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescrip
     )
 }
 
-pub(super) fn build_tts_fallback(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+pub(super) fn build_tts_fallback(
+    name: &str,
+) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     build_tts_configured(
         name,
         &required_value("VPR_OWNER_LAB_TTS_ALT_ENDPOINT", None)?,
@@ -65,8 +70,7 @@ fn build_tts_configured(
         _ => return Err(format!("unsupported TTS provider: {name}")),
     };
     if name.starts_with("metrotrance-")
-        && !(endpoint.starts_with("http://127.0.0.1:")
-            || endpoint.starts_with("http://localhost:"))
+        && !(endpoint.starts_with("http://127.0.0.1:") || endpoint.starts_with("http://localhost:"))
     {
         return Err("MetroTrance TTS must use a loopback endpoint".into());
     }
@@ -88,16 +92,21 @@ mod tests {
     #[test]
     fn rejects_unsupported_avatar_before_any_tts_or_session_side_effect() {
         let local = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
-            "https://avatar.example.test", "token",
-        )).unwrap();
+            "https://avatar.example.test",
+            "token",
+        ))
+        .unwrap();
         assert!(ensure_avatar_pcm_compatible(&local).is_err());
     }
 
     #[test]
     fn accepts_only_explicit_echo_enabled_pcm_avatar() {
         let did = DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(
-            "https://api.d-id.com", "test-key", "test-agent",
-        )).unwrap();
+            "https://api.d-id.com",
+            "test-key",
+            "test-agent",
+        ))
+        .unwrap();
         assert!(ensure_avatar_pcm_compatible(&did).is_err());
         let pcm = did.with_echo_backend(Arc::new(EchoPythonBackend::new(
             EchoPythonConfig::pcm_only("python".to_owned()).unwrap(),

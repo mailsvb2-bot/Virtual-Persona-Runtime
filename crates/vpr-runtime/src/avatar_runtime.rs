@@ -4,9 +4,9 @@ use std::sync::Arc;
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     CancellationProbe, GeneratedAudioBuffer, PcmSampleFormat, ProviderDescriptor,
-    TtsPort, TtsRequest, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, TtsPort, TtsRequest,
+    WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -240,10 +240,12 @@ impl ActiveTurn {
             &mut audio,
         )?;
         if audio.sample_format() != Some(PcmSampleFormat::S16Le) {
-            return Err(ProviderExecutionError::from(vpr_integration::ProviderError {
-                kind: vpr_integration::ProviderErrorKind::InvalidResponse,
-                retryable: false,
-            }));
+            return Err(ProviderExecutionError::from(
+                vpr_integration::ProviderError {
+                    kind: vpr_integration::ProviderErrorKind::InvalidResponse,
+                    retryable: false,
+                },
+            ));
         }
         Ok(audio)
     }
@@ -293,7 +295,9 @@ impl ActiveTurn {
             .authorized_realtime_pcm(tts, text)
             .map_err(RealtimeAvatarOutputError::Provider)?;
         // A fresh permit is mandatory AFTER potentially slow synthesis.
-        let permit = self.avatar_permit().map_err(RealtimeAvatarOutputError::Provider)?;
+        let permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
         let segment_id = self
             .begin_output_segment()
             .map_err(RealtimeAvatarOutputError::Runtime)?;

@@ -5,11 +5,11 @@ mod avatar_selection;
 mod provider_state;
 mod tts_factory;
 use avatar_factory::build_avatar;
-use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
+use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]

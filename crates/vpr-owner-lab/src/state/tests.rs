@@ -643,7 +643,9 @@ fn prepared_tts_providers_switch_both_directions_without_restarting_avatar() {
             Box::new(SelectionOnlyTts),
         );
     assert_eq!(engine.tts_selection()["active"], "metrotrance-qwen");
-    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
+    engine
+        .select_tts_provider("metrotrance-chatterbox")
+        .unwrap();
     assert_eq!(engine.tts_selection()["active"], "metrotrance-chatterbox");
     engine.select_tts_provider("metrotrance-qwen").unwrap();
     assert_eq!(engine.tts_selection()["active"], "metrotrance-qwen");

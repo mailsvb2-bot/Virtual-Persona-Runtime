@@ -6,7 +6,11 @@ struct TestCanonicalTts {
 
 impl TtsPort for TestCanonicalTts {
     fn descriptor(&self) -> ProviderDescriptor {
-        descriptor(if self.qwen { "metrotrance-qwen" } else { "metrotrance-chatterbox" })
+        descriptor(if self.qwen {
+            "metrotrance-qwen"
+        } else {
+            "metrotrance-chatterbox"
+        })
     }
 
     fn synthesize(
@@ -50,10 +54,15 @@ fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
     engine
         .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
         .unwrap();
-    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
+    engine
+        .select_tts_provider("metrotrance-chatterbox")
+        .unwrap();
     let second = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     engine
-        .acknowledge_voice_playback(second.evidence_turn_sequence, second.evidence_output_sequence)
+        .acknowledge_voice_playback(
+            second.evidence_turn_sequence,
+            second.evidence_output_sequence,
+        )
         .unwrap();
     engine.select_tts_provider("metrotrance-qwen").unwrap();
     let third = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
@@ -66,8 +75,6 @@ fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
     assert_eq!(stats.avatar_creates.load(Ordering::SeqCst), 1);
 }
-
-
 
 struct BlockingCanonicalTts {
     started: mpsc::Sender<()>,

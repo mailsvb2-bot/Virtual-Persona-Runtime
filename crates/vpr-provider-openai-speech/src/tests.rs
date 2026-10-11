@@ -217,5 +217,8 @@ fn configured_wire_compatible_tts_reports_its_actual_provider_identity() {
     )
     .with_provider_name("metrotrance-qwen");
     assert_eq!(config.descriptor().provider, "metrotrance-qwen");
-    assert_eq!(OpenAiSpeechTts::new(config).unwrap().descriptor().provider, "metrotrance-qwen");
+    assert_eq!(
+        OpenAiSpeechTts::new(config).unwrap().descriptor().provider,
+        "metrotrance-qwen"
+    );
 }

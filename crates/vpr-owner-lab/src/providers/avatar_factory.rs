@@ -86,8 +86,8 @@ fn build_did_avatar(
     }
     let mut backend_fingerprint = vec![endpoint.clone(), agent_id.clone()];
     let provider = if echo_enabled && pcm_tts_enabled {
-        let python = resolved_value("VPR_DID_ECHO_PYTHON", None)
-            .unwrap_or_else(|| "python".to_owned());
+        let python =
+            resolved_value("VPR_DID_ECHO_PYTHON", None).unwrap_or_else(|| "python".to_owned());
         let config = EchoPythonConfig::pcm_only(python)
             .map_err(|_| "PCM-only D-ID Echo configuration rejected".to_string())?;
         backend_fingerprint.push("runtime-tts-authorized-pcm".to_owned());

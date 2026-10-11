@@ -149,7 +149,10 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         engine = engine.with_stt(stt);
     }
     if let Some(tts) = providers.tts.take() {
-        let name = providers.tts_name.take().ok_or("missing TTS provider name")?;
+        let name = providers
+            .tts_name
+            .take()
+            .ok_or("missing TTS provider name")?;
         engine = engine.with_named_tts(name, tts);
     }
     if let Some(tts) = providers.tts_fallback.take() {

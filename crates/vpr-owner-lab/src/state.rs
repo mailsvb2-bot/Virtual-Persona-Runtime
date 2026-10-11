@@ -9,12 +9,11 @@ use vpr_domain::{
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
-    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription, TtsPort,
+    TtsPort, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle,
-    SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};

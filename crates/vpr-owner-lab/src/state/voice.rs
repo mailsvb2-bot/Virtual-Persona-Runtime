@@ -6,7 +6,7 @@ use vpr_domain::{Rt0ReasonCode, TurnState};
 pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
 pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
-    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TtsPort, TimedGeneratedTextBuffer,
+    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TimedGeneratedTextBuffer, TtsPort,
     UsageEvidence,
 };
 use vpr_runtime::{
@@ -310,8 +310,13 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        let (delivery, client_command) =
-            deliver_phrase(turn, self.provider.as_ref(), self.tts.as_deref(), handle, &reply)?;
+        let (delivery, client_command) = deliver_phrase(
+            turn,
+            self.provider.as_ref(),
+            self.tts.as_deref(),
+            handle,
+            &reply,
+        )?;
         let output_sequence =
             self.voice_playback
                 .register_delivery(evidence_turn_sequence, turn, delivery)?;
@@ -362,8 +367,13 @@ impl OwnerLabEngine {
                     output_started = true;
                 }
                 let avatar_started = Instant::now();
-                let (delivery, client_command) =
-                    deliver_phrase(turn, self.provider.as_ref(), self.tts.as_deref(), handle, &phrase)?;
+                let (delivery, client_command) = deliver_phrase(
+                    turn,
+                    self.provider.as_ref(),
+                    self.tts.as_deref(),
+                    handle,
+                    &phrase,
+                )?;
                 avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
                 let output_sequence = self.voice_playback.register_delivery(
                     evidence_turn_sequence,
@@ -385,8 +395,13 @@ impl OwnerLabEngine {
                 turn.begin_output().map_err(LabError::Runtime)?;
             }
             let avatar_started = Instant::now();
-            let (delivery, client_command) =
-                deliver_phrase(turn, self.provider.as_ref(), self.tts.as_deref(), handle, &phrase)?;
+            let (delivery, client_command) = deliver_phrase(
+                turn,
+                self.provider.as_ref(),
+                self.tts.as_deref(),
+                handle,
+                &phrase,
+            )?;
             avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
             let output_sequence =
                 self.voice_playback
