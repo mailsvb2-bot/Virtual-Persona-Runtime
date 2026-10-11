@@ -177,4 +177,8 @@ foreach ($proof in @(
         throw "Refusing to accept a different Python process without identity proof: $proof"
     }
 }
+$venvResolution = $source.IndexOf("Get-Content -LiteralPath $venvConfig -Encoding UTF8")
+if ($venvResolution -lt 0 -or -not $source.Contains("Substring('executable = '.Length)")) {
+    throw 'The virtualenv base Python path must be read in UTF-8, not mangled via native stdout'
+}
 Write-Host 'Windows Piper virtualenv direct-child binding and cleanup: PASS'
