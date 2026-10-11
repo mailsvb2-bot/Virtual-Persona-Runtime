@@ -107,3 +107,40 @@ try {
 }
 Write-Host 'RT0 ZIP checkout diagnostic regression: PASS'
 
+
+
+# Optional Piper first use must never disable the frozen candidate or loosen
+# listener identity checks. Validate the real production entrypoint statically.
+$source = Get-Content -LiteralPath $launcher -Raw
+$prepareAt = $source.IndexOf('& py -3.11 $preparer --data-dir $piperRoot')
+$stopAt = $source.IndexOf('Stop-PortListener -ExpectedExe $exe')
+if ($prepareAt -lt 0 -or $stopAt -lt 0 -or $prepareAt -ge $stopAt) {
+    throw 'Piper provisioning must complete before any Owner Lab process is stopped'
+}
+foreach ($required in @(
+    '[switch]$Piper',
+    'function New-PiperPrivateToken',
+    '[System.Security.Cryptography.RandomNumberGenerator]::Create()',
+    'function Wait-PiperReady',
+    'VPR_OWNER_LAB_TTS_PROVIDER',
+    'VPR_OWNER_LAB_TTS_MODEL',
+    'VPR_OWNER_LAB_TTS_VOICE',
+    'VPR_METROTRANCE_TTS_TOKEN',
+    'Get-NetTCPConnection -LocalPort 8897',
+    '$labProcess.WaitForExit()',
+    '$piperProcess.Kill()'
+)) {
+    if (-not $source.Contains($required)) {
+        throw "Piper process ownership / security contract missing: $required"
+    }
+}
+$click = Join-Path $PSScriptRoot '..\..\START_VPR_WITH_VOICE.cmd'
+$cmd = Get-Content -LiteralPath $click -Raw
+if (-not $cmd.Contains('scripts\start-rt0-piper.cmd')) {
+    throw 'One-click entrypoint must delegate to canonical launcher'
+}
+$delegate = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-piper.cmd') -Raw
+if (-not $delegate.Contains('-Piper -Rt0Evidence')) {
+    throw 'First-use Piper must preserve exact-candidate RT0 evidence'
+}
+Write-Host 'Windows Piper one-click provisioning and process ownership: PASS'
