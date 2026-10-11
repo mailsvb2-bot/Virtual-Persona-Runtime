@@ -28,6 +28,8 @@ jobs:
         run: python3 tests/e2e/test_echo_python_worker.py
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
+      - name: Piper speech bridge PCM and authorization contract
+        run: python3 tests/e2e/test_piper_tts_bridge.py
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
