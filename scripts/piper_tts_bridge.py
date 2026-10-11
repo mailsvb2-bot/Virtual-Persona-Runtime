@@ -2,8 +2,7 @@
 
 Requires pip install piper-tts and a locally provisioned .onnx/.onnx.json pair.
 Never downloads weights at request time. The provider identifier is currently
-the existing OpenAI-compatible metrotrance-qwen transport alias; this must be
-made a first-class piper provider before production rollout.
+the existing OpenAI-compatible local TTS wire contract.
 """
 import os
 from pathlib import Path
@@ -46,7 +45,7 @@ def main():
     synth = make_piper_synthesizer(model)
     server = ThreadingHTTPServer(
         ("127.0.0.1", port),
-        make_handler(token, synth, provider_id="metrotrance-qwen"),
+        make_handler(token, synth, provider_id="piper"),
     )
     try:
         print("Piper TTS loopback ready", flush=True)
