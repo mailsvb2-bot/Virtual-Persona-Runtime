@@ -37,7 +37,10 @@ use vpr_owner_lab::{
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
-const HTTP_WORKERS: usize = 4;
+// The Owner Lab UI loads a graph of ES modules and polls canonical APIs
+// concurrently. Reserve enough request handlers that slow response writers
+// cannot starve browser bootstrap and terminal evidence export.
+const HTTP_WORKERS: usize = 16;
 const DEFAULT_PORT: u16 = 8787;
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
