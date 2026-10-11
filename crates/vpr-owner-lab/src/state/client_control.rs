@@ -137,7 +137,10 @@ impl OwnerLabEngine {
             // avatar route may acknowledge Sent without producing any audio.
             let delivery = turn
                 .synthesize_and_deliver_realtime_avatar_audio(
-                    tts, self.provider.as_ref(), handle, suffix,
+                    tts,
+                    self.provider.as_ref(),
+                    handle,
+                    suffix,
                 )
                 .map_err(|error| match error {
                     vpr_runtime::RealtimeAvatarOutputError::Runtime(reason) => {
