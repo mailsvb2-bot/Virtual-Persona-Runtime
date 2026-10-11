@@ -12,7 +12,6 @@ from http.server import ThreadingHTTPServer
 
 
 def make_piper_synthesizer(model_path):
-    from piper import PiperVoice
     import io
     import threading
     import wave
@@ -20,6 +19,7 @@ def make_piper_synthesizer(model_path):
     model = Path(model_path).resolve(strict=True)
     if model.suffix != ".onnx" or not Path(str(model) + ".json").is_file():
         raise ValueError("Piper requires local .onnx and .onnx.json files")
+    from piper import PiperVoice
     voice = PiperVoice.load(str(model))
     lock = threading.Lock()
 
