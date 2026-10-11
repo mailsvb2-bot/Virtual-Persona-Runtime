@@ -106,6 +106,7 @@ class PiperFirstUseContract(unittest.TestCase):
     def test_pinned_voice_and_package_versions(self):
         self.assertEqual(bootstrap.VOICE, "ru_RU-denis-medium")
         self.assertEqual(bootstrap.PIPER_VERSION, "1.3.0")
+        self.assertEqual(bootstrap.ECHO_LIVEKIT_VERSION, "1.1.19")
         self.assertEqual(len(bootstrap.MODEL_SHA256), 64)
         self.assertIn("/v1.0.0/", bootstrap.VOICE_URL)
         self.assertTrue(bootstrap.VOICE_URL.startswith("https://huggingface.co/"))
