@@ -168,6 +168,17 @@ function Wait-PiperReady {
         if ($Process.HasExited) {
             throw 'Piper exited before its authenticated speech endpoint became ready'
         }
+        # Check the actual Windows listener owner BEFORE sending the bearer
+        # token. A foreign process racing the bind must never receive secrets.
+        $listeners = @(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue)
+        if ($listeners.Count -gt 0) {
+            if ($listeners.Count -ne 1 -or $listeners[0].OwningProcess -ne $Process.Id -or $listeners[0].LocalAddress -ne '127.0.0.1') {
+                throw 'Piper port owner does not match the exact spawned Python process'
+            }
+        } else {
+            Start-Sleep -Milliseconds 750
+            continue
+        }
         try {
             $result = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http://127.0.0.1:8897/v1/audio/speech' -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 10
             if ($result.StatusCode -eq 200 -and $result.Headers['Content-Type'] -like 'audio/wav*') {
@@ -280,6 +291,7 @@ Stop-PortListener -ExpectedExe $exe
 
 $piperProcess = $null
 $labProcess = $null
+$labReady = $false
 try {
 
     Push-Location $repoRoot
@@ -347,6 +359,7 @@ try {
     }
 
     $status = Get-LabStatus
+    $labReady = $true
     Write-Host "Owner Lab ready: pid=$listenerPid port=$Port egress=$($status.egress_enabled), conversation=$($status.conversation_readiness), persona=$($status.owner_context_state)."
     if (-not $NoBrowser) {
         if ($Rt0Evidence) {
@@ -366,7 +379,13 @@ try {
         try { if (-not $piperProcess.HasExited) { $piperProcess.Kill() } }
         finally { $piperProcess.Close() }
     }
-    if ($null -ne $labProcess) { $labProcess.Close() }
+    if ($null -ne $labProcess) {
+        try {
+            if (-not $labReady -and -not $labProcess.HasExited) {
+                $labProcess.Kill()
+            }
+        } finally { $labProcess.Close() }
+    }
     foreach ($secretVar in @('VPR_METROTRANCE_TTS_TOKEN', 'VPR_OWNER_LAB_TTS_API_KEY')) {
         Remove-Item -Path "Env:$secretVar" -ErrorAction SilentlyContinue
     }
