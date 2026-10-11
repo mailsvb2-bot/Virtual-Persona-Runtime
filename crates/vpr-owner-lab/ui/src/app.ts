@@ -1249,10 +1249,20 @@ const recordFirstVideoFrame = (): void => {
   if (connectJourneyStartedAt > 0) {
     queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
   }
+  // The first video frame can arrive before /api/status has published
+  // greeting_available. Retry only after the existing evidence/status fence
+  // completes, under the same session sequence: do not lose the welcome phrase
+  // to a connection race or send it to a later session.
+  const expectedSequence = evidenceSessionSequence;
   void connectionEvidenceTail
     .then(() => syncStatus())
+    .then(() => {
+      if (expectedSequence === evidenceSessionSequence) {
+        return greetAfterFirstVideoFrame();
+      }
+      return undefined;
+    })
     .catch(() => undefined);
-  void greetAfterFirstVideoFrame();
 };
 
 const modalityLabel = (state: ModalityReadiness): string => {
@@ -2742,7 +2752,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
   const voice = activeVoiceEvidence;
   const replaying = resumedSpeechStartedAt !== null;
   const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
-    replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
+    replaying || (voice?.responseComplete === true && voice.audioStarted
       && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null)
   );
   const sentences = replaying
@@ -2783,7 +2793,12 @@ const interruptAndOfferResume = async (): Promise<void> => {
   } else {
     clearInterruptedAnswer();
     if (interrupted) {
-      setStatus("Ответ остановлен. Продолжение недоступно: исходный ответ ещё не сформирован полностью.", "idle");
+      setStatus(
+        completedAuthorizedReply === null
+          ? "Ответ остановлен. Продолжение недоступно: сервер не подтвердил полный текст ответа."
+          : "Ответ остановлен. Продолжение недоступно: необходим подтверждённый исходный голосовой запрос.",
+        "idle",
+      );
     }
   }
   updateControls();
