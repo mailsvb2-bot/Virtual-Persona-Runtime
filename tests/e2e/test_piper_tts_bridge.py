@@ -17,6 +17,28 @@ spec.loader.exec_module(bridge)
 
 
 class PiperContract(unittest.TestCase):
+    def test_staged_espeak_data_is_private_and_removed(self):
+        with tempfile.TemporaryDirectory() as d:
+            source = Path(d) / "bundled"
+            source.mkdir()
+            (source / "phontab").write_bytes(b"valid-table")
+            (source / "phondata").write_bytes(b"valid-data")
+            workspace, staged = bridge.stage_short_espeak_data(source)
+            try:
+                self.assertNotEqual(source, staged)
+                self.assertEqual((staged / "phontab").read_bytes(), b"valid-table")
+                self.assertEqual((staged / "phondata").read_bytes(), b"valid-data")
+                self.assertLessEqual(len(str(staged).encode("utf-8")), 100)
+            finally:
+                workspace.cleanup()
+            self.assertFalse(staged.exists())
+            self.assertTrue((source / "phontab").exists())
+
+    def test_stage_rejects_missing_bundled_espeak_data(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(ValueError):
+                bridge.stage_short_espeak_data(Path(d))
+
     def test_requires_local_model_and_config(self):
         with tempfile.TemporaryDirectory() as d:
             model = Path(d) / "ru_RU-test.onnx"
