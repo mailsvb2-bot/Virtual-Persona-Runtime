@@ -143,4 +143,13 @@ $delegate = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\sta
 if (-not $delegate.Contains('-Piper -Rt0Evidence')) {
     throw 'First-use Piper must preserve exact-candidate RT0 evidence'
 }
+# Expressive credentials are validated only after canonical Piper/Echo is
+# declared. A misplaced probe used to reject fully configured D-ID accounts.
+$piperBinding = $source.IndexOf("$"+"env:VPR_OWNER_LAB_TTS_PROVIDER = 'piper'")
+$credentialProbe = $source.IndexOf('& $credentialsExe probe-avatar')
+$piperLaunch = $source.IndexOf('$piperProcess = Start-Process')
+if ($piperBinding -lt 0 -or $credentialProbe -lt 0 -or $piperLaunch -lt 0 -or
+    $piperBinding -ge $credentialProbe -or $credentialProbe -ge $piperLaunch) {
+    throw 'Expressive Echo preflight must see selected Piper provider before spawning it'
+}
 Write-Host 'Windows Piper one-click provisioning and process ownership: PASS'
