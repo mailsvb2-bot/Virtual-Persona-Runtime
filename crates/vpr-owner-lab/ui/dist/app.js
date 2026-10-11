@@ -876,6 +876,7 @@ const attachRemoteAudioEvidence = async (track) => {
 const greetAfterFirstVideoFrame = async () => {
     const sequence = evidenceSessionSequence;
     if (!videoEvidencePosted || !sessionState.realtime.control
+        || sessionState.backend.greeting_available !== true
         || sessionState.backend.session_state !== "active" || sequence <= 0
         || greetingRequestedSequence === sequence || textRequestInFlight
         || voiceRequestInFlight || recording)
@@ -928,10 +929,6 @@ const recordFirstVideoFrame = () => {
     if (connectJourneyStartedAt > 0) {
         queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
     }
-    // The first video frame can arrive before /api/status has published
-    // greeting_available. Retry only after the existing evidence/status fence
-    // completes, under the same session sequence: do not lose the welcome phrase
-    // to a connection race or send it to a later session.
     const expectedSequence = evidenceSessionSequence;
     void connectionEvidenceTail
         .then(() => syncStatus())
