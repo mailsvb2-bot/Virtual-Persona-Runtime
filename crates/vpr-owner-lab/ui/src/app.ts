@@ -1201,6 +1201,7 @@ const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void>
 const greetAfterFirstVideoFrame = async (): Promise<void> => {
   const sequence = evidenceSessionSequence;
   if (!videoEvidencePosted || !sessionState.realtime.control
+      || sessionState.backend.greeting_available !== true
       || sessionState.backend.session_state !== "active" || sequence <= 0
       || greetingRequestedSequence === sequence || textRequestInFlight
       || voiceRequestInFlight || recording) return;
