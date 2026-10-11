@@ -11,7 +11,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($parseErrors.Count -gt 0) { throw "Windows launcher has PowerShell parse errors" }
 
-foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener')) {
+foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate')) {
     $matching = @($ast.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -90,3 +90,20 @@ if ($script:closed -ne 3) {
     throw 'Verified and rejected process handles were not consistently closed'
 }
 Write-Host 'Windows launcher listener ownership regression: PASS'
+# A downloaded GitHub ZIP is not an exact-candidate checkout. Fail before
+# trying git or touching any live listener.
+$zipRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vpr-source-zip-" + [guid]::NewGuid().ToString('N'))
+$null = New-Item -ItemType Directory -Path $zipRoot
+try {
+    $rejectedZip = $false
+    try {
+        $null = Get-Rt0GitCandidate -RepositoryRoot $zipRoot
+    } catch {
+        $rejectedZip = $_.Exception.Message -match 'Git clone, not a GitHub ZIP'
+    }
+    if (-not $rejectedZip) { throw 'GitHub ZIP checkout must fail with a useful Git clone instruction' }
+} finally {
+    Remove-Item -LiteralPath $zipRoot -Force -Recurse
+}
+Write-Host 'RT0 ZIP checkout diagnostic regression: PASS'
+
