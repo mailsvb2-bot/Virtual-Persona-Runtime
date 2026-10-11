@@ -144,8 +144,18 @@ foreach ($required in @(
 }
 $click = Join-Path $PSScriptRoot '..\..\START_VPR_WITH_VOICE.cmd'
 $cmd = Get-Content -LiteralPath $click -Raw
-if (-not $cmd.Contains('scripts\start-rt0-piper.cmd')) {
-    throw 'One-click entrypoint must delegate to canonical launcher'
+if (-not $cmd.Contains('scripts\start-rt0-sapi.cmd')) {
+    throw 'One-click entrypoint must use local female system voice by default'
+}
+$sapiLauncher = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-sapi.cmd') -Raw
+if (-not $sapiLauncher.Contains('-SystemVoice -Rt0Evidence')) {
+    throw 'Native female system voice must preserve strict RT0 evidence checks'
+}
+if (-not $source.Contains('[switch]$SystemVoice') -or
+    -not $source.Contains('scripts\windows_sapi_prepare.py') -or
+    -not $source.Contains('scripts\windows_sapi_tts_bridge.py') -or
+    -not $source.Contains("'windows-sapi'")) {
+    throw 'Native Windows voice setup must use its own isolated, server-owned provider path'
 }
 $delegate = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-piper.cmd') -Raw
 if (-not $delegate.Contains('-Piper -Rt0Evidence')) {
@@ -187,4 +197,7 @@ if ($venvResolution -lt 0 -or -not $source.Contains("Substring('executable = '.L
 if ($source.Contains('Stop-Process -Id $piperListenerPid')) {
     throw 'Piper cleanup must use the verified child process handle, not a recyclable PID'
 }
-Write-Host 'Windows Piper virtualenv direct-child binding and cleanup: PASS'
+if ($source.IndexOf('if ($Piper -and $SystemVoice)') -lt 0) {
+    throw 'Local voice modes must be exclusive to avoid accidental provider switching'
+}
+Write-Host 'Windows Piper and female system voice child binding and cleanup: PASS'
