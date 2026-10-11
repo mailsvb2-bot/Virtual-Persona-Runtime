@@ -436,7 +436,18 @@ try {
         try {
             if ($piperListenerPid -gt 0 -and $piperListenerPid -ne $piperProcess.Id -and
                 (Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $piperListenerPid -VenvPython $piperPython -BasePython $piperBasePython -BridgeScript $piperBridge)) {
-                Stop-Process -Id $piperListenerPid -ErrorAction SilentlyContinue
+                # Retain an OS process handle before the final identity check,
+                # so recycling the integer PID cannot terminate another app.
+                $ownedChild = Get-Process -Id $piperListenerPid -ErrorAction SilentlyContinue
+                if ($null -ne $ownedChild) {
+                    try {
+                        $null = $ownedChild.Handle
+                        if ($ownedChild.Path -eq $piperBasePython -and
+                            (Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $ownedChild.Id -VenvPython $piperPython -BasePython $piperBasePython -BridgeScript $piperBridge)) {
+                            $ownedChild.Kill()
+                        }
+                    } finally { $ownedChild.Close() }
+                }
             }
             if (-not $piperProcess.HasExited) { $piperProcess.Kill() }
         } finally { $piperProcess.Close() }
