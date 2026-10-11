@@ -33,6 +33,27 @@ impl TtsPort for TestCanonicalTts {
 }
 
 
+
+#[test]
+fn connection_greeting_uses_one_fresh_authorized_pcm_turn_without_browser_command() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine.with_named_tts(
+        "piper".to_owned(),
+        Box::new(TestCanonicalTts {
+            stats: Arc::clone(&stats),
+            qwen: true,
+        }),
+    );
+    let greeting = engine.prepare_connection_greeting().unwrap();
+    assert!(greeting.client_command.is_none());
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 1);
+    engine.revoke_authority().unwrap();
+    assert!(engine.prepare_connection_greeting().is_err());
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 1);
+}
+
 #[test]
 fn interrupted_reply_resume_uses_same_tts_pcm_owner_and_no_browser_did_speak() {
     let (engine, stats, _) = voice_engine(false);
