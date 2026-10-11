@@ -68,10 +68,12 @@ This branch does **not** redistribute engine binaries or model weights.
 
 Required Linux CI executes Piper's loopback auth/model/PCM contract and
 offline first-run checksum, download failure, and cache tests. Windows CI
-parses the actual launcher and validates first-run safety contracts.
+validates launcher safety and also downloads the pinned real Piper voice,
+performs authenticated synthesis and checks the resulting PCM WAV contract.
 
-All of those are test-only evidence; the CI does **not** download a real
-Piper model or prove the latency/audio output of a live Windows avatar.
+These checks prove local synthesis on a CI Windows runner, **not** audible
+D-ID Echo playback, lip synchronization, latency or the full owner/visitor
+journey on the user's Windows machine. No RT0 exit is inferred from CI.
 
 RT0 exit still requires real owner + visitor, D-ID Expressive audible audio
 and visible moving video, measured first audio latency and A/V drift,
