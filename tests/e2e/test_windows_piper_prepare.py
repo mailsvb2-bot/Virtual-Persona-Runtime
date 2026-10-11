@@ -37,6 +37,22 @@ class PiperFirstUseContract(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             self.assertFalse(bootstrap.config_is_valid(path))
 
+    def test_cdn_redirect_matches_actual_official_model_host(self):
+        self.assertTrue(bootstrap.is_trusted_voice_redirect(
+            "https://us.aws.cdn.hf.co/voice/filename"
+        ))
+        self.assertTrue(bootstrap.is_trusted_voice_redirect(
+            "https://cas-bridge.xethub.hf.co/model"
+        ))
+        for bad in (
+            "http://us.aws.cdn.hf.co/model",
+            "https://us.aws.cdn.hf.co.attacker.test/model",
+            "https://evil.test/model",
+            "https://username:password@us.aws.cdn.hf.co/model",
+            "https://us.aws.cdn.hf.co:444/model",
+        ):
+            self.assertFalse(bootstrap.is_trusted_voice_redirect(bad), bad)
+
     def test_untrusted_host_fails_closed_without_partial_file(self):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / "model.onnx"
