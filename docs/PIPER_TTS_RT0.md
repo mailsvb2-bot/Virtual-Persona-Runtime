@@ -1,87 +1,77 @@
-# RT0: lightweight offline Piper speech (experimental)
+# Windows RT0: one-click Piper voice (development candidate)
 
-This is an **opt-in** local speech source, not a new policy owner or independent
-avatar publisher. Piper -> bearer-protected loopback speech endpoint -> canonical
-`TtsPort` / `ActiveTurn.execute_tts` -> fresh avatar permit -> private
-D-ID Echo PCM sender. The browser cannot choose a model or endpoint.
+**Goal:** a local Russian-speaking D-ID Echo avatar with no Qwen downloads,
+voice cloning, separate MetroTrance installation or manually launched TTS server.
 
-The initial voice is deliberately standard; **no voice cloning**, MetroTrance
-checkout, reference.wav, transcript.txt, Qwen model, or GPU is required.
+## One-click launch
 
-## Windows prerequisites and voice
+From a **clean Git clone** of the selected RT0 candidate, double-click:
 
-Use the Python interpreter that will **run the Piper bridge**. Keep it distinct
-from the existing D-ID Echo worker's Python environment if necessary.
+\`START_VPR_WITH_VOICE.cmd\`
 
-```powershell
-py -3.11 -m venv .vpr-piper
-.\.vpr-piper\Scripts\python.exe -m pip install piper-tts
-New-Item -ItemType Directory -Force -Path .local-piper | Out-Null
-Push-Location .local-piper
-..\.vpr-piper\Scripts\python.exe -m piper.download_voices ru_RU-irina-medium
-Pop-Location
-```
+The launcher delegates to the existing canonical Windows RT0 evidence launcher
+with \`-Piper -Rt0Evidence\`. It does not switch branches, update the checkout
+or weaken the Firefox strict-evidence requirement. Prerequisites still include
+the existing Rust toolchain, Windows secure provider profile (D-ID, Deepgram,
+DeepSeek), Python 3.11 registered as \`py -3.11\`, and an internet connection
+for the *first* optional voice download. This is **not yet a packaged end-user
+installer**; it makes the existing Windows developer RT0 lab one click.
 
-This downloads a small Russian voice and its configuration, once. Review the
-selected voice's MODEL_CARD/license before public or commercial deployment.
-Both `ru_RU-irina-medium.onnx` and `ru_RU-irina-medium.onnx.json` must
-exist. The bridge loads local files only and cannot download weights during a
-request. Keep the model and virtualenv **out of Git**; do not record client
-text or secrets in diagnostics.
+On first use, it:
 
-## Bridge terminal
+1. Creates a Piper-only virtual environment under
+   \`%LOCALAPPDATA%\\Virtual-Persona-Runtime\\Piper\\venv\`.
+2. Installs the fixed engine version \`piper-tts==1.3.0\`, separate from the
+   existing Echo Python interpreter.
+3. Downloads the \`ru_RU-denis-medium\` Russian voice (approximately 63 MB)
+   from the official pinned \`rhasspy/piper-voices\` \`v1.0.0\` revision.
+   It verifies the SHA-256 of the model
+   \`15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a\`
+   and the accompanying Russian 22,050 Hz model configuration.
+   A failed or interrupted download cannot replace a validated voice.
+4. Starts only the local \`127.0.0.1:8897\` speech bridge with a fresh
+   cryptographically random, per-launch bearer token. It rejects port
+   conflicts instead of using or killing unrecognized services.
+5. Requests a small authenticated warmup WAV, then configures the canonical
+   Owner Lab \`TtsPort\` for \`piper\` and launches the existing D-ID Echo PCM
+   sender path.
+6. Opens Firefox and supervises the Piper subprocess; on normal Owner Lab exit
+   it stops the exact Piper child it launched, without a persistent token file.
 
-Generate a fresh private token of at least 24 characters. Do not copy a demo
-token into production. In PowerShell at the VPR repository root:
+The model and environment are cached outside Git. The second launch should
+not download them again. The Windows PowerShell console remains open while
+the lab is running because it supervises the local TTS worker.
 
-```powershell
-$env:VPR_PIPER_MODEL = (Resolve-Path '.local-piper\ru_RU-irina-medium.onnx').Path
-$env:VPR_METROTRANCE_TTS_PORT = '8897'
-$env:VPR_METROTRANCE_TTS_TOKEN = '<private-random-token-minimum-24-chars>'
-.\.vpr-piper\Scripts\python.exe scripts\piper_tts_bridge.py
-```
+## Boundaries and license
 
-The inherited token variable name is retained for compatibility with the
-existing secure loopback HTTP handler, **not** because Piper runs MetroTrance.
-The listener binds only `127.0.0.1`, requires the bearer token, refuses
-mismatched `model`, enforces bounded requests and rejects non-PCM WAV.
+The bridge is **only a synthesis provider**. Browser clients cannot choose
+endpoint, provider credentials or model. The server-owned canonical
+\`ActiveTurn.execute_tts()\` creates bounded PCM; private Echo publication
+still requires a fresh permit. Cancellation/revocation must stop publication.
+No normal launch silently installs the voice: provisioning is activated only
+by \`-Piper\` or the explicit one-click entrypoint.
 
-## Owner Lab terminal
+The **Piper engine is GPLv3**. Its model files are from a separate repository.
+The selected Russian \`denis\` voice's source dataset is marked **CC0** in its
+official model card. Source/model licensing and GPL obligations still require
+review before bundling an installer or selling a commercial release.
+This branch does **not** redistribute engine binaries or model weights.
 
-Set exactly the **same** private bearer token; it is never browser-visible.
-The existing Windows credential profile supplies D-ID, Deepgram, and DeepSeek.
+- Engine: https://github.com/OHF-Voice/piper1-gpl
+- Piper API: https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/API_PYTHON.md
+- Selected voice model card: https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/ru/ru_RU/denis/medium/MODEL_CARD
 
-```powershell
-$env:VPR_OWNER_LAB_TTS_PROVIDER = 'piper'
-$env:VPR_OWNER_LAB_TTS_ENDPOINT = 'http://127.0.0.1:8897/v1/audio/speech'
-$env:VPR_OWNER_LAB_TTS_API_KEY = '<same-token-as-bridge>'
-$env:VPR_OWNER_LAB_TTS_MODEL = 'piper'
-$env:VPR_OWNER_LAB_TTS_VOICE = 'local'
-```
+## Regression gates and unresolved RT0 proof
 
-For **test branch evidence** use the existing strict Windows launcher with a
-clean Git clone and Firefox, because the ordinary launcher deliberately
-switches to `main` and would not test this unmerged branch:
+Required Linux CI executes Piper's loopback auth/model/PCM contract and
+offline first-run checksum, download failure, and cache tests. Windows CI
+parses the actual launcher and validates first-run safety contracts.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\windows-owner-lab-restart.ps1 -Rt0Evidence
-```
+All of those are test-only evidence; the CI does **not** download a real
+Piper model or prove the latency/audio output of a live Windows avatar.
 
-Do not disable Echo, STOP/revocation, or browser evidence requirements to
-make a voice sample play. The selected D-ID avatar needs real PCM-only Echo.
-The owner must verify D-ID Expressive playback, interrupt/STOP, visitor access,
-measured latency/AV sync, cost, and human review before RT0 exit.
-
-## CI and limitations
-
-```powershell
-python -m unittest discover -s tests/e2e -p test_piper_tts_bridge.py
-```
-
-The required Linux CI runs Piper's hermetic model/PCM/HTTP authentication
-regressions without downloading voices or importing Piper as an installed
-package. CI success proves the contract, **not** real synthesis speed or
-audible video playback. Do not merge solely because checks are green.
-
-Official engine: https://github.com/OHF-Voice/piper1-gpl
-Official voice models: https://huggingface.co/rhasspy/piper-voices
+RT0 exit still requires real owner + visitor, D-ID Expressive audible audio
+and visible moving video, measured first audio latency and A/V drift,
+interrupt/STOP and fail-closed revocation, verified cost/usage and human
+review on the frozen candidate. Never describe HTTP WAV generation as
+confirmed playback by the vendor or visitor.
