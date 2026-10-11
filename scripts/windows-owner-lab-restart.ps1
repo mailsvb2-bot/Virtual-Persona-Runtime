@@ -307,8 +307,17 @@ if ($Piper) {
     }
     $piperPython = Join-Path $piperRoot 'venv\Scripts\python.exe'
     $piperModel = Join-Path $piperRoot 'voices\ru_RU-denis-medium.onnx'
-    $piperBasePython = (& $piperPython -c 'import sys; print(sys._base_executable)').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $piperBasePython)) {
+    # Windows PowerShell 5.1 can corrupt non-ASCII paths emitted by native
+    # Python stdout (e.g. C:\Users\Пользователь). Read Python's UTF-8 venv
+    # configuration directly instead of guessing via terminal code pages.
+    $venvConfig = Join-Path $piperRoot 'venv\pyvenv.cfg'
+    $pythonLine = @(Get-Content -LiteralPath $venvConfig -Encoding UTF8 |
+        Where-Object { $_.StartsWith('executable = ') })
+    if ($pythonLine.Count -ne 1) {
+        throw 'Piper virtual environment does not identify a unique base Python interpreter'
+    }
+    $piperBasePython = $pythonLine[0].Substring('executable = '.Length)
+    if (-not (Test-Path -LiteralPath $piperBasePython)) {
         throw 'Piper base Python interpreter is unavailable'
     }
     if (-not (Test-Path -LiteralPath $piperPython) -or -not (Test-Path -LiteralPath $piperModel)) {
