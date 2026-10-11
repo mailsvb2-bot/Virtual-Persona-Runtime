@@ -9,6 +9,9 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+# Local optional Piper engine and downloaded voice weights
+.vpr-piper/
+.local-piper/
 coverage/
 *.log
 
