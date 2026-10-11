@@ -155,6 +155,57 @@ class SpeechBridgeContract(unittest.TestCase):
         self.assertTrue(module.validate_echo_wav(WAV))
         self.assertEqual(module.MAX_WAV_BYTES, 8 * 1024 * 1024)
 
+
+    def test_preset_voice_without_reference_files(self):
+        import os
+        import sys
+        import types
+        from unittest.mock import patch
+        class FakeTensor:
+            pass
+        calls = []
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, name, **kwargs):
+                calls.append((name, kwargs))
+                return cls()
+            def generate_custom_voice(self, **kwargs):
+                calls.append(kwargs)
+                return ([FakeTensor()], 16000)
+        fake_torch = types.SimpleNamespace(
+            cuda=types.SimpleNamespace(is_available=lambda: False),
+            float32="float32", float16="float16",
+        )
+        fake_sf = types.SimpleNamespace(
+            write=lambda output, data, rate, **kwargs: output.write(WAV)
+        )
+        with patch.dict(sys.modules, {
+            "torch": fake_torch,
+            "soundfile": fake_sf,
+            "qwen_tts": types.SimpleNamespace(Qwen3TTSModel=FakeModel),
+        }), patch.dict(os.environ, {"VPR_QWEN_PRESET_SPEAKER": "Ryan"}):
+            synth = module.make_custom_voice_synthesizer()
+            self.assertEqual(synth("Привет"), WAV)
+        self.assertEqual(calls[1], {
+            "text": "Привет", "language": "Russian", "speaker": "Ryan"
+        })
+        self.assertIn("CustomVoice", calls[0][0])
+
+    def test_preset_voice_rejects_unknown_speaker_before_model_load(self):
+        import os
+        import sys
+        import types
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"VPR_QWEN_PRESET_SPEAKER": "untrusted"}), patch.dict(
+            sys.modules, {
+                "torch": types.SimpleNamespace(),
+                "soundfile": types.SimpleNamespace(),
+                "qwen_tts": types.SimpleNamespace(Qwen3TTSModel=object),
+            }
+        ):
+            with self.assertRaises(ValueError):
+                module.make_custom_voice_synthesizer()
+
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
             module.make_handler("abc", lambda _: WAV)
