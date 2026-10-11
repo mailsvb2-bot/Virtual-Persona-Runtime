@@ -47,16 +47,19 @@ fn build_tts_configured(
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     if matches!(
         name,
-        "piper" | "metrotrance-qwen" | "metrotrance-chatterbox"
+        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-chatterbox"
     ) && !is_loopback_speech_endpoint(endpoint)
     {
         return Err("local TTS must use a loopback HTTP speech endpoint".into());
+    }
+    if name == "windows-sapi" && (model != "windows-sapi" || voice != "local") {
+        return Err("Windows SAPI requires model=windows-sapi and voice=local".into());
     }
     if name == "piper" && (model != "piper" || voice != "local") {
         return Err("Piper requires model=piper and voice=local".into());
     }
     let provider: Box<dyn TtsPort> = match name {
-        "piper" | "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
+        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-chatterbox" | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(
                 OpenAiSpeechConfig::new(
                     endpoint.to_owned(),
@@ -133,13 +136,13 @@ mod tests {
             "http://127.0.0.1:8897/other",
             "http://localhost:0/v1/audio/speech",
         ] {
-            for provider in ["piper", "metrotrance-qwen", "metrotrance-chatterbox"] {
+            for provider in ["piper", "windows-sapi", "metrotrance-qwen", "metrotrance-chatterbox"] {
                 let result = build_tts_configured(
                     provider,
                     endpoint,
                     "private-key".into(),
-                    if provider == "piper" {
-                        "piper"
+                    if provider == "piper" || provider == "windows-sapi" {
+                        provider
                     } else {
                         provider
                     },
@@ -151,6 +154,27 @@ mod tests {
         assert!(is_loopback_speech_endpoint(
             "http://localhost:8897/v1/audio/speech"
         ));
+    }
+
+    #[test]
+    fn native_windows_voice_uses_private_tts_and_rejects_wrong_identity() {
+        let (tts, descriptor) = build_tts_configured(
+            "windows-sapi",
+            "http://127.0.0.1:8897/v1/audio/speech",
+            "private-token".into(),
+            "windows-sapi",
+            "local",
+        )
+        .unwrap();
+        assert_eq!(tts.descriptor().provider, "windows-sapi");
+        assert_eq!(descriptor.provider, "windows-sapi");
+        assert!(build_tts_configured(
+            "windows-sapi",
+            "http://127.0.0.1:8897/v1/audio/speech",
+            "private-token".into(),
+            "windows-sapi",
+            "speaker-custom",
+        ).is_err());
     }
 
     #[test]
