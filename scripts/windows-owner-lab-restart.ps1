@@ -183,6 +183,22 @@ The Owner Lab backend was not opened in a non-evidence browser.
     return $firefox
 }
 
+function Get-Rt0GitCandidate {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    # ZIP/source-archive downloads lack .git metadata and cannot provide
+    # verifiable exact-candidate provenance for release-evidence collection.
+    if (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot '.git'))) {
+        throw "RT0 evidence requires a Git clone, not a GitHub ZIP download. In CMD: git clone https://github.com/mailsvb2-bot/Virtual-Persona-Runtime.git ; then run this launcher from the cloned folder. No Owner Lab listener was stopped."
+    }
+
+    $candidateOutput = @(git -C $RepositoryRoot rev-parse --verify HEAD)
+    if ($LASTEXITCODE -ne 0 -or $candidateOutput.Count -ne 1 -or $candidateOutput[0] -notmatch '^[0-9a-f]{40}$') {
+        throw 'RT0 evidence requires a valid exact Git candidate; no Owner Lab listener was stopped'
+    }
+    return [string]$candidateOutput[0]
+}
+
 $evidenceBrowser = $null
 if ($Rt0Evidence -and -not $NoBrowser) {
     $evidenceBrowser = Resolve-Rt0EvidenceBrowser
@@ -191,10 +207,7 @@ if ($Rt0Evidence -and -not $NoBrowser) {
 if ($Rt0Evidence) {
     Push-Location $repoRoot
     try {
-        $candidate = (git rev-parse HEAD).Trim()
-        if ($LASTEXITCODE -ne 0 -or $candidate -notmatch '^[0-9a-f]{40}$') {
-            throw 'RT0 evidence requires a valid exact Git candidate'
-        }
+        $candidate = Get-Rt0GitCandidate -RepositoryRoot $repoRoot
         $dirty = @(git status --porcelain --untracked-files=all)
         if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) {
             throw 'RT0 evidence requires a clean worktree; no listener was stopped'
