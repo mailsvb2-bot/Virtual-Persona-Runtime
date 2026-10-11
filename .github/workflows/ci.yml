@@ -122,6 +122,9 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Windows launcher listener ownership regression
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_launcher.ps1
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows clippy parity gate
