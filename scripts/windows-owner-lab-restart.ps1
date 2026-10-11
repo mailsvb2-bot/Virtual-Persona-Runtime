@@ -317,13 +317,17 @@ try {
     }
 
     Clear-ProviderEnvironmentOverrides
-    & $credentialsExe probe-avatar
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Avatar provider preflight failed; Owner Lab was not started'
-    }
-
-    $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
     if ($Piper) {
+        # The D-ID Expressive credential probe must see the actual selected
+        # server-owned TTS path BEFORE evaluating its Echo safety gate.
+        # Clear stale fallback/provider overrides without changing legacy mode.
+        foreach ($name in @(
+            'VPR_OWNER_LAB_TTS_ALT_PROVIDER', 'VPR_OWNER_LAB_TTS_ALT_ENDPOINT',
+            'VPR_OWNER_LAB_TTS_ALT_API_KEY', 'VPR_OWNER_LAB_TTS_ALT_MODEL',
+            'VPR_OWNER_LAB_TTS_ALT_VOICE', 'VPR_DID_ECHO_ENABLED'
+        )) {
+            Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+        }
         $env:VPR_PIPER_MODEL = $piperModel
         $env:VPR_METROTRANCE_TTS_TOKEN = New-PiperPrivateToken
         $env:VPR_METROTRANCE_TTS_PORT = '8897'
@@ -332,8 +336,15 @@ try {
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
         $env:VPR_OWNER_LAB_TTS_MODEL = 'piper'
         $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
-        # Echo's private PCM sender must use the verified LiveKit interpreter.
         $env:VPR_DID_ECHO_PYTHON = $piperPython
+    }
+    & $credentialsExe probe-avatar
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Avatar provider preflight failed; Owner Lab was not started'
+    }
+
+    $rt0EvidenceValue = if ($Rt0Evidence) { 'true' } else { 'false' }
+    if ($Piper) {
         $piperBridge = Join-Path $repoRoot 'scripts\piper_tts_bridge.py'
         $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
         Wait-PiperReady -Process $piperProcess
