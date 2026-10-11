@@ -9,12 +9,11 @@ use vpr_domain::{
 };
 use vpr_integration::{
     LlmPort, RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarTransport, SttPort,
-    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
+    TtsPort, WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
-    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle,
-    RealtimeAvatarStopHandle, SessionSecurityConfig,
+    ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -144,6 +143,10 @@ pub struct OwnerLabEngine {
     provider: Arc<dyn RealtimeAvatarPort>,
     stt: Option<Box<dyn SttPort>>,
     llm: Option<Box<dyn LlmPort>>,
+    tts: Option<Box<dyn TtsPort>>,
+    tts_name: Option<String>,
+    tts_fallback: Option<Box<dyn TtsPort>>,
+    tts_fallback_name: Option<String>,
     session: Option<ActiveSession>,
     avatar: Option<RealtimeAvatarHandle>,
     session_audience: Option<LabSessionAudience>,
@@ -171,6 +174,10 @@ impl OwnerLabEngine {
             provider: Arc::from(provider),
             stt: None,
             llm: None,
+            tts: None,
+            tts_name: None,
+            tts_fallback: None,
+            tts_fallback_name: None,
             session: None,
             avatar: None,
             session_audience: None,
@@ -179,20 +186,6 @@ impl OwnerLabEngine {
             voice_playback: voice_playback::LabVoicePlaybackRegistry::default(),
             egress_enabled,
         })
-    }
-
-    /// Returns an isolated stop-only capability only for a server-owned
-    /// `LiveKit` avatar. No arbitrary content publisher is copied to the caller.
-    #[must_use]
-    pub fn backend_stop_handle(&self) -> Option<RealtimeAvatarStopHandle> {
-        self.avatar
-            .as_ref()
-            .and_then(|handle| handle.backend_stop_handle(Arc::clone(&self.provider)))
-    }
-
-    #[must_use]
-    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
-        self.voice_playback.clone()
     }
 
     /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
@@ -224,11 +217,9 @@ impl OwnerLabEngine {
         Ok(())
     }
 
-    /// Identifies the current canonical session for conditional client teardown.
-    /// The sequence is stable across revoke/close and changes on every new start.
     #[must_use]
-    pub fn current_session_sequence(&self) -> Option<u64> {
-        self.session.as_ref().map(|_| self.session_counter)
+    pub fn voice_playback_registry(&self) -> LabVoicePlaybackRegistry {
+        self.voice_playback.clone()
     }
 
     #[must_use]
@@ -391,7 +382,16 @@ impl OwnerLabEngine {
                 if text.trim().is_empty() {
                     return Err(LabError::InvalidInput);
                 }
-                turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &text)
+                if let Some(tts) = self.tts.as_deref() {
+                    turn.speak_realtime_avatar_text_with_tts(
+                        tts,
+                        self.provider.as_ref(),
+                        handle,
+                        &text,
+                    )
+                } else {
+                    turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &text)
+                }
             }
             OwnerLabTurnInput::AudioUrl(url) => {
                 if url.trim().is_empty() {
@@ -589,6 +589,7 @@ pub use voice_playback::LabVoicePlaybackRegistry;
 
 #[cfg(test)]
 mod tests;
+mod tts_selection;
 #[cfg(test)]
 mod voice_streaming_tests;
 #[cfg(test)]

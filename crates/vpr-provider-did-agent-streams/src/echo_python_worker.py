@@ -100,7 +100,7 @@ async def run():
     tasks = {}
     generation = 0
 
-    async def speak(identifier, phrase, generation_at_start):
+    async def speak(identifier, phrase, generation_at_start, preauthorized_wav=None):
         writer = None
         try:
             # Serialize synthesis as well as sending. Otherwise a later,
@@ -109,7 +109,7 @@ async def run():
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
-                wav = await asyncio.to_thread(synthesize, phrase)
+                wav = preauthorized_wav if preauthorized_wav is not None else await asyncio.to_thread(synthesize, phrase)
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
@@ -168,6 +168,44 @@ async def run():
                         emit(identifier, False)
                         continue
                     task = asyncio.create_task(speak(identifier, text, generation))
+                    tasks[identifier] = task
+                elif command == "pcm":
+                    # Audio bytes originate from the canonical TTS permit in Rust.
+                    # No model/key/text is accepted on this transport.
+                    raw_pcm = request.get("pcm_hex")
+                    rate = request.get("sample_rate_hz")
+                    channels = request.get("channels")
+                    if (
+                        identifier in tasks
+                        or len(tasks) >= MAX_PENDING_UTTERANCES
+                        or not isinstance(raw_pcm, str)
+                        or len(raw_pcm) > MAX_WAV_BYTES * 2
+                        or not isinstance(rate, int)
+                        or not isinstance(channels, int)
+                        or not 8000 <= rate <= 96000
+                        or channels not in (1, 2)
+                    ):
+                        emit(identifier, False)
+                        continue
+                    try:
+                        pcm = bytes.fromhex(raw_pcm)
+                        if not pcm or len(pcm) % (channels * 2) != 0:
+                            raise ValueError("invalid PCM16")
+                        if len(pcm) // (channels * 2) > rate * 60:
+                            raise ValueError("audio too long")
+                        with io.BytesIO() as output:
+                            with wave.open(output, "wb") as writer:
+                                writer.setnchannels(channels)
+                                writer.setsampwidth(2)
+                                writer.setframerate(rate)
+                                writer.writeframes(pcm)
+                            wav = output.getvalue()
+                        if len(wav) > MAX_WAV_BYTES:
+                            raise ValueError("audio too large")
+                    except (ValueError, OverflowError):
+                        emit(identifier, False)
+                        continue
+                    task = asyncio.create_task(speak(identifier, None, generation, wav))
                     tasks[identifier] = task
                 elif command == "interrupt":
                     generation += 1

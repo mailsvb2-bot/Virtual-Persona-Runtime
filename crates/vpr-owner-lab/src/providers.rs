@@ -3,16 +3,18 @@ use std::env;
 mod avatar_factory;
 mod avatar_selection;
 mod provider_state;
+mod tts_factory;
 use avatar_factory::build_avatar;
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
+use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
-use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort};
+use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
@@ -32,6 +34,10 @@ pub struct ProviderBundle {
     pub avatar: Box<dyn RealtimeAvatarPort>,
     pub stt: Option<Box<dyn SttPort>>,
     pub llm: Option<Box<dyn LlmPort>>,
+    pub tts: Option<Box<dyn TtsPort>>,
+    pub tts_name: Option<String>,
+    pub tts_fallback: Option<Box<dyn TtsPort>>,
+    pub tts_fallback_name: Option<String>,
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
@@ -101,22 +107,40 @@ impl ProviderBundle {
                 return Err("voice mode requires both STT and LLM provider configuration".into());
             }
         };
+        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER");
+        if tts_name.is_some() {
+            ensure_avatar_pcm_compatible(avatar.as_ref())?;
+        }
+        let tts = tts_name.as_deref().map(build_tts).transpose()?;
+        let tts_fallback_name = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
+        if tts_fallback_name.is_some() && tts_name.is_none() {
+            return Err("TTS fallback requires a primary canonical TTS provider".into());
+        }
+        if tts_fallback_name == tts_name && tts_name.is_some() {
+            return Err("TTS fallback must use a distinct provider identifier".into());
+        }
+        let tts_fallback = tts_fallback_name
+            .as_deref()
+            .map(build_tts_fallback)
+            .transpose()?;
         Ok(Self {
             avatar,
             stt,
             llm,
+            tts: tts.map(|(port, _)| port),
+            tts_name,
+            tts_fallback: tts_fallback.map(|(port, _)| port),
+            tts_fallback_name,
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
         })
     }
 }
-
 #[cfg(windows)]
 fn environment_provider_config_complete(require_voice: bool) -> bool {
     provider_config_complete_with(require_voice, optional_env)
 }
-
 #[cfg(any(windows, test))]
 fn provider_config_complete_with(
     require_voice: bool,
@@ -125,7 +149,6 @@ fn provider_config_complete_with(
     if !avatar_provider_config_complete_with(&mut get) {
         return false;
     }
-
     let stt = get("VPR_OWNER_LAB_STT_PROVIDER");
     let llm = get("VPR_OWNER_LAB_LLM_PROVIDER");
     if stt.is_none() && llm.is_none() && !require_voice {
@@ -134,7 +157,6 @@ fn provider_config_complete_with(
     if stt.is_none() || llm.is_none() {
         return false;
     }
-
     [
         "VPR_OWNER_LAB_STT_ENDPOINT",
         "VPR_OWNER_LAB_STT_API_KEY",

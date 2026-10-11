@@ -9,10 +9,11 @@ use vpr_domain::{
     VerificationState,
 };
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, SttPort, SttRequest, Transcript, UsageEvidence,
-    WebRtcIceServer, WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioSink, GeneratedTextSink, LlmPort, LlmRequest, PcmSampleFormat,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapabilities,
+    RealtimeAvatarCapability, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    SttPort, SttRequest, Transcript, TtsPort, TtsRequest, UsageEvidence, WebRtcIceServer,
+    WebRtcSessionDescription,
 };
 
 use super::readiness::{LabModalityReadiness, LabModalityState};
@@ -26,6 +27,10 @@ struct VoiceStats {
     stt: AtomicUsize,
     llm: AtomicUsize,
     avatar_text: AtomicUsize,
+    avatar_pcm: AtomicUsize,
+    avatar_creates: AtomicUsize,
+    tts_qwen: AtomicUsize,
+    tts_chatterbox: AtomicUsize,
     contexts: Mutex<Vec<String>>,
 }
 
@@ -46,6 +51,7 @@ impl RealtimeAvatarPort for VoiceAvatar {
         &self,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
+        self.stats.avatar_creates.fetch_add(1, Ordering::SeqCst);
         Ok(RealtimeAvatarSession {
             provider_resource_id: "stream".into(),
             provider_session_id: "session".into(),
@@ -91,6 +97,25 @@ impl RealtimeAvatarPort for VoiceAvatar {
             return Err(cancelled());
         }
         self.stats.avatar_text.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn speak_pcm(
+        &self,
+        _session: &RealtimeAvatarSession,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled()
+            || pcm.is_empty()
+            || sample_rate_hz != 16_000
+            || channels != 1
+        {
+            return Err(cancelled());
+        }
+        self.stats.avatar_pcm.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
 
@@ -492,3 +517,6 @@ fn cancelled() -> ProviderError {
         retryable: false,
     }
 }
+
+#[path = "voice_tts_tests.rs"]
+mod voice_tts_tests;

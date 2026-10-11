@@ -343,7 +343,22 @@ fn probe_profile_did(
             // A credential probe is not a realtime-session readiness probe.
             // Expressive V2 requires a private, server-owned Echo sender.
             // Do not let the launcher report READY then show a black avatar.
-            if expressive_echo_preflight_denied(&presenter, env::var("VPR_DID_ECHO_ENABLED").ok().as_deref())
+            let tts_ready = [
+                "VPR_OWNER_LAB_TTS_PROVIDER",
+                "VPR_OWNER_LAB_TTS_ENDPOINT",
+                "VPR_OWNER_LAB_TTS_API_KEY",
+                "VPR_OWNER_LAB_TTS_MODEL",
+                "VPR_OWNER_LAB_TTS_VOICE",
+            ]
+            .iter()
+            .all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
+            let explicitly_set = env::var("VPR_DID_ECHO_ENABLED").ok();
+            let echo_enabled = explicitly_set.as_deref().or(if tts_ready {
+                Some("true")
+            } else {
+                None
+            });
+            if expressive_echo_preflight_denied(&presenter, echo_enabled)
             {
                 return Err(
                     "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID credentials are valid, but this Expressive presenter cannot open a secure session without server-owned Echo. The current credential profile contains only D-ID/Deepgram/DeepSeek, not a voice provider. The launcher must not claim avatar readiness. Configure server-owned Echo with a voice service; do not disable the revocation guard."

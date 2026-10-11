@@ -6,7 +6,7 @@ use vpr_domain::{Rt0ReasonCode, TurnState};
 pub use vpr_evaluation::SessionUsageEvidence as LabProviderUsage;
 pub type LabVoiceUsage = LabProviderUsage;
 use vpr_integration::{
-    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TimedGeneratedTextBuffer,
+    AudioInput, LlmPort, LlmRequest, PcmSampleFormat, SttPort, TimedGeneratedTextBuffer, TtsPort,
     UsageEvidence,
 };
 use vpr_runtime::{
@@ -66,6 +66,26 @@ impl OwnerLabEngine {
     #[must_use]
     pub fn with_stt(mut self, stt: Box<dyn SttPort>) -> Self {
         self.stt = Some(stt);
+        self
+    }
+
+    #[must_use]
+    pub fn with_tts(mut self, tts: Box<dyn TtsPort>) -> Self {
+        self.tts = Some(tts);
+        self
+    }
+
+    #[must_use]
+    pub fn with_named_tts(mut self, name: String, tts: Box<dyn TtsPort>) -> Self {
+        self.tts_name = Some(name);
+        self.tts = Some(tts);
+        self
+    }
+
+    #[must_use]
+    pub fn with_tts_fallback(mut self, name: String, tts: Box<dyn TtsPort>) -> Self {
+        self.tts_fallback_name = Some(name);
+        self.tts_fallback = Some(tts);
         self
     }
 
@@ -290,8 +310,13 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        let (delivery, client_command) =
-            deliver_phrase(turn, self.provider.as_ref(), handle, &reply)?;
+        let (delivery, client_command) = deliver_phrase(
+            turn,
+            self.provider.as_ref(),
+            self.tts.as_deref(),
+            handle,
+            &reply,
+        )?;
         let output_sequence =
             self.voice_playback
                 .register_delivery(evidence_turn_sequence, turn, delivery)?;
@@ -342,8 +367,13 @@ impl OwnerLabEngine {
                     output_started = true;
                 }
                 let avatar_started = Instant::now();
-                let (delivery, client_command) =
-                    deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
+                let (delivery, client_command) = deliver_phrase(
+                    turn,
+                    self.provider.as_ref(),
+                    self.tts.as_deref(),
+                    handle,
+                    &phrase,
+                )?;
                 avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
                 let output_sequence = self.voice_playback.register_delivery(
                     evidence_turn_sequence,
@@ -365,8 +395,13 @@ impl OwnerLabEngine {
                 turn.begin_output().map_err(LabError::Runtime)?;
             }
             let avatar_started = Instant::now();
-            let (delivery, client_command) =
-                deliver_phrase(turn, self.provider.as_ref(), handle, &phrase)?;
+            let (delivery, client_command) = deliver_phrase(
+                turn,
+                self.provider.as_ref(),
+                self.tts.as_deref(),
+                handle,
+                &phrase,
+            )?;
             avatar_millis = avatar_millis.saturating_add(elapsed_millis(avatar_started));
             let output_sequence =
                 self.voice_playback
@@ -440,9 +475,16 @@ impl OwnerLabEngine {
 fn deliver_phrase(
     turn: &ActiveTurn,
     provider: &dyn vpr_integration::RealtimeAvatarPort,
+    tts: Option<&dyn TtsPort>,
     handle: &RealtimeAvatarHandle,
     phrase: &str,
 ) -> Result<(OutputDeliveryHandle, Option<LabClientCommand>), LabError> {
+    if let Some(tts) = tts {
+        let delivery = turn
+            .synthesize_and_deliver_realtime_avatar_audio(tts, provider, handle, phrase)
+            .map_err(|error| terminalize_avatar_output_error(turn, error))?;
+        return Ok((delivery, None));
+    }
     let client_text = handle
         .client_control()
         .is_some_and(|control| control.text_input);

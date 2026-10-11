@@ -32,6 +32,22 @@ pub trait DidEchoBackend: Send + Sync {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError>;
 
+    /// Publishes audio from an already-authorized canonical TTS operation.
+    /// No further synthesis or provider selection happens inside Echo.
+    ///
+    /// # Errors
+    /// Fails closed unless the backend implements private PCM publication.
+    fn speak_pcm(
+        &self,
+        _session_id: &str,
+        _pcm: &[u8],
+        _sample_rate_hz: u32,
+        _channels: u16,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(super::unavailable())
+    }
+
     /// Cancels current Echo playback without closing the private `LiveKit` room.
     /// An implementation must send did.interrupt and drop pending utterances;
     /// it must not publish any new audio as part of STOP.

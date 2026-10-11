@@ -1,15 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::blocking::{Client, RequestBuilder, Response};
+use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde::de::DeserializeOwned;
 use vpr_integration::{
-    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
-    RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcSessionDescription, build_provider_http_client, read_bounded_provider_body,
+    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
+    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
+    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
+    build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -17,9 +16,11 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 mod client_control;
 mod diagnostics;
 mod echo;
+mod echo_pcm;
 mod echo_python;
 mod protocol;
 mod provider_error;
+mod response_json;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
@@ -35,6 +36,7 @@ use provider_error::{
     cancelled, expect_success, invalid_response, map_transport_error, policy_denied, unavailable,
     validate_audio_url, validate_endpoint,
 };
+use response_json::decode_json_response;
 
 pub struct DidAgentStreamsConfig {
     endpoint: String,
@@ -313,24 +315,18 @@ impl DidAgentStreamsAvatar {
     }
 }
 
-fn decode_json_response<T: DeserializeOwned>(
-    response: Response,
-    cancellation: Option<&dyn CancellationProbe>,
-) -> Result<T, ProviderError> {
-    let body = read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
-    serde_json::from_slice(&body).map_err(|_| invalid_response())
-}
-
 impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     fn descriptor(&self) -> ProviderDescriptor {
         self.config.descriptor()
     }
 
     fn capabilities(&self) -> RealtimeAvatarCapabilities {
-        RealtimeAvatarCapabilities::new([
-            RealtimeAvatarCapability::TextInput,
-            RealtimeAvatarCapability::AudioUrlInput,
-        ])
+        let audio_input = if self.echo_backend.is_some() {
+            RealtimeAvatarCapability::AudioPcmInput
+        } else {
+            RealtimeAvatarCapability::AudioUrlInput
+        };
+        RealtimeAvatarCapabilities::new([RealtimeAvatarCapability::TextInput, audio_input])
     }
 
     fn create_session(
@@ -420,12 +416,18 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         if text.trim().is_empty() {
             return Err(invalid_response());
         }
-        if self.echo_sessions.contains(&session.provider_session_id)? {
-            let backend = self.echo_backend.as_ref().ok_or_else(unavailable)?;
+        if matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. }) {
+            // A stale, closed or forged LiveKit session must never fall through
+            // to legacy D-ID speaking. Echo is the sole authorized speech
+            // route for Expressive, even after its sender is revoked.
+            if !self.echo_sessions.contains(&session.provider_session_id)? {
+                return Err(policy_denied());
+            }
+            let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
             return backend.speak(&session.provider_session_id, text, cancellation);
         }
-        if !matches!(session.transport, RealtimeAvatarTransport::WebRtc { .. }) {
-            return Err(unavailable());
+        if self.echo_backend.is_some() {
+            return Err(policy_denied());
         }
         let response = self
             .authorized(
@@ -439,6 +441,17 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         expect_success(response).map(|_| ())
+    }
+
+    fn speak_pcm(
+        &self,
+        session: &RealtimeAvatarSession,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        echo_pcm::send_private_pcm(self, session, pcm, sample_rate_hz, channels, cancellation)
     }
 
     fn speak_audio_url(

@@ -611,3 +611,47 @@ fn provider_create_failure_marks_only_media_preparation_failed_and_allows_retry(
     assert_eq!(retry.voice, LabModalityState::Preparing);
     assert_eq!(retry.video, LabModalityState::Preparing);
 }
+
+struct SelectionOnlyTts;
+
+impl vpr_integration::TtsPort for SelectionOnlyTts {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "selection-only".to_owned(),
+            model: "test".to_owned(),
+            representation: None,
+        }
+    }
+
+    fn synthesize(
+        &self,
+        _request: &vpr_integration::TtsRequest,
+        _cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn vpr_integration::GeneratedAudioSink,
+    ) -> Result<vpr_integration::UsageEvidence, ProviderError> {
+        panic!("selection must not execute TTS or leak old queued audio");
+    }
+}
+
+#[test]
+fn prepared_tts_providers_switch_both_directions_without_restarting_avatar() {
+    let (engine, stats) = engine(true);
+    let mut engine = engine
+        .with_named_tts("metrotrance-qwen".to_owned(), Box::new(SelectionOnlyTts))
+        .with_tts_fallback(
+            "metrotrance-chatterbox".to_owned(),
+            Box::new(SelectionOnlyTts),
+        );
+    assert_eq!(engine.tts_selection()["active"], "metrotrance-qwen");
+    engine
+        .select_tts_provider("metrotrance-chatterbox")
+        .unwrap();
+    assert_eq!(engine.tts_selection()["active"], "metrotrance-chatterbox");
+    engine.select_tts_provider("metrotrance-qwen").unwrap();
+    assert_eq!(engine.tts_selection()["active"], "metrotrance-qwen");
+    assert!(matches!(
+        engine.select_tts_provider("did"),
+        Err(LabError::InvalidInput)
+    ));
+    assert_eq!(stats.create.load(Ordering::SeqCst), 0);
+}

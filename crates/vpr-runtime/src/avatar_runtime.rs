@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, RealtimeAvatarClientCommand,
-    RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioBuffer, PcmSampleFormat, ProviderDescriptor,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, TtsPort, TtsRequest,
+    WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -219,6 +220,97 @@ impl ActiveTurn {
         port.speak_text(&handle.provider_session, text, &permit.cancellation)
             .map_err(ProviderExecutionError::from)
             .map_err(RealtimeAvatarOutputError::Provider)?;
+        self.acknowledge_output_sent(&delivery)
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        Ok(delivery)
+    }
+
+    fn authorized_realtime_pcm(
+        &self,
+        tts: &dyn TtsPort,
+        text: &str,
+    ) -> Result<GeneratedAudioBuffer, ProviderExecutionError> {
+        let mut audio = GeneratedAudioBuffer::default();
+        self.execute_tts(
+            tts,
+            &TtsRequest {
+                text: text.to_owned(),
+                locale_hint: Some("ru".to_owned()),
+            },
+            &mut audio,
+        )?;
+        if audio.sample_format() != Some(PcmSampleFormat::S16Le) {
+            return Err(ProviderExecutionError::from(
+                vpr_integration::ProviderError {
+                    kind: vpr_integration::ProviderErrorKind::InvalidResponse,
+                    retryable: false,
+                },
+            ));
+        }
+        Ok(audio)
+    }
+
+    /// Direct avatar speaking through the same canonical TTS permit as
+    /// streaming voice, without a browser-controlled D-ID speech route.
+    ///
+    /// # Errors
+    /// Rejects revoked authority and unsupported private audio publishers.
+    pub fn speak_realtime_avatar_text_with_tts(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<(), ProviderExecutionError> {
+        self.validate_avatar_handle(port, handle)?;
+        let audio = self.authorized_realtime_pcm(tts, text)?;
+        let permit = self.avatar_permit()?;
+        port.speak_pcm(
+            &handle.provider_session,
+            audio.pcm(),
+            audio.sample_rate_hz().unwrap_or(0),
+            audio.channels().unwrap_or(0),
+            &permit.cancellation,
+        )
+        .map_err(ProviderExecutionError::from)
+    }
+
+    /// Executes TTS under the canonical turn permit, then sends authorized
+    /// PCM directly to a private avatar publisher. Never synthesizes inside
+    /// the avatar adapter or exposes audio to browser JavaScript.
+    ///
+    /// # Errors
+    /// Fails closed if either authorization epoch changed, TTS failed, or
+    /// the selected avatar does not support private PCM publication.
+    pub fn synthesize_and_deliver_realtime_avatar_audio(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        self.validate_avatar_handle(port, handle)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let audio = self
+            .authorized_realtime_pcm(tts, text)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        // A fresh permit is mandatory AFTER potentially slow synthesis.
+        let permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
+        port.speak_pcm(
+            &handle.provider_session,
+            audio.pcm(),
+            audio.sample_rate_hz().unwrap_or(0),
+            audio.channels().unwrap_or(0),
+            &permit.cancellation,
+        )
+        .map_err(ProviderExecutionError::from)
+        .map_err(RealtimeAvatarOutputError::Provider)?;
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
         Ok(delivery)

@@ -1,3 +1,4 @@
+mod engine_bootstrap;
 mod evidence_provenance;
 mod http_avatar_input;
 mod http_client_control;
@@ -10,6 +11,7 @@ mod http_references;
 mod http_security_tests;
 mod http_session;
 mod http_text;
+mod http_tts;
 mod http_voice;
 mod launch;
 
@@ -41,6 +43,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ht
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
+const TTS_SELECTOR_JS: &str = include_str!("../ui/dist/tts-selector.js");
 const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
@@ -120,7 +123,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         launch::print_usage();
         return Ok(());
     }
-
     let egress_env = env::var("VPR_OWNER_LAB_ALLOW_EGRESS").ok();
     let egress_enabled = launch::resolve_egress_enabled(&launch_options, egress_env.as_deref());
     let rt0_evidence_mode = match env::var("VPR_OWNER_LAB_RT0_EVIDENCE") {
@@ -137,17 +139,9 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
-    let mut providers = ProviderBundle::from_env(false)?;
+    let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
-
-    let mut engine = OwnerLabEngine::new(providers.avatar, egress_enabled)
-        .map_err(|_| "owner-lab runtime initialization failed")?;
-    if let Some(llm) = providers.llm.take() {
-        engine = engine.with_llm(llm);
-    }
-    if let Some(stt) = providers.stt.take() {
-        engine = engine.with_stt(stt);
-    }
+    let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
@@ -163,7 +157,6 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             );
         }
     }
-
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         rt0_evidence_mode,
@@ -213,7 +206,6 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
         return;
     }
-
     let method = request.method().clone();
     let path = request.url().to_owned();
     let response = if method == Method::Get {
@@ -229,6 +221,7 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
+        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, "text/javascript; charset=utf-8"),
         "/interrupted-answer.js" => {
             static_response(INTERRUPTED_ANSWER_JS, "text/javascript; charset=utf-8")
         }
@@ -270,6 +263,7 @@ fn route_request(
 ) -> HttpResponse {
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
+        (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
         (&Method::Get, "/api/status") => {
             with_engine(state, |engine| json_response(200, &engine.status()))
         }
@@ -412,6 +406,7 @@ fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpR
                 }),
             )
         }),
+        "/api/tts/select" => http_tts::select(request, state),
         "/api/text/turn" => http_text::text_turn_response(request, state),
         "/api/voice/events" => http_voice::events_response(request, state),
         "/api/avatar/interrupt" => http_interrupt::interrupt_response(request, state),
