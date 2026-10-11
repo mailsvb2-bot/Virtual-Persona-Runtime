@@ -7,33 +7,33 @@ voice cloning, separate MetroTrance installation or manually launched TTS server
 
 From a **clean Git clone** of the selected RT0 candidate, double-click:
 
-\`START_VPR_WITH_VOICE.cmd\`
+`START_VPR_WITH_VOICE.cmd`
 
 The launcher delegates to the existing canonical Windows RT0 evidence launcher
-with \`-Piper -Rt0Evidence\`. It does not switch branches, update the checkout
+with `-Piper -Rt0Evidence`. It does not switch branches, update the checkout
 or weaken the Firefox strict-evidence requirement. Prerequisites still include
 the existing Rust toolchain, Windows secure provider profile (D-ID, Deepgram,
-DeepSeek), Python 3.11 registered as \`py -3.11\`, and an internet connection
+DeepSeek), Python 3.11 registered as `py -3.11`, and an internet connection
 for the *first* optional voice download. This is **not yet a packaged end-user
 installer**; it makes the existing Windows developer RT0 lab one click.
 
 On first use, it:
 
 1. Creates a Piper-only virtual environment under
-   \`%LOCALAPPDATA%\\Virtual-Persona-Runtime\\Piper\\venv\`.
-2. Installs the fixed engine version \`piper-tts==1.3.0\`, separate from the
+   `%LOCALAPPDATA%\Virtual-Persona-Runtime\Piper\venv`.
+2. Installs the fixed engine version `piper-tts==1.3.0`, separate from the
    existing Echo Python interpreter.
-3. Downloads the \`ru_RU-denis-medium\` Russian voice (approximately 63 MB)
-   from the official pinned \`rhasspy/piper-voices\` \`v1.0.0\` revision.
+3. Downloads the `ru_RU-denis-medium` Russian voice (approximately 63 MB)
+   from the official pinned `rhasspy/piper-voices` `v1.0.0` revision.
    It verifies the SHA-256 of the model
-   \`15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a\`
+   `15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a`
    and the accompanying Russian 22,050 Hz model configuration.
    A failed or interrupted download cannot replace a validated voice.
-4. Starts only the local \`127.0.0.1:8897\` speech bridge with a fresh
+4. Starts only the local `127.0.0.1:8897` speech bridge with a fresh
    cryptographically random, per-launch bearer token. It rejects port
    conflicts instead of using or killing unrecognized services.
 5. Requests a small authenticated warmup WAV, then configures the canonical
-   Owner Lab \`TtsPort\` for \`piper\` and launches the existing D-ID Echo PCM
+   Owner Lab `TtsPort` for `piper` and launches the existing D-ID Echo PCM
    sender path.
 6. Opens Firefox and supervises the Piper subprocess; on normal Owner Lab exit
    it stops the exact Piper child it launched, without a persistent token file.
@@ -46,13 +46,13 @@ the lab is running because it supervises the local TTS worker.
 
 The bridge is **only a synthesis provider**. Browser clients cannot choose
 endpoint, provider credentials or model. The server-owned canonical
-\`ActiveTurn.execute_tts()\` creates bounded PCM; private Echo publication
+`ActiveTurn.execute_tts()` creates bounded PCM; private Echo publication
 still requires a fresh permit. Cancellation/revocation must stop publication.
 No normal launch silently installs the voice: provisioning is activated only
-by \`-Piper\` or the explicit one-click entrypoint.
+by `-Piper` or the explicit one-click entrypoint.
 
 The **Piper engine is GPLv3**. Its model files are from a separate repository.
-The selected Russian \`denis\` voice's source dataset is marked **CC0** in its
+The selected Russian `denis` voice's source dataset is marked **CC0** in its
 official model card. Source/model licensing and GPL obligations still require
 review before bundling an installer or selling a commercial release.
 This branch does **not** redistribute engine binaries or model weights.
