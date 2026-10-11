@@ -2241,6 +2241,10 @@ const switchRecordingMicrophone = async (selectedDeviceId: string): Promise<void
 const startMicrophone = async (): Promise<void> => {
   const mediaDevices = runtimeMediaDevices();
   if (!mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  // Firefox may take time to show a capture permission prompt. A device
+  // change during that pending prompt would otherwise be silently discarded
+  // because no recording worklet exists yet, forcing STOP and a second start.
+  microphoneSelect.disabled = true;
   try {
     const selectedDeviceId = microphoneSelect.value.trim();
     micStream = await mediaDevices.getUserMedia({
@@ -2312,6 +2316,7 @@ const startMicrophone = async (): Promise<void> => {
     if (micSamplesSent >= MAX_VOICE_SAMPLES) void finishMicrophoneTurn();
   };
   recording = true;
+  microphoneSelect.disabled = false;
   micSource.connect(micWorklet);
   micWorklet.connect(audioContext.destination);
   recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
