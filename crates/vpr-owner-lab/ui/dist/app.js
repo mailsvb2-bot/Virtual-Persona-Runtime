@@ -112,6 +112,8 @@ let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
 let evidenceSessionSequence = 0;
+let greetingRequestedSequence = 0;
+let greetingPlaybackPending = false;
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
 const sessionEgressFence = typeof BroadcastChannel === "undefined"
     ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
@@ -871,6 +873,52 @@ const attachRemoteAudioEvidence = async (track) => {
     if (remoteEvidenceFrame === null)
         monitorRemoteAudio();
 };
+const greetAfterFirstVideoFrame = async () => {
+    const sequence = evidenceSessionSequence;
+    if (!videoEvidencePosted || !sessionState.realtime.control
+        || sessionState.backend.session_state !== "active" || sequence <= 0
+        || greetingRequestedSequence === sequence || textRequestInFlight
+        || voiceRequestInFlight || recording)
+        return;
+    greetingRequestedSequence = sequence;
+    greetingPlaybackPending = true;
+    const generation = voiceDeliveryGeneration;
+    providerPlaybackInFlight = true;
+    if (rt0EvidenceMode)
+        rt0PlaybackPending = true;
+    updateControls();
+    try {
+        const result = await api("/api/avatar/greeting", {
+            expected_session_sequence: sequence,
+        });
+        if (result.client_command !== null)
+            throw new Error("GREETING_MUST_USE_PRIVATE_PCM");
+        if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence
+            || sessionState.backend.session_state !== "active")
+            return;
+        setStatus("Аватар приветствует вас", "ready");
+    }
+    catch {
+        if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence)
+            return;
+        const stopped = await api("/api/avatar/interrupt", sessionEndRequest())
+            .then(() => true, () => false);
+        providerPlaybackInFlight = false;
+        greetingPlaybackPending = false;
+        rt0PlaybackPending = false;
+        if (!stopped) {
+            broadcastSessionEgressFence();
+            closePeerTransport();
+            await api("/api/session/revoke", sessionEndRequest()).catch(() => undefined);
+            await syncStatus().catch(() => undefined);
+            setStatus("Приветствие: STOP Echo не подтверждён, сессия отозвана", "error");
+        }
+        else {
+            setStatus("Сессия подключена, приветствие недоступно", "idle");
+        }
+        updateControls();
+    }
+};
 const recordFirstVideoFrame = () => {
     if (videoEvidencePosted || connectEvidenceStartedAt === 0)
         return;
@@ -883,6 +931,7 @@ const recordFirstVideoFrame = () => {
     void connectionEvidenceTail
         .then(() => syncStatus())
         .catch(() => undefined);
+    void greetAfterFirstVideoFrame();
 };
 const modalityLabel = (state) => {
     switch (state) {
@@ -970,7 +1019,8 @@ const updateControls = () => {
         || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
     voiceButton.disabled = recording
         ? false
-        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
+        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
+            || (strictPlaybackBlocked && !greetingPlaybackPending);
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
         || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
@@ -1181,6 +1231,7 @@ const closePeerTransport = () => {
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
+    greetingPlaybackPending = false;
     providerPlaybackInFlight = false;
     stopMicrophoneCapture();
     stopRemoteEvidence();
@@ -1442,6 +1493,8 @@ const connectAvatar = async () => {
     connectionEvidenceTail = Promise.resolve();
     connectionEvidenceFailure = null;
     evidenceSessionSequence = 0;
+    greetingRequestedSequence = 0;
+    greetingPlaybackPending = false;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
     setStatus("Создаю защищённую сессию…");
@@ -1483,6 +1536,8 @@ const connectAvatar = async () => {
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
+        if (videoEvidencePosted)
+            void greetAfterFirstVideoFrame();
         const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
         setStatus(selectedAudience() === "visitor"
             ? `Visitor-сессия ${transportName} согласована`
@@ -2044,14 +2099,16 @@ const toggleVoice = async () => {
             await finishMicrophoneTurn();
         }
         else {
-            if (rt0EvidenceMode && rt0PlaybackPending) {
+            if (rt0EvidenceMode && rt0PlaybackPending && !greetingPlaybackPending) {
                 throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
             }
             clearInterruptedAnswer();
-            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
+            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight
+                || greetingPlaybackPending) {
                 if (!await interruptAvatar()) {
                     throw new Error("PROVIDER_STOP_UNCONFIRMED");
                 }
+                greetingPlaybackPending = false;
             }
             await startMicrophone();
         }
@@ -2216,6 +2273,8 @@ const interruptAndOfferResume = async () => {
             : voice.audibleDurationMillis;
     const offset = replaying ? resumeFromIndex : 0;
     const interrupted = await interruptAvatar();
+    if (interrupted)
+        greetingPlaybackPending = false;
     resumedSpeechStartedAt = null;
     if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
         try {
