@@ -1808,6 +1808,7 @@ const startMicrophone = async () => {
     const mediaDevices = runtimeMediaDevices();
     if (!mediaDevices?.getUserMedia)
         throw new Error("MIC_UNAVAILABLE");
+    microphoneSelect.disabled = true;
     try {
         const selectedDeviceId = microphoneSelect.value.trim();
         micStream = await mediaDevices.getUserMedia({
@@ -1876,6 +1877,7 @@ const startMicrophone = async () => {
             void finishMicrophoneTurn();
     };
     recording = true;
+    microphoneSelect.disabled = false;
     micSource.connect(micWorklet);
     micWorklet.connect(audioContext.destination);
     recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
