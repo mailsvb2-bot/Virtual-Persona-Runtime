@@ -5,16 +5,19 @@ voice cloning, separate MetroTrance installation or manually launched TTS server
 
 ## One-click launch
 
-From a **clean Git clone** of the selected RT0 candidate, double-click:
+From a **clean Git clone** of the selected RT0 candidate, double-click the **Piper-only fallback**:
 
-`START_VPR_WITH_VOICE.cmd`
+`scripts\start-rt0-piper.cmd`
 
-The launcher delegates to the existing canonical Windows RT0 evidence launcher
+The Piper-only launcher delegates to the existing canonical Windows RT0 evidence launcher
 with `-Piper -Rt0Evidence`. It does not switch branches, update the checkout
 or weaken the Firefox strict-evidence requirement. Prerequisites still include
 the existing Rust toolchain, Windows secure provider profile (D-ID, Deepgram,
 DeepSeek), Python 3.11 registered as `py -3.11`, and an internet connection
-for the *first* optional voice download. This is **not yet a packaged end-user
+for the *first* optional voice download. The root `START_VPR_WITH_VOICE.cmd` now selects the installed female
+Microsoft Irina Desktop voice; see `docs/WINDOWS_NATIVE_VOICE_RT0.md`.
+
+This is **not yet a packaged end-user
 installer**; it makes the existing Windows developer RT0 lab one click.
 
 On first use, it:
