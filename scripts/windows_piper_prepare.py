@@ -12,7 +12,30 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+
+TRUSTED_VOICE_HOSTS = frozenset({
+    "huggingface.co",
+    "cas-bridge.xethub.hf.co",
+    "cdn-lfs.huggingface.co",
+})
+
+
+def is_trusted_voice_redirect(url: str) -> bool:
+    """Allow only pinned-model CDN transports over authenticated HTTPS origin."""
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme == "https"
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in (None, 443)
+            and (host in TRUSTED_VOICE_HOSTS or host.endswith(".cdn.hf.co"))
+        )
+    except ValueError:
+        return False
 
 VOICE = "ru_RU-denis-medium"
 MODEL_SHA256 = "15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a"
@@ -57,11 +80,7 @@ def download_checked(url: str, destination: Path, limit: int, validator) -> None
     try:
         req = Request(url, headers={"User-Agent": "VPR-RT0-Piper/1"})
         with urlopen(req, timeout=40) as response, staging.open("xb") as output:
-            if response.url.split("/", 3)[:3] not in (
-                ["https:", "", "huggingface.co"],
-                ["https:", "", "cas-bridge.xethub.hf.co"],
-                ["https:", "", "cdn-lfs.huggingface.co"],
-            ):
+            if not is_trusted_voice_redirect(response.url):
                 raise RuntimeError("untrusted model download host")
             total = 0
             while True:
