@@ -32,6 +32,22 @@ class NativeAuditionContract(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.select_audition_row([{**a, "text":"different"}, b], "masha")
 
+    def test_openrail_line_wrapping_keeps_consent_and_restrictions(self):
+        legal = (
+            "# Dialogs — OpenRAIL License\\n"
+            "Grant including commercial purposes\\n"
+            "10. To provide medical advice and medical results interpretation\\n"
+            "Actor gave written\\n informed consent for lawful use"
+        ).replace("\\\\n", "\\n")
+        m.validate_dialogs_license(legal)
+        for omitted in (
+            "including commercial purposes",
+            "To provide medical advice",
+            "written",
+        ):
+            with self.assertRaises(RuntimeError):
+                m.validate_dialogs_license(legal.replace(omitted, ""))
+ 
     def test_no_user_audio_or_production_default(self):
         self.assertLessEqual(m.MAX_REFERENCE_BYTES, 3 * 1024 * 1024)
         self.assertLessEqual(m.MAX_REFERENCE_SECONDS, 13)
