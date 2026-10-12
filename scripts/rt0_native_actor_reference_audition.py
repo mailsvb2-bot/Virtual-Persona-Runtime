@@ -92,6 +92,21 @@ def decode_native_reference(row: dict):
     }
 
 
+def validate_dialogs_license(terms: str) -> None:
+    # Markdown legal text wraps lines mid-phrase: \"written\\n informed consent\".
+    # Normalize whitespace, NEVER waive the commercial grant or restrictions.
+    canonical = " ".join(terms.split())
+    required = {
+        "license": "OpenRAIL",
+        "commercial grant": "including commercial purposes",
+        "medical-use restriction": "To provide medical advice",
+        "recorded actor consent": "written informed consent",
+    }
+    missing = [name for name, marker in required.items() if marker not in canonical]
+    if missing:
+        raise RuntimeError("source-rights gate missing: " + ", ".join(missing))
+
+
 def load_pinned_dialogs_preview(cache_dir: Path) -> list[dict]:
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
@@ -112,16 +127,7 @@ def load_pinned_dialogs_preview(cache_dir: Path) -> list[dict]:
     )
     terms = Path(license_file).read_text(encoding="utf-8")
     # This grant is conditional, not equivalent to MIT/CC0; keep source terms.
-    required = {
-        "license": "OpenRAIL",
-        "commercial grant": "including commercial purposes",
-        "medical-use restriction": "To provide medical advice",
-        "recorded actor consent": "written informed consent",
-    }
-    missing = [name for name, marker in required.items() if marker not in terms]
-    if missing:
-        # Report only which legal assurance is absent, never source audio.
-        raise RuntimeError("source-rights gate missing: " + ", ".join(missing))
+    validate_dialogs_license(terms)
     return pq.read_table(
         preview, columns=["audio", "speaker_id", "emotion", "text"]
     ).to_pylist()
