@@ -4,7 +4,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use vpr_integration::ProviderErrorKind;
+use vpr_integration::{ProviderErrorKind, RealtimeAvatarCapability};
 
 struct Probe(AtomicBool);
 
