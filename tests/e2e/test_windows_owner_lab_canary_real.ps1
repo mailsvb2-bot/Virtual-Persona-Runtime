@@ -27,6 +27,46 @@ foreach ($name in @(
     if ($f.Count -ne 1) { throw "Missing live launcher function $name" }
     . ([ScriptBlock]::Create($f[0].Extent.Text))
 }
+# A synthetic but structurally reviewed Persona is required for the canonical
+# text_and_voice readiness status. This is a hermetic CI fixture only, not a
+# human attestation or persisted user data.
+$fixturePath = Join-Path $env:RUNNER_TEMP 'vpr-canary-synthetic-persona.json'
+$syntheticPersona = @{
+    schema_version = 'vpr-reviewed-owner-persona-2'
+    snapshot = @{
+        persona_id = 'ci-only-owner'
+        persona_version = 3
+        claims = @(
+            @{
+                claim_id = 'ci-only-style'
+                history_complete = $true
+                revisions = @(
+                    @{
+                        revision = 1
+                        statement = 'CI fixture, not a real human statement'
+                        kind = 'preference'
+                        source = 'owner'
+                        verification = 'unverified'
+                        derivation = 'direct'
+                    },
+                    @{
+                        revision = 2
+                        statement = 'CI fixture, not a real human statement'
+                        kind = 'preference'
+                        source = 'owner'
+                        verification = 'owner_verified'
+                        derivation = 'direct'
+                    }
+                )
+            }
+        )
+    }
+}
+[IO.File]::WriteAllText(
+    $fixturePath,
+    ($syntheticPersona | ConvertTo-Json -Depth 20),
+    [Text.UTF8Encoding]::new($false)
+)
 $envOverrides = @{
     VPR_PROVIDER_CREDENTIAL_SOURCE = 'environment'
     VPR_OWNER_LAB_AVATAR_PROVIDER = 'did'
@@ -44,7 +84,7 @@ $envOverrides = @{
     VPR_OWNER_LAB_LLM_ENDPOINT = 'http://127.0.0.1:18790/v1/chat/completions'
     VPR_OWNER_LAB_LLM_API_KEY = 'windows-canary-llm-fixture'
     VPR_OWNER_LAB_LLM_MODEL = 'deepseek-flash'
-    VPR_OWNER_LAB_PERSONA_STORE_PATH = (Join-Path $env:RUNNER_TEMP 'vpr-canary-fixture-no-persona.json')
+    VPR_OWNER_LAB_PERSONA_STORE_PATH = $fixturePath
 }
 $original = @{}
 foreach ($name in ($envOverrides.Keys + @('VPR_OWNER_LAB_PORT'))) {
@@ -114,4 +154,5 @@ try {
     foreach ($key in $original.Keys) {
         [Environment]::SetEnvironmentVariable($key, $original[$key], 'Process')
     }
+    Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
 }

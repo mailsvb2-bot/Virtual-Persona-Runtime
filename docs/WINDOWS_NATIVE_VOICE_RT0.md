@@ -97,3 +97,8 @@ instance after an intentionally invalid-provider canary startup, then
 tests a clean primary-port handoff. These checks make no D-ID, STT, LLM
 or other external network calls. They do not prove an actual owner/visitor
 session or licensed Sveta voice synthesis; those remain manual RT0 gates.
+
+Real-process CI restores a synthetic, structurally owner-reviewed Persona
+fixture from an isolated temporary store. This verifies the canonical
+conversation_readiness guard instead of weakening it to accept an unreviewed
+Persona. No actual owner identity or human approval is inferred from the test.
