@@ -117,5 +117,111 @@ class WindowsSapiPreflightContract(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "existing Owner Lab was not stopped"):
                 prepare.verify_system_voice(Path("python.exe"))
 
+
+class PersistentSapiRuntimeContract(unittest.TestCase):
+    """Fast repeated speech must reuse one child; failures fail closed."""
+
+    class FakeChild:
+        def __init__(self, responses):
+            import io as io_module
+            self.stdout = io_module.StringIO("".join(responses))
+            self.stdin = io_module.StringIO()
+            self.terminated = False
+            self.killed = 0
+            self.environment = {}
+
+        def poll(self):
+            return 0 if self.terminated else None
+
+        def kill(self):
+            self.killed += 1
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            self.terminated = True
+            return 0
+
+    def test_two_russian_utterances_reuse_one_private_voice_host(self):
+        import os
+        wav = base64.b64encode(wav_fixture()).decode("ascii") + "\n"
+        child = self.FakeChild(["READY\n", wav, wav])
+        synth = bridge.WindowsSapiSynthesizer(1)
+        try:
+            with patch.object(bridge.subprocess, "Popen", return_value=child) as popen:
+                self.assertEqual(synth("Здравствуйте."), wav_fixture())
+                self.assertEqual(synth("Продолжаю ответ."), wav_fixture())
+            popen.assert_called_once()
+            env = popen.call_args.kwargs["env"]
+            self.assertEqual(env["VPR_WINDOWS_SAPI_RATE"], "1")
+            self.assertNotIn("VPR_DID_API_KEY", env)
+            self.assertNotIn("VPR_METROTRANCE_TTS_TOKEN", env)
+            sent = child.stdin.getvalue().splitlines()
+            self.assertEqual([base64.b64decode(x).decode("utf-8") for x in sent],
+                             ["Здравствуйте.", "Продолжаю ответ."])
+            self.assertEqual(child.killed, 0)
+        finally:
+            synth.close()
+
+    def test_invalid_inputs_do_not_launch_voice_process(self):
+        synth = bridge.WindowsSapiSynthesizer(1)
+        try:
+            with patch.object(bridge.subprocess, "Popen") as start:
+                with self.assertRaises(ValueError):
+                    synth(" ")
+                with self.assertRaises(ValueError):
+                    synth("а" * 4096)
+                start.assert_not_called()
+        finally:
+            synth.close()
+
+    def test_worker_failure_is_bounded_and_later_request_starts_fresh(self):
+        wav = base64.b64encode(wav_fixture()).decode("ascii") + "\n"
+        failed = self.FakeChild(["READY\n", "ERR\n"])
+        recovered = self.FakeChild(["READY\n", wav])
+        synth = bridge.WindowsSapiSynthesizer(1)
+        try:
+            with patch.object(bridge.subprocess, "Popen", side_effect=[failed, recovered]) as spawn:
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    synth("Сбой.")
+                self.assertTrue(failed.terminated)
+                self.assertEqual(synth("Следующая попытка."), wav_fixture())
+                self.assertEqual(spawn.call_count, 2)
+        finally:
+            synth.close()
+
+    def test_missing_ready_never_accepts_private_speech(self):
+        failed = self.FakeChild(["UNEXPECTED\n"])
+        synth = bridge.WindowsSapiSynthesizer(1)
+        try:
+            with patch.object(bridge.subprocess, "Popen", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    synth("Нельзя отправлять.")
+                self.assertEqual(failed.stdin.getvalue(), "")
+                self.assertEqual(failed.killed, 1)
+        finally:
+            synth.close()
+
+    def test_sapi_rate_range_explicit(self):
+        import os
+        with patch.dict(os.environ, {"VPR_WINDOWS_SAPI_RATE": "4"}):
+            with self.assertRaises(ValueError):
+                bridge._rate()
+        with patch.dict(os.environ, {"VPR_WINDOWS_SAPI_RATE": "1"}):
+            self.assertEqual(bridge._rate(), 1)
+        with self.assertRaises(ValueError):
+            bridge.WindowsSapiSynthesizer(-3)
+
+    @unittest.skipUnless(__import__("os").name == "nt", "Native SAPI requires Windows")
+    def test_real_native_windows_host_reuses_voice_and_returns_distinct_audio(self):
+        voice = bridge.make_windows_sapi_synthesizer()
+        try:
+            first = voice("Здравствуйте. Рада вас слышать.")
+            second = voice("Продолжаю ответ.")
+            self.assertTrue(validate_echo_wav(first))
+            self.assertTrue(validate_echo_wav(second))
+            self.assertNotEqual(first, second)
+        finally:
+            voice.close()
+
 if __name__ == "__main__":
     unittest.main()

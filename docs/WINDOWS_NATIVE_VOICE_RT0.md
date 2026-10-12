@@ -102,3 +102,31 @@ Real-process CI restores a synthetic, structurally owner-reviewed Persona
 fixture from an isolated temporary store. This verifies the canonical
 conversation_readiness guard instead of weakening it to accept an unreviewed
 Persona. No actual owner identity or human approval is inferred from the test.
+
+## User-observed live-session performance and native voice limitations
+
+October 12 owner/visitor evidence on exact SHA ec3591ed6e8e:
+- Owner: first useful video ~11.46 s (backend ~8.32 s); visitor: ~6.32 s
+  (backend ~4.64 s). This backend stage is external D-ID/session creation,
+  not a microphone/STT problem or a guarantee of future startup time.
+- STT 247/293 ms; LLM total 4218/4425 ms; browser-observed first audio
+  3695/3663 ms from the voice request. Some work overlaps through streaming.
+- No A/V timestamp or confirmed canonical playback; do not infer lip sync,
+  provider completion or listening satisfaction from a green browser event.
+
+The native Windows SAPI bridge now retains one verified Russian female voice
+host for serial speech requests, avoiding a new PowerShell startup on every
+clause/resumed sentence. The local process uses fixed code, bounded base64
+stdin/stdout IPC, no phrase arguments/logging, and no inherited VPR provider
+secrets. Errors and hung inference discard the child and fail closed; next
+request can start a fresh local voice. The bounded speaking-rate setting
+VPR_WINDOWS_SAPI_RATE defaults to +1 (range -2..3); it alters speed, NOT the
+voice identity or native expressiveness. A SAPI voice remains synthetic and
+may be perceived as robotic. Real naturalness requires a separately licensed,
+consented Russian neural female voice and fresh human audition.
+
+The interrupted-answer UI acknowledges the click synchronously, prevents
+duplicate requests, and reports time through server authorization plus
+private PCM preparation/delivery. This is NOT time until actual audible Echo
+playout; do not label it as such. Production RT0 still requires measured
+real owner/visitor playback and human quality acceptance.

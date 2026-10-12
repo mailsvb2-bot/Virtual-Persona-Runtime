@@ -345,6 +345,8 @@ let interruptedAnswerSentences: string[] = [];
 let resumeFromIndex = 0;
 let resumeCursorEdited = false;
 let resumedSpeechStartedAt: number | null = null;
+let resumeRequestInFlight = false;
+const RESUME_BUTTON_IDLE_LABEL = "Продолжить ответ";
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 let avSyncCollectionPending = false;
 let pendingAvSyncEvidence: Promise<void> | null = null;
@@ -1363,7 +1365,8 @@ const updateControls = (): void => {
   speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
   interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
   resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
-    || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
+    || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
+    || resumeRequestInFlight;
   voiceButton.disabled = recording
     ? false
     : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
@@ -2808,7 +2811,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
 };
 
 const resumeInterruptedAnswer = async (): Promise<void> => {
-  if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
+  if (resumeRequestInFlight || resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
       || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
     return;
   }
@@ -2823,7 +2826,15 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
     return;
   }
-  resumeAnswerButton.disabled = true;
+  // Acknowledge the actual user click synchronously. The Rust backend may
+  // spend seconds synthesizing PCM and sending it through private Echo.
+  // Do not claim audible playback or generate an unguarded duplicate request.
+  resumeRequestInFlight = true;
+  const resumeClickedAt = performance.now();
+  resumeAnswerButton.setAttribute("aria-busy", "true");
+  resumeAnswerButton.textContent = "Готовлю продолжение…";
+  setStatus("Продолжение запрошено: проверяю разрешение, синтезирую голос и отправляю в Echo…");
+  updateControls();
   let prepared: ResumedSpeech | null = null;
   try {
     if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
@@ -2854,9 +2865,10 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
     resumeAnswerRow.hidden = true;
+    const preparationMillis = Math.round(performance.now() - resumeClickedAt);
     setStatus(
-      "Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
-        + "Это повторная отправка текста, а не подтверждение полного playback.",
+      `Продолжение отправлено за ${preparationMillis} мс (без повторного LLM-запроса). `
+        + "Начало звука зависит от Echo; полное воспроизведение ещё не подтверждено.",
       "ready",
     );
   } catch (error) {
@@ -2888,8 +2900,12 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       return;
     }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
+  } finally {
+    resumeRequestInFlight = false;
+    resumeAnswerButton.textContent = RESUME_BUTTON_IDLE_LABEL;
+    resumeAnswerButton.removeAttribute("aria-busy");
+    updateControls();
   }
-  updateControls();
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
