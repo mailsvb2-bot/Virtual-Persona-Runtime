@@ -111,6 +111,8 @@ let recording = false;
 let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let interruptOperation = null;
+let manualInterruptActionInFlight = false;
 let evidenceSessionSequence = 0;
 let greetingRequestedSequence = 0;
 let greetingPlaybackPending = false;
@@ -1010,6 +1012,10 @@ const selectedAudience = () => sessionState.backend.session_audience ?? audience
 const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
+const serverEchoStopAvailable = () => !!liveKitRoom && sessionState.backend.session_state === "active"
+    && capabilities.has("interrupt")
+    && activeClientControl?.interrupt === false
+    && activeClientControl?.text_input === false;
 const updateControls = () => {
     const transportReady = sessionState.realtime.control && sessionState.backend.session_state === "active";
     const textReady = sessionState.backend.conversation_readiness !== "none";
@@ -1023,7 +1029,9 @@ const updateControls = () => {
         && providerPlaybackInFlight;
     const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
     speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-    interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
+    const protectedServerStopReady = transportReady && serverEchoStopAvailable();
+    interruptButton.disabled = manualInterruptActionInFlight || interruptOperation !== null
+        || (!voiceRequestInFlight && !clientInterruptReady && !protectedServerStopReady);
     resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
         || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
         || resumeRequestInFlight;
@@ -2167,17 +2175,23 @@ const speak = async () => {
         }
     }
 };
-const interruptAvatar = async (recordEvidence = true) => {
+const performInterruptAvatar = async (recordEvidence = true) => {
     const voice = activeVoiceEvidence;
+    const requestSequenceForEvidence = recordEvidence && voice?.audioStarted && !voice.interrupted
+        ? voice.requestSequence : null;
+    const interruptedAt = performance.now();
     if (voice)
         voice.interrupted = true;
-    if (recordEvidence && voice?.audioStarted) {
-        interruptEvidenceWatch = {
-            requestSequence: voice.requestSequence,
-            startedAt: performance.now(),
-            silentFrames: 0,
-        };
-    }
+    interruptEvidenceWatch = null;
+    const observeConfirmedStop = () => {
+        if (requestSequenceForEvidence !== null) {
+            interruptEvidenceWatch = {
+                requestSequence: requestSequenceForEvidence,
+                startedAt: interruptedAt,
+                silentFrames: 0,
+            };
+        }
+    };
     setLocalAudioMuted(true);
     const playbackId = sessionState.playbackId;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
@@ -2196,10 +2210,21 @@ const interruptAvatar = async (recordEvidence = true) => {
         ? dispatchClientCommand(preparedInterrupt)
         : null;
     try {
+        if (serverEchoStopAvailable()) {
+            await api("/api/avatar/interrupt", sessionEndRequest());
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            greetingPlaybackPending = false;
+            observeConfirmedStop();
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
+        }
         if (providerStopRequired && !clientReady) {
             await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2214,6 +2239,7 @@ const interruptAvatar = async (recordEvidence = true) => {
                 await canonicalStop;
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2227,6 +2253,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             await dispatchClientCommand(command);
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2234,6 +2261,14 @@ const interruptAvatar = async (recordEvidence = true) => {
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
+            observeConfirmedStop();
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
+        }
+        if (canonicalStop) {
+            rt0PlaybackPending = false;
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2270,48 +2305,75 @@ const interruptAvatar = async (recordEvidence = true) => {
         return false;
     }
 };
-const interruptAndOfferResume = async () => {
-    const voice = activeVoiceEvidence;
-    const replaying = resumedSpeechStartedAt !== null;
-    const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted
-        && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null));
-    const sentences = replaying
-        ? interruptedAnswerSentences
-        : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
-    const elapsed = replaying
-        ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
-        : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
-            ? 0
-            : voice.audibleDurationMillis;
-    const offset = replaying ? resumeFromIndex : 0;
-    const interrupted = await interruptAvatar();
-    if (interrupted)
-        greetingPlaybackPending = false;
-    resumedSpeechStartedAt = null;
-    if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-        try {
-            if (resumeSourceRequest === null)
-                throw new Error("RESUME_SOURCE_UNAVAILABLE");
-            await api("/api/avatar/confirm-interruption", {
-                request_sequence: resumeSourceRequest,
-            });
-            offerInterruptedAnswer(sentences, elapsed, offset);
-            setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-                + "Точное слово остановки D-ID не сообщает.", "ready");
-        }
-        catch (error) {
-            clearInterruptedAnswer();
-            setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
-                : "Продолжение не подтверждено сервером.", "error");
-        }
-    }
-    else {
-        clearInterruptedAnswer();
-        if (interrupted) {
-            setStatus("Ответ остановлен. Продолжение недоступно: нет подтверждённого полного голосового ответа.", "idle");
-        }
-    }
+const interruptAvatar = (recordEvidence = true) => {
+    if (interruptOperation)
+        return interruptOperation;
+    const operation = performInterruptAvatar(recordEvidence);
+    interruptOperation = operation;
     updateControls();
+    void operation.finally(() => {
+        if (interruptOperation === operation) {
+            interruptOperation = null;
+            updateControls();
+        }
+    }).catch(() => undefined);
+    return operation;
+};
+const interruptAndOfferResume = async () => {
+    if (manualInterruptActionInFlight || interruptOperation)
+        return;
+    manualInterruptActionInFlight = true;
+    interruptButton.textContent = "Останавливаю…";
+    setStatus("Останавливаю звук: ожидаю подтверждённый STOP сервера Echo…");
+    updateControls();
+    try {
+        const voice = activeVoiceEvidence;
+        const replaying = resumedSpeechStartedAt !== null;
+        const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted
+            && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null));
+        const sentences = replaying
+            ? interruptedAnswerSentences
+            : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
+        const elapsed = replaying
+            ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
+            : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
+                ? 0
+                : voice.audibleDurationMillis;
+        const offset = replaying ? resumeFromIndex : 0;
+        const interrupted = await interruptAvatar();
+        if (interrupted)
+            greetingPlaybackPending = false;
+        resumedSpeechStartedAt = null;
+        if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
+            try {
+                if (resumeSourceRequest === null)
+                    throw new Error("RESUME_SOURCE_UNAVAILABLE");
+                await api("/api/avatar/confirm-interruption", {
+                    request_sequence: resumeSourceRequest,
+                });
+                offerInterruptedAnswer(sentences, elapsed, offset);
+                setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+                    + "Точное слово остановки D-ID не сообщает.", "ready");
+            }
+            catch (error) {
+                clearInterruptedAnswer();
+                setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
+                    : "Продолжение не подтверждено сервером.", "error");
+            }
+        }
+        else {
+            clearInterruptedAnswer();
+            if (interrupted) {
+                setStatus("Ответ остановлен. Продолжение недоступно: нет подтверждённого полного голосового ответа.", "idle");
+            }
+        }
+        updateControls();
+    }
+    finally {
+        manualInterruptActionInFlight = false;
+        interruptButton.textContent = "Прервать";
+        updateControls();
+    }
 };
 const resumeInterruptedAnswer = async () => {
     if (resumeRequestInFlight || resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
