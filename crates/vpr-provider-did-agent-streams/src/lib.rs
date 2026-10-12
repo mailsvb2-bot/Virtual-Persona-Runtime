@@ -5,7 +5,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
     RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
     RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
     build_provider_http_client,
@@ -13,6 +13,7 @@ use vpr_integration::{
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+mod capabilities;
 mod client_control;
 mod diagnostics;
 mod echo;
@@ -321,17 +322,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     }
 
     fn capabilities(&self) -> RealtimeAvatarCapabilities {
-        let audio_input = if self.echo_backend.is_some() {
-            RealtimeAvatarCapability::AudioPcmInput
-        } else {
-            RealtimeAvatarCapability::AudioUrlInput
-        };
-        let mut capabilities = vec![RealtimeAvatarCapability::TextInput, audio_input];
-        if self.echo_backend.is_some() {
-            // Server STOP is canonical but never a browser did.interrupt right.
-            capabilities.push(RealtimeAvatarCapability::Interrupt);
-        }
-        RealtimeAvatarCapabilities::new(capabilities)
+        self.advertised_capabilities()
     }
 
     fn create_session(
