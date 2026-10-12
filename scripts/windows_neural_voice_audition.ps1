@@ -26,7 +26,9 @@ if (-not (Test-Path -LiteralPath $python)) {
 & $python -m pip install --disable-pip-version-check --upgrade pip
 if ($LASTEXITCODE -ne 0) { throw 'pip setup failed' }
 if ($Engine -eq 'chatterbox-v3') {
-    & $python -m pip install --disable-pip-version-check chatterbox-tts==0.1.7
+    # PyPI 0.1.7 predates the June 2026 multilingual V3 t3_model switch.
+    # Pin the upstream MIT source revision that actually contains V3.
+    & $python -m pip install --disable-pip-version-check 'git+https://github.com/resemble-ai/chatterbox.git@5de7a54aa4e5e2baadb0182dde554908b48b85c2'
 } else {
     & $python -m pip install --disable-pip-version-check qwen-tts==0.1.1
 }
