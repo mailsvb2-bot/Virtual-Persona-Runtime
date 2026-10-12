@@ -162,3 +162,7 @@ turn. It verifies immediate local mute, canonical session revocation, LiveKit
 viewer teardown, no browser publisher permissions and private provider STOP
 on the revocation path. The refusal is intentionally test-injected; it is
 not misrepresented as a real remote D-ID outage.
+
+The STOP-denial E2E injects the failure only after one completed canonical
+voice attempt. Startup/greeting interrupt traffic is passed through to the
+real server so that a failure test never changes the prerequisite voice journey.

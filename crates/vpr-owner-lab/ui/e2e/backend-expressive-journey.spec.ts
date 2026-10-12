@@ -267,7 +267,25 @@ test("Expressive browser STOP failure revokes provider authority and closes view
   const before = (await echoEvents(request)).length;
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await page.addInitScript(() => { (window as unknown as { __vprExpectedEchoStopFailure: boolean }).__vprExpectedEchoStopFailure = true; });
+  let interceptedStopAfterRealVoice = 0;
   await page.route("**/api/avatar/interrupt", async (route) => {
+    // An initial Echo greeting can legitimately request STOP while the
+    // connection is coming up. Only inject a refusal AFTER the real voice
+    // request has reached the completed canonical backend state.
+    const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
+    const evidence = snapshot.ok()
+      ? await snapshot.json() as {
+          voice_attempts?: Array<{ status?: string; request_sequence?: number }>;
+        }
+      : null;
+    const userTurnFinished = evidence?.voice_attempts?.some(
+      (turn) => turn.status === "completed" && turn.request_sequence === 1,
+    ) === true;
+    if (!userTurnFinished) {
+      await route.continue();
+      return;
+    }
+    interceptedStopAfterRealVoice += 1;
     await route.fulfill({
       status: 503, contentType: "application/json",
       body: JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }),
@@ -283,6 +301,7 @@ test("Expressive browser STOP failure revokes provider authority and closes view
     const event = snapshot.events?.find((item) => item.status);
     return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:stop";
   }, { timeout: 80000 }).toBe("ok");
+  expect(interceptedStopAfterRealVoice).toBe(1);
   const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
   expect(await status.json()).toMatchObject({ session_state: "revoked" });

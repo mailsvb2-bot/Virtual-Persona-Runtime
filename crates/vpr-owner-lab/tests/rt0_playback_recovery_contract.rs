@@ -85,9 +85,24 @@ fn strict_rt0_av_sync_never_promotes_html_media_clock_fallback() {
 #[test]
 fn prepared_livekit_interrupt_bypasses_http_roundtrip_on_the_media_stop_path() {
     let interrupt = APP
-        .split("const interruptAvatar = async")
+        .split("const performInterruptAvatar = async")
         .nth(1)
-        .expect("interruptAvatar must exist");
+        .expect("canonical STOP implementation must exist");
+    assert!(
+        APP.contains("const interruptAvatar = (recordEvidence = true)")
+            && APP.contains("if (interruptOperation) return interruptOperation"),
+        "every STOP attempt must pass the same single-flight gate"
+    );
+    for private_stop_marker in [
+        "if (serverEchoStopAvailable())",
+        "await api<{ ok: true }>(\"/api/avatar/interrupt\", sessionEndRequest());",
+        "observeConfirmedStop()",
+    ] {
+        assert!(
+            interrupt.contains(private_stop_marker),
+            "private Echo STOP must retain server authority and evidence fence: {private_stop_marker}"
+        );
+    }
     for marker in [
         "activeClientControl?.prepared_interrupt",
         "const fastProviderStop",
