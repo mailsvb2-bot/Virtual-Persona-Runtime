@@ -26,15 +26,17 @@ required = (
     "python3 scripts/dependency_audit_gate.py --npm-json /tmp/npm-audit.json",
     "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294",
     "fail-on-severity: high",
-    "/dependency-graph/compare/",
-    "supported=true",
-    "supported=false",
-    "if: steps.dependency-graph.outputs.supported == 'true'",
-    "if: steps.dependency-graph.outputs.supported == 'false'",
+    "Review dependency changes (fail closed if unavailable)",
 )
 for value in required:
     if value not in workflow:
         raise SystemExit(f"dependency security workflow drifted: {value}")
+
+# Disabled Dependency Graph must fail the PR rather than green-skip analysis.
+if "supported=false" in workflow or "dependency-graph.outputs.supported" in workflow:
+    raise SystemExit("dependency-review must not skip on GitHub 403")
+if "if: github.event_name == 'pull_request'" not in workflow:
+    raise SystemExit("dependency-review must run on all pull requests")
 
 for forbidden in (
     "cargo install cargo-audit\n",

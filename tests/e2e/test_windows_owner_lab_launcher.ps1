@@ -113,7 +113,7 @@ Write-Host 'RT0 ZIP checkout diagnostic regression: PASS'
 # listener identity checks. Validate the real production entrypoint statically.
 $source = Get-Content -LiteralPath $launcher -Raw
 $prepareAt = $source.IndexOf('& py -3.11 $preparer --data-dir $piperRoot')
-$stopAt = $source.IndexOf('Stop-PortListener -ExpectedExe $exe')
+$stopAt = $source.IndexOf('Stop-PortListener -ExpectedExe $oldExe')
 if ($prepareAt -lt 0 -or $stopAt -lt 0 -or $prepareAt -ge $stopAt) {
     throw 'Piper provisioning must complete before any Owner Lab process is stopped'
 }

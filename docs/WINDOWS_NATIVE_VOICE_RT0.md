@@ -49,3 +49,20 @@ This mode invokes **Windows-provided** voice files in place. It does not
 redistribute Microsoft's voice assets; review Windows voice usage terms before
 commercial release. Future cross-platform releases will need another
 properly licensed female voice provider.
+
+## Staged Windows handoff and voice rights
+
+Windows Owner Lab builds into an isolated target/rt0-staging Cargo cache,
+and runs from alternating target/rt0-live/a and b slots. It validates
+the selected provider and warms a real authenticated private speech endpoint
+before retiring an inactive old session. Voice ports 8897 through 8927
+can coexist during preparation; a foreign listener is never terminated.
+
+Build failures, credential errors and TTS warmup failures preserve the
+previous process. The final handoff can still fail after stopping the old
+listener; this is not zero-downtime deployment or RT0 proof.
+
+The user prefers actress-reference Sveta. This is evaluation-only and
+subject to external audio licensing restrictions. No production voice
+cloning or Echo/TtsPort binding is authorized without explicit rights
+clearance and human approval.
