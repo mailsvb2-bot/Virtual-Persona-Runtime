@@ -17,8 +17,6 @@ import rt0_multilingual_voice_audition as v
 class VoiceAuditionContract(unittest.TestCase):
     def test_no_session_input_or_provider_tokens(self):
         self.assertEqual(v.ENGINES, ("chatterbox-v3", "qwen-base", "qwen-design"))
-        self.assertIn("русского", v.DESIGN_INSTRUCTION.lower().replace("russian","русского")
-                      if "русского" in v.DESIGN_INSTRUCTION.lower() else "русского")
         self.assertIn("Russian", v.DESIGN_INSTRUCTION)
         self.assertIn("Здравствуйте", v.AUDITION_TEXT)
         self.assertTrue(v.QWEN_BASE.startswith("Qwen/Qwen3-TTS-"))
