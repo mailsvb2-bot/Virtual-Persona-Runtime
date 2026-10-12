@@ -1,0 +1,58 @@
+name: RT0 Native Russian Actor Reference Audition
+
+on:
+  push:
+    branches:
+      - feat/rt0-piper-lightweight-tts
+    paths:
+      - .github/workflows/rt0-native-actor-audition.yml
+      - scripts/rt0_native_actor_reference_audition.py
+      - tests/e2e/test_rt0_native_actor_reference_audition.py
+
+permissions:
+  contents: read
+
+jobs:
+  qwen-base-native-voices:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      HF_HOME: ${{ runner.temp }}/vpr-native-russian-hf
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      HF_HUB_DOWNLOAD_TIMEOUT: '180'
+      PYTHONUTF8: '1'
+      OMP_NUM_THREADS: '4'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Check voice provenance and fail-closed selection offline
+        run: python tests/e2e/test_rt0_native_actor_reference_audition.py
+      - name: Prepare isolated Qwen CPU and pinned audio reader
+        shell: pwsh
+        run: |
+          python -m venv .actor-audition-env
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot create isolated Qwen test venv' }
+          $python = '.actor-audition-env/Scripts/python.exe'
+          & $python -m pip install --disable-pip-version-check qwen-tts==0.1.1 pyarrow==20.0.0 scipy==1.15.3 soundfile==0.13.1
+          if ($LASTEXITCODE -ne 0) { throw 'Native Russian audition dependencies unavailable' }
+      - name: Synthesize female Russian from exact studio actor references
+        shell: pwsh
+        run: |
+          $python = '.actor-audition-env/Scripts/python.exe'
+          & $python scripts/rt0_native_actor_reference_audition.py --cache-dir .actor-cache --output-dir native-actor-audition
+          if ($LASTEXITCODE -ne 0) { throw 'Native recorded reference Qwen inference failed' }
+          Copy-Item -LiteralPath '.actor-cache/LICENSE.md' -Destination 'native-actor-audition/LICENSE_OPENRAIL.md'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot preserve mandatory license' }
+      - name: Publish generated fixed-text audition and license restrictions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rt0-qwen-real-russian-actor-reference
+          path: |
+            native-actor-audition/*.wav
+            native-actor-audition/*.json
+            native-actor-audition/LICENSE_OPENRAIL.md
+          if-no-files-found: error
+          retention-days: 14
