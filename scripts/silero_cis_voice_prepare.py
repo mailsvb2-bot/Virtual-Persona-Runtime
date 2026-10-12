@@ -17,6 +17,7 @@ from silero_cis_voice_preview import (
 from windows_piper_prepare import download_checked
 
 TORCH_VERSION = "2.5.1"
+NUMPY_VERSION = "1.26.4"
 CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
@@ -37,8 +38,9 @@ def prepare_python(root: Path) -> Path:
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
     probe = [
         str(exe), "-c",
-        "import torch; import importlib.metadata as m; "
+        "import torch; import numpy; import importlib.metadata as m; "
         f"assert m.version('torch').split('+')[0] == '{TORCH_VERSION}'; "
+        f"assert m.version('numpy') == '{NUMPY_VERSION}'; "
         "assert torch.cuda.is_available() is False",
     ]
     if subprocess.run(
@@ -48,7 +50,7 @@ def prepare_python(root: Path) -> Path:
             str(exe), "-m", "pip", "install", "--disable-pip-version-check",
             "--only-binary=:all:", "--index-url", CPU_INDEX,
             "--extra-index-url", "https://pypi.org/simple",
-            "torch==" + TORCH_VERSION,
+            "torch==" + TORCH_VERSION, "numpy==" + NUMPY_VERSION,
         ], check=True)
         subprocess.run(probe, check=True)
     return exe
