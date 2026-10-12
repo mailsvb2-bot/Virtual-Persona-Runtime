@@ -53,3 +53,21 @@ into canonical supporting-evidence files.
 RT1 ReleaseSpec remains BLOCKED_ON_RT0_EXIT and allows bounded feasibility
 spikes only. This operator workflow is RT0 diagnostics; it creates no RT1
 publication endpoint, account, second Persona authority or durable state.
+
+## Executable correction -> new response -> visitor safety E2E
+
+The browser + real Rust Owner Lab HTTP/provider-fixture E2E now carries three
+sessions, not two isolated tests. Original owner text/voice/interruption and
+recovery are recorded under the initial reviewed Persona. After terminal
+evidence export the owner corrects one exact opinion; canonical persistence
+advances PersonaVersion. A newly opened owner session sends real HTTP-backed
+text and microphone/STT -> LLM -> avatar voice turns. The E2E inspects the
+**provider-received LLM request bodies** to ensure that only the NEW reviewed
+revision appears in the new turns while the original turns preserve the old
+revision. Then a visitor requests text and voice without either private
+revision; mutation/read of owner claims is denied. After revoke, a new
+protected text turn is denied and the fixture confirms zero new provider egress.
+
+The deterministic provider fixture proves system behavior, not a distinct
+human visitor or real D-ID/LLM quality. RT0 exit remains blocked on the real
+human/provider evidence matrix.

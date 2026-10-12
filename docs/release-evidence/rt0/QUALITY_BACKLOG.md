@@ -32,3 +32,15 @@ remain in docs/capabilities/RT0.json and docs/releases/RT0_RELEASE_SPEC.md.
   exported owner snapshot cannot establish independent human visitor.
 - **Accept only after:** real separate consenting visitor speech/video session,
   scope-leakage check and reviewer provenance attestation on exact candidate.
+
+
+## RT0-CORRECTION-004 — owner correction changes the next answer
+
+- **Deterministic E2E:** implemented for three actual Owner Lab HTTP sessions:
+  original owner, corrected owner, visitor, with genuine Rust PersonaVersion
+  advance and observed subsequent LLM request payloads.
+- **Isolation:** visitor cannot read/edit reviewed owner claims, and neither
+  historical nor current private revision reaches its LLM inputs.
+- **Revocation:** subsequent protected turn is rejected with no new LLM egress.
+- **Live human/prod proof:** OPEN. Test-only LLM/STT/avatar fixtures, not RT0
+  Golden or independent non-owner acceptance evidence.

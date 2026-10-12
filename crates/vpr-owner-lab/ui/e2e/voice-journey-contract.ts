@@ -212,7 +212,8 @@ export const assertProviderRequests = async (
 
   expect(ownerTextLlm).toBeDefined();
   expect(ownerVoiceLlm).toBeDefined();
-  expect(scopedVoiceLlms).toHaveLength(2);
+  // Original owner, corrected owner and privacy-scoped visitor each ask this.
+  expect(scopedVoiceLlms).toHaveLength(3);
   expect(interruptedOwnerVoiceLlm).toBeDefined();
   expect(failedOwnerLlm).toBeDefined();
   expect(recoveredOwnerLlm).toBeDefined();
