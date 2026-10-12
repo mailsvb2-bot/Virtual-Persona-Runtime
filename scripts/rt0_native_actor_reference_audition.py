@@ -112,10 +112,16 @@ def load_pinned_dialogs_preview(cache_dir: Path) -> list[dict]:
     )
     terms = Path(license_file).read_text(encoding="utf-8")
     # This grant is conditional, not equivalent to MIT/CC0; keep source terms.
-    if ("OpenRAIL" not in terms or "including commercial purposes" not in terms
-            or "To provide medical advice" not in terms
-            or "written informed consent" not in terms):
-        raise RuntimeError("source reference rights or restriction contract changed")
+    required = {
+        "license": "OpenRAIL",
+        "commercial grant": "including commercial purposes",
+        "medical-use restriction": "To provide medical advice",
+        "recorded actor consent": "written informed consent",
+    }
+    missing = [name for name, marker in required.items() if marker not in terms]
+    if missing:
+        # Report only which legal assurance is absent, never source audio.
+        raise RuntimeError("source-rights gate missing: " + ", ".join(missing))
     return pq.read_table(
         preview, columns=["audio", "speaker_id", "emotion", "text"]
     ).to_pylist()
