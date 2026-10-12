@@ -156,3 +156,9 @@ Failure revokes session. Local silence is never remote provider STOP proof.
 Browser E2E tests real UI click through Rust and hermetic Python Echo worker,
 and verifies immediate mute, sender isolation and provider_stop_sent receipt.
 Real audible D-ID playout and voice quality remain human RT0 gates.
+
+The browser E2E also simulates an HTTP STOP refusal after a real microphone
+turn. It verifies immediate local mute, canonical session revocation, LiveKit
+viewer teardown, no browser publisher permissions and private provider STOP
+on the revocation path. The refusal is intentionally test-injected; it is
+not misrepresented as a real remote D-ID outage.

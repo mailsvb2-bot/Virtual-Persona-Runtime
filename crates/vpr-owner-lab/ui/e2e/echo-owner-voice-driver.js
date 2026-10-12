@@ -53,6 +53,21 @@
         throw new Error("ECHO_STOP_NOT_MUTED_IMMEDIATELY");
       }
       stop.click();
+      if (window.__vprExpectedEchoStopFailure === true) {
+        await waitFor(() =>
+          control("status").textContent.includes("PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED"),
+          "server-stop-failed-canonical-revoked",
+        );
+        if (!stop.disabled || window.__vprExpressiveRoomDisconnectCount < 1) {
+          throw new Error("ECHO_STOP_FAILURE_DID_NOT_CLOSE_VIEWER");
+        }
+        if (window.__vprLiveKitCommands.some((c) =>
+          c.topic === "did.interrupt" || c.topic === "did.speak")) {
+          throw new Error("ECHO_STOP_FAILURE_EXPOSED_PRIVATE_SENDER");
+        }
+        await report({ status: "ok", route: "browser-stop-failure-revoked" });
+        return;
+      }
       await waitFor(() => !stop.disabled, "server-echo-stop-acknowledged");
       if (!control("status").textContent.includes("Ответ остановлен")) {
         throw new Error("ECHO_STOP_STATUS_NOT_CONFIRMED");

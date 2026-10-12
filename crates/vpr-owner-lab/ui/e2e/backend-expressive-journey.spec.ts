@@ -260,6 +260,36 @@ test("real browser owner voice reaches private server Echo audio", async ({ page
   expect(await snapshot.json()).toMatchObject({ canonical_playback_proven: false });
 });
 
+test("Expressive browser STOP failure revokes provider authority and closes viewer", async ({ page, request }) => {
+  test.setTimeout(120000);
+  const cleared = await request.delete(mailboxUrl);
+  expect(cleared.ok()).toBeTruthy();
+  const before = (await echoEvents(request)).length;
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await page.addInitScript(() => { (window as unknown as { __vprExpectedEchoStopFailure: boolean }).__vprExpectedEchoStopFailure = true; });
+  await page.route("**/api/avatar/interrupt", async (route) => {
+    await route.fulfill({
+      status: 503, contentType: "application/json",
+      body: JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }),
+    });
+  });
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/echo-owner-voice-driver.js" });
+  await page.goto("/");
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending:mailbox";
+    const snapshot = await response.json() as { events?: Array<{ status?: string; error?: string }> };
+    const event = snapshot.events?.find((item) => item.status);
+    return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:stop";
+  }, { timeout: 80000 }).toBe("ok");
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  expect(await status.json()).toMatchObject({ session_state: "revoked" });
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+});
+
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
   test.setTimeout(90000);
   const { csrf } = await startEcho(request);
