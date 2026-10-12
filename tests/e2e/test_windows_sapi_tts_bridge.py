@@ -8,11 +8,13 @@ from pathlib import Path
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from metrotrance_tts_bridge import make_handler, validate_echo_wav
 import windows_sapi_tts_bridge as bridge
+import windows_sapi_prepare as prepare
 
 
 def wav_fixture():
@@ -78,6 +80,42 @@ class WindowsSapiContract(unittest.TestCase):
             server.server_close()
             worker.join(timeout=3)
 
+
+
+class WindowsSapiPreflightContract(unittest.TestCase):
+    """Never replace a working Owner Lab if native speech preflight fails."""
+
+    def test_success_executes_actual_synthesizer_with_bounded_timeout(self):
+        python = Path("C:/rt0/venv/Scripts/python.exe")
+        with patch.object(prepare.subprocess, "run",
+                          return_value=prepare.subprocess.CompletedProcess([], 0)) as run:
+            prepare.verify_system_voice(python)
+        args, kwargs = run.call_args
+        self.assertEqual(args[0][0], str(python))
+        self.assertEqual(args[0][1], "-c")
+        self.assertIn("make_windows_sapi_synthesizer()", args[0][2])
+        self.assertIn("Проверка голоса.", args[0][2])
+        self.assertEqual(kwargs["timeout"], 45)
+        self.assertFalse(kwargs["check"])
+        self.assertEqual(kwargs["stdout"], prepare.subprocess.DEVNULL)
+        self.assertEqual(kwargs["stderr"], prepare.subprocess.DEVNULL)
+
+    def test_missing_voice_or_invalid_pcm_fails_closed(self):
+        with patch.object(prepare.subprocess, "run",
+                          return_value=prepare.subprocess.CompletedProcess([], 1)):
+            with self.assertRaisesRegex(RuntimeError, "existing Owner Lab was not stopped"):
+                prepare.verify_system_voice(Path("python.exe"))
+
+    def test_hung_synthesis_fails_closed(self):
+        with patch.object(prepare.subprocess, "run",
+                          side_effect=prepare.subprocess.TimeoutExpired("python.exe", 45)):
+            with self.assertRaisesRegex(RuntimeError, "existing Owner Lab was not stopped"):
+                prepare.verify_system_voice(Path("python.exe"))
+
+    def test_missing_python_fails_closed(self):
+        with patch.object(prepare.subprocess, "run", side_effect=OSError("not found")):
+            with self.assertRaisesRegex(RuntimeError, "existing Owner Lab was not stopped"):
+                prepare.verify_system_voice(Path("python.exe"))
 
 if __name__ == "__main__":
     unittest.main()
