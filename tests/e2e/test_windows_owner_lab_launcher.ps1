@@ -11,7 +11,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($parseErrors.Count -gt 0) { throw "Windows launcher has PowerShell parse errors" }
 
-foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate')) {
+foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate', 'Get-VerifiedExistingOwnerLabExe', 'Get-AvailablePrivateVoicePort')) {
     $matching = @($ast.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -134,7 +134,8 @@ foreach ($required in @(
     'VPR_OWNER_LAB_TTS_MODEL',
     'VPR_OWNER_LAB_TTS_VOICE',
     'VPR_METROTRANCE_TTS_TOKEN',
-    'Get-NetTCPConnection -LocalPort 8897',
+    'Get-NetTCPConnection -LocalPort $candidate',
+    'Get-NetTCPConnection -LocalPort $privateVoicePort',
     '$labProcess.WaitForExit()',
     '$piperProcess.Kill()'
 )) {
@@ -201,3 +202,35 @@ if ($source.IndexOf('if ($Piper -and $SystemVoice)') -lt 0) {
     throw 'Local voice modes must be exclusive to avoid accidental provider switching'
 }
 Write-Host 'Windows Piper and female system voice child binding and cleanup: PASS'
+
+# Real launcher ordering: preparation and trust checks must all finish before
+# terminating the verified previous process.
+$build = $source.IndexOf('cargo build --locked -p vpr-owner-lab --bins')
+$copy = $source.IndexOf('Copy-Item -LiteralPath $builtExe -Destination $exe -Force')
+$probe = $source.IndexOf('& $credentialsExe probe-avatar')
+$warm = $source.IndexOf('Wait-PiperReady -Process $piperProcess')
+$stop = $source.IndexOf('Stop-PortListener -ExpectedExe $oldExe')
+$launch = $source.IndexOf('$labProcess = Start-Process -FilePath $exe')
+if ($build -lt 0 -or $copy -le $build -or $probe -le $copy -or
+    $warm -le $probe -or $stop -le $warm -or $launch -le $stop) {
+    throw 'Old Owner Lab is terminated before new binary/credentials/private voice are ready'
+}
+if (-not $source.Contains('target\rt0-staging') -or -not $source.Contains('target\rt0-live')) {
+    throw 'New binary must build in an isolated cache and start from alternating slots'
+}
+$script:listenerPresent = $true
+$script:runningExe = 'C:\Windows\System32\foreign.exe'
+$rejectedForeign = $false
+try {
+    $null = Get-VerifiedExistingOwnerLabExe -LegacyExe $script:expectedExe -SlotAExe 'C:\vpr\target\rt0-live\a\vpr-owner-lab.exe' -SlotBExe 'C:\vpr\target\rt0-live\b\vpr-owner-lab.exe'
+} catch { $rejectedForeign = $_.Exception.Message -match 'Foreign listener' }
+if (-not $rejectedForeign) { throw 'Foreign listener was accepted for termination' }
+$script:runningExe = $script:expectedExe
+$actual = Get-VerifiedExistingOwnerLabExe -LegacyExe $script:expectedExe -SlotAExe 'C:\vpr\target\rt0-live\a\vpr-owner-lab.exe' -SlotBExe 'C:\vpr\target\rt0-live\b\vpr-owner-lab.exe'
+if ($actual -ne $script:expectedExe) { throw 'Known legacy Lab was rejected' }
+function Get-NetTCPConnection {
+    param($LocalPort, $State, $ErrorAction)
+    if ($LocalPort -eq 8897) { [pscustomobject]@{ OwningProcess = 99999 } }
+}
+if ((Get-AvailablePrivateVoicePort) -ne 8898) { throw 'Port selection must preserve an existing voice listener' }
+Write-Host 'Windows transactional candidate preparation and port isolation: PASS'

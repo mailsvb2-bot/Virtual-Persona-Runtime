@@ -129,6 +129,24 @@ function Assert-ExpectedListener {
     }
 }
 
+function Get-VerifiedExistingOwnerLabExe {
+    param([string]$LegacyExe, [string]$SlotAExe, [string]$SlotBExe)
+    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -eq 0) { return $null }
+    if ($listeners.Count -ne 1) { throw "Ambiguous listener on $Port" }
+    $process = Get-Process -Id $listeners[0].OwningProcess -ErrorAction Stop
+    try {
+        $null = $process.Handle
+        $actual = $process.Path
+        if ([string]::IsNullOrWhiteSpace($actual)) { throw 'Unverifiable Owner Lab process' }
+        foreach ($candidate in @($LegacyExe, $SlotAExe, $SlotBExe)) {
+            $expected = [System.IO.Path]::GetFullPath($candidate)
+            if ([string]::Equals([System.IO.Path]::GetFullPath($actual), $expected, [System.StringComparison]::OrdinalIgnoreCase)) { return $expected }
+        }
+        throw "Foreign listener on Owner Lab port: $actual"
+    } finally { $process.Close() }
+}
+
 function Clear-ProviderEnvironmentOverrides {
     $names = @(
         'VPR_DID_ENDPOINT',
@@ -159,6 +177,13 @@ function New-PiperPrivateToken {
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     return [Convert]::ToBase64String($bytes)
+}
+
+function Get-AvailablePrivateVoicePort {
+    foreach ($candidate in 8897..8927) {
+        if (@(Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue).Count -eq 0) { return [int]$candidate }
+    }
+    throw 'No free private voice port; existing Owner Lab was preserved'
 }
 
 function Test-VerifiedPiperListener {
@@ -201,7 +226,7 @@ function Wait-PiperReady {
         }
         # Check the actual Windows listener owner BEFORE sending the bearer
         # token. A foreign process racing the bind must never receive secrets.
-        $listeners = @(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue)
+        $listeners = @(Get-NetTCPConnection -LocalPort $privateVoicePort -State Listen -ErrorAction SilentlyContinue)
         if ($listeners.Count -gt 0) {
             if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne '127.0.0.1' -or
                 -not (Test-VerifiedPiperListener -Process $Process -OwnerPid $listeners[0].OwningProcess -VenvPython $piperPython -BasePython $piperBasePython -BridgeScript $piperBridge)) {
@@ -213,7 +238,7 @@ function Wait-PiperReady {
             continue
         }
         try {
-            $result = Invoke-WebRequest -UseBasicParsing -Method Post -Uri 'http://127.0.0.1:8897/v1/audio/speech' -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 10
+            $result = Invoke-WebRequest -UseBasicParsing -Method Post -Uri ("http://127.0.0.1:$privateVoicePort/v1/audio/speech") -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 10
             if ($result.StatusCode -eq 200 -and $result.Headers['Content-Type'] -like 'audio/wav*') {
                 return
             }
@@ -297,6 +322,7 @@ if ($Rt0Evidence) {
 # Explicit opt-in download happens before stopping any existing session.
 $piperPython = $null
 $piperModel = $null
+$privateVoicePort = 0
 if ($Piper -or $SystemVoice) {
     if (-not $env:LOCALAPPDATA) {
         throw 'LocalAppData is required for the private Piper runtime'
@@ -331,21 +357,24 @@ if ($Piper -or $SystemVoice) {
         ($Piper -and -not (Test-Path -LiteralPath $piperModel))) {
         throw 'Local voice setup returned without validated runtime and model files'
     }
-    if (@(Get-NetTCPConnection -LocalPort 8897 -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
-        throw 'Piper loopback port 8897 is occupied; refusing to use or terminate an unknown listener'
-    }
+    $privateVoicePort = Get-AvailablePrivateVoicePort
 }
 
-$exe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
+# Staging cache is never a running executable. The two run slots permit
+# an atomic candidate handoff without overwriting a live Windows EXE.
+$legacyExe = Join-Path $repoRoot 'target\debug\vpr-owner-lab.exe'
+$liveRoot = Join-Path $repoRoot 'target\rt0-live'
+$slotAExe = Join-Path $liveRoot 'a\vpr-owner-lab.exe'
+$slotBExe = Join-Path $liveRoot 'b\vpr-owner-lab.exe'
+$oldExe = Get-VerifiedExistingOwnerLabExe -LegacyExe $legacyExe -SlotAExe $slotAExe -SlotBExe $slotBExe
+$exe = if ($oldExe -and $oldExe -eq [IO.Path]::GetFullPath($slotAExe)) { $slotBExe } else { $slotAExe }
 Assert-SafeToRestart
-Stop-PortListener -ExpectedExe $exe
 
 $piperProcess = $null
 $piperListenerPid = 0
 $labProcess = $null
 $labReady = $false
 try {
-
     Push-Location $repoRoot
     try {
         if (-not $Rt0Evidence) {
@@ -354,19 +383,24 @@ try {
             git pull --ff-only
             if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed' }
         }
-        cargo build --locked -p vpr-owner-lab --bins
-        if ($LASTEXITCODE -ne 0) { throw 'Owner Lab binaries build failed' }
-    } finally {
-        Pop-Location
-    }
+        $previousCargoTargetDir = $env:CARGO_TARGET_DIR
+        try {
+            $env:CARGO_TARGET_DIR = Join-Path $repoRoot 'target\rt0-staging'
+            cargo build --locked -p vpr-owner-lab --bins
+            if ($LASTEXITCODE -ne 0) { throw 'Staging build failed before stopping the old Owner Lab' }
+        } finally {
+            if ($null -eq $previousCargoTargetDir) { Remove-Item Env:CARGO_TARGET_DIR -ErrorAction SilentlyContinue }
+            else { $env:CARGO_TARGET_DIR = $previousCargoTargetDir }
+        }
+    } finally { Pop-Location }
 
-    $credentialsExe = Join-Path $repoRoot 'target\debug\vpr-provider-credentials.exe'
-    if (-not (Test-Path -LiteralPath $exe)) {
-        throw "Owner Lab executable was not produced: $exe"
-    }
-    if (-not (Test-Path -LiteralPath $credentialsExe)) {
-        throw "Provider credential diagnostic was not produced: $credentialsExe"
-    }
+    $builtDir = Join-Path $repoRoot 'target\rt0-staging\debug'
+    $builtExe = Join-Path $builtDir 'vpr-owner-lab.exe'
+    $credentialsExe = Join-Path $builtDir 'vpr-provider-credentials.exe'
+    if (-not (Test-Path -LiteralPath $builtExe)) { throw "Missing staged Owner Lab: $builtExe" }
+    if (-not (Test-Path -LiteralPath $credentialsExe)) { throw "Missing staged provider probe: $credentialsExe" }
+    $null = New-Item -ItemType Directory -Force -Path (Split-Path -Path $exe -Parent)
+    Copy-Item -LiteralPath $builtExe -Destination $exe -Force
 
     Clear-ProviderEnvironmentOverrides
     if ($Piper -or $SystemVoice) {
@@ -383,9 +417,9 @@ try {
         if ($Piper) { $env:VPR_PIPER_MODEL = $piperModel }
         else { Remove-Item Env:VPR_PIPER_MODEL -ErrorAction SilentlyContinue }
         $env:VPR_METROTRANCE_TTS_TOKEN = New-PiperPrivateToken
-        $env:VPR_METROTRANCE_TTS_PORT = '8897'
+        $env:VPR_METROTRANCE_TTS_PORT = [string]$privateVoicePort
         $env:VPR_OWNER_LAB_TTS_PROVIDER = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
-        $env:VPR_OWNER_LAB_TTS_ENDPOINT = 'http://127.0.0.1:8897/v1/audio/speech'
+        $env:VPR_OWNER_LAB_TTS_ENDPOINT = "http://127.0.0.1:$privateVoicePort/v1/audio/speech"
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
         $env:VPR_OWNER_LAB_TTS_MODEL = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
         $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
@@ -401,6 +435,13 @@ try {
         $piperBridge = Join-Path $repoRoot $(if ($SystemVoice) { 'scripts\windows_sapi_tts_bridge.py' } else { 'scripts\piper_tts_bridge.py' })
         $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
         Wait-PiperReady -Process $piperProcess
+    }
+    # Only after build, provider probe and authenticated WAV warmup passed.
+    if ($oldExe) {
+        Assert-SafeToRestart
+        Stop-PortListener -ExpectedExe $oldExe
+    }
+    if ($Piper -or $SystemVoice) {
         $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
         $env:VPR_OWNER_LAB_PORT = [string]$Port
         $env:VPR_OWNER_LAB_RT0_EVIDENCE = $rt0EvidenceValue
