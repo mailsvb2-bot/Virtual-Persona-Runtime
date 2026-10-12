@@ -43,6 +43,10 @@ export type BrowserJourneyState = {
   phase: string | null;
   error: string | null;
   ownerEvidence: EvidenceSnapshot | null;
+  correctedOwnerEvidence: EvidenceSnapshot | null;
+  correctedPersonaVersion: number | null;
+  visitorMutationDenied: boolean;
+  postRevokeLlmDenied: boolean;
   visitorEvidence: EvidenceSnapshot | null;
   requestedMicrophones: string[];
   interruptPayloads: string[];
@@ -133,6 +137,17 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
       && event.elapsed_millis > 0
   )).toBeTruthy();
 
+  expect(journey.correctedPersonaVersion).toBe(3);
+  expect(journey.visitorMutationDenied).toBe(true);
+  expect(journey.postRevokeLlmDenied).toBe(true);
+  const correctedOwner = journey.correctedOwnerEvidence;
+  expect(correctedOwner).not.toBeNull();
+  if (!correctedOwner) throw new Error("CORRECTED_OWNER_EVIDENCE_MISSING");
+  expect(correctedOwner.participant_role).toBe("owner");
+  assertCommonEvidence(correctedOwner);
+  expect(correctedOwner.text_attempts).toMatchObject([{
+    request_sequence: 1, status: "completed", failure_code: null,
+  }]);
   const visitor = journey.visitorEvidence;
   expect(visitor).not.toBeNull();
   if (!visitor) throw new Error("VISITOR_EVIDENCE_CHECKPOINT_MISSING");
@@ -150,6 +165,7 @@ export const assertProviderRequests = async (
   request: APIRequestContext,
   providerUrl: string,
   ownerAnswers: string[],
+  correctedOwnerClaim: string,
 ): Promise<void> => {
   const providerState = await request.get(`${providerUrl}/__state`);
   expect(providerState.ok()).toBeTruthy();
@@ -168,11 +184,11 @@ export const assertProviderRequests = async (
   const stt = requests.filter((entry) => entry.kind === "stt");
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
-  expect(stt).toHaveLength(3);
-  expect(llm).toHaveLength(7);
-  expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(2);
-  expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(2);
-  expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(2);
+  expect(stt).toHaveLength(4);
+  expect(llm).toHaveLength(9);
+  expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(3);
+  expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(3);
+  expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(3);
 
   expect(stt.every((entry) => entry.authorization === "Bearer voice-stt-e2e-secret")).toBeTruthy();
   expect(stt.every((entry) => entry.contentType?.startsWith("multipart/form-data"))).toBeTruthy();
@@ -187,6 +203,8 @@ export const assertProviderRequests = async (
   );
   const failedOwnerLlm = llm.find((entry) => entry.bodyText.includes("Спровоцируй отказ провайдера"));
   const recoveredOwnerLlm = llm.find((entry) => entry.bodyText.includes("Восстановление после отказа"));
+  const revisedTextLlm = llm.find((entry) => entry.bodyText.includes("Вопрос после исправления владельцем"));
+  const revisedVoiceLlm = scopedVoiceLlms.find((entry) => entry.bodyText.includes(correctedOwnerClaim));
   const visitorTextLlm = llm.find((entry) => entry.bodyText.includes("Текстовый вопрос visitor"));
   const visitorVoiceLlm = scopedVoiceLlms.find((entry) =>
     entry.bodyText.includes("Visitor permissions do not expose owner-reviewed personal context")
@@ -198,6 +216,8 @@ export const assertProviderRequests = async (
   expect(interruptedOwnerVoiceLlm).toBeDefined();
   expect(failedOwnerLlm).toBeDefined();
   expect(recoveredOwnerLlm).toBeDefined();
+  expect(revisedTextLlm).toBeDefined();
+  expect(revisedVoiceLlm).toBeDefined();
   expect(visitorTextLlm).toBeDefined();
   expect(visitorVoiceLlm).toBeDefined();
 
@@ -210,6 +230,20 @@ export const assertProviderRequests = async (
     expect(visitorTextLlm?.bodyText).not.toContain(ownerAnswer);
     expect(visitorVoiceLlm?.bodyText).not.toContain(ownerAnswer);
   }
+  expect(revisedTextLlm?.bodyText).toContain(correctedOwnerClaim);
+  expect(revisedVoiceLlm?.bodyText).toContain(correctedOwnerClaim);
+  expect(revisedTextLlm?.bodyText).not.toContain(ownerAnswers[2]);
+  expect(revisedVoiceLlm?.bodyText).not.toContain(ownerAnswers[2]);
+  expect(visitorTextLlm?.bodyText).not.toContain(correctedOwnerClaim);
+  expect(visitorVoiceLlm?.bodyText).not.toContain(correctedOwnerClaim);
+  for (const unchanged of ownerAnswers.slice(0, 2)) {
+    expect(revisedTextLlm?.bodyText).toContain(unchanged);
+    expect(revisedVoiceLlm?.bodyText).toContain(unchanged);
+  }
+  expect(llm.some((entry) =>
+    entry.bodyText.includes("ПОСЕТИТЕЛЬ НЕ МОЖЕТ МЕНЯТЬ ЧАСТНЫЕ ФАКТЫ")
+      || entry.bodyText.includes("Запретить запрос после отзыва доступа")
+  )).toBe(false);
   expect(visitorTextLlm?.bodyText).toContain(
     "Visitor permissions do not expose owner-reviewed personal context",
   );
@@ -230,4 +264,5 @@ export const assertProviderRequests = async (
 
   expect(spokenText("/stream-1")).toContain("Голосовой ответ владельцу");
   expect(spokenText("/stream-2")).toBe("В visitor scope нет подтверждённых данных владельца");
+  expect(spokenText("/stream-3")).toBe("В visitor scope нет подтверждённых данных владельца");
 };
