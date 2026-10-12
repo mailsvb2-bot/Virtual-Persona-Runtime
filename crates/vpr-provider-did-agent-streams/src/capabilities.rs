@@ -1,5 +1,5 @@
 //! Truthful D-ID capabilities: private Echo STOP is a SERVER operation, not
-//! a permission to publish LiveKit did.interrupt from the browser.
+//! a permission to publish LiveKit `did.interrupt` from the browser.
 use vpr_integration::{RealtimeAvatarCapabilities, RealtimeAvatarCapability};
 
 use crate::DidAgentStreamsAvatar;
