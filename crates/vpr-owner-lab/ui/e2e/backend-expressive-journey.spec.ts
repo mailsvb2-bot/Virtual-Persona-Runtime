@@ -264,50 +264,74 @@ test("Expressive browser STOP failure revokes provider authority and closes view
   test.setTimeout(120000);
   const cleared = await request.delete(mailboxUrl);
   expect(cleared.ok()).toBeTruthy();
-  const before = (await echoEvents(request)).length;
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
-  await page.addInitScript(() => { (window as unknown as { __vprExpectedEchoStopFailure: boolean }).__vprExpectedEchoStopFailure = true; });
-  // Fail ONLY the actual user-initiated STOP after the browser has completed
-  // a real microphone->Rust->private Echo voice turn. Earlier greeting or
-  // recovery STOP requests must pass through without fault injection.
-  let stopFailureArmed = false;
-  let interceptedStopAfterRealVoice = 0;
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/echo-stop-failure-driver.js" });
+
+  // Any internal start/greeting STOP is normal and must not be altered.
+  // Only after we prove a LIVE server-owned PCM publish is a user STOP faulted.
+  let failureArmed = false;
+  let faultedStopCount = 0;
   await page.route("**/api/avatar/interrupt", async (route) => {
-    if (!stopFailureArmed) {
+    if (!failureArmed) {
       await route.continue();
       return;
     }
-    interceptedStopAfterRealVoice += 1;
+    faultedStopCount++;
     await route.fulfill({
-      status: 503, contentType: "application/json",
+      status: 503,
+      contentType: "application/json",
       body: JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }),
     });
   });
-  await installProviderAutoConnect(page);
-  await page.addInitScript({ path: "e2e/echo-owner-voice-driver.js" });
   await page.goto("/");
   await expect.poll(async () => {
     const response = await request.get(mailboxUrl);
-    if (!response.ok) return false;
-    const snapshot = await response.json() as { events?: Array<{ phase?: string }> };
-    return snapshot.events?.some((item) => item.phase === "voice-reply-ready") === true;
-  }, { timeout: 60000 }).toBe(true);
-  stopFailureArmed = true;
-  const armed = await request.post(mailboxUrl, { data: { phase: "stop-refusal-armed" } });
-  expect(armed.status()).toBe(204);
+    if (!response.ok()) return "pending";
+    const snapshot = await response.json() as {
+      events?: Array<{ phase?: string; status?: string; error?: string }>;
+    };
+    const failed = snapshot.events?.find((e) => e.status === "failed");
+    if (failed) return \`failed:\${failed.error ?? "unknown"}\`;
+    return snapshot.events?.some((e) => e.phase === "private-echo-viewer-ready")
+      ? "ready" : "pending";
+  }, { timeout: 40000 }).toBe("ready");
+
+  const bootstrap = await request.get(\`\${ownerLabUrl}/api/bootstrap\`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+  const before = (await echoEvents(request)).length;
+  const speech = await postJson(request, csrf, "/api/avatar/speak", {
+    text: "Это реальный серверный голос перед подтверждённой остановкой.",
+  });
+  expect(speech.ok(), "Rust must publish authorized private PCM before STOP fault").toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 30000,
+  }).toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+
+  failureArmed = true;
+  const posted = await request.post(mailboxUrl, {
+    data: { phase: "private-echo-audio-published" },
+  });
+  expect(posted.status()).toBe(204);
+
   await expect.poll(async () => {
     const response = await request.get(mailboxUrl);
-    if (!response.ok()) return "pending:mailbox";
-    const snapshot = await response.json() as { events?: Array<{ status?: string; error?: string }> };
-    const event = snapshot.events?.find((item) => item.status);
-    return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:stop";
-  }, { timeout: 80000 }).toBe("ok");
-  expect(interceptedStopAfterRealVoice).toBe(1);
-  const status = await request.get(`${ownerLabUrl}/api/status`);
+    if (!response.ok()) return "pending";
+    const snapshot = await response.json() as {
+      events?: Array<{ status?: string; error?: string }>;
+    };
+    const failed = snapshot.events?.find((e) => e.status === "failed");
+    if (failed) return \`failed:\${failed.error ?? "unknown"}\`;
+    return snapshot.events?.some((e) => e.status === "ok") ? "ok" : "pending";
+  }, { timeout: 45000 }).toBe("ok");
+  expect(faultedStopCount).toBe(1);
+  const status = await request.get(\`\${ownerLabUrl}/api/status\`);
   expect(status.ok()).toBeTruthy();
   expect(await status.json()).toMatchObject({ session_state: "revoked" });
-  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 20000 })
-    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 20000,
+  }).toEqual(expect.arrayContaining(["provider_stop_sent"]));
 });
 
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {

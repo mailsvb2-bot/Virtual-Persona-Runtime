@@ -173,3 +173,13 @@ Only after the external Playwright controller observes this event does it arm
 an intercepted 503 for the next real user STOP click. Startup/greeting STOPs
 pass through unaffected. This avoids manufacturing an early pre-answer
 provider outage, and it does not create a privileged production testing route.
+
+The negative browser E2E separates concerns: the already existing positive
+journey tests microphone -> STT -> LLM -> private Echo and its ordinary STOP.
+For the failure journey an external test controller issues a REAL authorized
+Rust /api/avatar/speak while the viewer is connected, verifies private Echo
+audio_stream_opened and audio_bytes_written, and only THEN arms an HTTP
+failure for the user's next Stop click via an independent fixture mailbox.
+This prevents introducing a fake failure during unrelated startup/greeting
+traffic and proves provider authority revocation, local mute, browser publisher
+isolation and viewer disconnect on a real provider-output session.
