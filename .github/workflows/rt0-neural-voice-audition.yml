@@ -6,6 +6,7 @@ on:
       - feat/rt0-piper-lightweight-tts
     paths:
       - scripts/rt0_multilingual_voice_audition.py
+      - scripts/windows_neural_voice_audition.ps1
       - tests/e2e/test_rt0_multilingual_voice_audition.py
       - .github/workflows/rt0-neural-voice-audition.yml
 
@@ -20,3 +21,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Check isolated model audition contracts
         run: python tests/e2e/test_rt0_multilingual_voice_audition.py
+
+  qwen-russian-voice-design:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Generate female native Russian voice without cloning a person
+        shell: pwsh
+        run: |
+          & ./scripts/windows_neural_voice_audition.ps1 -Engine qwen-design
+          if ($LASTEXITCODE -ne 0) { throw 'Native Russian Qwen VoiceDesign failed' }
+      - name: Upload fixed public Russian audition WAV only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rt0-qwen-russian-voice-design
+          path: audio-candidates/qwen-design.*
+          if-no-files-found: error
+          retention-days: 14
