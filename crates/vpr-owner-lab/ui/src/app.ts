@@ -310,6 +310,8 @@ let recording = false;
 let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let interruptOperation: Promise<boolean> | null = null;
+let manualInterruptActionInFlight = false;
 let evidenceSessionSequence = 0;
 let greetingRequestedSequence = 0;
 let greetingPlaybackPending = false;
@@ -1348,6 +1350,14 @@ const updateAudienceMode = (): void => {
   personaPanel.hidden = selectedAudience() === "visitor";
 };
 
+// D-ID Echo has a server-owned STOP with an epoch-bound HTTP receipt. Browser
+// client_control.interrupt=false is correct and must NOT hide the STOP control.
+const serverEchoStopAvailable = (): boolean =>
+  !!liveKitRoom && sessionState.backend.session_state === "active"
+  && capabilities.has("interrupt")
+  && activeClientControl?.interrupt === false
+  && activeClientControl?.text_input === false;
+
 const updateControls = (): void => {
   const transportReady = sessionState.realtime.control && sessionState.backend.session_state === "active";
   const textReady = sessionState.backend.conversation_readiness !== "none";
@@ -1363,7 +1373,9 @@ const updateControls = (): void => {
     && providerPlaybackInFlight;
   const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
   speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-  interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
+  const protectedServerStopReady = transportReady && serverEchoStopAvailable();
+  interruptButton.disabled = manualInterruptActionInFlight || interruptOperation !== null
+    || (!voiceRequestInFlight && !clientInterruptReady && !protectedServerStopReady);
   resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
     || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
     || resumeRequestInFlight;
@@ -2627,16 +2639,23 @@ const speak = async (): Promise<void> => {
   }
 };
 
-const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
+const performInterruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   const voice = activeVoiceEvidence;
+  const requestSequenceForEvidence = recordEvidence && voice?.audioStarted && !voice.interrupted
+    ? voice.requestSequence : null;
+  const interruptedAt = performance.now();
   if (voice) voice.interrupted = true;
-  if (recordEvidence && voice?.audioStarted) {
-    interruptEvidenceWatch = {
-      requestSequence: voice.requestSequence,
-      startedAt: performance.now(),
-      silentFrames: 0,
-    };
-  }
+  // Local mute must not count as proof that remote audio STOP succeeded.
+  interruptEvidenceWatch = null;
+  const observeConfirmedStop = (): void => {
+    if (requestSequenceForEvidence !== null) {
+      interruptEvidenceWatch = {
+        requestSequence: requestSequenceForEvidence,
+        startedAt: interruptedAt,
+        silentFrames: 0,
+      };
+    }
+  };
 
   // Immediate user-visible silence is independent of the remote STOP receipt.
   // It must NOT create interruption_stopped or playback_completed evidence.
@@ -2666,6 +2685,18 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     : null;
 
   try {
+    if (serverEchoStopAvailable()) {
+      // Viewer cannot send did.interrupt. Use the private sender's epoch-fenced
+      // server STOP even before voice events or after stale playback status.
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
+      rt0PlaybackPending = false;
+      sessionState.setPlaybackId(null);
+      greetingPlaybackPending = false;
+      observeConfirmedStop();
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
+    }
     if (providerStopRequired && !clientReady) {
       // Echo's viewer never publishes did.interrupt. An independent
       // server-owned STOP can run while STT/LLM holds the engine mutex.
@@ -2673,6 +2704,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2690,6 +2722,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       if (canonicalStop) await canonicalStop;
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2704,6 +2737,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       await dispatchClientCommand(command);
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2711,6 +2745,16 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     if (!voiceRequestInFlight) {
       await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
+      observeConfirmedStop();
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
+    }
+    // A server-side in-flight voice turn may have no client playback command.
+    // A successfully acknowledged canonical STOP still counts as STOP success.
+    if (canonicalStop) {
+      rt0PlaybackPending = false;
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2756,7 +2800,28 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   }
 };
 
+// Coalesce concurrent UI, microphone and silence-recovery STOP attempts.
+const interruptAvatar = (recordEvidence = true): Promise<boolean> => {
+  if (interruptOperation) return interruptOperation;
+  const operation = performInterruptAvatar(recordEvidence);
+  interruptOperation = operation;
+  updateControls();
+  void operation.finally(() => {
+    if (interruptOperation === operation) {
+      interruptOperation = null;
+      updateControls();
+    }
+  }).catch(() => undefined);
+  return operation;
+};
+
 const interruptAndOfferResume = async (): Promise<void> => {
+  if (manualInterruptActionInFlight || interruptOperation) return;
+  manualInterruptActionInFlight = true;
+  interruptButton.textContent = "Останавливаю…";
+  setStatus("Останавливаю звук: ожидаю подтверждённый STOP сервера Echo…");
+  updateControls();
+  try {
   const voice = activeVoiceEvidence;
   const replaying = resumedSpeechStartedAt !== null;
   const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
@@ -2808,6 +2873,11 @@ const interruptAndOfferResume = async (): Promise<void> => {
     }
   }
   updateControls();
+  } finally {
+    manualInterruptActionInFlight = false;
+    interruptButton.textContent = "Прервать";
+    updateControls();
+  }
 };
 
 const resumeInterruptedAnswer = async (): Promise<void> => {

@@ -326,7 +326,12 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         } else {
             RealtimeAvatarCapability::AudioUrlInput
         };
-        RealtimeAvatarCapabilities::new([RealtimeAvatarCapability::TextInput, audio_input])
+        let mut capabilities = vec![RealtimeAvatarCapability::TextInput, audio_input];
+        if self.echo_backend.is_some() {
+            // Server STOP is canonical but never a browser did.interrupt right.
+            capabilities.push(RealtimeAvatarCapability::Interrupt);
+        }
+        RealtimeAvatarCapabilities::new(capabilities)
     }
 
     fn create_session(
