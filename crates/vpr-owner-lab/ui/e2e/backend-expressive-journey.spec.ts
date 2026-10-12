@@ -267,21 +267,13 @@ test("Expressive browser STOP failure revokes provider authority and closes view
   const before = (await echoEvents(request)).length;
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
   await page.addInitScript(() => { (window as unknown as { __vprExpectedEchoStopFailure: boolean }).__vprExpectedEchoStopFailure = true; });
+  // Fail ONLY the actual user-initiated STOP after the browser has completed
+  // a real microphone->Rust->private Echo voice turn. Earlier greeting or
+  // recovery STOP requests must pass through without fault injection.
+  let stopFailureArmed = false;
   let interceptedStopAfterRealVoice = 0;
   await page.route("**/api/avatar/interrupt", async (route) => {
-    // An initial Echo greeting can legitimately request STOP while the
-    // connection is coming up. Only inject a refusal AFTER the real voice
-    // request has reached the completed canonical backend state.
-    const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
-    const evidence = snapshot.ok()
-      ? await snapshot.json() as {
-          voice_attempts?: Array<{ status?: string; request_sequence?: number }>;
-        }
-      : null;
-    const userTurnFinished = evidence?.voice_attempts?.some(
-      (turn) => turn.status === "completed" && turn.request_sequence === 1,
-    ) === true;
-    if (!userTurnFinished) {
+    if (!stopFailureArmed) {
       await route.continue();
       return;
     }
@@ -294,6 +286,15 @@ test("Expressive browser STOP failure revokes provider authority and closes view
   await installProviderAutoConnect(page);
   await page.addInitScript({ path: "e2e/echo-owner-voice-driver.js" });
   await page.goto("/");
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok) return false;
+    const snapshot = await response.json() as { events?: Array<{ phase?: string }> };
+    return snapshot.events?.some((item) => item.phase === "voice-reply-ready") === true;
+  }, { timeout: 60000 }).toBe(true);
+  stopFailureArmed = true;
+  const armed = await request.post(mailboxUrl, { data: { phase: "stop-refusal-armed" } });
+  expect(armed.status()).toBe(204);
   await expect.poll(async () => {
     const response = await request.get(mailboxUrl);
     if (!response.ok()) return "pending:mailbox";

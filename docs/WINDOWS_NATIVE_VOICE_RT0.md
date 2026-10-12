@@ -166,3 +166,10 @@ not misrepresented as a real remote D-ID outage.
 The STOP-denial E2E injects the failure only after one completed canonical
 voice attempt. Startup/greeting interrupt traffic is passed through to the
 real server so that a failure test never changes the prerequisite voice journey.
+
+Negative STOP-failure E2E now uses an independent test-only mailbox barrier:
+the REAL browser first reports completing its microphone→Rust→Echo answer.
+Only after the external Playwright controller observes this event does it arm
+an intercepted 503 for the next real user STOP click. Startup/greeting STOPs
+pass through unaffected. This avoids manufacturing an early pre-answer
+provider outage, and it does not create a privileged production testing route.

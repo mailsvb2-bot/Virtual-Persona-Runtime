@@ -38,6 +38,18 @@
       voice.click();
       await waitFor(() => (control("status").textContent || "").includes("Вы: Привет из браузера")
         && (control("status").textContent || "").includes("Ответ:"), "reply");
+      // Only the failure-E2E case coordinates fault injection through the
+      // independent fixture mailbox. No post-navigation renderer RPC and no
+      // production-specific test header/route are used.
+      if (window.__vprExpectedEchoStopFailure === true) {
+        await report({ phase: "voice-reply-ready" });
+        await waitFor(async () => {
+          const response = await fetch("/__journey/report/expressive", { cache: "no-store" });
+          if (!response.ok) return false;
+          const result = await response.json();
+          return result.events?.some((event) => event.phase === "stop-refusal-armed") === true;
+        }, "controller-armed-stop", 20000);
+      }
       // Click the real control; the publisher stays private to Rust/Python.
       const stop = control("interrupt");
       await waitFor(() => !stop.disabled, "server-echo-stop-available");
