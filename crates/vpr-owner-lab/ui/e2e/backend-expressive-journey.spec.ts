@@ -292,12 +292,12 @@ test("Expressive browser STOP failure revokes provider authority and closes view
       events?: Array<{ phase?: string; status?: string; error?: string }>;
     };
     const failed = snapshot.events?.find((e) => e.status === "failed");
-    if (failed) return \`failed:\${failed.error ?? "unknown"}\`;
+    if (failed) return `failed:${failed.error ?? "unknown"}`;
     return snapshot.events?.some((e) => e.phase === "private-echo-viewer-ready")
       ? "ready" : "pending";
   }, { timeout: 40000 }).toBe("ready");
 
-  const bootstrap = await request.get(\`\${ownerLabUrl}/api/bootstrap\`);
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
   const before = (await echoEvents(request)).length;
@@ -322,11 +322,11 @@ test("Expressive browser STOP failure revokes provider authority and closes view
       events?: Array<{ status?: string; error?: string }>;
     };
     const failed = snapshot.events?.find((e) => e.status === "failed");
-    if (failed) return \`failed:\${failed.error ?? "unknown"}\`;
+    if (failed) return `failed:${failed.error ?? "unknown"}`;
     return snapshot.events?.some((e) => e.status === "ok") ? "ok" : "pending";
   }, { timeout: 45000 }).toBe("ok");
   expect(faultedStopCount).toBe(1);
-  const status = await request.get(\`\${ownerLabUrl}/api/status\`);
+  const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
   expect(await status.json()).toMatchObject({ session_state: "revoked" });
   await expect.poll(async () => (await echoEvents(request)).slice(before), {
