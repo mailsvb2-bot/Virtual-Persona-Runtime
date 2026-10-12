@@ -76,6 +76,17 @@ def checked_wav(samples, sample_rate: int) -> bytes:
 
 
 def generate(backend: str, reference: Path | None):
+    # Reject unsupported providers and arbitrary audio before importing optional
+    # inference dependencies, downloading weights or touching any runtime state.
+    if backend not in ENGINES:
+        raise ValueError("unsupported audition engine")
+    if backend in ("chatterbox-v3", "qwen-base") and reference is None:
+        raise ValueError("synthetic Russian test reference required")
+    if backend == "qwen-design" and reference is not None:
+        raise ValueError("VoiceDesign is reference-free")
+    if reference is not None:
+        validate_reference(reference)
+
     import torch
 
     torch.set_num_threads(min(4, os.cpu_count() or 1))
