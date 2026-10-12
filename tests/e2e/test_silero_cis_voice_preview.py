@@ -74,6 +74,7 @@ class PreviewContract(unittest.TestCase):
         self.assertIn("/resolve/5f1a14e/", preview.MODEL_URL)
         self.assertEqual(len(preview.MODEL_SHA256), 64)
         self.assertEqual(prepare.TORCH_VERSION, "2.5.1")
+        self.assertEqual(prepare.NUMPY_VERSION, "1.26.4")
         self.assertTrue(prepare.CPU_INDEX.startswith("https://download.pytorch.org/"))
         self.assertNotIn("v5_5_ru", preview.MODEL_URL)
 
