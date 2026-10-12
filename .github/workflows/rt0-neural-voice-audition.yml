@@ -1,8 +1,9 @@
-name: RT0 Chatterbox and Qwen Voice Audition
+name: RT0 Neural Voice Audition
 
 on:
   push:
-    branches: [feat/rt0-piper-lightweight-tts]
+    branches:
+      - feat/rt0-piper-lightweight-tts
     paths:
       - scripts/rt0_multilingual_voice_audition.py
       - tests/e2e/test_rt0_multilingual_voice_audition.py
@@ -13,68 +14,9 @@ permissions:
   actions: read
 
 jobs:
-  synthesize:
-    strategy:
-      fail-fast: false
-      matrix:
-        engine: [chatterbox-v3, qwen-base, qwen-design]
+  windows-audition:
     runs-on: windows-2022
-    timeout-minutes: 50
-    env:
-      HF_HOME: ${{ runner.temp }}/vpr-huggingface-cache
-      HF_HUB_DISABLE_TELEMETRY: '1'
-      HF_HUB_DOWNLOAD_TIMEOUT: '180'
-      PYTHONUTF8: '1'
-      OMP_NUM_THREADS: '4'
-      TOKENIZERS_PARALLELISM: 'false'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.11'
-      - name: Isolated contract tests - no downloads or speech from live sessions
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check isolated model audition contracts
         run: python tests/e2e/test_rt0_multilingual_voice_audition.py
-      - name: Retrieve prior MIT synthetic female reference (audition only)
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if ('${{ matrix.engine }}' -ne 'qwen-design') {
-            gh run download 38226686115 --repo ${{ github.repository }} -n silero-female-cis-ru-sha-60e29a259e6de6416ee67d8139839c9caf0d882e -D reference
-            if ($LASTEXITCODE -ne 0) { throw 'Pinned synthetic female voice fixture unavailable' }
-            python -c "from pathlib import Path; import sys; sys.path.insert(0,'scripts'); from rt0_multilingual_voice_audition import validate_reference; validate_reference(Path('reference/ru_ekaterina.wav')); print('PINNED_SYNTHETIC_REFERENCE_VERIFIED')"
-            if ($LASTEXITCODE -ne 0) { throw 'Synthetic fixture provenance/hash invalid' }
-          }
-      - name: Install model dependencies into audition-only private environment
-        shell: pwsh
-        run: |
-          python -m venv .voice-audition-env
-          if ($LASTEXITCODE -ne 0) { throw 'Python venv creation failed' }
-          $python = '.voice-audition-env/Scripts/python.exe'
-          & $python -m pip install --disable-pip-version-check --upgrade pip
-          if ($LASTEXITCODE -ne 0) { throw 'pip setup failed' }
-          if ('${{ matrix.engine }}' -eq 'chatterbox-v3') {
-            & $python -m pip install --disable-pip-version-check chatterbox-tts==0.1.7
-          } else {
-            & $python -m pip install --disable-pip-version-check qwen-tts==0.1.1
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'Isolated model dependency installation failed' }
-      - name: Generate real Russian audition WAV with bounded audio output
-        shell: pwsh
-        run: |
-          $python = '.voice-audition-env/Scripts/python.exe'
-          if ('${{ matrix.engine }}' -eq 'qwen-design') {
-            & $python scripts/rt0_multilingual_voice_audition.py --engine '${{ matrix.engine }}' --output-dir audio-candidates
-          } else {
-            & $python scripts/rt0_multilingual_voice_audition.py --engine '${{ matrix.engine }}' --reference reference/ru_ekaterina.wav --output-dir audio-candidates
-          }
-          if ($LASTEXITCODE -ne 0) { throw 'Model failed to generate validated Russian audio' }
-      - name: Upload only fixed public audition sentence, no session recordings
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: rt0-native-russian-${{ matrix.engine }}-${{ github.sha }}
-          path: |
-            audio-candidates/*.wav
-            audio-candidates/*.json
-          if-no-files-found: error
-          retention-days: 14
