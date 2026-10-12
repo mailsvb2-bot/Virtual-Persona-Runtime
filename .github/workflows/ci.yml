@@ -32,6 +32,8 @@ jobs:
         run: python3 tests/e2e/test_piper_tts_bridge.py
       - name: Windows female voice private HTTP and Unicode contract
         run: python3 tests/e2e/test_windows_sapi_tts_bridge.py
+      - name: RT0 live owner and visitor acceptance handoff (non-promoting)
+        run: python3 tests/e2e/test_rt0_live_acceptance.py
       - name: Piper first-run download integrity and cache contract
         run: python3 tests/e2e/test_windows_piper_prepare.py
       - name: MIT Silero female audition integrity and whitelist contract

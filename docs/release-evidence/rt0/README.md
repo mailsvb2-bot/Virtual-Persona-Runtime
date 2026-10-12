@@ -249,3 +249,10 @@ cargo run --locked -p vpr-owner-lab -- --allow-egress
 ```
 
 The flag is intentionally not persisted in Windows Credential Manager. A new process is fail-closed again unless the operator explicitly supplies `--allow-egress` (or the existing `VPR_OWNER_LAB_ALLOW_EGRESS=true` automation override).
+
+## Live owner/visitor acceptance handoff
+
+Use [LIVE_ACCEPTANCE_HANDOFF.md](LIVE_ACCEPTANCE_HANDOFF.md) for a privacy-bounded,
+non-promoting assessment of exported owner/visitor browser session snapshots.
+Track real, unfinished human-quality blockers in [QUALITY_BACKLOG.md](QUALITY_BACKLOG.md).
+
