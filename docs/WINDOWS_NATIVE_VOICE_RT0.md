@@ -66,3 +66,19 @@ The user prefers actress-reference Sveta. This is evaluation-only and
 subject to external audio licensing restrictions. No production voice
 cloning or Echo/TtsPort binding is authorized without explicit rights
 clearance and human approval.
+
+## Exact-candidate full Owner Lab canary before restart
+
+The Windows restart launcher now starts the fully configured candidate on a
+separate unoccupied loopback port after the isolated build, provider credential
+probe and authenticated private speech warmup. Before any old listener is
+stopped, the canary must start as the exact staged executable, acknowledge
+egress and RT0 evidence mode when requested, report text-and-voice provider
+readiness, and have no active session. Unknown or competing listeners are
+rejected before any HTTP probe. The canary process is terminated through
+its retained process handle and its port must be released.
+
+A failed canary startup, readiness check, identity verification or teardown
+leaves the old Owner Lab running. This does not replace a human owner/visitor
+session, authorize actress-reference cloning, prove D-ID audio/video playback,
+or provide automatic rollback after the final port handoff.

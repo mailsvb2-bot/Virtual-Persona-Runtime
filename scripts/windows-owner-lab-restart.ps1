@@ -91,12 +91,13 @@ function Stop-PortListener {
 function Assert-ExpectedListener {
     param(
         [Parameter(Mandatory = $true)][string]$ExpectedExe,
+        [int]$ListenPort = $Port,
         [switch]$PassThruProcess
     )
 
-    $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
+    $listeners = @(Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue)
     if ($listeners.Count -ne 1) {
-        throw "Expected exactly one listener on port $Port, found $($listeners.Count)"
+        throw "Expected exactly one listener on port $ListenPort, found $($listeners.Count)"
     }
 
     $listenerPid = $listeners[0].OwningProcess
@@ -115,7 +116,7 @@ function Assert-ExpectedListener {
         $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
         $actualPath = [System.IO.Path]::GetFullPath($actualExe)
         if (-not [string]::Equals($expectedPath, $actualPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Port $Port is owned by unexpected process: $actualPath"
+            throw "Port $ListenPort is owned by unexpected process: $actualPath"
         }
         if ($PassThruProcess) {
             $handedOff = $true
@@ -177,6 +178,97 @@ function New-PiperPrivateToken {
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     return [Convert]::ToBase64String($bytes)
+}
+
+function Get-AvailableCanaryPort {
+    param([int]$PrimaryPort = $Port)
+    if ($PrimaryPort -lt 1 -or $PrimaryPort -gt 65503) {
+        throw 'Owner Lab primary port cannot support a private canary port'
+    }
+    foreach ($candidate in ($PrimaryPort + 1)..($PrimaryPort + 32)) {
+        if (@(Get-NetTCPConnection -LocalPort $candidate -State Listen -ErrorAction SilentlyContinue).Count -eq 0) {
+            return [int]$candidate
+        }
+    }
+    throw 'No free canary port; refusing to replace an existing Owner Lab'
+}
+
+function Assert-CanaryReadiness {
+    param(
+        [Parameter(Mandatory = $true)][object]$Bootstrap,
+        [Parameter(Mandatory = $true)][object]$Status,
+        [bool]$StrictEvidence
+    )
+    if (-not $Bootstrap.egress_enabled -or -not $Status.egress_enabled) {
+        throw 'Staged Owner Lab did not acknowledge provider egress'
+    }
+    if ($StrictEvidence -and -not $Bootstrap.rt0_evidence_mode) {
+        throw 'Staged Owner Lab did not acknowledge exact-candidate RT0 evidence mode'
+    }
+    if ($Status.conversation_readiness -ne 'text_and_voice') {
+        throw "Staged Owner Lab is not text-and-voice ready: $($Status.conversation_readiness)"
+    }
+    if ($Status.session_state -notin @('none', 'closed')) {
+        throw 'Staged Owner Lab must have no active session before handoff'
+    }
+}
+
+function Wait-CanaryLabReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][int]$ListenPort,
+        [Parameter(Mandatory = $true)][string]$ExpectedExe,
+        [bool]$StrictEvidence,
+        [int]$TimeoutSeconds = 45
+    )
+    $canaryUrl = "http://127.0.0.1:$ListenPort"
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastReadinessError = 'server never accepted the readiness requests'
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($Process.HasExited) {
+            throw 'Staged Owner Lab process exited before startup readiness'
+        }
+        $listeners = @(Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue)
+        if ($listeners.Count -gt 0) {
+            # Fail immediately on an unknown/ambiguous listener; NEVER probe it.
+            $actualPid = Assert-ExpectedListener -ExpectedExe $ExpectedExe -ListenPort $ListenPort
+            if ($actualPid -ne $Process.Id) {
+                throw 'Private canary port is owned by a different process'
+            }
+            try {
+                $bootstrap = Invoke-RestMethod -Method Get -Uri "$canaryUrl/api/bootstrap" -TimeoutSec 2
+                $status = Invoke-RestMethod -Method Get -Uri "$canaryUrl/api/status" -TimeoutSec 2
+                Assert-CanaryReadiness -Bootstrap $bootstrap -Status $status -StrictEvidence $StrictEvidence
+                return
+            } catch {
+                $lastReadinessError = $_.Exception.Message
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Staged Owner Lab failed readiness before cutover: $lastReadinessError"
+}
+
+function Stop-CanaryLab {
+    param(
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][int]$ListenPort
+    )
+    # The Process object originates from Start-Process -PassThru; never
+    # terminate a numeric PID looked up from a port or an untrusted file.
+    try {
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+        }
+        if (-not $Process.WaitForExit(15000)) {
+            throw 'Staged Owner Lab failed to stop before the primary cutover'
+        }
+        if (@(Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue).Count -ne 0) {
+            throw 'Canary port still has a listener after process termination'
+        }
+    } finally {
+        $Process.Close()
+    }
 }
 
 function Get-AvailablePrivateVoicePort {
@@ -436,7 +528,29 @@ try {
         $piperProcess = Start-Process -FilePath $piperPython -ArgumentList ('"' + $piperBridge + '"') -WorkingDirectory $repoRoot -PassThru
         Wait-PiperReady -Process $piperProcess
     }
-    # Only after build, provider probe and authenticated WAV warmup passed.
+    # Prove that the fully configured Owner Lab can actually start and answer
+    # the canonical HTTP APIs BEFORE taking down the old listener.
+    $canaryPort = Get-AvailableCanaryPort -PrimaryPort $Port
+    $canaryProcess = $null
+    try {
+        $env:VPR_OWNER_LAB_PORT = [string]$canaryPort
+        $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
+        $env:VPR_OWNER_LAB_RT0_EVIDENCE = $rt0EvidenceValue
+        $canaryProcess = Start-Process -FilePath $exe -ArgumentList '--allow-egress' -WorkingDirectory $repoRoot -PassThru
+        Wait-CanaryLabReady -Process $canaryProcess -ListenPort $canaryPort -ExpectedExe $exe -StrictEvidence ([bool]$Rt0Evidence)
+        Write-Host "Candidate Owner Lab verified on private port $canaryPort; no previous session was stopped."
+    } finally {
+        try {
+            if ($null -ne $canaryProcess) {
+                Stop-CanaryLab -Process $canaryProcess -ListenPort $canaryPort
+            }
+        } finally {
+            $env:VPR_OWNER_LAB_PORT = [string]$Port
+        }
+    }
+
+    # Final handoff is permitted ONLY after staged binary, provider probe,
+    # authenticated private TTS and full Owner Lab HTTP readiness have passed.
     if ($oldExe) {
         Assert-SafeToRestart
         Stop-PortListener -ExpectedExe $oldExe

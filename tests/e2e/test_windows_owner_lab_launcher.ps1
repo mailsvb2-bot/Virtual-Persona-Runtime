@@ -11,7 +11,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($parseErrors.Count -gt 0) { throw "Windows launcher has PowerShell parse errors" }
 
-foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate', 'Get-VerifiedExistingOwnerLabExe', 'Get-AvailablePrivateVoicePort')) {
+foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate', 'Get-VerifiedExistingOwnerLabExe', 'Get-AvailablePrivateVoicePort', 'Get-AvailableCanaryPort', 'Assert-CanaryReadiness', 'Wait-CanaryLabReady', 'Stop-CanaryLab')) {
     $matching = @($ast.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -209,10 +209,13 @@ $build = $source.IndexOf('cargo build --locked -p vpr-owner-lab --bins')
 $copy = $source.IndexOf('Copy-Item -LiteralPath $builtExe -Destination $exe -Force')
 $probe = $source.IndexOf('& $credentialsExe probe-avatar')
 $warm = $source.IndexOf('Wait-PiperReady -Process $piperProcess')
+$canary = $source.IndexOf('Wait-CanaryLabReady -Process $canaryProcess')
+$canaryStop = $source.IndexOf('Stop-CanaryLab -Process $canaryProcess')
 $stop = $source.IndexOf('Stop-PortListener -ExpectedExe $oldExe')
 $launch = $source.IndexOf('$labProcess = Start-Process -FilePath $exe')
 if ($build -lt 0 -or $copy -le $build -or $probe -le $copy -or
-    $warm -le $probe -or $stop -le $warm -or $launch -le $stop) {
+    $warm -le $probe -or $canary -le $warm -or $canaryStop -le $canary -or
+    $stop -le $canaryStop -or $launch -le $stop) {
     throw 'Old Owner Lab is terminated before new binary/credentials/private voice are ready'
 }
 if (-not $source.Contains('target\rt0-staging') -or -not $source.Contains('target\rt0-live')) {
