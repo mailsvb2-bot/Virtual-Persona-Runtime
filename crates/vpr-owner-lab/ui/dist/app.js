@@ -144,6 +144,8 @@ let interruptedAnswerSentences = [];
 let resumeFromIndex = 0;
 let resumeCursorEdited = false;
 let resumedSpeechStartedAt = null;
+let resumeRequestInFlight = false;
+const RESUME_BUTTON_IDLE_LABEL = "Продолжить ответ";
 let interruptEvidenceWatch = null;
 let avSyncCollectionPending = false;
 let pendingAvSyncEvidence = null;
@@ -1023,7 +1025,8 @@ const updateControls = () => {
     speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
     interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
     resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
-        || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
+        || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
+        || resumeRequestInFlight;
     voiceButton.disabled = recording
         ? false
         : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
@@ -2311,7 +2314,7 @@ const interruptAndOfferResume = async () => {
     updateControls();
 };
 const resumeInterruptedAnswer = async () => {
-    if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
+    if (resumeRequestInFlight || resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
         || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
         return;
     }
@@ -2326,7 +2329,12 @@ const resumeInterruptedAnswer = async () => {
         setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
         return;
     }
-    resumeAnswerButton.disabled = true;
+    resumeRequestInFlight = true;
+    const resumeClickedAt = performance.now();
+    resumeAnswerButton.setAttribute("aria-busy", "true");
+    resumeAnswerButton.textContent = "Готовлю продолжение…";
+    setStatus("Продолжение запрошено: проверяю разрешение, синтезирую голос и отправляю в Echo…");
+    updateControls();
     let prepared = null;
     try {
         if (resumeSourceRequest === null)
@@ -2352,8 +2360,9 @@ const resumeInterruptedAnswer = async () => {
         resumedSpeechStartedAt = performance.now();
         providerPlaybackInFlight = true;
         resumeAnswerRow.hidden = true;
-        setStatus("Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
-            + "Это повторная отправка текста, а не подтверждение полного playback.", "ready");
+        const preparationMillis = Math.round(performance.now() - resumeClickedAt);
+        setStatus(`Продолжение отправлено за ${preparationMillis} мс (без повторного LLM-запроса). `
+            + "Начало звука зависит от Echo; полное воспроизведение ещё не подтверждено.", "ready");
     }
     catch (error) {
         if (prepared !== null) {
@@ -2378,7 +2387,12 @@ const resumeInterruptedAnswer = async () => {
         }
         setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
     }
-    updateControls();
+    finally {
+        resumeRequestInFlight = false;
+        resumeAnswerButton.textContent = RESUME_BUTTON_IDLE_LABEL;
+        resumeAnswerButton.removeAttribute("aria-busy");
+        updateControls();
+    }
 };
 const endSession = async (kind) => {
     if (!sessionEndRequest().expected_session_sequence) {

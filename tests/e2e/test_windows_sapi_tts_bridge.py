@@ -125,7 +125,11 @@ class PersistentSapiRuntimeContract(unittest.TestCase):
         def __init__(self, responses):
             import io as io_module
             self.stdout = io_module.StringIO("".join(responses))
-            self.stdin = io_module.StringIO()
+            class ReadableAfterClose(io_module.StringIO):
+                def close(self):
+                    # Preserve recorded IPC frames for post-teardown assertions.
+                    self.closed_by_engine = True
+            self.stdin = ReadableAfterClose()
             self.terminated = False
             self.killed = 0
             self.environment = {}
@@ -197,6 +201,7 @@ class PersistentSapiRuntimeContract(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "unavailable"):
                     synth("Нельзя отправлять.")
                 self.assertEqual(failed.stdin.getvalue(), "")
+                self.assertTrue(failed.stdin.closed_by_engine)
                 self.assertEqual(failed.killed, 1)
         finally:
             synth.close()
