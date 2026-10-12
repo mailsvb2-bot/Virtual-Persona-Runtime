@@ -1,0 +1,48 @@
+name: RT0 Silero Female Voice Audition
+
+on:
+  push:
+    branches:
+      - feat/rt0-piper-lightweight-tts
+    paths:
+      - scripts/silero_cis_voice_preview.py
+      - scripts/silero_cis_voice_prepare.py
+      - tests/e2e/test_silero_cis_voice_preview.py
+      - .github/workflows/silero-voice-audition.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: silero-audition-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-real-model:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+      - name: Hermetic voice integrity and speaker tests
+        run: python tests/e2e/test_silero_cis_voice_preview.py
+      - name: Provision only fixed verified MIT-licensed model and CPU Torch
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'silero-cis-audition'
+          python scripts/silero_cis_voice_prepare.py --data-dir $root
+          if ($LASTEXITCODE -ne 0) { throw 'Silero model integrity or CPU runtime failed' }
+          $python = Join-Path $root 'venv\Scripts\python.exe'
+          $model = Join-Path $root 'models\v5_cis_base_nostress.pt'
+          & $python scripts/silero_cis_voice_preview.py --model $model --output-dir 'silero-voice-samples'
+          if ($LASTEXITCODE -ne 0) { throw 'Real Silero female audio synthesis failed' }
+      - name: Upload fixed sample text only - no session audio or secrets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: silero-female-cis-ru-sha-${{ github.sha }}
+          path: silero-voice-samples/*.wav
+          if-no-files-found: error
+          retention-days: 14
