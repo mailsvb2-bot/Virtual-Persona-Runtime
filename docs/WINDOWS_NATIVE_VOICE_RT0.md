@@ -130,3 +130,9 @@ duplicate requests, and reports time through server authorization plus
 private PCM preparation/delivery. This is NOT time until actual audible Echo
 playout; do not label it as such. Production RT0 still requires measured
 real owner/visitor playback and human quality acceptance.
+
+The reusable SAPI host receives a positively allowlisted operating-system
+environment: no user-supplied provider token, application key, or miscellaneous
+process secret is inherited even under non-VPR variable names. Browser E2E
+asserts immediate Resume UI acknowledgement, duplicate-click fencing,
+denial cleanup and successful canonical suffix replay.

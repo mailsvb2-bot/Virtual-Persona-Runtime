@@ -142,8 +142,15 @@ class WindowsSapiSynthesizer:
         if self._process is not None and self._process.poll() is None:
             return self._process
         self._discard()
+        # Positive allowlist: child speech host needs OS/voice paths, not
+        # application, payment, LLM, STT, or avatar credentials of any name.
+        allowed = {
+            "SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP",
+            "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PSMODULEPATH",
+            "COMSPEC", "SYSTEMDRIVE", "HOMEDRIVE", "HOMEPATH",
+        }
         safe_env = {key: val for key, val in os.environ.items()
-                    if not key.upper().startswith(("VPR_", "METROTRANCE_"))}
+                    if key.upper() in allowed}
         safe_env[RATE_ENV] = str(self._rate)
         command = [
             "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand",

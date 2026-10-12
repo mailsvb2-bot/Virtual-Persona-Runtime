@@ -151,14 +151,21 @@ class PersistentSapiRuntimeContract(unittest.TestCase):
         child = self.FakeChild(["READY\n", wav, wav])
         synth = bridge.WindowsSapiSynthesizer(1)
         try:
-            with patch.object(bridge.subprocess, "Popen", return_value=child) as popen:
-                self.assertEqual(synth("Здравствуйте."), wav_fixture())
-                self.assertEqual(synth("Продолжаю ответ."), wav_fixture())
+            with patch.dict(__import__("os").environ, {
+                "DEEPSEEK_API_KEY": "secret-do-not-export",
+                "OPENAI_API_KEY": "secret-do-not-export",
+                "VPR_DID_API_KEY": "secret-do-not-export",
+            }):
+                with patch.object(bridge.subprocess, "Popen", return_value=child) as popen:
+                    self.assertEqual(synth("Здравствуйте."), wav_fixture())
+                    self.assertEqual(synth("Продолжаю ответ."), wav_fixture())
             popen.assert_called_once()
             env = popen.call_args.kwargs["env"]
             self.assertEqual(env["VPR_WINDOWS_SAPI_RATE"], "1")
             self.assertNotIn("VPR_DID_API_KEY", env)
             self.assertNotIn("VPR_METROTRANCE_TTS_TOKEN", env)
+            self.assertNotIn("DEEPSEEK_API_KEY", env)
+            self.assertNotIn("OPENAI_API_KEY", env)
             sent = child.stdin.getvalue().splitlines()
             self.assertEqual([base64.b64decode(x).decode("utf-8") for x in sent],
                              ["Здравствуйте.", "Продолжаю ответ."])
