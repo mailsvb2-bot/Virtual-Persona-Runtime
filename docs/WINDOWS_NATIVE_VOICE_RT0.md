@@ -87,3 +87,13 @@ Canary readiness also verifies that the embedded HTML entrypoint and
 JavaScript application bundle respond successfully. Canary listener teardown
 allows a short bounded Windows TCP release delay, but any lingering listener
 blocks the primary cutover rather than being ignored.
+
+### Windows real-process CI evidence (not live provider)
+
+The Windows CI also starts two actual Rust Owner Lab processes on separate
+loopback ports with isolated, intentionally fake provider credentials,
+proves both HTTP endpoints and bundled browser assets, preserves the old
+instance after an intentionally invalid-provider canary startup, then
+tests a clean primary-port handoff. These checks make no D-ID, STT, LLM
+or other external network calls. They do not prove an actual owner/visitor
+session or licensed Sveta voice synthesis; those remain manual RT0 gates.

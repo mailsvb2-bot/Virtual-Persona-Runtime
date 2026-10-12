@@ -75,7 +75,7 @@ function Invoke-RestMethod {
     throw 'Unexpected private canary request'
 }
 function Invoke-WebRequest {
-    param($UseBasicParsing, $Method, $Uri, $TimeoutSec)
+    param([switch]$UseBasicParsing, $Method, $Uri, $TimeoutSec)
     $script:uiAssetCount++
     if ($Uri -notmatch '^http://127[.]0[.]0[.]1:8788(/|/app[.]js)$') {
         throw 'Unexpected canary browser URL'

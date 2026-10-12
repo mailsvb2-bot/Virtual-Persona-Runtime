@@ -136,6 +136,13 @@ jobs:
       - name: Windows full Owner Lab canary and rollback-safe preflight regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary.ps1
+      - name: Real Windows two-instance Owner Lab canary with no provider egress
+        shell: pwsh
+        run: |
+          cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Owner Lab build failed' }
+          pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary_real.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows Owner Lab canary E2E failed' }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows clippy parity gate
