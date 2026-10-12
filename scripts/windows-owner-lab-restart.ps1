@@ -239,6 +239,15 @@ function Wait-CanaryLabReady {
                 $bootstrap = Invoke-RestMethod -Method Get -Uri "$canaryUrl/api/bootstrap" -TimeoutSec 2
                 $status = Invoke-RestMethod -Method Get -Uri "$canaryUrl/api/status" -TimeoutSec 2
                 Assert-CanaryReadiness -Bootstrap $bootstrap -Status $status -StrictEvidence $StrictEvidence
+                # A listening server without its embedded browser UI is not
+                # a usable Owner Lab. Check both frontend entrypoints.
+                $page = Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$canaryUrl/" -TimeoutSec 2
+                $bundle = Invoke-WebRequest -UseBasicParsing -Method Get -Uri "$canaryUrl/app.js" -TimeoutSec 2
+                if ($page.StatusCode -ne 200 -or $bundle.StatusCode -ne 200 -or
+                    [string]::IsNullOrWhiteSpace([string]$page.Content) -or
+                    [string]::IsNullOrWhiteSpace([string]$bundle.Content)) {
+                    throw 'Staged Owner Lab browser assets unavailable'
+                }
                 return
             } catch {
                 $lastReadinessError = $_.Exception.Message
@@ -263,9 +272,16 @@ function Stop-CanaryLab {
         if (-not $Process.WaitForExit(15000)) {
             throw 'Staged Owner Lab failed to stop before the primary cutover'
         }
-        if (@(Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue).Count -ne 0) {
-            throw 'Canary port still has a listener after process termination'
+        # TCP teardown is asynchronous on Windows; allow a short bounded
+        # release window rather than falsely failing an otherwise safe stop.
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            if (@(Get-NetTCPConnection -LocalPort $ListenPort -State Listen -ErrorAction SilentlyContinue).Count -eq 0) {
+                return
+            }
+            Start-Sleep -Milliseconds 125
         }
+        throw 'Canary port still has a listener after process termination'
     } finally {
         $Process.Close()
     }

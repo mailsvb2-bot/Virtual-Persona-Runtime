@@ -82,3 +82,8 @@ A failed canary startup, readiness check, identity verification or teardown
 leaves the old Owner Lab running. This does not replace a human owner/visitor
 session, authorize actress-reference cloning, prove D-ID audio/video playback,
 or provide automatic rollback after the final port handoff.
+
+Canary readiness also verifies that the embedded HTML entrypoint and
+JavaScript application bundle respond successfully. Canary listener teardown
+allows a short bounded Windows TCP release delay, but any lingering listener
+blocks the primary cutover rather than being ignored.

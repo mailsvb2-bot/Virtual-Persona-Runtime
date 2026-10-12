@@ -51,6 +51,7 @@ Assert-Rejected { Get-AvailableCanaryPort -PrimaryPort 8787 } 'No free canary po
 Assert-Rejected { Get-AvailableCanaryPort -PrimaryPort 65535 } 'cannot support'
 
 $script:probeCount = 0
+$script:uiAssetCount = 0
 $script:trustedExe = 'C:\repo\target\rt0-live\b\vpr-owner-lab.exe'
 $script:observedExe = 'C:\Windows\System32\foreign.exe'
 $script:observedPid = 51881
@@ -73,6 +74,14 @@ function Invoke-RestMethod {
     if ($Uri.EndsWith('/api/status')) { return $ready }
     throw 'Unexpected private canary request'
 }
+function Invoke-WebRequest {
+    param($UseBasicParsing, $Method, $Uri, $TimeoutSec)
+    $script:uiAssetCount++
+    if ($Uri -notmatch '^http://127[.]0[.]0[.]1:8788(/|/app[.]js)$') {
+        throw 'Unexpected canary browser URL'
+    }
+    return [pscustomobject]@{ StatusCode = 200; Content = 'nonempty verified browser asset' }
+}
 $process = [pscustomobject]@{ Id = 51881; HasExited = $false }
 Assert-Rejected {
     Wait-CanaryLabReady -Process $process -ListenPort 8788 -ExpectedExe $script:trustedExe -TimeoutSeconds 2
@@ -80,7 +89,9 @@ Assert-Rejected {
 if ($script:probeCount -ne 0) { throw 'HTTP probe reached an unverified process' }
 $script:observedExe = $script:trustedExe
 Wait-CanaryLabReady -Process $process -ListenPort 8788 -ExpectedExe $script:trustedExe -TimeoutSeconds 2
-if ($script:probeCount -ne 2) { throw 'Canary must check BOTH bootstrap and status' }
+if ($script:probeCount -ne 2 -or $script:uiAssetCount -ne 2) {
+    throw 'Canary must check bootstrap, status and embedded browser assets'
+}
 $process.HasExited = $true
 Assert-Rejected {
     Wait-CanaryLabReady -Process $process -ListenPort 8788 -ExpectedExe $script:trustedExe -TimeoutSeconds 2
@@ -114,7 +125,14 @@ $staged | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {
 $staged | Add-Member -MemberType ScriptMethod -Name Close -Value {
     $script:canaryCloseCount++
 }
+# Once our process exits, Windows releases the listener.
 $script:observedPid = 0
+function Get-NetTCPConnection {
+    param($LocalPort, $State, $ErrorAction)
+    if ($LocalPort -eq 8788 -and $script:observedPid -gt 0) {
+        [pscustomobject]@{ OwningProcess = $script:observedPid }
+    }
+}
 Stop-CanaryLab -Process $staged -ListenPort 8788
 if ($script:canaryKillCount -ne 1 -or $script:canaryCloseCount -ne 1) {
     throw 'Retained canary process handle must be stopped and closed once'
