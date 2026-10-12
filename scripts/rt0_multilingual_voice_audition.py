@@ -157,9 +157,13 @@ def main():
     args.output_dir.mkdir(parents=True, exist_ok=True)
     path = args.output_dir / (args.engine + ".wav")
     path.write_bytes(wav)
+    # Some inference APIs return (1, samples) rather than (samples,). WAV is
+    # the canonical evidence: len(data) would report 0.0 s for Chatterbox.
+    with wave.open(io.BytesIO(wav), "rb") as confirmed:
+        duration_seconds = confirmed.getnframes() / confirmed.getframerate()
     result = {
         "engine": args.engine,
-        "seconds": round(len(data) / rate, 2),
+        "seconds": round(duration_seconds, 2),
         "wall_seconds": round(time.monotonic() - started, 2),
         "rate_hz": int(rate),
         "reference_type": "synthetic_mit_sample" if args.reference else "none",
