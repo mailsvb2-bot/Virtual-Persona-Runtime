@@ -20,6 +20,7 @@ MODEL_URL = (
 )
 FEMALE_VOICES = ("ru_ekaterina", "ru_karina", "ru_vika")
 SAMPLE_RATE = 24000
+MIN_MODEL_BYTES = 80_000_000
 MAX_MODEL_BYTES = 140 * 1024 * 1024
 TEST_PHRASE = (
     "Здравствуйте! Меня зовут Екатерина. Я рада вас слышать. "
@@ -28,7 +29,7 @@ TEST_PHRASE = (
 
 
 def verified_model(path: Path) -> bool:
-    if not path.is_file() or not 80_000_000 <= path.stat().st_size <= MAX_MODEL_BYTES:
+    if not path.is_file() or not MIN_MODEL_BYTES <= path.stat().st_size <= MAX_MODEL_BYTES:
         return False
     digest = hashlib.sha256()
     with path.open("rb") as source:
