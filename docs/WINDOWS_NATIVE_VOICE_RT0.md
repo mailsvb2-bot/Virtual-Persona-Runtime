@@ -136,3 +136,23 @@ environment: no user-supplied provider token, application key, or miscellaneous
 process secret is inherited even under non-VPR variable names. Browser E2E
 asserts immediate Resume UI acknowledgement, duplicate-click fencing,
 denial cleanup and successful canonical suffix replay.
+
+## Owner/visitor Echo server-owned STOP correction — October 12
+
+Observed live owner: video 6526 ms; STT 304 ms; LLM 1262 ms; first audio
+2303 ms; browser recovery at 12412 ms; canonical playback not proven.
+User reported metallic Windows SAPI voice and unresponsive Interrupt button.
+
+Cause: Echo returns browser interrupt=false because only its private server
+sender may issue STOP, but UI wrongly required browser interrupt=true.
+Backend had not advertised canonical server-owned Interrupt capability.
+
+Now Echo with private backend advertises canonical Interrupt without granting
+the browser a publisher. The button stays usable on active LiveKit Echo
+with a server STOP, immediately mutes local audio, prevents duplicate STOP
+calls, and waits for epoch-scoped /api/avatar/interrupt confirmation.
+Failure revokes session. Local silence is never remote provider STOP proof.
+
+Browser E2E tests real UI click through Rust and hermetic Python Echo worker,
+and verifies immediate mute, sender isolation and provider_stop_sent receipt.
+Real audible D-ID playout and voice quality remain human RT0 gates.

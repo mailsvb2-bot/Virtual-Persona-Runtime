@@ -185,11 +185,14 @@ test("Expressive Echo keeps its sender credentials private", async ({
   expect(payload).not.toContain("did.speak");
   const session = JSON.parse(payload) as {
     transport: { kind: string; token?: string };
-    client_control?: { text_input?: boolean } | null;
+    capabilities: string[];
+    client_control?: { text_input?: boolean; interrupt?: boolean } | null;
   };
   expect(session.transport.kind).toBe("live_kit");
   expect(session.transport.token).toMatch(/^fixture-livekit-token-/);
   expect(session.client_control?.text_input ?? false).toBe(false);
+  expect(session.client_control?.interrupt ?? false).toBe(false);
+  expect(session.capabilities).toContain("interrupt");
   const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
   expect(await status.json()).toMatchObject({
@@ -251,7 +254,7 @@ test("real browser owner voice reaches private server Echo audio", async ({ page
     return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:voice";
   }, { timeout: 80000 }).toBe("ok");
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 20000 })
-    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "provider_stop_sent"]));
   const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(snapshot.ok()).toBeTruthy();
   expect(await snapshot.json()).toMatchObject({ canonical_playback_proven: false });
