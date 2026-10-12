@@ -54,16 +54,14 @@ class PreviewContract(unittest.TestCase):
             fake_model = Path(d) / preview.MODEL_NAME
             content = b"verified-test-bytes"
             fake_model.write_bytes(content)
-            with patch.object(preview, "MIN_MODEL_BYTES", 0, create=True):
-                # Real SHA-256, never rely on filenames or ZIP metadata.
+            with patch.object(preview, "MIN_MODEL_BYTES", 0):
+                # Verify a real streaming SHA-256, not merely a mock validator.
                 with patch.object(preview, "MODEL_SHA256", hashlib.sha256(content).hexdigest()):
-                    # The preview verifier has a release size guard as well.
-                    with patch.object(preview, "verified_model", return_value=True):
-                        with patch.object(prepare, "verified_model", return_value=True):
-                            with patch.object(prepare, "download_checked") as download:
-                                output = prepare.prepare_model(Path(d))
-                                self.assertEqual(output, fake_model)
-                                download.assert_not_called()
+                    self.assertTrue(preview.verified_model(fake_model))
+                    with patch.object(prepare, "download_checked") as download:
+                        output = prepare.prepare_model(Path(d))
+                        self.assertEqual(output, fake_model)
+                        download.assert_not_called()
                 self.assertFalse(preview.verified_model(fake_model))
             with patch.object(prepare, "verified_model", side_effect=[False, False]):
                 with patch.object(prepare, "download_checked") as download:
