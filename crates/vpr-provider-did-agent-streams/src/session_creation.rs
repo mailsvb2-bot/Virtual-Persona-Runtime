@@ -1,4 +1,4 @@
-//! D-ID Echo LiveKit session creation: private speaker opens before browser receives viewer grant.
+//! D-ID Echo `LiveKit` session creation: private speaker opens before browser receives viewer grant.
 use crate::protocol::CreateV2SessionResponse;
 use crate::response_json::decode_json_response;
 use crate::{
