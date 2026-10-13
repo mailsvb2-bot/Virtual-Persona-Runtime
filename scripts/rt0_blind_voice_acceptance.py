@@ -8,6 +8,7 @@ Rights are independently reviewed; generated audio alone grants no permission.
 from __future__ import annotations
 
 import argparse
+from array import array
 import hashlib
 import html
 import json
@@ -51,10 +52,23 @@ def valid_preview(wav_path: Path, metadata: dict, name: str) -> dict:
                 or not 0.25 < wav.getnframes() / wav.getframerate() <= 35):
             raise ValueError("unsupported or excessive audition audio")
         length = wav.getnframes() / wav.getframerate()
+        pcm = array("h")
+        pcm.frombytes(wav.readframes(wav.getnframes()))
+        if sys.byteorder != "little":
+            pcm.byteswap()
+        if not pcm:
+            raise ValueError("empty preview audio")
+        # Technical sanity is not speech intelligibility or human approval.
+        mean = sum(pcm) / len(pcm)
+        mean_square = sum(float(x) * x for x in pcm) / len(pcm)
+        ac_rms = math.sqrt(max(0.0, mean_square - mean * mean)) / 32768.0
+        clipped_ratio = sum(abs(x) >= 32700 for x in pcm) / len(pcm)
+        if ac_rms < 0.003 or clipped_ratio > 0.10:
+            raise ValueError("silent, DC-only or severely clipped preview")
     if not isinstance(metadata.get("seconds"), (int, float)) or (
             abs(length - metadata["seconds"]) > 0.03):
         raise ValueError("preview duration does not match its generation evidence")
-    return {"sha256": sha256(wav_path), "duration_seconds": round(length, 3)}
+    return {"sha256": sha256(wav_path), "duration_seconds": round(length, 3),\n            "ac_rms_dbfs": round(20 * math.log10(ac_rms), 2),\n            "clipped_sample_ratio": round(clipped_ratio, 5)}
 
 
 def render_browser(labels: list[str], session: str) -> str:
@@ -165,6 +179,8 @@ def prepare(source: Path, destination: Path, manifest_file: Path) -> dict:
             "blind_label": label, "engine": name,
             "audio_sha256": ident["sha256"], "sidecar_sha256": sidecar_sha,
             "duration_seconds": ident["duration_seconds"],
+            "ac_rms_dbfs": ident["ac_rms_dbfs"],
+            "clipped_sample_ratio": ident["clipped_sample_ratio"],
         })
     (destination / "index.html").write_text(render_browser(labels, session), encoding="utf-8")
     manifest_file.parent.mkdir(parents=True, exist_ok=True)
