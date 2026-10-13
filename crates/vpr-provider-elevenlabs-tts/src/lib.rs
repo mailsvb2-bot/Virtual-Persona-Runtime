@@ -166,7 +166,7 @@ struct SpeechRequest<'a> {
 /// arbitrary HTTP read boundaries (including one-byte chunks). Neither a
 /// declared Content-Length nor a chunked transfer can bypass the hard limit.
 fn stream_pcm(
-    mut response: Response,
+    response: Response,
     cancellation: &dyn CancellationProbe,
     sink: &mut dyn GeneratedAudioSink,
     sample_rate_hz: u32,
