@@ -1145,7 +1145,6 @@ const handleProviderClientEvent = (raw) => {
                 await completion;
             }
             else {
-                greetingPlaybackPending = false;
                 providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
                 if (rt0EvidenceMode)
                     rt0PlaybackPending = false;
