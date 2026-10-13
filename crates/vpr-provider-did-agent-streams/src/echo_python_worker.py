@@ -160,6 +160,7 @@ async def run():
     generation = 0
 
     async def speak(identifier, phrase, generation_at_start, preauthorized_wav=None):
+        nonlocal generation
         writer = None
         published = False
         try:
@@ -211,14 +212,20 @@ async def run():
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
-            # Truncated/malformed HTTP streaming may have sent a WAV prefix.
-            # Explicitly interrupt provider playback before reporting failure,
-            # never falsely claiming that the media was heard or completed.
-            if published and generation_at_start == generation:
-                try:
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
-                except Exception:
-                    pass
+            # A failed stream is terminal for this publisher generation.
+            # An incomplete WAV may already be in D-ID's playback queue.
+            # Fence every queued utterance before sending the remote interrupt;
+            # otherwise the next task can race ahead and publish stale sound.
+            if generation_at_start == generation:
+                generation += 1
+                for task in tuple(tasks.values()):
+                    if task is not asyncio.current_task():
+                        task.cancel()
+                if published:
+                    try:
+                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                    except Exception:
+                        pass
             emit(identifier, False)
         finally:
             if writer is not None:
