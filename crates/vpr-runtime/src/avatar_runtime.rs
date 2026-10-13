@@ -5,10 +5,9 @@ use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
     CancellationProbe, GeneratedAudioBuffer, GeneratedAudioStreamingSink, PcmSampleFormat,
     ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapability,
-    RealtimeAvatarPcmStream,
     RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, TtsPort, TtsRequest,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    TtsPort, TtsRequest, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -294,7 +293,10 @@ impl ActiveTurn {
         // Native D-ID Echo documents an explicit pcm16 byte stream. Route
         // streaming TTS chunks through the SAME canonical TTS and avatar permits.
         // Other adapters continue the existing buffered compatibility path.
-        if port.capabilities().supports(RealtimeAvatarCapability::AudioPcmStreamInput) {
+        if port
+            .capabilities()
+            .supports(RealtimeAvatarCapability::AudioPcmStreamInput)
+        {
             return self.stream_and_deliver_realtime_avatar_pcm(tts, port, handle, text);
         }
         self.validate_avatar_handle(port, handle)
@@ -337,29 +339,47 @@ impl ActiveTurn {
     ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
         self.validate_avatar_handle(port, handle)
             .map_err(RealtimeAvatarOutputError::Provider)?;
-        let avatar_permit = self.avatar_permit().map_err(RealtimeAvatarOutputError::Provider)?;
-        let segment_id = self.begin_output_segment().map_err(RealtimeAvatarOutputError::Runtime)?;
+        let avatar_permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
         let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
 
         let mut published: Option<Box<dyn RealtimeAvatarPcmStream>> = None;
         let mut send = |pcm: &[u8], rate: u32, channels: u16| -> Result<(), ProviderError> {
             if avatar_permit.cancellation.is_cancelled() {
-                return Err(ProviderError { kind: ProviderErrorKind::Cancelled, retryable: false });
+                return Err(ProviderError {
+                    kind: ProviderErrorKind::Cancelled,
+                    retryable: false,
+                });
             }
             if published.is_none() {
                 published = Some(port.open_pcm_stream(
-                    &handle.provider_session, rate, channels, &avatar_permit.cancellation,
+                    &handle.provider_session,
+                    rate,
+                    channels,
+                    &avatar_permit.cancellation,
                 )?);
             }
-            published.as_mut().ok_or(ProviderError {
-                kind: ProviderErrorKind::Unavailable, retryable: false,
-            })?.push_pcm(pcm, &avatar_permit.cancellation)
+            published
+                .as_mut()
+                .ok_or(ProviderError {
+                    kind: ProviderErrorKind::Unavailable,
+                    retryable: false,
+                })?
+                .push_pcm(pcm, &avatar_permit.cancellation)
         };
         let mut sink = GeneratedAudioStreamingSink::new(&mut send);
-        let synthesis = self.execute_tts(tts, &TtsRequest {
-            text: text.to_owned(),
-            locale_hint: Some("ru".to_owned()),
-        }, &mut sink);
+        let synthesis = self.execute_tts(
+            tts,
+            &TtsRequest {
+                text: text.to_owned(),
+                locale_hint: Some("ru".to_owned()),
+            },
+            &mut sink,
+        );
         let received_bytes = sink.received_bytes();
         drop(sink);
         drop(send);
@@ -374,18 +394,24 @@ impl ActiveTurn {
             if let Some(mut stream) = published {
                 let _ = stream.abort();
             }
-            return Err(RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
-                ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false },
-            )));
+            return Err(RealtimeAvatarOutputError::Provider(
+                ProviderExecutionError::from(ProviderError {
+                    kind: ProviderErrorKind::InvalidResponse,
+                    retryable: false,
+                }),
+            ));
         }
         let mut stream = published.ok_or_else(|| {
-            RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
-                ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false },
-            ))
+            RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            }))
         })?;
         if let Err(error) = stream.finish(&avatar_permit.cancellation) {
             let _ = stream.abort();
-            return Err(RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(error)));
+            return Err(RealtimeAvatarOutputError::Provider(
+                ProviderExecutionError::from(error),
+            ));
         }
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
