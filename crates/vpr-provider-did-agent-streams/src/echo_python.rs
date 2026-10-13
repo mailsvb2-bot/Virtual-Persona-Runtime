@@ -1,7 +1,6 @@
 //! Explicitly enabled, backend-only `LiveKit` Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,6 +13,10 @@ use serde_json::{Value, json};
 use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
 use super::{DidEchoBackend, cancelled, invalid_response, unavailable};
+
+#[path = "echo_python_pcm_stream.rs"]
+mod pcm_stream;
+use pcm_stream::EchoPythonPcmStream;
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(55);
 const SPEECH_TIMEOUT: Duration = Duration::from_secs(80);
@@ -295,91 +298,6 @@ impl SessionWorker {
         Ok(())
     }
 }
-/// One canonical utterance, sent as D-ID documented `pcm16` byte-stream.
-/// A dropped/failed stream always sends an interrupt or kills its private worker.
-struct EchoPythonPcmStream {
-    worker: Arc<SessionWorker>,
-    stream_id: u64,
-    rate: u32,
-    channels: u16,
-    bytes: usize,
-    closed: bool,
-}
-
-impl RealtimeAvatarPcmStream for EchoPythonPcmStream {
-    fn push_pcm(
-        &mut self,
-        pcm: &[u8],
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<(), ProviderError> {
-        let frame = usize::from(self.channels) * 2;
-        let next = self.bytes.checked_add(pcm.len()).ok_or_else(invalid_response)?;
-        if self.closed || pcm.is_empty() || pcm.len() % frame != 0
-            || next > 8 * 1024 * 1024 - 44
-            || next / frame > self.rate as usize * 60
-            || cancellation.is_cancelled()
-        {
-            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
-        }
-        for part in pcm.chunks(8 * 1024) {
-            let mut hex = String::with_capacity(part.len() * 2);
-            for byte in part {
-                write!(&mut hex, "{byte:02x}").map_err(|_| invalid_response())?;
-            }
-            self.worker.request(
-                json!({"command":"pcm_chunk","stream_id":self.stream_id,"pcm_hex":hex}),
-                SPEECH_TIMEOUT,
-                Some(cancellation),
-                false,
-            )?;
-        }
-        self.bytes = next;
-        Ok(())
-    }
-
-    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
-        if self.closed || self.bytes == 0 || cancellation.is_cancelled() {
-            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
-        }
-        // "End" is acknowledged only after LiveKit closes the byte stream.
-        // It is NOT a D-ID playout or a browser hearing acknowledgement.
-        self.worker.request(
-            json!({"command":"pcm_end","stream_id":self.stream_id}),
-            SPEECH_TIMEOUT,
-            Some(cancellation),
-            false,
-        )?;
-        self.closed = true;
-        Ok(())
-    }
-
-    fn abort(&mut self) -> Result<(), ProviderError> {
-        if self.closed {
-            return Ok(());
-        }
-        let result = self.worker.request(
-            json!({"command":"pcm_abort","stream_id":self.stream_id}),
-            INTERRUPT_TIMEOUT,
-            None,
-            true,
-        );
-        self.closed = true;
-        if result.is_err() {
-            // A missing STOP receipt is unsafe; the private sender must die.
-            let _ = self.worker.terminate();
-        }
-        result
-    }
-}
-
-impl Drop for EchoPythonPcmStream {
-    fn drop(&mut self) {
-        if !self.closed {
-            let _ = self.abort();
-        }
-    }
-}
-
 impl EchoPythonBackend {
     #[must_use]
     pub fn new(config: EchoPythonConfig) -> Self {
@@ -601,127 +519,5 @@ impl Drop for EchoPythonBackend {
     }
 }
 #[cfg(all(test, unix))]
-mod bounded_stop_tests {
-    use super::*;
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::atomic::AtomicBool;
-
-    struct NeverCancelled(AtomicBool);
-
-    impl CancellationProbe for NeverCancelled {
-        fn is_cancelled(&self) -> bool {
-            self.0.load(Ordering::Acquire)
-        }
-    }
-
-    #[test]
-    fn unresponsive_echo_interrupt_is_fenced_and_child_killed_without_five_second_wait() {
-        // A real child OS process, not a mocked DidEchoBackend. The fake
-        // interpreter acknowledges open, but indefinitely stalls on did.interrupt.
-        // No LiveKit account, paid TTS call or real network access is needed.
-        let script = std::env::temp_dir().join(format!(
-            "vpr-echo-hung-{}-{}.sh",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("stop")
-        ));
-        std::fs::write(
-            &script,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
-    *'"command":"interrupt"'*) while :; do :; done ;;
-  esac
-done
-"#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-        let configuration = EchoPythonConfig::new(
-            script.to_string_lossy().into_owned(),
-            "https://tts.example.test/v1/audio/speech",
-            "test-only-key",
-            "test-model",
-            "test-voice",
-        )
-        .unwrap();
-        let backend = EchoPythonBackend::new(configuration);
-        let probe = NeverCancelled(AtomicBool::new(false));
-        backend
-            .open(
-                "hung-session",
-                "wss://livekit.example.test/room/agent-1",
-                "test-token",
-                &probe,
-            )
-            .unwrap();
-        let started = Instant::now();
-        let failed = backend.stop("hung-session");
-        let elapsed = started.elapsed();
-        let _ = std::fs::remove_file(&script);
-        assert!(
-            failed.is_err(),
-            "vendor receipt missing: STOP must not be reported successful"
-        );
-        assert!(
-            elapsed < Duration::from_millis(1800),
-            "STOP was blocked by a nonresponsive private worker: {elapsed:?}"
-        );
-        assert!(
-            backend.stop("hung-session").is_err(),
-            "unconfirmed STOP must remain unconfirmed"
-        );
-        backend.forget("hung-session").unwrap();
-        assert!(
-            backend.worker("hung-session").is_err(),
-            "dead publisher must be unregistered"
-        );
-    }
-    #[test]
-    fn acknowledged_echo_stop_is_reusable_for_canonical_close_without_replaying_control() {
-        let script = std::env::temp_dir().join(format!("vpr-echo-ack-{}.sh", std::process::id()));
-        std::fs::write(
-            &script,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  case "$line" in
-    *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
-    *'"command":"interrupt"'*) printf '{"id":1,"ok":true}\n' ;;
-  esac
-done
-"#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-        let backend = EchoPythonBackend::new(
-            EchoPythonConfig::new(
-                script.to_string_lossy().into_owned(),
-                "https://tts.example.test/v1/audio/speech",
-                "test-only-key",
-                "test-model",
-                "test-voice",
-            )
-            .unwrap(),
-        );
-        let probe = NeverCancelled(AtomicBool::new(false));
-        backend
-            .open(
-                "ack-session",
-                "wss://livekit.example.test/room/agent-1",
-                "token",
-                &probe,
-            )
-            .unwrap();
-        backend.stop("ack-session").unwrap();
-        backend.stop("ack-session").unwrap();
-        assert!(
-            backend.speak("ack-session", "late speech", &probe).is_err(),
-            "STOP must fence all future egress"
-        );
-        backend.forget("ack-session").unwrap();
-        let _ = std::fs::remove_file(&script);
-        assert!(backend.worker("ack-session").is_err());
-    }
-}
+#[path = "echo_python_tests.rs"]
+mod bounded_stop_tests;
