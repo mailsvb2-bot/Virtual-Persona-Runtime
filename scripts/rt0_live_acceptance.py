@@ -199,21 +199,29 @@ def build_handoff(paths: list[Path], speaker_quality: str = 'unreviewed') -> dic
         raise InvalidEvidence('at least one real exported snapshot is required')
     if speaker_quality not in ('unreviewed', 'rejected', 'accepted'):
         raise InvalidEvidence('invalid human speech-quality disposition')
-    sessions, digests, sequences = [], set(), set()
+    sessions, digests = [], set()
     for path in paths:
         item, digest = _read(path)
         if digest in digests:
             raise InvalidEvidence('duplicate snapshot bytes')
         digests.add(digest)
-        sequence = item['session_sequence']
-        if sequence in sequences:
-            raise InvalidEvidence('duplicate session sequence')
-        sequences.add(sequence)
         sessions.append(item)
+
+    # A group is only meaningful for ONE immutable build and provider setup.
+    # Report a mixed candidate before comparing its session generations:
+    # different builds may legitimately both label their first session "1",
+    # and calling that the primary error would conceal evidence contamination.
     candidate = sessions[0]['candidate_sha']
     state = sessions[0]['provider_state_sha256']
     if any(x['candidate_sha'] != candidate or x['provider_state_sha256'] != state for x in sessions):
         raise InvalidEvidence('cross-candidate or cross-provider-state evidence')
+
+    sequences: set[int] = set()
+    for item in sessions:
+        sequence = item['session_sequence']
+        if sequence in sequences:
+            raise InvalidEvidence('duplicate session sequence')
+        sequences.add(sequence)
     by_role = {role: [_quality(x) for x in sessions if x['participant_role'] == role]
                for role in ('owner', 'visitor')}
     observed = {
