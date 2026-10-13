@@ -90,7 +90,11 @@ const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
 export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void => {
   expect(journey.stage).toBe("complete");
   expect(journey.error).toBeNull();
-  expect(journey.requestedMicrophones).toContain("headset-mic");
+  expect(journey.requestedMicrophones.slice(0, 3)).toEqual([
+    "headset-mic",
+    "builtin-mic",
+    "headset-mic",
+  ]);
 
   expect(journey.interruptPayloads).toHaveLength(1);
   const interruptPayload = JSON.parse(journey.interruptPayloads[0] ?? "{}") as {
