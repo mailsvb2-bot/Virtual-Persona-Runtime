@@ -6,7 +6,8 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
     RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
-    RealtimeAvatarClientRoute, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
+    RealtimeAvatarTransport,
     WebRtcIceCandidate, WebRtcSessionDescription, build_provider_http_client,
 };
 
@@ -447,6 +448,29 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
         echo_pcm::send_private_pcm(self, session, pcm, sample_rate_hz, channels, cancellation)
+    }
+
+    fn open_pcm_stream(
+        &self,
+        session: &RealtimeAvatarSession,
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
+            || !self.echo_sessions.contains(&session.provider_session_id)?
+        {
+            return Err(policy_denied());
+        }
+        let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
+        backend.open_pcm_stream(
+            &session.provider_session_id,
+            sample_rate_hz,
+            channels,
+            cancellation,
+        )
     }
 
     fn speak_audio_url(
