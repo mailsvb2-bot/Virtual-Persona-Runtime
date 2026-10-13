@@ -287,10 +287,13 @@ pub struct GeneratedAudioStreamingSink<'a> {
 
 impl<'a> GeneratedAudioStreamingSink<'a> {
     #[must_use]
-    pub fn new(
-        emit: &'a mut dyn FnMut(&[u8], u32, u16) -> Result<(), ProviderError>,
-    ) -> Self {
-        Self { emit, bytes: 0, rate: None, channels: None }
+    pub fn new(emit: &'a mut dyn FnMut(&[u8], u32, u16) -> Result<(), ProviderError>) -> Self {
+        Self {
+            emit,
+            bytes: 0,
+            rate: None,
+            channels: None,
+        }
     }
 
     #[must_use]
@@ -309,9 +312,10 @@ impl GeneratedAudioSink for GeneratedAudioStreamingSink<'_> {
         channels: u16,
         sample_format: PcmSampleFormat,
     ) -> Result<(), ProviderError> {
-        let frame_bytes = usize::from(channels)
-            .checked_mul(sample_format.bytes_per_sample());
-        if sample_rate_hz == 0 || channels == 0 || pcm.is_empty()
+        let frame_bytes = usize::from(channels).checked_mul(sample_format.bytes_per_sample());
+        if sample_rate_hz == 0
+            || channels == 0
+            || pcm.is_empty()
             || self.rate.is_some_and(|rate| rate != sample_rate_hz)
             || self.channels.is_some_and(|value| value != channels)
             || !frame_bytes.is_some_and(|size| size > 0 && pcm.len() % size == 0)
@@ -319,14 +323,17 @@ impl GeneratedAudioSink for GeneratedAudioStreamingSink<'_> {
             return Err(invalid_generated_output());
         }
         let size = frame_bytes.ok_or_else(invalid_generated_output)?;
-        let prospective = self.bytes.checked_add(pcm.len()).ok_or_else(invalid_generated_output)?;
-        let duration = u64::try_from(prospective).ok()
+        let prospective = self
+            .bytes
+            .checked_add(pcm.len())
+            .ok_or_else(invalid_generated_output)?;
+        let duration = u64::try_from(prospective)
+            .ok()
             .and_then(|bytes| bytes.checked_div(u64::try_from(size).ok()?))
             .and_then(|frames| frames.checked_mul(1_000))
             .and_then(|millis| millis.checked_div(u64::from(sample_rate_hz)))
             .ok_or_else(invalid_generated_output)?;
-        if prospective > MAX_GENERATED_AUDIO_BYTES
-            || duration > MAX_GENERATED_AUDIO_DURATION_MILLIS
+        if prospective > MAX_GENERATED_AUDIO_BYTES || duration > MAX_GENERATED_AUDIO_DURATION_MILLIS
         {
             return Err(invalid_generated_output());
         }
