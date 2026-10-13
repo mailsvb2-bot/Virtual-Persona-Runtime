@@ -327,10 +327,15 @@ impl DidEchoBackend for EchoPythonBackend {
         channels: u16,
         cancellation: &dyn CancellationProbe,
     ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
-        if !(8_000..=96_000).contains(&sample_rate_hz) || !matches!(channels, 1 | 2)
+        if !(8_000..=96_000).contains(&sample_rate_hz)
+            || !matches!(channels, 1 | 2)
             || cancellation.is_cancelled()
         {
-            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+            return Err(if cancellation.is_cancelled() {
+                cancelled()
+            } else {
+                invalid_response()
+            });
         }
         let worker = self.worker(session_id)?;
         let id = worker.request_identified(
