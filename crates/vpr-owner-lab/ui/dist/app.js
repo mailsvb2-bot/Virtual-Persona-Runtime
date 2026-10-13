@@ -1075,16 +1075,24 @@ const unlockAudioPlayback = async () => {
     const room = liveKitRoom;
     updateControls();
     try {
-        const attempts = [];
-        if (room?.startAudio)
-            attempts.push(room.startAudio());
+        const audioStart = room?.startAudio?.();
         const element = room ? avatarAudio : video;
-        if (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-            attempts.push(element.play());
-        }
-        if (attempts.length === 0)
+        const playResult = (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+            ? element.play().then(() => true, () => false)
+            : null;
+        if (!audioStart && !playResult)
             throw new Error("AUDIO_TRACK_NOT_READY");
-        await Promise.all(attempts);
+        if (audioStart) {
+            await audioStart;
+            if (playResult)
+                void playResult.then((playing) => {
+                    if (!playing && evidenceSessionSequence === sequence)
+                        requireManualAudioUnlock();
+                });
+        }
+        else if (!await playResult) {
+            throw new Error("AUDIO_PLAYBACK_DENIED");
+        }
         if (evidenceSessionSequence !== sequence || sessionState.backend.session_state !== "active"
             || locallyFencedSessionSequence === sequence)
             return;
