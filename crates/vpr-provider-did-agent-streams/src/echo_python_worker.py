@@ -13,6 +13,8 @@ import wave
 from urllib.parse import urlsplit
 
 MAX_WAV_BYTES = 8 * 1024 * 1024
+MAX_WAV_HEADER_BYTES = 64 * 1024
+WAV_STREAM_CHUNK_BYTES = 4 * 1024
 MAX_TEXT_BYTES = 4096
 MAX_PENDING_UTTERANCES = 16
 TTS_TIMEOUT_SECONDS = 35
@@ -22,8 +24,19 @@ def emit(identifier, ok):
     print(json.dumps({"id": identifier, "ok": bool(ok)}, separators=(",", ":")), flush=True)
 
 
-def synthesize(text):
-    """Blocking TTS lives in a worker thread; cancellation fences its result."""
+class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a private TTS token or voice text to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("TTS redirects are not authorized")
+
+
+def synthesize_chunks(text):
+    """Read validated PCM16 WAV as bounded provider chunks, not a whole file.
+
+    Called only by the private authorized Echo worker. The caller's generation
+    fence is checked before EVERY async LiveKit write, including after STOP.
+    """
     if not isinstance(text, str) or not text.strip():
         raise ValueError("invalid speech")
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -43,21 +56,67 @@ def synthesize(text):
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=TTS_TIMEOUT_SECONDS) as response:
-        wav_bytes = response.read(MAX_WAV_BYTES + 1)
-    if len(wav_bytes) > MAX_WAV_BYTES or not wav_bytes.startswith(b"RIFF"):
-        raise ValueError("invalid bounded WAV")
-    with wave.open(io.BytesIO(wav_bytes), "rb") as audio:
-        if (
-            audio.getcomptype() != "NONE"
-            or audio.getsampwidth() != 2
-            or audio.getnchannels() not in (1, 2)
-            or audio.getframerate() < 8000
-            or audio.getnframes() == 0
-            or audio.getnframes() > audio.getframerate() * 60
-        ):
-            raise ValueError("unsupported audio format")
-    return wav_bytes
+    opener = urllib.request.build_opener(NoCredentialRedirect())
+    with opener.open(request, timeout=TTS_TIMEOUT_SECONDS) as response:
+        declared = response.headers.get("Content-Length")
+        if declared is not None and int(declared) > MAX_WAV_BYTES:
+            raise ValueError("oversized declared WAV")
+        received = 0
+        expected_size = None
+        header = bytearray()
+        while True:
+            chunk = response.read(WAV_STREAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > MAX_WAV_BYTES:
+                raise ValueError("oversized streamed WAV")
+            if expected_size is None:
+                header.extend(chunk)
+                if len(header) < 12:
+                    continue
+                if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+                    raise ValueError("not PCM WAV")
+                expected = int.from_bytes(header[4:8], "little") + 8
+                if expected > MAX_WAV_BYTES or expected < 44 or received > expected:
+                    raise ValueError("invalid declared RIFF length")
+                try:
+                    with wave.open(io.BytesIO(header), "rb") as audio:
+                        if (
+                            audio.getcomptype() != "NONE"
+                            or audio.getsampwidth() != 2
+                            or audio.getnchannels() not in (1, 2)
+                            or not 8000 <= audio.getframerate() <= 96000
+                            or audio.getnframes() == 0
+                            or audio.getnframes() > audio.getframerate() * 60
+                        ):
+                            raise ValueError("unsupported audio format")
+                except (EOFError, wave.Error) as error:
+                    if len(header) >= MAX_WAV_HEADER_BYTES:
+                        raise ValueError("invalid streamed WAV header") from error
+                    continue
+                expected_size = expected
+                yield bytes(header)
+                header.clear()
+            else:
+                if received > expected_size:
+                    raise ValueError("extra untrusted WAV bytes")
+                yield chunk
+        if expected_size is None or received != expected_size:
+            raise ValueError("incomplete streamed WAV")
+
+
+def synthesize(text):
+    """Compatibility buffered helper; realtime Echo uses synthesize_chunks."""
+    return b"".join(synthesize_chunks(text))
+
+
+def next_speech_chunk(iterator):
+    """Avoid leaking StopIteration into asyncio.to_thread's Future."""
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
 
 
 async def run():
@@ -102,40 +161,64 @@ async def run():
 
     async def speak(identifier, phrase, generation_at_start, preauthorized_wav=None):
         writer = None
+        published = False
         try:
-            # Serialize synthesis as well as sending. Otherwise a later,
-            # faster TTS request can overtake an earlier spoken sentence.
+            # Serialize synthesis and publishing: later TTS cannot overtake the
+            # earlier sentence. Each blocking read occupies a worker thread,
+            # not the STOP/control event loop.
             async with utterance_lock:
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
-                wav = preauthorized_wav if preauthorized_wav is not None else await asyncio.to_thread(synthesize, phrase)
+                if preauthorized_wav is None:
+                    source = synthesize_chunks(phrase)
+                    async def next_chunk():
+                        return await asyncio.to_thread(next_speech_chunk, source)
+                else:
+                    # Canonical Rust authorization already validated the entire
+                    # PCM body; keep its existing bounded WAV handoff.
+                    chunks = iter(preauthorized_wav[offset:offset + 16 * 1024]
+                                  for offset in range(0, len(preauthorized_wav), 16 * 1024))
+                    async def next_chunk():
+                        return next(chunks, None)
+
+                chunk = await next_chunk()
                 if generation_at_start != generation:
-                    emit(identifier, False)
-                    return
+                    raise asyncio.CancelledError()
+                if not chunk:
+                    raise ValueError("empty TTS stream")
                 writer = await room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
                     attributes={"format": "wav"},
                     destination_identities=agents,
                 )
-                # Backpressure from LiveKit bounds outbound sender memory.
-                for offset in range(0, len(wav), 16 * 1024):
+                while chunk is not None:
                     if generation_at_start != generation:
                         raise asyncio.CancelledError()
-                    await writer.write(wav[offset:offset + 16 * 1024])
+                    await writer.write(chunk)
+                    published = True
+                    chunk = await next_chunk()
+                if generation_at_start != generation:
+                    raise asyncio.CancelledError()
                 await writer.aclose()
                 writer = None
-                # Closing a byte stream means D-ID received the utterance,
-                # not that audio played. A concurrent STOP must not turn a
-                # cancelled utterance into a successful sender receipt.
+                # A closed byte stream is only provider delivery, never verified
+                # RTP playout, audio hearing, or lip synchronisation.
                 if generation_at_start != generation:
-                    emit(identifier, False)
-                    return
+                    raise asyncio.CancelledError()
                 emit(identifier, True)
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
+            # Truncated/malformed HTTP streaming may have sent a WAV prefix.
+            # Explicitly interrupt provider playback before reporting failure,
+            # never falsely claiming that the media was heard or completed.
+            if published and generation_at_start == generation:
+                try:
+                    await room.local_participant.send_text("{}", topic="did.interrupt")
+                except Exception:
+                    pass
             emit(identifier, False)
         finally:
             if writer is not None:
@@ -143,7 +226,6 @@ async def run():
                     await writer.aclose()
                 except Exception:
                     pass
-            # A stale task must never remove a newer task's ownership.
             if tasks.get(identifier) is asyncio.current_task():
                 tasks.pop(identifier, None)
 
