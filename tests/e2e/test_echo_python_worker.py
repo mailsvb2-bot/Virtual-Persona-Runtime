@@ -94,14 +94,14 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    def synthesize(text):
+    def synthesize_chunks(text):
         if tts_latency is not None:
             time.sleep(tts_latency(text))
         elif not delay_after_speak:
             time.sleep(0.12)
-        return b"RIFF" + text.encode("utf-8")
+        yield b"RIFF" + text.encode("utf-8")
 
-    module.synthesize = synthesize
+    module.synthesize_chunks = synthesize_chunks
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
         Room=FakeRoom,
