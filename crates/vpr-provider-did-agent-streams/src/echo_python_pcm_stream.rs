@@ -1,9 +1,9 @@
 //! One private PCM16 stream; stop/cancel always fences the same Echo worker.
-use super::{SessionWorker, SPEECH_TIMEOUT, INTERRUPT_TIMEOUT};
+use super::{INTERRUPT_TIMEOUT, SPEECH_TIMEOUT, SessionWorker};
 use crate::{cancelled, invalid_response};
+use serde_json::json;
 use std::fmt::Write as _;
 use std::sync::Arc;
-use serde_json::json;
 use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
 /// One canonical utterance, sent as D-ID documented `pcm16` byte-stream.
@@ -24,13 +24,22 @@ impl RealtimeAvatarPcmStream for EchoPythonPcmStream {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
         let frame = usize::from(self.channels) * 2;
-        let next = self.bytes.checked_add(pcm.len()).ok_or_else(invalid_response)?;
-        if self.closed || pcm.is_empty() || pcm.len() % frame != 0
+        let next = self
+            .bytes
+            .checked_add(pcm.len())
+            .ok_or_else(invalid_response)?;
+        if self.closed
+            || pcm.is_empty()
+            || pcm.len() % frame != 0
             || next > 8 * 1024 * 1024 - 44
             || next / frame > self.rate as usize * 60
             || cancellation.is_cancelled()
         {
-            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+            return Err(if cancellation.is_cancelled() {
+                cancelled()
+            } else {
+                invalid_response()
+            });
         }
         for part in pcm.chunks(8 * 1024) {
             let mut hex = String::with_capacity(part.len() * 2);
@@ -50,7 +59,11 @@ impl RealtimeAvatarPcmStream for EchoPythonPcmStream {
 
     fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
         if self.closed || self.bytes == 0 || cancellation.is_cancelled() {
-            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+            return Err(if cancellation.is_cancelled() {
+                cancelled()
+            } else {
+                invalid_response()
+            });
         }
         // "End" is acknowledged only after LiveKit closes the byte stream.
         // It is NOT a D-ID playout or a browser hearing acknowledgement.
@@ -90,4 +103,3 @@ impl Drop for EchoPythonPcmStream {
         }
     }
 }
-
