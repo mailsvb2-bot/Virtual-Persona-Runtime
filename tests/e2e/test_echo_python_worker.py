@@ -179,6 +179,62 @@ class EchoWorkerTests(unittest.TestCase):
             "format": "pcm16", "sample_rate": "16000", "channels": "1",
         })
 
+    def test_canonical_pcm16_stream_begin_chunk_finish_is_progressive_and_private(self):
+        pcm1, pcm2 = bytes([1, 0] * 160), bytes([2, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 12, "command": "pcm_chunk", "stream_id": 11, "pcm_hex": pcm1.hex()},
+            {"id": 13, "command": "pcm_chunk", "stream_id": 11, "pcm_hex": pcm2.hex()},
+            {"id": 14, "command": "pcm_end", "stream_id": 11},
+            {"id": 15, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, delay_before_close=0.3)
+        self.assertEqual(trace["audio"], [pcm1, pcm2])
+        self.assertEqual(trace["stream_options"][0]["topic"], "did.audio-stream")
+        self.assertEqual(trace["stream_options"][0]["attributes"], {
+            "format": "pcm16", "sample_rate": "16000", "channels": "1",
+        })
+        self.assertTrue(all(any(r["id"] == i and r["ok"] for r in receipts)
+                            for i in (11, 12, 13, 14)))
+
+    def test_streamed_pcm_abort_cancels_late_chunks_and_sends_vendor_interrupt(self):
+        first = bytes([1, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 21, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 22, "command": "pcm_chunk", "stream_id": 21, "pcm_hex": first.hex()},
+            {"id": 23, "command": "pcm_abort", "stream_id": 21},
+            {"id": 24, "command": "pcm_chunk", "stream_id": 21, "pcm_hex": first.hex()},
+            {"id": 25, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, delay_before_close=0.15)
+        self.assertTrue(any(t == "did.interrupt" for _, t in trace["stops"]))
+        self.assertFalse(any(r["id"] == 24 and r["ok"] for r in receipts))
+        self.assertTrue(any(r["id"] == 23 and r["ok"] for r in receipts))
+
+    def test_native_pcm16_stream_rejects_truncated_sample_and_mismatched_id(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 31, "command": "pcm_begin", "sample_rate_hz": 24000, "channels": 1},
+            {"id": 32, "command": "pcm_chunk", "stream_id": 99, "pcm_hex": "0100"},
+            {"id": 33, "command": "pcm_chunk", "stream_id": 31, "pcm_hex": "01"},
+            {"id": 34, "command": "pcm_end", "stream_id": 31},
+            {"id": 35, "command": "pcm_abort", "stream_id": 31},
+            {"id": 36, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, delay_before_close=0.1)
+        for i in (32, 33, 34):
+            self.assertTrue(any(r["id"] == i and not r["ok"] for r in receipts))
+        self.assertEqual(trace["audio"], [])
+        self.assertTrue(any(r["id"] == 35 and r["ok"] for r in receipts))
+
     def test_invalid_pcm_never_reaches_private_publisher(self):
         records = [
             {"id": 0, "command": "open",
