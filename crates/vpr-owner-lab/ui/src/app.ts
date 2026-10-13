@@ -1641,9 +1641,11 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     track.attach(avatarAudio);
     const sequence = evidenceSessionSequence;
     if (liveKitRoom?.canPlaybackAudio === false) requireManualAudioUnlock();
-    void avatarAudio.play().catch(() => {
-      if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
-    });
+    if (avatarAudio.srcObject || avatarAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      void avatarAudio.play().catch(() => {
+        if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
+      });
+    }
     if (track.mediaStreamTrack) {
       void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
     }
@@ -1899,9 +1901,11 @@ const connectWebRtcTransport = async (
     } else if (event.track.kind === "audio") {
       sessionState.setRealtimeReadiness({ audio: true });
       const sequence = evidenceSessionSequence;
-      void video.play().catch(() => {
-        if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
-      });
+      if (video.srcObject || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        void video.play().catch(() => {
+          if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
+        });
+      }
       void attachRemoteAudioEvidence(event.track).catch(() => undefined);
     }
     updateControls();
