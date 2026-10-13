@@ -12,6 +12,9 @@ impl DidAgentStreamsAvatar {
             RealtimeAvatarCapability::AudioUrlInput
         };
         let mut capabilities = vec![RealtimeAvatarCapability::TextInput, audio_input];
+        if self.echo_backend.as_ref().is_some_and(|backend| backend.supports_pcm_stream()) {
+            capabilities.push(RealtimeAvatarCapability::AudioPcmStreamInput);
+        }
         if self.echo_backend.is_some() {
             // The private sender alone may STOP Echo; client_control.interrupt
             // deliberately stays false for every viewer session.
