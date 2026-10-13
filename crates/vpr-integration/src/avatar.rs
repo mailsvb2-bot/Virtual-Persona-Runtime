@@ -193,8 +193,11 @@ impl RealtimeAvatarCapabilities {
 pub trait RealtimeAvatarPcmStream: Send {
     /// # Errors
     /// Fails for invalid, revoked or undeliverable PCM chunks.
-    fn push_pcm(&mut self, pcm: &[u8], cancellation: &dyn CancellationProbe)
-        -> Result<(), ProviderError>;
+    fn push_pcm(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError>;
 
     /// # Errors
     /// Fails unless the whole utterance reached the private provider stream.
