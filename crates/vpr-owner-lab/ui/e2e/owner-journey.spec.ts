@@ -161,9 +161,16 @@ const installLiveKitBrowserFake = async (page: Page, audioInitiallyBlocked = fal
       async disconnect(): Promise<void> {}
 
       async startAudio(): Promise<void> {
-        this.canPlaybackAudio = true;
-        const fakeWindow = window as typeof window & { __vprAudioUnlockCount?: number };
+        const fakeWindow = window as typeof window & {
+          __vprAudioUnlockCount?: number;
+          __vprRejectNextAudioUnlock?: boolean;
+        };
         fakeWindow.__vprAudioUnlockCount = (fakeWindow.__vprAudioUnlockCount ?? 0) + 1;
+        if (fakeWindow.__vprRejectNextAudioUnlock) {
+          fakeWindow.__vprRejectNextAudioUnlock = false;
+          throw new Error("AUDIO_PLAYBACK_DENIED");
+        }
+        this.canPlaybackAudio = true;
       }
 
       triggerUnexpectedDisconnect(): void {
@@ -965,16 +972,29 @@ test("autoplay-blocked LiveKit defers server Echo greeting until explicit audio 
 
   await expect(page.locator(".stage")).toHaveClass(/has-video/);
   await expect(page.locator("#audio-unlock")).toBeVisible();
+  await expect(page.locator("#voice")).toBeDisabled();
+  await expect(page.locator("#speak")).toBeDisabled();
+  expect(state.apiPaths).not.toContain("POST /api/avatar/greeting");
+
+  // An unsuccessful gesture must not publish the welcome phrase nor unblock speech.
+  await page.evaluate(() => {
+    (window as typeof window & { __vprRejectNextAudioUnlock?: boolean })
+      .__vprRejectNextAudioUnlock = true;
+  });
+  await page.locator("#audio-unlock").click();
+  await expect(page.locator("#status")).toContainText("AUDIO_PLAYBACK_DENIED");
+  await expect(page.locator("#audio-unlock")).toBeVisible();
   expect(state.apiPaths).not.toContain("POST /api/avatar/greeting");
 
   await page.locator("#audio-unlock").click();
   await expect(page.locator("#audio-unlock")).toBeHidden();
+  await expect(page.locator("#voice")).toBeEnabled();
   await expect.poll(() =>
     state.apiPaths.filter((path) => path === "POST /api/avatar/greeting").length
   ).toBe(1);
   await expect.poll(() => page.evaluate(() => (
     window as typeof window & { __vprAudioUnlockCount?: number }
-  ).__vprAudioUnlockCount ?? 0)).toBe(1);
+  ).__vprAudioUnlockCount ?? 0)).toBe(2);
   // Browser permission is not a canonical playback acknowledgement.
   expect(state.mediaEvidence.some((event) => event.kind === "playback_completed")).toBe(false);
 
