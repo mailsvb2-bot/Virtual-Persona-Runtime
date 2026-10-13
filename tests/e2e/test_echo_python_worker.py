@@ -160,7 +160,7 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 1 and item["ok"] for item in receipts))
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
-    def test_canonical_pcm_is_published_as_private_wav_without_worker_tts(self):
+    def test_canonical_pcm_is_published_as_private_pcm16_without_worker_tts(self):
         pcm = bytes(320)
         records = [
             {"id": 0, "command": "open",
@@ -173,12 +173,11 @@ class EchoWorkerTests(unittest.TestCase):
         trace, receipts = run_worker(True, records=records, delay_before_close=0.15)
         self.assertTrue(any(item["id"] == 1 and item["ok"] for item in receipts))
         audio = b"".join(trace["audio"])
-        self.assertTrue(audio.startswith(b"RIFF"))
+        self.assertEqual(audio, pcm)
         self.assertEqual(trace["stream_options"][0]["topic"], "did.audio-stream")
-        with __import__("wave").open(io.BytesIO(audio), "rb") as wav:
-            self.assertEqual(wav.getframerate(), 16000)
-            self.assertEqual(wav.getnchannels(), 1)
-            self.assertEqual(wav.readframes(160), pcm)
+        self.assertEqual(trace["stream_options"][0]["attributes"], {
+            "format": "pcm16", "sample_rate": "16000", "channels": "1",
+        })
 
     def test_invalid_pcm_never_reaches_private_publisher(self):
         records = [
