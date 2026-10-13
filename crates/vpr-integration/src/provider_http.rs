@@ -218,6 +218,9 @@ const fn cancelled() -> ProviderError {
 mod tests {
     use std::io::{BufReader, Read, Write};
     use std::net::TcpListener;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
 
@@ -225,6 +228,7 @@ mod tests {
 
     use super::{
         BoundedProviderLineReader, build_provider_http_client, read_bounded_provider_body,
+        read_bounded_provider_stream,
     };
     use crate::{CancellationProbe, ProviderErrorKind};
 
@@ -380,6 +384,99 @@ mod tests {
                 .kind,
             ProviderErrorKind::Cancelled
         );
+    }
+
+    struct AtomicCancellation(Arc<AtomicBool>);
+    impl CancellationProbe for AtomicCancellation {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Acquire)
+        }
+    }
+
+    fn gated_chunked_body() -> (String, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (written_tx, written_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            stream.write_all(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n",
+            ).unwrap();
+            stream.flush().unwrap();
+            written_tx.send(()).unwrap();
+            if release_rx.recv_timeout(Duration::from_secs(3)).is_ok() {
+                let _ = stream.write_all(b"3\r\ndef\r\n0\r\n\r\n");
+            }
+        });
+        (format!("http://{address}/provider"), written_rx, release_tx)
+    }
+
+    #[test]
+    fn bounded_stream_delivers_first_chunk_before_provider_body_ends() {
+        let (url, server_written, server_release) = gated_chunked_body();
+        let (first_chunk, observed) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let response = build_provider_http_client(Duration::from_secs(3))
+                .unwrap().get(url).send().unwrap();
+            let mut chunks = Vec::new();
+            let count = read_bounded_provider_stream(response, 6, Some(&NeverCancelled), |chunk| {
+                chunks.extend_from_slice(chunk);
+                if chunks.len() == 3 {
+                    let _ = first_chunk.send(());
+                }
+                Ok(())
+            }).unwrap();
+            (count, chunks)
+        });
+        server_written.recv_timeout(Duration::from_secs(2)).unwrap();
+        observed.recv_timeout(Duration::from_secs(2))
+            .expect("first PCM bytes must reach generation sink before response EOF");
+        server_release.send(()).unwrap();
+        let (count, body) = worker.join().unwrap();
+        assert_eq!(count, 6);
+        assert_eq!(body, b"abcdef");
+    }
+
+    #[test]
+    fn bounded_stream_refuses_unknown_length_overflow_without_delivering_excess() {
+        let endpoint = serve_body(vec![7; 17], false, true);
+        let response = build_provider_http_client(Duration::from_secs(2))
+            .unwrap().get(endpoint).send().unwrap();
+        let mut delivered = 0;
+        let error = read_bounded_provider_stream(response, 16, Some(&NeverCancelled), |part| {
+            delivered += part.len();
+            Ok(())
+        }).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(delivered <= 16, "overflow bytes must never reach the callback");
+    }
+
+    #[test]
+    fn bounded_stream_cancellation_halts_before_second_provider_chunk() {
+        let (url, server_written, server_release) = gated_chunked_body();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancel_for_thread = Arc::clone(&cancelled);
+        let (first_chunk, observed) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let response = build_provider_http_client(Duration::from_secs(3))
+                .unwrap().get(url).send().unwrap();
+            read_bounded_provider_stream(
+                response, 6, Some(&AtomicCancellation(cancel_for_thread)),
+                |part| {
+                    first_chunk.send(part.to_vec()).unwrap();
+                    Ok(())
+                },
+            ).unwrap_err()
+        });
+        server_written.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(observed.recv_timeout(Duration::from_secs(2)).unwrap(), b"abc");
+        cancelled.store(true, Ordering::Release);
+        server_release.send(()).unwrap();
+        assert_eq!(worker.join().unwrap().kind, ProviderErrorKind::Cancelled);
+        assert!(observed.try_recv().is_err(), "cancellation must fence the second chunk");
     }
 
     #[test]
