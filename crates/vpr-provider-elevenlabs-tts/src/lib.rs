@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
@@ -7,7 +6,7 @@ use serde::Serialize;
 use vpr_integration::{
     CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES, PcmSampleFormat,
     ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence,
-    UsageUnit, build_provider_http_client,
+    UsageUnit, build_provider_http_client, read_bounded_provider_stream,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -172,67 +171,37 @@ fn stream_pcm(
     sink: &mut dyn GeneratedAudioSink,
     sample_rate_hz: u32,
 ) -> Result<usize, ProviderError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_PROVIDER_BINARY_BODY_BYTES as u64)
-    {
-        return Err(invalid_response());
-    }
-    let mut total = 0_usize;
     let mut pending = None::<u8>;
-    let mut buffer = [0_u8; 8_192];
-
-    loop {
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        // The +1 read detects a byte beyond the cap even without Content-Length.
-        let remaining = MAX_PROVIDER_BINARY_BODY_BYTES.saturating_sub(total);
-        let size = remaining.saturating_add(1).min(buffer.len());
-        let read = response
-            .read(&mut buffer[..size])
-            .map_err(|_| if cancellation.is_cancelled() { cancelled() } else { unavailable() })?;
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        if read == 0 {
-            break;
-        }
-        if read > remaining {
-            return Err(invalid_response());
-        }
-        total += read;
-
-        let mut start = 0_usize;
-        if let Some(first) = pending.take() {
-            let pair = [first, buffer[0]];
-            sink.push_generated_audio(&pair, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
-            start = 1;
-        }
-        let aligned_end = start + ((read - start) / 2) * 2;
-        if aligned_end > start {
-            sink.push_generated_audio(
-                &buffer[start..aligned_end],
-                sample_rate_hz,
-                1,
-                PcmSampleFormat::S16Le,
-            )?;
-        }
-        if aligned_end < read {
-            pending = Some(buffer[aligned_end]);
-        }
-    }
+    let total = read_bounded_provider_stream(
+        response,
+        MAX_PROVIDER_BINARY_BODY_BYTES,
+        Some(cancellation),
+        |bytes| {
+            let mut start = 0_usize;
+            if let Some(first) = pending.take() {
+                let pair = [first, bytes[0]];
+                sink.push_generated_audio(&pair, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+                start = 1;
+            }
+            let aligned_end = start + ((bytes.len() - start) / 2) * 2;
+            if aligned_end > start {
+                sink.push_generated_audio(
+                    &bytes[start..aligned_end],
+                    sample_rate_hz,
+                    1,
+                    PcmSampleFormat::S16Le,
+                )?;
+            }
+            if aligned_end < bytes.len() {
+                pending = Some(bytes[aligned_end]);
+            }
+            Ok(())
+        },
+    )?;
     if total == 0 || pending.is_some() {
         return Err(invalid_response());
     }
     Ok(total)
-}
-
-fn unavailable() -> ProviderError {
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: true,
-    }
 }
 
 fn language_code(locale: &str) -> Option<&str> {
