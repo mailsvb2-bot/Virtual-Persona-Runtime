@@ -2,9 +2,9 @@ use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 use vpr_integration::{GeneratedAudioBuffer, ProviderErrorKind, TtsRequest, UsageUnit};
 
 struct Probe(AtomicBool);
