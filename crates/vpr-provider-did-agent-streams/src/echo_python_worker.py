@@ -159,7 +159,7 @@ async def run():
     tasks = {}
     generation = 0
 
-    async def speak(identifier, phrase, generation_at_start, preauthorized_wav=None):
+    async def speak(identifier, phrase, generation_at_start, preauthorized_pcm=None):
         nonlocal generation
         writer = None
         published = False
@@ -171,15 +171,19 @@ async def run():
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
-                if preauthorized_wav is None:
+                if preauthorized_pcm is None:
                     source = synthesize_chunks(phrase)
+                    attributes = {"format": "wav"}
                     async def next_chunk():
                         return await asyncio.to_thread(next_speech_chunk, source)
                 else:
-                    # Canonical Rust authorization already validated the entire
-                    # PCM body; keep its existing bounded WAV handoff.
-                    chunks = iter(preauthorized_wav[offset:offset + 16 * 1024]
-                                  for offset in range(0, len(preauthorized_wav), 16 * 1024))
+                    pcm, rate, channels = preauthorized_pcm
+                    attributes = {
+                        "format": "pcm16", "sample_rate": str(rate),
+                        "channels": str(channels),
+                    }
+                    chunks = iter(pcm[offset:offset + 16 * 1024]
+                                  for offset in range(0, len(pcm), 16 * 1024))
                     async def next_chunk():
                         return next(chunks, None)
 
@@ -191,7 +195,7 @@ async def run():
                 writer = await room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
-                    attributes={"format": "wav"},
+                    attributes=attributes,
                     destination_identities=agents,
                 )
                 while chunk is not None:
@@ -282,19 +286,10 @@ async def run():
                             raise ValueError("invalid PCM16")
                         if len(pcm) // (channels * 2) > rate * 60:
                             raise ValueError("audio too long")
-                        with io.BytesIO() as output:
-                            with wave.open(output, "wb") as writer:
-                                writer.setnchannels(channels)
-                                writer.setsampwidth(2)
-                                writer.setframerate(rate)
-                                writer.writeframes(pcm)
-                            wav = output.getvalue()
-                        if len(wav) > MAX_WAV_BYTES:
-                            raise ValueError("audio too large")
                     except (ValueError, OverflowError):
                         emit(identifier, False)
                         continue
-                    task = asyncio.create_task(speak(identifier, None, generation, wav))
+                    task = asyncio.create_task(speak(identifier, None, generation, (pcm, rate, channels)))
                     tasks[identifier] = task
                 elif command == "interrupt":
                     generation += 1
