@@ -12,8 +12,7 @@ pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
     RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
-    WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 pub use transport::{
     MediaTimelineStamp, RealtimeAudioOutputEvent, RealtimeMediaFlushEvent, RealtimeOutputPort,
