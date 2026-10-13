@@ -11,7 +11,8 @@ pub use provider_http::{
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    WebRtcIceCandidate,
     WebRtcIceServer, WebRtcSessionDescription,
 };
 pub use transport::{
