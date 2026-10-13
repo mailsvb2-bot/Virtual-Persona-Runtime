@@ -22,6 +22,7 @@ mod echo_python;
 mod protocol;
 mod provider_error;
 mod response_json;
+mod session_creation;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
@@ -29,7 +30,7 @@ use echo::DidEchoRegistry;
 pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
     AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
-    CreateV2SessionResponse, IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
+    IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
     SpeakScript, parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
@@ -255,50 +256,6 @@ impl DidAgentStreamsAvatar {
             self.client_control.register_interrupt(&session)?;
         }
         Ok(session)
-    }
-
-    fn create_livekit_session(
-        &self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<RealtimeAvatarSession, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        // A viewer-side LiveKit token cannot be atomically revoked with a
-        // browser-published did.speak. No expressive session is issued without
-        // a separately credentialed server-owned Echo audio publisher.
-        if self.echo_backend.is_none() {
-            return Err(policy_denied());
-        }
-        let request = self.authorized(self.client.post(self.v2_sessions_url()?));
-        let request = if self.echo_backend.is_some() {
-            request.json(&serde_json::json!({"session_type": "echo"}))
-        } else {
-            request
-        };
-        let response = request
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
-        if let Some(backend) = &self.echo_backend {
-            let secret = body
-                .echo_token
-                .as_deref()
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(invalid_response)?
-                .to_owned();
-            let session_url = body.session_url.clone();
-            let session: RealtimeAvatarSession = body.try_into()?;
-            self.echo_sessions.open_session(
-                backend.as_ref(),
-                &session.provider_session_id,
-                &session_url,
-                &secret,
-                cancellation,
-            )?;
-            Ok(session)
-        } else {
-            body.try_into()
-        }
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
