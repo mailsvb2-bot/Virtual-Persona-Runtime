@@ -36,6 +36,43 @@ GATES = (
     ('distinct_visitor', 'Independent human visitor provenance attested'),
 )
 
+
+# Match vpr_evaluation::session_evidence::LabMediaEvidenceKind and
+# requires_request_sequence(). Avatar connect and first video are SESSION
+# events, while playback, provider and STOP diagnostics are VOICE TURN events.
+# Never infer a voice turn from a filename, timing value or UI-only event.
+SESSION_MEDIA_KINDS = frozenset({
+    'video_ready',
+    'backend_start_ready',
+    'transport_connect_started',
+    'transport_connected',
+    'remote_video_track_received',
+    'remote_video_attached',
+    'end_to_end_video_ready',
+    'reconnect_restored',
+})
+VOICE_MEDIA_KINDS = frozenset({
+    'backend_complete_received',
+    'client_delivery_sent',
+    'audio_started',
+    'provider_data_received',
+    'provider_event_ignored',
+    'provider_unknown_chat_event',
+    'provider_unknown_video_event',
+    'provider_unknown_tool_event',
+    'provider_unknown_other_event',
+    'provider_video_generation_started',
+    'provider_video_generation_done',
+    'provider_video_generation_failed',
+    'provider_informational_event',
+    'provider_event_parse_failed',
+    'provider_playback_done_received',
+    'playback_recovery_triggered',
+    'browser_audio_tail_observed',
+    'playback_completed',
+    'interruption_stopped',
+})
+
 class InvalidEvidence(ValueError):
     """Malformed, unsupported, stale, or conflicting evidence."""
 
@@ -97,25 +134,40 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
             _nonnegative(attempt.get('llm_millis'), 'LLM time')
             if not isinstance(attempt.get('canonical_playback_confirmed'), bool):
                 raise InvalidEvidence('missing per-turn canonical playback flag')
-    # These events must belong to a completed voice turn, not to a greeting,
-    # an unknown request or an uncompleted provider operation.
-    completed_turn_media = {
-        'audio_started', 'playback_completed',
-        'provider_playback_done_received', 'end_to_end_video_ready',
-    }
+    seen_events: set[tuple[int | None, str]] = set()
+    started_audio_requests: set[int] = set()
+    stopped_requests: set[int] = set()
     for event in item['media_events']:
         if not isinstance(event, dict) or not isinstance(event.get('kind'), str):
             raise InvalidEvidence('malformed media event')
+        kind = event['kind']
+        if kind not in SESSION_MEDIA_KINDS and kind not in VOICE_MEDIA_KINDS:
+            raise InvalidEvidence('unknown canonical media event kind')
         _nonnegative(event.get('elapsed_millis'), 'media event elapsed time')
         sequence = event.get('request_sequence')
-        if sequence is not None:
+        if kind in SESSION_MEDIA_KINDS:
+            # An avatar can render video BEFORE anyone has spoken.
+            # Session lifecycle events must never fabricate a voice request.
+            if sequence is not None:
+                raise InvalidEvidence('session media event must not reference a voice request')
+        else:
             sequence = _positive_sequence(sequence, 'media request sequence')
             if sequence not in requests:
                 raise InvalidEvidence('media event references unknown voice request')
-        if event['kind'] in completed_turn_media and sequence not in completed_requests:
-            raise InvalidEvidence('turn media event lacks a completed voice request')
-        if event['kind'] == 'interruption_stopped' and sequence is None:
-            raise InvalidEvidence('STOP media event lacks a voice request')
+            if sequence not in completed_requests:
+                raise InvalidEvidence('turn media event lacks a completed voice request')
+        event_key = (sequence, kind)
+        if kind != 'reconnect_restored' and event_key in seen_events:
+            raise InvalidEvidence('duplicate canonical media event')
+        seen_events.add(event_key)
+        if kind == 'audio_started':
+            started_audio_requests.add(sequence)
+        elif kind == 'interruption_stopped':
+            stopped_requests.add(sequence)
+    # STOP can only reference audio from the SAME completed voice turn.
+    # Use two-phase validation because canonical snapshots need not be ordered.
+    if not stopped_requests.issubset(started_audio_requests):
+        raise InvalidEvidence('STOP lacks matching started audio for the same voice request')
     return item, hashlib.sha256(raw).hexdigest()
 
 def _millis(item: dict[str, Any], kind: str) -> float | None:

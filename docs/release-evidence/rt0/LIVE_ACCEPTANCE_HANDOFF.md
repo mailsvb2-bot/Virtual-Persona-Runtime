@@ -71,3 +71,24 @@ protected text turn is denied and the fixture confirms zero new provider egress.
 The deterministic provider fixture proves system behavior, not a distinct
 human visitor or real D-ID/LLM quality. RT0 exit remains blocked on the real
 human/provider evidence matrix.
+
+
+## Browser media evidence scope parity with Rust (October 2026)
+
+The diagnostic's media validator mirrors the Rust
+\`LabMediaEvidenceKind::requires_request_sequence\` contract:
+
+- Avatar connection milestones, including \`end_to_end_video_ready\`,
+  are **session events** with no voice request sequence. Video legitimately
+  becomes ready before the first spoken request.
+- \`audio_started\`, playback/provider signals and
+  \`interruption_stopped\` are **voice-turn events** and must refer to a
+  completed canonical voice request in the *same* snapshot.
+- A STOP observation requires \`audio_started\` for the same request.
+  Unknown request IDs, unknown media kinds, duplicated single-instance
+  events, forged or absent request IDs and repeated session generations
+  are rejected. Reconnect events may recur, as in the canonical contract.
+- None of these checks elevates a browser-only observation into
+  provider-grounded playout, a second human identity, p95 compliance or
+  RT0 release evidence.
+

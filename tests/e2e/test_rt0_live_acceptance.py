@@ -30,9 +30,9 @@ def sample(role='owner'):
             'canonical_playback_confirmed': False,
         }],
         'media_events': [
-            {'kind': 'end_to_end_video_ready', 'elapsed_millis': 6500},
-            {'kind': 'audio_started', 'elapsed_millis': 2700},
-            {'kind': 'interruption_stopped', 'elapsed_millis': 85},
+            {'kind': 'end_to_end_video_ready', 'request_sequence': None, 'elapsed_millis': 6500},
+            {'kind': 'audio_started', 'request_sequence': 1, 'elapsed_millis': 2700},
+            {'kind': 'interruption_stopped', 'request_sequence': 1, 'elapsed_millis': 85},
         ],
         'av_sync_samples': [],
         'av_sync_diagnostics': [{'audio_issue': 'timestamp_unavailable', 'video_issue': 'timestamp_unavailable'}],
@@ -136,6 +136,85 @@ class HandoffMatrix(unittest.TestCase):
         self.assertEqual(self.gate(report, 'av_sync'), 'not_evidenced')
         self.assertEqual(self.gate(report, 'billing'), 'not_evidenced')
         self.assertFalse(report['release_ready_claimed'])
+
+    def test_video_before_any_voice_turn_is_a_session_event_not_a_voice_turn(self):
+        s = sample()
+        s['voice_attempts'] = []
+        s['media_events'] = [
+            {'kind': 'backend_start_ready', 'request_sequence': None, 'elapsed_millis': 4000},
+            {'kind': 'end_to_end_video_ready', 'request_sequence': None, 'elapsed_millis': 6500},
+            {'kind': 'reconnect_restored', 'request_sequence': None, 'elapsed_millis': 100},
+        ]
+        report = build_handoff([self.save('video-only.json', s)])
+        self.assertEqual(self.gate(report, 'owner_video'), 'observed_not_exit_verified')
+        self.assertEqual(self.gate(report, 'owner_voice'), 'not_evidenced')
+        self.assertEqual(self.gate(report, 'owner_audio'), 'not_evidenced')
+        self.assertEqual(self.gate(report, 'owner_stop'), 'not_evidenced')
+        self.assertFalse(report['release_ready_claimed'])
+
+    def test_media_must_respect_exact_rust_session_and_voice_request_scope(self):
+        scenarios = [
+            ('session_video_forged_voice', 0, 'request_sequence', 1),
+            ('audio_without_voice_number', 1, 'request_sequence', None),
+            ('audio_unknown_voice_number', 1, 'request_sequence', 999),
+            ('stop_unknown_voice_number', 2, 'request_sequence', 999),
+            ('unknown_media_kind', 1, 'kind', 'fabricated_success'),
+            ('nonpositive_voice_number', 1, 'request_sequence', 0),
+        ]
+        for label, index, field, value in scenarios:
+            with self.subTest(label=label):
+                s = sample()
+                s['media_events'][index][field] = value
+                with self.assertRaises(InvalidEvidence):
+                    build_handoff([self.save('bad.json', s)])
+
+    def test_failed_or_missing_voice_attempt_cannot_create_playback_or_stop(self):
+        for mode in ('failed', 'missing'):
+            with self.subTest(mode=mode):
+                s = sample()
+                if mode == 'failed':
+                    s['voice_attempts'][0]['status'] = 'failed'
+                else:
+                    s['voice_attempts'] = []
+                with self.assertRaises(InvalidEvidence):
+                    build_handoff([self.save('bad.json', s)])
+
+    def test_duplicate_audio_and_unpaired_stop_fail_closed(self):
+        s = sample()
+        s['media_events'].append(dict(s['media_events'][1]))
+        with self.assertRaisesRegex(InvalidEvidence, 'duplicate canonical'):
+            build_handoff([self.save('bad.json', s)])
+        s = sample()
+        s['media_events'].pop(1)  # Stop without an AudioStarted event for turn 1.
+        with self.assertRaisesRegex(InvalidEvidence, 'matching started audio'):
+            build_handoff([self.save('bad.json', s)])
+
+    def test_interruption_cannot_be_spliced_across_different_voice_requests(self):
+        s = sample()
+        s['voice_attempts'].append({
+            'request_sequence': 2, 'status': 'completed',
+            'stt_millis': 180, 'llm_millis': 1200,
+            'canonical_playback_confirmed': False,
+        })
+        s['media_events'][2]['request_sequence'] = 2
+        with self.assertRaisesRegex(InvalidEvidence, 'matching started audio'):
+            build_handoff([self.save('bad.json', s)])
+        s['media_events'].append({
+            'kind': 'audio_started', 'request_sequence': 2,
+            'elapsed_millis': 1900,
+        })
+        report = build_handoff([self.save('valid.json', s)])
+        self.assertEqual(self.gate(report, 'owner_stop'), 'observed_not_exit_verified')
+        self.assertFalse(report['release_ready_claimed'])
+
+    def test_distinct_files_same_session_generation_are_not_independent(self):
+        first = sample()
+        second = sample('visitor')
+        second['private_secret'] = 'different snapshot same session generation'
+        a = self.save('owner.json', first)
+        b = self.save('visitor.json', second)
+        with self.assertRaisesRegex(InvalidEvidence, 'duplicate session sequence'):
+            build_handoff([a, b])
 
 if __name__ == '__main__':
     unittest.main()
