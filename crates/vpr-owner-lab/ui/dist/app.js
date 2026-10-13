@@ -45,6 +45,7 @@ const visitorOption = audienceSelect.querySelector('option[value="visitor"]');
 const consent = byId("consent");
 const message = byId("message");
 const connectButton = byId("connect");
+const audioUnlockButton = byId("audio-unlock");
 const speakButton = byId("speak");
 const interruptButton = byId("interrupt");
 const resumeAnswerRow = byId("resume-answer-row");
@@ -116,6 +117,8 @@ let manualInterruptActionInFlight = false;
 let evidenceSessionSequence = 0;
 let greetingRequestedSequence = 0;
 let greetingPlaybackPending = false;
+let audioUnlockRequired = false;
+let audioUnlockInFlight = false;
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
 const sessionEgressFence = typeof BroadcastChannel === "undefined"
     ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
@@ -880,6 +883,7 @@ const attachRemoteAudioEvidence = async (track) => {
 const greetAfterFirstVideoFrame = async () => {
     const sequence = evidenceSessionSequence;
     if (!videoEvidencePosted || !sessionState.realtime.control
+        || audioUnlockRequired
         || sessionState.backend.greeting_available !== true
         || sessionState.backend.session_state !== "active" || sequence <= 0
         || greetingRequestedSequence === sequence || textRequestInFlight
@@ -1045,10 +1049,61 @@ const updateControls = () => {
     closeButton.disabled = !backendSessionPresent()
         || (rt0EvidenceMode && avSyncCollectionPending);
     connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
+    audioUnlockButton.hidden = !transportReady || !audioUnlockRequired;
+    audioUnlockButton.disabled = audioUnlockInFlight;
     audienceSelect.disabled = backendSessionPresent();
     if (visitorOption)
         visitorOption.disabled = !ownerCaptureReviewed;
     updateAudienceMode();
+};
+const requireManualAudioUnlock = () => {
+    if (sessionState.backend.session_state !== "active" || evidenceSessionSequence <= 0
+        || locallyFencedSessionSequence === evidenceSessionSequence)
+        return;
+    audioUnlockRequired = true;
+    setStatus("Браузер не разрешил воспроизведение. Нажмите «Включить звук аватара», затем начнётся приветствие.", "error");
+    updateControls();
+};
+const unlockAudioPlayback = async () => {
+    if (audioUnlockInFlight || !audioUnlockRequired
+        || sessionState.backend.session_state !== "active"
+        || !sessionState.realtime.control
+        || locallyFencedSessionSequence === evidenceSessionSequence)
+        return;
+    audioUnlockInFlight = true;
+    const sequence = evidenceSessionSequence;
+    const room = liveKitRoom;
+    updateControls();
+    try {
+        const attempts = [];
+        if (room?.startAudio)
+            attempts.push(room.startAudio());
+        const element = room ? avatarAudio : video;
+        if (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            attempts.push(element.play());
+        }
+        if (attempts.length === 0)
+            throw new Error("AUDIO_TRACK_NOT_READY");
+        await Promise.all(attempts);
+        if (evidenceSessionSequence !== sequence || sessionState.backend.session_state !== "active"
+            || locallyFencedSessionSequence === sequence)
+            return;
+        if (room?.canPlaybackAudio === false)
+            throw new Error("AUDIO_PLAYBACK_STILL_BLOCKED");
+        audioUnlockRequired = false;
+        setStatus("Звук разрешён браузером. Ожидаю фактическое аудио и синхронизацию аватара.", "ready");
+        await greetAfterFirstVideoFrame();
+    }
+    catch (error) {
+        if (evidenceSessionSequence === sequence && sessionState.backend.session_state === "active") {
+            audioUnlockRequired = true;
+            setStatus(`Звук не включён: ${error instanceof Error ? error.message : "AUDIO_PLAYBACK_DENIED"}`, "error");
+        }
+    }
+    finally {
+        audioUnlockInFlight = false;
+        updateControls();
+    }
 };
 const ownerCapture = mountOwnerCapture({
     api,
@@ -1202,6 +1257,13 @@ const attachLiveKitTrack = (track) => {
         liveKitAudioTrack = track;
         sessionState.setRealtimeReadiness({ audio: true });
         track.attach(avatarAudio);
+        const sequence = evidenceSessionSequence;
+        if (liveKitRoom?.canPlaybackAudio === false)
+            requireManualAudioUnlock();
+        void avatarAudio.play().catch(() => {
+            if (evidenceSessionSequence === sequence)
+                requireManualAudioUnlock();
+        });
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
         }
@@ -1250,6 +1312,7 @@ const closePeerTransport = () => {
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
     greetingPlaybackPending = false;
+    audioUnlockRequired = false;
     providerPlaybackInFlight = false;
     stopMicrophoneCapture();
     stopRemoteEvidence();
@@ -1409,6 +1472,11 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         }
         else if (event.track.kind === "audio") {
             sessionState.setRealtimeReadiness({ audio: true });
+            const sequence = evidenceSessionSequence;
+            void video.play().catch(() => {
+                if (evidenceSessionSequence === sequence)
+                    requireManualAudioUnlock();
+            });
             void attachRemoteAudioEvidence(event.track).catch(() => undefined);
         }
         updateControls();
@@ -1465,6 +1533,12 @@ const connectLiveKitTransport = async (transport) => {
         if (track)
             handleLiveKitTrackUnsubscribed(track);
     });
+    if (sdk.RoomEvent.AudioPlaybackStatusChanged) {
+        room.on(sdk.RoomEvent.AudioPlaybackStatusChanged, () => {
+            if (room === liveKitRoom && room.canPlaybackAudio === false)
+                requireManualAudioUnlock();
+        });
+    }
     room.on(sdk.RoomEvent.DataReceived, (...args) => {
         const payload = args[0];
         if (!(payload instanceof Uint8Array))
@@ -1491,6 +1565,8 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room, reason);
     });
     await room.connect(transport.server_url, transport.token);
+    if (room.canPlaybackAudio === false)
+        requireManualAudioUnlock();
     sessionState.setRealtimeReadiness({ control: true });
     updateControls();
 };
@@ -1513,6 +1589,7 @@ const connectAvatar = async () => {
     evidenceSessionSequence = 0;
     greetingRequestedSequence = 0;
     greetingPlaybackPending = false;
+    audioUnlockRequired = false;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
     setStatus("Создаю защищённую сессию…");
@@ -2539,6 +2616,7 @@ audienceSelect.addEventListener("change", () => {
     updateControls();
 });
 connectButton.addEventListener("click", () => void connectAvatar());
+audioUnlockButton.addEventListener("click", () => void unlockAudioPlayback());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
