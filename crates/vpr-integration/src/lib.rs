@@ -4,7 +4,8 @@ mod transport;
 
 pub use provider_http::{
     BoundedProviderLineReader, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_JSON_BODY_BYTES,
-    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body, read_bounded_provider_stream,
+    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body,
+    read_bounded_provider_stream,
 };
 
 pub use avatar::{
