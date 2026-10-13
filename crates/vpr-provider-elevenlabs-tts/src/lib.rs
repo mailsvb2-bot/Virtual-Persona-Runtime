@@ -137,7 +137,12 @@ impl TtsPort for ElevenLabsTts {
         // Deliver frame-aligned PCM as the provider produces it. This is a
         // generation sink, not a browser/private network publisher: runtime
         // authorization still gates avatar egress after synthesis.
-        let generated_bytes = stream_pcm(response, cancellation, sink, self.config.output_sample_rate_hz)?;
+        let generated_bytes = stream_pcm(
+            response,
+            cancellation,
+            sink,
+            self.config.output_sample_rate_hz,
+        )?;
         let input_chars = u64::try_from(request.text.chars().count()).unwrap_or(u64::MAX);
         let output_millis = u64::try_from(generated_bytes / 2)
             .ok()
