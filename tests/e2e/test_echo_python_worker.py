@@ -26,6 +26,7 @@ class FakeWriter:
 
     async def write(self, data):
         self.trace["audio"].append(bytes(data))
+        self.trace["write_timestamps"].append(time.monotonic())
 
     async def aclose(self):
         if self.trace["close_latency"]:
@@ -51,7 +52,7 @@ class FakeRoom:
 
     def __init__(self):
         self.trace = {
-            "audio": [], "closed": 0, "stream_options": [], "stops": [],
+            "audio": [], "write_timestamps": [], "closed": 0, "stream_options": [], "stops": [],
             "connected": [], "disconnected": 0,
             "close_latency": self.__class__.close_latency,
         }
@@ -91,7 +92,7 @@ class DelayedInput:
 
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
-               close_latency=0):
+               close_latency=0, tts_chunks=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -100,7 +101,10 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
             time.sleep(tts_latency(text))
         elif not delay_after_speak:
             time.sleep(0.12)
-        yield b"RIFF" + text.encode("utf-8")
+        if tts_chunks is not None:
+            yield from tts_chunks(text)
+        else:
+            yield b"RIFF" + text.encode("utf-8")
 
     module.synthesize_chunks = synthesize_chunks
     mock_livekit = types.ModuleType("livekit")
@@ -253,6 +257,56 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(trace["audio"])
         self.assertFalse(any(r["id"] == 21 and r["ok"] for r in receipts))
         self.assertTrue(any(r["id"] == 22 and r["ok"] for r in receipts))
+
+    def test_echo_publishes_first_chunk_before_tts_response_is_complete(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 31, "command": "speak", "text": "Привет"},
+            {"id": 32, "command": "close"},
+        ]
+
+        def slow_chunks(_):
+            yield b"RIFF-first-wav-chunk"
+            time.sleep(0.15)
+            yield b"second-wav-chunk"
+
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.4,
+            tts_chunks=slow_chunks,
+        )
+        self.assertEqual(trace["audio"], [b"RIFF-first-wav-chunk", b"second-wav-chunk"])
+        self.assertGreaterEqual(
+            trace["write_timestamps"][1] - trace["write_timestamps"][0],
+            0.10,
+            "private LiveKit sender must receive first chunk BEFORE TTS EOF",
+        )
+        self.assertTrue(any(item["id"] == 31 and item["ok"] for item in receipts))
+
+    def test_stop_during_stream_fences_late_tts_chunks(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 41, "command": "speak", "text": "Привет"},
+            {"id": 42, "command": "interrupt"},
+            {"id": 43, "command": "close"},
+        ]
+
+        def slow_chunks(_):
+            yield b"RIFF-prefix"
+            time.sleep(0.3)
+            yield b"FORBIDDEN-LATE-AUDIO"
+
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.05,
+            tts_chunks=slow_chunks,
+        )
+        self.assertIn(b"RIFF-prefix", trace["audio"])
+        self.assertNotIn(b"FORBIDDEN-LATE-AUDIO", trace["audio"])
+        self.assertTrue(any(item["id"] == 42 and item["ok"] for item in receipts))
+        self.assertFalse(any(item["id"] == 41 and item["ok"] for item in receipts))
 
     def test_queued_echo_utterances_have_a_hard_limit(self):
         records = [
