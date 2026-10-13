@@ -1379,7 +1379,7 @@ const updateControls = (): void => {
     && playbackReady
     && providerPlaybackInFlight;
   const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
-  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
+  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked || audioUnlockRequired;
   const protectedServerStopReady = transportReady && serverEchoStopAvailable();
   interruptButton.disabled = manualInterruptActionInFlight || interruptOperation !== null
     || (!voiceRequestInFlight && !clientInterruptReady && !protectedServerStopReady);
@@ -1389,7 +1389,7 @@ const updateControls = (): void => {
   voiceButton.disabled = recording
     ? false
     : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
-      || (strictPlaybackBlocked && !greetingPlaybackPending);
+      || (strictPlaybackBlocked && !greetingPlaybackPending) || audioUnlockRequired;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
