@@ -1,10 +1,9 @@
 //! D-ID Echo LiveKit session creation: private speaker opens before browser receives viewer grant.
-use crate::{
-    DidAgentStreamsAvatar, invalid_response, policy_denied,
-    map_transport_error, expect_success,
-};
 use crate::protocol::CreateV2SessionResponse;
 use crate::response_json::decode_json_response;
+use crate::{
+    DidAgentStreamsAvatar, expect_success, invalid_response, map_transport_error, policy_denied,
+};
 use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarSession};
 
 impl DidAgentStreamsAvatar {
@@ -51,5 +50,4 @@ impl DidAgentStreamsAvatar {
             body.try_into()
         }
     }
-
 }
