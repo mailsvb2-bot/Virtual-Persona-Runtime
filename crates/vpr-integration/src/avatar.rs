@@ -110,6 +110,8 @@ pub enum RealtimeAvatarCapability {
     AudioUrlInput,
     /// Accepts private PCM created through the canonical TTS execution permit.
     AudioPcmInput,
+    /// Private backpressured PCM16 utterance stream with exact per-chunk authorization.
+    AudioPcmStreamInput,
     Interrupt,
 }
 
@@ -185,6 +187,24 @@ impl RealtimeAvatarCapabilities {
     }
 }
 
+/// Private, single-utterance PCM16 stream. The caller must supply the same
+/// canonical revocation probe on every operation and abort on provider failure.
+/// Closing the sender is transport delivery, never confirmed human playout.
+pub trait RealtimeAvatarPcmStream: Send {
+    /// # Errors
+    /// Fails for invalid, revoked or undeliverable PCM chunks.
+    fn push_pcm(&mut self, pcm: &[u8], cancellation: &dyn CancellationProbe)
+        -> Result<(), ProviderError>;
+
+    /// # Errors
+    /// Fails unless the whole utterance reached the private provider stream.
+    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError>;
+
+    /// # Errors
+    /// Must cancel already queued private speech, even after an incomplete utterance.
+    fn abort(&mut self) -> Result<(), ProviderError>;
+}
+
 pub trait RealtimeAvatarPort: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
     fn capabilities(&self) -> RealtimeAvatarCapabilities;
@@ -245,6 +265,24 @@ pub trait RealtimeAvatarPort: Send + Sync {
         _channels: u16,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
+    /// Opens one authorized native PCM16 stream (no WAV buffering/roundtrip).
+    /// Unsupported avatar transports deny rather than silently using text.
+    ///
+    /// # Errors
+    /// Returns a typed provider denial for unavailable streaming, bad format or revocation.
+    fn open_pcm_stream(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _sample_rate_hz: u32,
+        _channels: u16,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
         Err(ProviderError {
             kind: ProviderErrorKind::Unavailable,
             retryable: false,
