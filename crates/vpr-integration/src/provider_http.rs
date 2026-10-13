@@ -81,8 +81,9 @@ pub fn read_bounded_provider_stream(
             return Err(cancelled());
         }
         let remaining = max_bytes.saturating_sub(total);
+        let probe_len = remaining.saturating_add(1).min(buffer.len());
         let read = response
-            .read(&mut buffer[..remaining.saturating_add(1).min(buffer.len())])
+            .read(&mut buffer[..probe_len])
             .map_err(|_| {
                 if cancellation.is_some_and(CancellationProbe::is_cancelled) {
                     cancelled()
