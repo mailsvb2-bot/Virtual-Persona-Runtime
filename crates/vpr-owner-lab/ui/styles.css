@@ -15,6 +15,8 @@ h1 { margin:0; font-size:clamp(36px,6vw,70px); line-height:.95; letter-spacing:-
 #avatar { position:absolute; inset:0; width:100% !important; height:100% !important; min-width:0 !important; min-height:0 !important; max-width:100% !important; max-height:100% !important; display:block; object-fit:contain; background:#050608; }
 .placeholder { position:absolute; inset:0; display:grid; place-items:center; color:#68738c; pointer-events:none; }
 .stage.has-video .placeholder { display:none; }
+#audio-unlock { position:absolute; z-index:3; bottom:clamp(10px,3vw,24px); left:50%; transform:translateX(-50%); max-width:calc(100% - 24px); white-space:normal; font-weight:700; background:#e8edff; color:#10131a; border-color:#e8edff; box-shadow:0 4px 24px rgba(0,0,0,.58); }
+#audio-unlock:focus-visible { outline:3px solid #8fbbff; outline-offset:3px; }
 .panel,.evidence { border:1px solid #293149; border-radius:18px; padding:18px; background:rgba(17,21,31,.82); }
 .telemetry-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:14px 0 12px; }
 .metric-card { min-width:0; border:1px solid #303a51; border-radius:14px; padding:13px; background:#0d111a; display:grid; gap:7px; }
