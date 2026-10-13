@@ -171,6 +171,7 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
         b = self.rating(2)
         item = blind.read_json(b)
         item["reviewer_key"] = "test-human-1"
+        item["ratings"][0]["notes"] = "Independent file bytes, duplicate pseudonym"
         b.write_text(json.dumps(item), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "duplicate listener identity"):
             blind.assess(self.private, self.package, [a, b], self.rights())
