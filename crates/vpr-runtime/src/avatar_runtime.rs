@@ -348,41 +348,41 @@ impl ActiveTurn {
         let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
 
         let mut published: Option<Box<dyn RealtimeAvatarPcmStream>> = None;
-        let mut send = |pcm: &[u8], rate: u32, channels: u16| -> Result<(), ProviderError> {
-            if avatar_permit.cancellation.is_cancelled() {
-                return Err(ProviderError {
-                    kind: ProviderErrorKind::Cancelled,
-                    retryable: false,
-                });
-            }
-            if published.is_none() {
-                published = Some(port.open_pcm_stream(
-                    &handle.provider_session,
-                    rate,
-                    channels,
-                    &avatar_permit.cancellation,
-                )?);
-            }
-            published
-                .as_mut()
-                .ok_or(ProviderError {
-                    kind: ProviderErrorKind::Unavailable,
-                    retryable: false,
-                })?
-                .push_pcm(pcm, &avatar_permit.cancellation)
+        let (synthesis, received_bytes) = {
+            let mut send = |pcm: &[u8], rate: u32, channels: u16| -> Result<(), ProviderError> {
+                if avatar_permit.cancellation.is_cancelled() {
+                    return Err(ProviderError {
+                        kind: ProviderErrorKind::Cancelled,
+                        retryable: false,
+                    });
+                }
+                if published.is_none() {
+                    published = Some(port.open_pcm_stream(
+                        &handle.provider_session,
+                        rate,
+                        channels,
+                        &avatar_permit.cancellation,
+                    )?);
+                }
+                published
+                    .as_mut()
+                    .ok_or(ProviderError {
+                        kind: ProviderErrorKind::Unavailable,
+                        retryable: false,
+                    })?
+                    .push_pcm(pcm, &avatar_permit.cancellation)
+            };
+            let mut sink = GeneratedAudioStreamingSink::new(&mut send);
+            let synthesis = self.execute_tts(
+                tts,
+                &TtsRequest {
+                    text: text.to_owned(),
+                    locale_hint: Some("ru".to_owned()),
+                },
+                &mut sink,
+            );
+            (synthesis, sink.received_bytes())
         };
-        let mut sink = GeneratedAudioStreamingSink::new(&mut send);
-        let synthesis = self.execute_tts(
-            tts,
-            &TtsRequest {
-                text: text.to_owned(),
-                locale_hint: Some("ru".to_owned()),
-            },
-            &mut sink,
-        );
-        let received_bytes = sink.received_bytes();
-        drop(sink);
-        drop(send);
 
         if let Err(error) = synthesis {
             if let Some(mut stream) = published {
