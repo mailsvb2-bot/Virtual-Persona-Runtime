@@ -89,6 +89,7 @@ document.getElementById("review").addEventListener("submit", event => {
     schema_version: "rt0-blind-listener-score-1",
     session_id: SESSION,
     human_listening_attested: true,
+    reviewer_key: form.elements.namedItem("reviewer_key").value.trim(),
     ratings
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"});
@@ -115,7 +116,10 @@ document.getElementById("review").addEventListener("submit", event => {
             "Это не тест синхронизации лица и не коммерческая лицензия.</p>"
             f"<blockquote>{html.escape(AUDITION_TEXT)}</blockquote>"
             "<form id=\"review\">" + "".join(pieces)
-            + '<label><input required type="checkbox"> Я лично прослушал(а) каждый голос '
+            + '<label>Ваш постоянный псевдоним для этого прослушивания (не имя) '
+            '<input name="reviewer_key" minlength="3" maxlength="64" required '
+            'autocomplete="off"></label>'
+            '<label><input required type="checkbox"> Я лично прослушал(а) каждый голос '
             'в наушниках и подтверждаю свои оценки.</label>'
             '<button type="submit">Сохранить протокол оценок (JSON)</button></form>'
             f"<script>{js}</script></html>")
@@ -188,8 +192,20 @@ def assess(manifest_file: Path, package: Path, listener_files: list[Path],
     if len(listener_files) < 2:
         raise ValueError("a single listener is not sufficient for voice selection")
     records = []
+    listener_keys = set()
+    listener_digests = set()
     for file in listener_files:
+        digest = sha256(file)
+        if digest in listener_digests:
+            raise ValueError("duplicate listening file is not a second human")
+        listener_digests.add(digest)
         item = read_json(file)
+        listener_key = item.get("reviewer_key")
+        if not isinstance(listener_key, str) or not 3 <= len(listener_key.strip()) <= 64:
+            raise ValueError("reviewer pseudonym required for independent listening")
+        if listener_key.strip() in listener_keys:
+            raise ValueError("duplicate listener identity must not count twice")
+        listener_keys.add(listener_key.strip())
         if (item.get("schema_version") != "rt0-blind-listener-score-1"
                 or item.get("session_id") != manifest["session_id"]
                 or item.get("human_listening_attested") is not True):
