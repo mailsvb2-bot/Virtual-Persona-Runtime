@@ -11,6 +11,7 @@ import sys
 import time
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 WORKER = (
@@ -292,6 +293,85 @@ class EchoWorkerTests(unittest.TestCase):
             sorted(item["ok"] for item in receipts if item["id"] == 7),
             [False, True],
         )
+
+
+
+class FragmentedWavResponse(io.BytesIO):
+    """An HTTP-like response yielding arbitrary short PCM frames."""
+    headers = {}
+
+    def read(self, count=-1):
+        return super().read(min(count, 37))
+
+
+def load_worker_module():
+    spec = importlib.util.spec_from_file_location("vpr_echo_stream_under_test", WORKER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def real_wav():
+    import wave
+    with io.BytesIO() as output:
+        with wave.open(output, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(24000)
+            audio.writeframes(b"\\x01\\x00" * 2400)
+        return output.getvalue()
+
+
+class EchoStreamingHttpTests(unittest.TestCase):
+    def read_stream(self, wav):
+        module = load_worker_module()
+        response = FragmentedWavResponse(wav)
+        opener = types.SimpleNamespace(open=lambda *args, **kwargs: response)
+        private_environment = {
+            "VPR_DID_ECHO_TTS_MODEL": "test-model",
+            "VPR_DID_ECHO_TTS_VOICE": "test-voice",
+            "VPR_DID_ECHO_TTS_ENDPOINT": "https://speech.example.test/v1/audio/speech",
+            "VPR_DID_ECHO_TTS_API_KEY": "test-key",
+        }
+        with mock.patch.dict(module.os.environ, private_environment):
+            with mock.patch.object(module.urllib.request, "build_opener", return_value=opener):
+                parts = []
+                for part in module.synthesize_chunks("Здравствуйте!"):
+                    parts.append(part)
+        return parts
+
+    def test_real_wav_http_chunks_arrive_without_full_body_buffering(self):
+        wav = real_wav()
+        parts = self.read_stream(wav)
+        self.assertGreater(len(parts), 1, "must yield WAV header before the full file")
+        self.assertLess(len(parts[0]), len(wav), "first chunk cannot be the whole response")
+        self.assertEqual(b"".join(parts), wav)
+
+    def test_truncated_wav_stream_fails_after_a_partial_prefix(self):
+        module = load_worker_module()
+        wav = real_wav()
+        response = FragmentedWavResponse(wav[:-1])
+        opener = types.SimpleNamespace(open=lambda *args, **kwargs: response)
+        private_environment = {
+            "VPR_DID_ECHO_TTS_MODEL": "test-model",
+            "VPR_DID_ECHO_TTS_VOICE": "test-voice",
+            "VPR_DID_ECHO_TTS_ENDPOINT": "https://speech.example.test/v1/audio/speech",
+            "VPR_DID_ECHO_TTS_API_KEY": "test-key",
+        }
+        with mock.patch.dict(module.os.environ, private_environment):
+            with mock.patch.object(module.urllib.request, "build_opener", return_value=opener):
+                stream = module.synthesize_chunks("Привет!")
+                self.assertTrue(next(stream).startswith(b"RIFF"))
+                with self.assertRaisesRegex(ValueError, "incomplete streamed WAV"):
+                    list(stream)
+
+    def test_redirect_cannot_forward_private_token_or_speech(self):
+        module = load_worker_module()
+        with self.assertRaises(ValueError):
+            module.NoCredentialRedirect().redirect_request(
+                None, None, 307, "Redirect", {},
+                "https://untrusted.example.test/steal",
+            )
 
 
 if __name__ == "__main__":
