@@ -51,7 +51,7 @@ pub fn read_bounded_provider_body(
 /// Delivers HTTP body chunks incrementally to a bounded provider-side consumer.
 ///
 /// Enforces the SAME size, transport, and cancellation policy as the buffered
-/// reader. The consumer never receives bytes beyond max_bytes, even with a
+/// reader. The consumer never receives bytes beyond `max_bytes`, even with a
 /// missing or deceptive Content-Length. This function is a provider input
 /// primitive; it is NOT an authorization to publish audio to a client.
 ///
