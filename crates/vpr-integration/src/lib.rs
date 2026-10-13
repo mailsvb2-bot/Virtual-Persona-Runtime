@@ -278,8 +278,8 @@ impl GeneratedAudioSink for GeneratedAudioBuffer {
 /// Frame-aligned, strictly bounded generated PCM forwarded by the canonical runtime.
 /// This object does not carry provider credentials, an avatar session or egress grants.
 /// Only the authorized runtime may attach its callback to a private PCM publisher.
-type GeneratedPcmChunkReceiver<'a> =
-    dyn FnMut(&[u8], u32, u16) -> Result<(), ProviderError> + 'a;
+/// Callback that forwards one frame-aligned generated PCM chunk into the canonical private publisher.
+pub type GeneratedPcmChunkReceiver<'a> = dyn FnMut(&[u8], u32, u16) -> Result<(), ProviderError> + 'a;
 
 pub struct GeneratedAudioStreamingSink<'a> {
     emit: &'a mut GeneratedPcmChunkReceiver<'a>,
