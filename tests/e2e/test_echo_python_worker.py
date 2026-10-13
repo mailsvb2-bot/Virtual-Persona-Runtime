@@ -308,6 +308,31 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == 42 and item["ok"] for item in receipts))
         self.assertFalse(any(item["id"] == 41 and item["ok"] for item in receipts))
 
+    def test_failed_stream_interrupts_partially_sent_wav_and_fences_queue(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 51, "command": "speak", "text": "Первая фраза"},
+            {"id": 52, "command": "speak", "text": "Вторая фраза"},
+            {"id": 53, "command": "close"},
+        ]
+
+        def chunks(text):
+            if text.startswith("Первая"):
+                yield b"RIFF-incomplete"
+                raise ValueError("provider returned a truncated WAV")
+            yield b"FORBIDDEN-QUEUED-AUDIO"
+
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.3, tts_chunks=chunks,
+        )
+        self.assertIn(b"RIFF-incomplete", trace["audio"])
+        self.assertNotIn(b"FORBIDDEN-QUEUED-AUDIO", trace["audio"])
+        self.assertTrue(any(topic == "did.interrupt" for _, topic in trace["stops"]))
+        self.assertFalse(any(item["id"] == 51 and item["ok"] for item in receipts))
+        self.assertFalse(any(item["id"] == 52 and item["ok"] for item in receipts))
+
     def test_queued_echo_utterances_have_a_hard_limit(self):
         records = [
             {"id": 0, "command": "open",
