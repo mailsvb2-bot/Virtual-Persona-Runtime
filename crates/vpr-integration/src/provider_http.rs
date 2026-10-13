@@ -82,15 +82,13 @@ pub fn read_bounded_provider_stream(
         }
         let remaining = max_bytes.saturating_sub(total);
         let probe_len = remaining.saturating_add(1).min(buffer.len());
-        let read = response
-            .read(&mut buffer[..probe_len])
-            .map_err(|_| {
-                if cancellation.is_some_and(CancellationProbe::is_cancelled) {
-                    cancelled()
-                } else {
-                    unavailable()
-                }
-            })?;
+        let read = response.read(&mut buffer[..probe_len]).map_err(|_| {
+            if cancellation.is_some_and(CancellationProbe::is_cancelled) {
+                cancelled()
+            } else {
+                unavailable()
+            }
+        })?;
         if cancellation.is_some_and(CancellationProbe::is_cancelled) {
             return Err(cancelled());
         }
@@ -420,7 +418,10 @@ mod tests {
         let (first_chunk, observed) = mpsc::channel();
         let worker = thread::spawn(move || {
             let response = build_provider_http_client(Duration::from_secs(3))
-                .unwrap().get(url).send().unwrap();
+                .unwrap()
+                .get(url)
+                .send()
+                .unwrap();
             let mut chunks = Vec::new();
             let count = read_bounded_provider_stream(response, 6, Some(&NeverCancelled), |chunk| {
                 chunks.extend_from_slice(chunk);
@@ -428,11 +429,13 @@ mod tests {
                     let _ = first_chunk.send(());
                 }
                 Ok(())
-            }).unwrap();
+            })
+            .unwrap();
             (count, chunks)
         });
         server_written.recv_timeout(Duration::from_secs(2)).unwrap();
-        observed.recv_timeout(Duration::from_secs(2))
+        observed
+            .recv_timeout(Duration::from_secs(2))
             .expect("first PCM bytes must reach generation sink before response EOF");
         server_release.send(()).unwrap();
         let (count, body) = worker.join().unwrap();
@@ -444,14 +447,21 @@ mod tests {
     fn bounded_stream_refuses_unknown_length_overflow_without_delivering_excess() {
         let endpoint = serve_body(vec![7; 17], false, true);
         let response = build_provider_http_client(Duration::from_secs(2))
-            .unwrap().get(endpoint).send().unwrap();
+            .unwrap()
+            .get(endpoint)
+            .send()
+            .unwrap();
         let mut delivered = 0;
         let error = read_bounded_provider_stream(response, 16, Some(&NeverCancelled), |part| {
             delivered += part.len();
             Ok(())
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-        assert!(delivered <= 16, "overflow bytes must never reach the callback");
+        assert!(
+            delivered <= 16,
+            "overflow bytes must never reach the callback"
+        );
     }
 
     #[test]
@@ -462,21 +472,33 @@ mod tests {
         let (first_chunk, observed) = mpsc::channel();
         let worker = thread::spawn(move || {
             let response = build_provider_http_client(Duration::from_secs(3))
-                .unwrap().get(url).send().unwrap();
+                .unwrap()
+                .get(url)
+                .send()
+                .unwrap();
             read_bounded_provider_stream(
-                response, 6, Some(&AtomicCancellation(cancel_for_thread)),
+                response,
+                6,
+                Some(&AtomicCancellation(cancel_for_thread)),
                 |part| {
                     first_chunk.send(part.to_vec()).unwrap();
                     Ok(())
                 },
-            ).unwrap_err()
+            )
+            .unwrap_err()
         });
         server_written.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(observed.recv_timeout(Duration::from_secs(2)).unwrap(), b"abc");
+        assert_eq!(
+            observed.recv_timeout(Duration::from_secs(2)).unwrap(),
+            b"abc"
+        );
         cancelled.store(true, Ordering::Release);
         server_release.send(()).unwrap();
         assert_eq!(worker.join().unwrap().kind, ProviderErrorKind::Cancelled);
-        assert!(observed.try_recv().is_err(), "cancellation must fence the second chunk");
+        assert!(
+            observed.try_recv().is_err(),
+            "cancellation must fence the second chunk"
+        );
     }
 
     #[test]
