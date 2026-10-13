@@ -96,6 +96,27 @@
       () => (byId("microphone-level-text").textContent ?? "").includes("RMS"),
       "microphone-sample",
     );
+    // Exercise the real browser input pipeline while the same canonical upload
+    // is open: headset -> internal mic -> headset, without ending this turn.
+    const micSelect = byId("microphone-device");
+    await waitFor(
+      () => [...micSelect.options].some((option) => option.value === "builtin-mic"),
+      "available-microphone-options",
+    );
+    const switchMic = async (deviceId) => {
+      micSelect.value = deviceId;
+      micSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await waitFor(
+        () => (window.__vprRequestedMicrophones ?? []).at(-1) === deviceId
+          && !micSelect.disabled,
+        `microphone-switched:${deviceId}`,
+      );
+      if (voice.textContent !== "Остановить и отправить") {
+        throw new Error("MICROPHONE_SWITCH_INTERRUPTED_RECORDING");
+      }
+    };
+    await switchMic("builtin-mic");
+    await switchMic("headset-mic");
     voice.click();
     await waitForStatus(`Ответ: ${expectedReply}`);
     await waitFor(() => !byId("interrupt").disabled, "playback-started");
