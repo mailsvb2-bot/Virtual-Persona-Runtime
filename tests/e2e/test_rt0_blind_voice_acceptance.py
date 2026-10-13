@@ -72,6 +72,7 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
             "schema_version": "rt0-blind-listener-score-1",
             "session_id": session or manifest["session_id"],
             "human_listening_attested": attested,
+            "reviewer_key": f"test-human-{index}",
             "ratings": [{
                 "blind_label": item["blind_label"],
                 "scores": {metric: score for metric in blind.SCORES},
@@ -91,7 +92,6 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
         listener_html = (self.package / "index.html").read_text(encoding="utf-8")
         self.assertIn("Здравствуйте!", listener_html)
         self.assertIn("russian_nativeness", listener_html)
-        self.assertIn("personally", "personally")  # No external TTS required.
         for provider in ("qwen-design", "chatterbox-v3"):
             self.assertNotIn(provider, listener_html)
         mapping = blind.read_json(self.private)
@@ -133,6 +133,18 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
             blind.assess(self.private, self.package, [a, b], self.rights())
         b = self.rating(3, attested=False)
         with self.assertRaises(ValueError):
+            blind.assess(self.private, self.package, [a, b], self.rights())
+
+    def test_repeated_review_file_or_same_listener_pseudonym_cannot_count_twice(self):
+        self.prepare()
+        a = self.rating(1)
+        with self.assertRaisesRegex(ValueError, "duplicate listening file"):
+            blind.assess(self.private, self.package, [a, a], self.rights())
+        b = self.rating(2)
+        item = blind.read_json(b)
+        item["reviewer_key"] = "test-human-1"
+        b.write_text(json.dumps(item), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "duplicate listener identity"):
             blind.assess(self.private, self.package, [a, b], self.rights())
 
     def test_tampered_audio_mapping_and_mismatched_text_fail_closed(self):
