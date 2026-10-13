@@ -10,6 +10,7 @@ No provider keys, browser data, user speech or D-ID audio can enter this run.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -163,6 +164,7 @@ def main():
         duration_seconds = confirmed.getnframes() / confirmed.getframerate()
     result = {
         "engine": args.engine,
+        "audition_text_sha256": hashlib.sha256(AUDITION_TEXT.encode("utf-8")).hexdigest(),
         "seconds": round(duration_seconds, 2),
         "wall_seconds": round(time.monotonic() - started, 2),
         "rate_hz": int(rate),
