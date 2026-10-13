@@ -68,7 +68,9 @@ def valid_preview(wav_path: Path, metadata: dict, name: str) -> dict:
     if not isinstance(metadata.get("seconds"), (int, float)) or (
             abs(length - metadata["seconds"]) > 0.03):
         raise ValueError("preview duration does not match its generation evidence")
-    return {"sha256": sha256(wav_path), "duration_seconds": round(length, 3),\n            "ac_rms_dbfs": round(20 * math.log10(ac_rms), 2),\n            "clipped_sample_ratio": round(clipped_ratio, 5)}
+    return {"sha256": sha256(wav_path), "duration_seconds": round(length, 3),
+            "ac_rms_dbfs": round(20 * math.log10(ac_rms), 2),
+            "clipped_sample_ratio": round(clipped_ratio, 5)}
 
 
 def render_browser(labels: list[str], session: str) -> str:
