@@ -36,10 +36,34 @@ pub fn build_provider_http_client(timeout: Duration) -> Result<Client, reqwest::
 /// Returns a typed provider error for cancellation, transport failure, invalid zero limit, or
 /// a body that exceeds the hard bound.
 pub fn read_bounded_provider_body(
-    mut response: Response,
+    response: Response,
     max_bytes: usize,
     cancellation: Option<&dyn CancellationProbe>,
 ) -> Result<Vec<u8>, ProviderError> {
+    let mut output = Vec::new();
+    read_bounded_provider_stream(response, max_bytes, cancellation, |chunk| {
+        output.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    Ok(output)
+}
+
+/// Delivers HTTP body chunks incrementally to a bounded provider-side consumer.
+///
+/// Enforces the SAME size, transport, and cancellation policy as the buffered
+/// reader. The consumer never receives bytes beyond max_bytes, even with a
+/// missing or deceptive Content-Length. This function is a provider input
+/// primitive; it is NOT an authorization to publish audio to a client.
+///
+/// # Errors
+/// Fails closed for an empty limit, oversized body, cancellation, I/O
+/// failure, or a consumer rejecting a chunk.
+pub fn read_bounded_provider_stream(
+    mut response: Response,
+    max_bytes: usize,
+    cancellation: Option<&dyn CancellationProbe>,
+    mut consume: impl FnMut(&[u8]) -> Result<(), ProviderError>,
+) -> Result<usize, ProviderError> {
     if max_bytes == 0 {
         return Err(invalid_response());
     }
@@ -50,32 +74,33 @@ pub fn read_bounded_provider_body(
     {
         return Err(invalid_response());
     }
-
-    let mut output = Vec::with_capacity(
-        response
-            .content_length()
-            .and_then(|length| usize::try_from(length).ok())
-            .unwrap_or(0)
-            .min(max_bytes),
-    );
+    let mut total = 0_usize;
     let mut buffer = [0_u8; 8_192];
-
     loop {
         if cancellation.is_some_and(CancellationProbe::is_cancelled) {
             return Err(cancelled());
         }
-        let remaining = max_bytes.saturating_sub(output.len());
-        let probe_len = remaining.saturating_add(1).min(buffer.len()).max(1);
+        let remaining = max_bytes.saturating_sub(total);
         let read = response
-            .read(&mut buffer[..probe_len])
-            .map_err(|_| unavailable())?;
+            .read(&mut buffer[..remaining.saturating_add(1).min(buffer.len())])
+            .map_err(|_| {
+                if cancellation.is_some_and(CancellationProbe::is_cancelled) {
+                    cancelled()
+                } else {
+                    unavailable()
+                }
+            })?;
+        if cancellation.is_some_and(CancellationProbe::is_cancelled) {
+            return Err(cancelled());
+        }
         if read == 0 {
-            return Ok(output);
+            return Ok(total);
         }
         if read > remaining {
             return Err(invalid_response());
         }
-        output.extend_from_slice(&buffer[..read]);
+        consume(&buffer[..read])?;
+        total += read;
     }
 }
 
