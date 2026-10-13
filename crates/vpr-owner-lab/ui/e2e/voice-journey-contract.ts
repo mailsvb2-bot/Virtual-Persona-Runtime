@@ -90,6 +90,9 @@ const assertCommonEvidence = (snapshot: EvidenceSnapshot): void => {
 export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void => {
   expect(journey.stage).toBe("complete");
   expect(journey.error).toBeNull();
+  // Preserve the existing architecture contract: persistent preference is tested
+  // independently of the stronger in-turn hot-switch ordering assertion.
+  expect(journey.requestedMicrophones).toContain("headset-mic");
   expect(journey.requestedMicrophones.slice(0, 3)).toEqual([
     "headset-mic",
     "builtin-mic",
