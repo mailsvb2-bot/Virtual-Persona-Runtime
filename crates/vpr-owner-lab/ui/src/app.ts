@@ -1494,6 +1494,9 @@ const handleProviderClientEvent = (raw: string): void => {
           updateControls();
           await completion;
         } else {
+          // Provider completion for the initial greeting is not a voice-turn
+          // ACK. Clear its own pending fence only on an actual provider event.
+          greetingPlaybackPending = false;
           providerPlaybackInFlight = voiceCommandScheduler.hasPendingPlayback;
           if (rt0EvidenceMode) rt0PlaybackPending = false;
         }
