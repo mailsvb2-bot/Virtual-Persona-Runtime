@@ -44,6 +44,11 @@ def _nonnegative(value: Any, label: str) -> float:
         raise InvalidEvidence(f'invalid {label}')
     return float(value)
 
+def _positive_sequence(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise InvalidEvidence(f'invalid {label}')
+    return value
+
 def _required_digest(value: Any, label: str) -> str:
     if not isinstance(value, str) or len(value) != 64 or any(c not in '0123456789abcdef' for c in value):
         raise InvalidEvidence(f'invalid {label}')
@@ -69,6 +74,7 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
         raise InvalidEvidence('unsupported evidence scope')
     if item.get('participant_role') not in ('owner', 'visitor'):
         raise InvalidEvidence('unknown role; never infer it from filename')
+    _positive_sequence(item.get('session_sequence'), 'session sequence')
     _nonnegative(item.get('session_duration_millis'), 'session duration')
     if not isinstance(item.get('voice_attempts'), list) or not isinstance(item.get('media_events'), list):
         raise InvalidEvidence('missing voice/media arrays')
@@ -76,18 +82,40 @@ def _read(path: Path) -> tuple[dict[str, Any], str]:
         raise InvalidEvidence('missing canonical proof booleans')
     if not isinstance(item.get('av_sync_samples'), list) or not isinstance(item.get('av_sync_diagnostics'), list):
         raise InvalidEvidence('missing A/V proof arrays')
-    for event in item['media_events']:
-        if not isinstance(event, dict) or not isinstance(event.get('kind'), str):
-            raise InvalidEvidence('malformed media event')
-        _nonnegative(event.get('elapsed_millis'), 'media event elapsed time')
+    requests: set[int] = set()
+    completed_requests: set[int] = set()
     for attempt in item['voice_attempts']:
         if not isinstance(attempt, dict) or attempt.get('status') not in ('completed', 'failed', 'cancelled', 'denied'):
             raise InvalidEvidence('invalid voice attempt')
-        if attempt.get('status') == 'completed':
+        sequence = _positive_sequence(attempt.get('request_sequence'), 'voice request sequence')
+        if sequence in requests:
+            raise InvalidEvidence('duplicate voice request sequence')
+        requests.add(sequence)
+        if attempt['status'] == 'completed':
+            completed_requests.add(sequence)
             _nonnegative(attempt.get('stt_millis'), 'STT time')
             _nonnegative(attempt.get('llm_millis'), 'LLM time')
             if not isinstance(attempt.get('canonical_playback_confirmed'), bool):
                 raise InvalidEvidence('missing per-turn canonical playback flag')
+    # These events must belong to a completed voice turn, not to a greeting,
+    # an unknown request or an uncompleted provider operation.
+    completed_turn_media = {
+        'audio_started', 'playback_completed',
+        'provider_playback_done_received', 'end_to_end_video_ready',
+    }
+    for event in item['media_events']:
+        if not isinstance(event, dict) or not isinstance(event.get('kind'), str):
+            raise InvalidEvidence('malformed media event')
+        _nonnegative(event.get('elapsed_millis'), 'media event elapsed time')
+        sequence = event.get('request_sequence')
+        if sequence is not None:
+            sequence = _positive_sequence(sequence, 'media request sequence')
+            if sequence not in requests:
+                raise InvalidEvidence('media event references unknown voice request')
+        if event['kind'] in completed_turn_media and sequence not in completed_requests:
+            raise InvalidEvidence('turn media event lacks a completed voice request')
+        if event['kind'] == 'interruption_stopped' and sequence is None:
+            raise InvalidEvidence('STOP media event lacks a voice request')
     return item, hashlib.sha256(raw).hexdigest()
 
 def _millis(item: dict[str, Any], kind: str) -> float | None:
@@ -119,12 +147,16 @@ def build_handoff(paths: list[Path], speaker_quality: str = 'unreviewed') -> dic
         raise InvalidEvidence('at least one real exported snapshot is required')
     if speaker_quality not in ('unreviewed', 'rejected', 'accepted'):
         raise InvalidEvidence('invalid human speech-quality disposition')
-    sessions, digests = [], set()
+    sessions, digests, sequences = [], set(), set()
     for path in paths:
         item, digest = _read(path)
         if digest in digests:
             raise InvalidEvidence('duplicate snapshot bytes')
         digests.add(digest)
+        sequence = item['session_sequence']
+        if sequence in sequences:
+            raise InvalidEvidence('duplicate session sequence')
+        sequences.add(sequence)
         sessions.append(item)
     candidate = sessions[0]['candidate_sha']
     state = sessions[0]['provider_state_sha256']
