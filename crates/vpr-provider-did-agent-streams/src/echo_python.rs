@@ -1,6 +1,7 @@
 //! Explicitly enabled, backend-only `LiveKit` Echo sender.
 //! No room publisher token, TTS key or generated audio reaches browser JSON.
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -10,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use vpr_integration::{CancellationProbe, ProviderError};
+use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
 use super::{DidEchoBackend, cancelled, invalid_response, unavailable};
 
@@ -224,11 +225,22 @@ impl SessionWorker {
     }
     fn request(
         &self,
-        mut payload: Value,
+        payload: Value,
         timeout: Duration,
         cancellation: Option<&dyn CancellationProbe>,
         allow_stopped: bool,
     ) -> Result<(), ProviderError> {
+        self.request_identified(payload, timeout, cancellation, allow_stopped)
+            .map(|_| ())
+    }
+
+    fn request_identified(
+        &self,
+        mut payload: Value,
+        timeout: Duration,
+        cancellation: Option<&dyn CancellationProbe>,
+        allow_stopped: bool,
+    ) -> Result<u64, ProviderError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (sender, receiver) = mpsc::sync_channel(1);
         {
@@ -262,7 +274,7 @@ impl SessionWorker {
                 return Err(unavailable());
             }
             match receiver.recv_timeout(Duration::from_millis(100)) {
-                Ok(true) => return Ok(()),
+                Ok(true) => return Ok(id),
                 Ok(false) | Err(mpsc::RecvTimeoutError::Disconnected) => return Err(unavailable()),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
@@ -283,6 +295,91 @@ impl SessionWorker {
         Ok(())
     }
 }
+/// One canonical utterance, sent as D-ID documented `pcm16` byte-stream.
+/// A dropped/failed stream always sends an interrupt or kills its private worker.
+struct EchoPythonPcmStream {
+    worker: Arc<SessionWorker>,
+    stream_id: u64,
+    rate: u32,
+    channels: u16,
+    bytes: usize,
+    closed: bool,
+}
+
+impl RealtimeAvatarPcmStream for EchoPythonPcmStream {
+    fn push_pcm(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        let frame = usize::from(self.channels) * 2;
+        let next = self.bytes.checked_add(pcm.len()).ok_or_else(invalid_response)?;
+        if self.closed || pcm.is_empty() || pcm.len() % frame != 0
+            || next > 8 * 1024 * 1024 - 44
+            || next / frame > self.rate as usize * 60
+            || cancellation.is_cancelled()
+        {
+            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+        }
+        for part in pcm.chunks(8 * 1024) {
+            let mut hex = String::with_capacity(part.len() * 2);
+            for byte in part {
+                write!(&mut hex, "{byte:02x}").map_err(|_| invalid_response())?;
+            }
+            self.worker.request(
+                json!({"command":"pcm_chunk","stream_id":self.stream_id,"pcm_hex":hex}),
+                SPEECH_TIMEOUT,
+                Some(cancellation),
+                false,
+            )?;
+        }
+        self.bytes = next;
+        Ok(())
+    }
+
+    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if self.closed || self.bytes == 0 || cancellation.is_cancelled() {
+            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+        }
+        // "End" is acknowledged only after LiveKit closes the byte stream.
+        // It is NOT a D-ID playout or a browser hearing acknowledgement.
+        self.worker.request(
+            json!({"command":"pcm_end","stream_id":self.stream_id}),
+            SPEECH_TIMEOUT,
+            Some(cancellation),
+            false,
+        )?;
+        self.closed = true;
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), ProviderError> {
+        if self.closed {
+            return Ok(());
+        }
+        let result = self.worker.request(
+            json!({"command":"pcm_abort","stream_id":self.stream_id}),
+            INTERRUPT_TIMEOUT,
+            None,
+            true,
+        );
+        self.closed = true;
+        if result.is_err() {
+            // A missing STOP receipt is unsafe; the private sender must die.
+            let _ = self.worker.terminate();
+        }
+        result
+    }
+}
+
+impl Drop for EchoPythonPcmStream {
+    fn drop(&mut self) {
+        if !self.closed {
+            let _ = self.abort();
+        }
+    }
+}
+
 impl EchoPythonBackend {
     #[must_use]
     pub fn new(config: EchoPythonConfig) -> Self {
@@ -301,6 +398,39 @@ impl EchoPythonBackend {
     }
 }
 impl DidEchoBackend for EchoPythonBackend {
+    fn supports_pcm_stream(&self) -> bool {
+        true
+    }
+
+    fn open_pcm_stream(
+        &self,
+        session_id: &str,
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+        if !(8_000..=96_000).contains(&sample_rate_hz) || !matches!(channels, 1 | 2)
+            || cancellation.is_cancelled()
+        {
+            return Err(if cancellation.is_cancelled() { cancelled() } else { invalid_response() });
+        }
+        let worker = self.worker(session_id)?;
+        let id = worker.request_identified(
+            json!({"command":"pcm_begin","sample_rate_hz":sample_rate_hz,"channels":channels}),
+            SPEECH_TIMEOUT,
+            Some(cancellation),
+            false,
+        )?;
+        Ok(Box::new(EchoPythonPcmStream {
+            worker,
+            stream_id: id,
+            rate: sample_rate_hz,
+            channels,
+            bytes: 0,
+            closed: false,
+        }))
+    }
+
     fn open(
         &self,
         session_id: &str,
