@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import struct
 from pathlib import Path
 import sys
 import tempfile
@@ -32,7 +34,9 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
                 output.setnchannels(1)
                 output.setsampwidth(2)
                 output.setframerate(24000)
-                output.writeframes(bytes([index + 1, 0]) * 24000)
+                samples = (int(8000 * math.sin(2 * math.pi * (180 + index * 65) * i / 24000))
+                           for i in range(24000))
+                output.writeframes(struct.pack("<24000h", *samples))
             metadata = {
                 "engine": name,
                 "audition_text_sha256": blind.TEXT_SHA256,
@@ -122,6 +126,30 @@ class BlindVoiceAcceptanceTests(unittest.TestCase):
         a, b = self.rating(3, 2), self.rating(4, 2)
         poor = blind.assess(self.private, self.package, [a, b], self.rights())
         self.assertIsNone(poor["selected_for_live_trial"])
+
+    def test_silent_dc_only_and_severely_clipped_wav_are_not_human_voice_candidates(self):
+        audio = self.source / "qwen-design.wav"
+        with wave.open(str(audio), "wb") as stream:
+            stream.setnchannels(1)
+            stream.setsampwidth(2)
+            stream.setframerate(24000)
+            stream.writeframes(bytes(48000))
+        with self.assertRaisesRegex(ValueError, "silent, DC-only"):
+            self.prepare()
+        with wave.open(str(audio), "wb") as stream:
+            stream.setnchannels(1)
+            stream.setsampwidth(2)
+            stream.setframerate(24000)
+            stream.writeframes(struct.pack("<24000h", *([1000] * 24000)))
+        with self.assertRaisesRegex(ValueError, "silent, DC-only"):
+            self.prepare()
+        with wave.open(str(audio), "wb") as stream:
+            stream.setnchannels(1)
+            stream.setsampwidth(2)
+            stream.setframerate(24000)
+            stream.writeframes(struct.pack("<24000h", *([32767, -32768] * 12000)))
+        with self.assertRaisesRegex(ValueError, "severely clipped"):
+            self.prepare()
 
     def test_rejects_single_reviewer_cross_session_and_missing_attestation(self):
         self.prepare()
