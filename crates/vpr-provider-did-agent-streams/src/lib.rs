@@ -7,8 +7,8 @@ use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
     RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
     RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
-    RealtimeAvatarTransport,
-    WebRtcIceCandidate, WebRtcSessionDescription, build_provider_http_client,
+    RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
+    build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -29,9 +29,8 @@ pub use echo::DidEchoBackend;
 use echo::DidEchoRegistry;
 pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
-    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
-    IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
-    SpeakScript, parse_livekit_event,
+    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse, IceRequest, SdpRequest,
+    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
