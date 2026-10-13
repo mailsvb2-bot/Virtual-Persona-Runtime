@@ -1426,14 +1426,22 @@ const unlockAudioPlayback = async (): Promise<void> => {
   try {
     // Invoke media play/startAudio synchronously from the click handler before
     // the user-activation window closes. Do not await a network request first.
-    const attempts: Promise<void>[] = [];
-    if (room?.startAudio) attempts.push(room.startAudio());
+    const audioStart = room?.startAudio?.();
     const element = room ? avatarAudio : video;
-    if (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      attempts.push(element.play());
+    // play() may stay pending until Echo sends its FIRST audio frame. Never
+    // deadlock the greeting waiting for the media frame it must create.
+    const playResult = (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+      ? element.play().then(() => true, () => false)
+      : null;
+    if (!audioStart && !playResult) throw new Error("AUDIO_TRACK_NOT_READY");
+    if (audioStart) {
+      await audioStart;
+      if (playResult) void playResult.then((playing) => {
+        if (!playing && evidenceSessionSequence === sequence) requireManualAudioUnlock();
+      });
+    } else if (!await playResult) {
+      throw new Error("AUDIO_PLAYBACK_DENIED");
     }
-    if (attempts.length === 0) throw new Error("AUDIO_TRACK_NOT_READY");
-    await Promise.all(attempts);
     if (evidenceSessionSequence !== sequence || sessionState.backend.session_state !== "active"
         || locallyFencedSessionSequence === sequence) return;
     if (room?.canPlaybackAudio === false) throw new Error("AUDIO_PLAYBACK_STILL_BLOCKED");
