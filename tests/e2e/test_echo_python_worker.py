@@ -318,7 +318,7 @@ def real_wav():
             audio.setnchannels(1)
             audio.setsampwidth(2)
             audio.setframerate(24000)
-            audio.writeframes(b"\\x01\\x00" * 2400)
+            audio.writeframes(bytes((1, 0)) * 2400)
         return output.getvalue()
 
 
