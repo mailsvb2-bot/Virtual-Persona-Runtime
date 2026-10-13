@@ -35,6 +35,7 @@ type FixtureState = {
   apiPaths: string[];
   staleStatusOnceAfterStart: boolean;
   avatarStartDelayMillis: number;
+  greetingAvailable: boolean;
   mediaEvidence: Array<{ kind: string; elapsed_millis: number }>;
   voiceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
   appearanceReference: null | { bytes: number; media_type: string; sha256: string; raw_retained: false };
@@ -76,8 +77,8 @@ const installBrowserFakes = async (page: Page): Promise<void> => {
   });
 };
 
-const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
-  await page.addInitScript(() => {
+const installLiveKitBrowserFake = async (page: Page, audioInitiallyBlocked = false): Promise<void> => {
+  await page.addInitScript((blockedAudio: boolean) => {
     type EventHandler = (...args: unknown[]) => void;
     const roomEvents = {
       TrackSubscribed: "track-subscribed",
@@ -86,6 +87,7 @@ const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
       Reconnecting: "reconnecting",
       Reconnected: "reconnected",
       Disconnected: "disconnected",
+      AudioPlaybackStatusChanged: "audio-playback-status-changed",
     };
 
     class FakeRemoteTrack {
@@ -134,6 +136,7 @@ const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
     }
 
     class FakeRoom {
+      canPlaybackAudio = !blockedAudio;
       readonly localParticipant = {
         sendText: async (): Promise<void> => undefined,
       };
@@ -156,6 +159,12 @@ const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
       }
 
       async disconnect(): Promise<void> {}
+
+      async startAudio(): Promise<void> {
+        this.canPlaybackAudio = true;
+        const fakeWindow = window as typeof window & { __vprAudioUnlockCount?: number };
+        fakeWindow.__vprAudioUnlockCount = (fakeWindow.__vprAudioUnlockCount ?? 0) + 1;
+      }
 
       triggerUnexpectedDisconnect(): void {
         this.emit(roomEvents.Disconnected);
@@ -183,7 +192,7 @@ const installLiveKitBrowserFake = async (page: Page): Promise<void> => {
         return 1;
       },
     });
-  });
+  }, audioInitiallyBlocked);
 };
 
 const json = async (route: Route, payload: unknown, status = 200): Promise<void> => {
@@ -204,6 +213,7 @@ const statusSnapshot = (state: FixtureState) => ({
   session_state: state.sessionState,
   avatar_open: state.avatarOpen,
   egress_enabled: true,
+  greeting_available: state.greetingAvailable,
   conversation_readiness: "text_and_voice",
   modality_readiness: state.ownerReviewed
     ? {
@@ -419,6 +429,12 @@ const installApiFixture = async (page: Page, state: FixtureState): Promise<void>
           : null,
       });
     }
+    if (path === "/api/avatar/greeting") {
+      if (body.expected_session_sequence !== state.startAudiences.length) {
+        return json(route, { ok: false, code: "SESSION_GENERATION_MISMATCH" }, 409);
+      }
+      return json(route, { client_command: null });
+    }
     if (path === "/api/avatar/answer" || path === "/api/avatar/ice") {
       return json(route, { ok: true });
     }
@@ -478,6 +494,7 @@ const initialState = (): FixtureState => ({
   apiPaths: [],
   staleStatusOnceAfterStart: false,
   avatarStartDelayMillis: 0,
+  greetingAvailable: false,
   mediaEvidence: [],
   voiceReference: null,
   appearanceReference: null,
@@ -920,6 +937,49 @@ test("LiveKit avatar stays contained and unexpected disconnect closes the backen
   await expect.poll(() => state.sessionState).toBe("closed");
   await expect.poll(() => state.apiPaths.includes("POST /api/evidence/session/export")).toBe(true);
   expect(state.apiPaths).toContain("POST /api/session/close");
+});
+
+test("autoplay-blocked LiveKit defers server Echo greeting until explicit audio gesture", async ({ page }) => {
+  const state = initialState();
+  state.personaId = "owner-blocked-audio";
+  state.personaVersion = 2;
+  state.captureState = "reviewed";
+  state.ownerReviewed = true;
+  state.transportKind = "live_kit";
+  state.greetingAvailable = true;
+  state.claims = [{
+    claim_id: "preference-tone",
+    statement: "Говори естественным русским языком",
+    kind: "preference",
+    verification: "verified",
+    revision: 1,
+    owner_reviewed: true,
+  }];
+
+  await installBrowserFakes(page);
+  await installLiveKitBrowserFake(page, true);
+  await installApiFixture(page, state);
+  await page.goto("/");
+  await page.locator("#consent").check();
+  await page.locator("#connect").click();
+
+  await expect(page.locator(".stage")).toHaveClass(/has-video/);
+  await expect(page.locator("#audio-unlock")).toBeVisible();
+  expect(state.apiPaths).not.toContain("POST /api/avatar/greeting");
+
+  await page.locator("#audio-unlock").click();
+  await expect(page.locator("#audio-unlock")).toBeHidden();
+  await expect.poll(() =>
+    state.apiPaths.filter((path) => path === "POST /api/avatar/greeting").length
+  ).toBe(1);
+  await expect.poll(() => page.evaluate(() => (
+    window as typeof window & { __vprAudioUnlockCount?: number }
+  ).__vprAudioUnlockCount ?? 0)).toBe(1);
+  // Browser permission is not a canonical playback acknowledgement.
+  expect(state.mediaEvidence.some((event) => event.kind === "playback_completed")).toBe(false);
+
+  await page.locator("#close").click();
+  await expect.poll(() => state.sessionState).toBe("closed");
 });
 
 test("active visitor recovery does not request owner-only persona endpoints", async ({ page }) => {
