@@ -38,6 +38,10 @@ jobs:
         run: python3 tests/e2e/test_windows_piper_prepare.py
       - name: MIT Silero female audition integrity and whitelist contract
         run: python3 tests/e2e/test_silero_cis_voice_preview.py
+      - name: Human-blind native Russian voice and legal-rights acceptance contract
+        run: |
+          python3 tests/e2e/test_rt0_multilingual_voice_audition.py
+          python3 tests/e2e/test_rt0_blind_voice_acceptance.py
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
