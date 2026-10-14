@@ -50,6 +50,8 @@ pub enum CheckStatus {
 pub enum RecordStatus {
     Recorded,
     Missing,
+    #[serde(rename = "DEFERRED_INTERIM_VOICE")]
+    DeferredInterimVoice,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -330,7 +332,11 @@ pub fn evaluate_rt0_exit_evidence(
     evaluate_quality(&evidence.quality, &mut failures);
     evaluate_cost(&evidence.cost, &mut failures);
     evaluate_privacy(&evidence.privacy_permissions, &mut failures);
-    evaluate_human(&evidence.human_evaluation, &mut failures);
+    let interim_voice = context.provider_state.providers.iter().any(|provider| {
+        provider.role == crate::ProviderRole::Tts
+            && provider.voice_profile_status.as_deref() == Some("INTERIM")
+    });
+    evaluate_human(&evidence.human_evaluation, interim_voice, &mut failures);
     if evidence.known_limitations.review_status != CheckStatus::Passed {
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
