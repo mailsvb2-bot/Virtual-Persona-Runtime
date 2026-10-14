@@ -31,8 +31,8 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabError, LabSessionEvidenceRecorder, LabVoicePlaybackRegistry, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
-    restore_reviewed_persona, VoiceProfile,
+    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle, VoiceProfile,
+    restore_reviewed_persona,
 };
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
@@ -273,15 +273,13 @@ fn route_request(
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
         (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
-        (&Method::Get, "/api/status") => {
-            with_engine(state, |engine| {
-                let mut status = serde_json::to_value(engine.status()).unwrap_or_default();
-                if let Some(profile) = state.voice_profile.as_ref() {
-                    status["voice_profile"] = http_tts::voice_profile_public(profile);
-                }
-                json_response(200, &status)
-            })
-        }
+        (&Method::Get, "/api/status") => with_engine(state, |engine| {
+            let mut status = serde_json::to_value(engine.status()).unwrap_or_default();
+            if let Some(profile) = state.voice_profile.as_ref() {
+                status["voice_profile"] = http_tts::voice_profile_public(profile);
+            }
+            json_response(200, &status)
+        }),
         (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
         (&Method::Get, "/api/references") => {
             http_references::snapshot_response(&state.reference_intake)
@@ -453,7 +451,10 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
-                voice_profile: state.voice_profile.as_ref().map(http_tts::voice_profile_public),
+                voice_profile: state
+                    .voice_profile
+                    .as_ref()
+                    .map(http_tts::voice_profile_public),
             },
         )
     })
