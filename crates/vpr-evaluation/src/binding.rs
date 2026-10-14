@@ -215,16 +215,21 @@ pub(crate) fn validate_provider_state(
             return Err(EvidenceBindingError::InvalidProviderFingerprint);
         }
         if provider.role == ProviderRole::Tts {
-            if !matches!(provider.voice_profile_status.as_deref(), Some("INTERIM" | "ACCEPTED"))
-                || !provider.profile_id.as_deref().is_some_and(|id|
-                    (3..=64).contains(&id.len()) && id.bytes().all(|b|
-                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
-                || provider.version.is_none_or(|version| version == 0)
+            if !matches!(
+                provider.voice_profile_status.as_deref(),
+                Some("INTERIM" | "ACCEPTED")
+            ) || !provider.profile_id.as_deref().is_some_and(|id| {
+                (3..=64).contains(&id.len())
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            }) || provider.version.is_none_or(|version| version == 0)
             {
                 return Err(EvidenceBindingError::BlankProviderDescriptor);
             }
         } else if provider.voice_profile_status.is_some()
-            || provider.profile_id.is_some() || provider.version.is_some()
+            || provider.profile_id.is_some()
+            || provider.version.is_some()
         {
             return Err(EvidenceBindingError::BlankProviderDescriptor);
         }
