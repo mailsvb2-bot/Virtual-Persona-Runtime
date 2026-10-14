@@ -134,22 +134,19 @@ impl ProviderBundle {
                 }
             }
         }
-        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok().is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        if strict {
-            if let Some(voice) = &voice_profile { voice.validate_strict()?; }
-            if optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some() {
-                return Err("RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN".into());
-            }
-            if (optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some()
-                || profile.as_ref().and_then(|profile| profile.tts.as_ref()).is_some())
-                && voice_profile.is_none() {
-                return Err("RT0_EVIDENCE_VOICE_PROFILE_REQUIRED".into());
-            }
-        }
+        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok()
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
             .or_else(|| profile.as_ref()?.tts.as_ref().map(|tts| tts.provider.to_ascii_lowercase()));
         if voice_profile.is_some() && tts_name.is_none() {
             return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
+        }
+        if strict {
+            validate_strict_voice_selection(
+                tts_name.as_deref(),
+                voice_profile.as_ref(),
+                optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
+            )?;
         }
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
@@ -198,6 +195,23 @@ impl ProviderBundle {
         })
     }
 }
+fn validate_strict_voice_selection(
+    primary_tts: Option<&str>,
+    profile: Option<&VoiceProfile>,
+    fallback_configured: bool,
+) -> Result<(), String> {
+    if fallback_configured {
+        return Err("RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN".into());
+    }
+    if primary_tts.is_some() && profile.is_none() {
+        return Err("RT0_EVIDENCE_VOICE_PROFILE_REQUIRED".into());
+    }
+    if let Some(profile) = profile {
+        profile.validate_strict()?;
+    }
+    Ok(())
+}
+
 /// Binds exact nonsecret voice identity to the TTS configuration fingerprint.
 /// Any provider, model, speaker, status, rights digest or version change must
 /// invalidate all earlier RT0 evidence.
@@ -647,6 +661,29 @@ mod tests {
         changed.status = VoiceProfileStatus::Accepted;
         changed.rights_ref_sha256 = Some("b".repeat(64));
         assert_ne!(original, digest(&changed));
+    }
+
+    #[test]
+    fn strict_release_voice_configuration_is_fail_closed_and_integrated_speech_remains_valid() {
+        use crate::{VoiceProfile, VoiceProfileStatus};
+        let mut profile = VoiceProfile {
+            schema_version: "vpr-voice-profile-0.1".into(),
+            profile_id: "interim-qwen3-serena".into(), version: 1,
+            status: VoiceProfileStatus::Interim,
+            provider: "metrotrance-qwen-preset".into(),
+            model: "metrotrance-qwen-preset".into(),
+            voice: "Serena".into(), rights_ref_sha256: None,
+        };
+        let strict = super::validate_strict_voice_selection;
+        assert!(strict(None, None, false).is_ok());
+        assert!(strict(Some("metrotrance-qwen-preset"), Some(&profile), false).is_ok());
+        assert!(strict(Some("metrotrance-qwen-preset"), None, false).is_err());
+        assert!(strict(Some("metrotrance-qwen-preset"), Some(&profile), true).is_err());
+        profile.status = VoiceProfileStatus::Candidate;
+        assert!(strict(Some("metrotrance-qwen-preset"), Some(&profile), false).is_err());
+        profile.status = VoiceProfileStatus::Accepted;
+        profile.rights_ref_sha256 = Some("a".repeat(64));
+        assert!(strict(Some("metrotrance-qwen-preset"), Some(&profile), false).is_ok());
     }
 
     #[test]
