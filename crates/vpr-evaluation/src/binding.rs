@@ -26,6 +26,12 @@ pub struct ProviderStateBinding {
     pub provider: String,
     pub model_or_representation: String,
     pub configuration_fingerprint_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_profile_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -207,6 +213,20 @@ pub(crate) fn validate_provider_state(
         }
         if !valid_sha256(&provider.configuration_fingerprint_sha256) {
             return Err(EvidenceBindingError::InvalidProviderFingerprint);
+        }
+        if provider.role == ProviderRole::Tts {
+            if !matches!(provider.voice_profile_status.as_deref(), Some("INTERIM" | "ACCEPTED"))
+                || !provider.profile_id.as_deref().is_some_and(|id|
+                    (3..=64).contains(&id.len()) && id.bytes().all(|b|
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+                || !provider.version.is_some_and(|version| version > 0)
+            {
+                return Err(EvidenceBindingError::BlankProviderDescriptor);
+            }
+        } else if provider.voice_profile_status.is_some()
+            || provider.profile_id.is_some() || provider.version.is_some()
+        {
+            return Err(EvidenceBindingError::BlankProviderDescriptor);
         }
     }
     for required in [ProviderRole::Stt, ProviderRole::Llm, ProviderRole::Avatar] {
