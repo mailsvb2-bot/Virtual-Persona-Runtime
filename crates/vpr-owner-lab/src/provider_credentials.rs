@@ -20,6 +20,9 @@ pub struct StoredTtsCredential {
 
 impl StoredTtsCredential {
     /// Only provider-approved fields are persisted, never logged.
+    ///
+    /// # Errors
+    /// Rejects incomplete or unsupported provider credentials.
     pub fn validate(&self) -> Result<(), String> {
         if !matches!(self.provider.as_str(),
             "piper" | "windows-sapi" | "metrotrance-qwen" |
@@ -117,6 +120,9 @@ impl ProviderCredentialProfile {
     }
 
     /// Configures a single explicit TTS route without changing avatar/STT/LLM identity.
+    ///
+    /// # Errors
+    /// Rejects invalid TTS credentials or an invalid combined profile.
     pub fn set_tts(&mut self, stored: StoredTtsCredential) -> Result<(), String> {
         stored.validate()?;
         self.tts = Some(stored);
