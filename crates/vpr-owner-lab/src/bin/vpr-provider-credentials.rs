@@ -95,7 +95,10 @@ fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
         .ok_or("secure VPR profile is missing; configure avatar/STT/LLM first")?;
     println!("Configure the selected voice route. Credentials stay in Windows Credential Manager.");
     let stored = StoredTtsCredential {
-        provider: prompt_line("TTS provider (metrotrance-qwen-preset/piper/windows-sapi/openai-speech/elevenlabs): ")?.to_ascii_lowercase(),
+        provider: prompt_line(
+            "TTS provider (metrotrance-qwen-preset/piper/windows-sapi/openai-speech/elevenlabs): ",
+        )?
+        .to_ascii_lowercase(),
         endpoint: prompt_line("TTS endpoint: ")?,
         api_key: prompt_secret("TTS API key (hidden): ")?,
         model: prompt_line("TTS model: ")?,
@@ -473,7 +476,10 @@ fn print_safe_profile(profile: &ProviderCredentialProfile) {
         profile.llm_provider, profile.llm_model, profile.llm_endpoint
     );
     if let Some(tts) = &profile.tts {
-        println!("  TTS: {} {} voice={} · key: present", tts.provider, tts.model, tts.voice);
+        println!(
+            "  TTS: {} {} voice={} · key: present",
+            tts.provider, tts.model, tts.voice
+        );
     } else {
         println!("  TTS: not configured · key: absent");
     }
