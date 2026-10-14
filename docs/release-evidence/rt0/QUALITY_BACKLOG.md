@@ -44,3 +44,5 @@ remain in docs/capabilities/RT0.json and docs/releases/RT0_RELEASE_SPEC.md.
 - **Revocation:** subsequent protected turn is rejected with no new LLM egress.
 - **Live human/prod proof:** OPEN. Test-only LLM/STT/avatar fixtures, not RT0
   Golden or independent non-owner acceptance evidence.
+
+- **RT0-TTS-001:** Versioned voice-profile with `INTERIM` TTS binding, explicit status/rights provenance and provider-state digest invalidation. Human voice-naturalness acceptance deferred to RT1 only under Canon Amendment A1; RT0 audio/stop/sync/permissions remain non-deferred.
