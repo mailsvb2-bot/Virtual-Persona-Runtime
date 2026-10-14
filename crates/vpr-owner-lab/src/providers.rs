@@ -166,9 +166,12 @@ impl ProviderBundle {
         })
     }
 }
+type ConfiguredTts = (Box<dyn TtsPort>, ProviderDescriptor);
+type TtsFallbackConfiguration = (Option<String>, Option<ConfiguredTts>);
+
 fn configure_tts_fallback(
     primary: Option<&str>,
-) -> Result<(Option<String>, Option<(Box<dyn TtsPort>, ProviderDescriptor)>), String> {
+) -> Result<TtsFallbackConfiguration, String> {
     let fallback = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
     if fallback.is_some() && primary.is_none() {
         return Err("TTS fallback requires a primary canonical TTS provider".into());
