@@ -47,7 +47,7 @@ fn build_tts_configured(
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     if matches!(
         name,
-        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-chatterbox"
+        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-qwen-preset" | "metrotrance-chatterbox"
     ) && !is_loopback_speech_endpoint(endpoint)
     {
         return Err("local TTS must use a loopback HTTP speech endpoint".into());
@@ -62,6 +62,7 @@ fn build_tts_configured(
         "piper"
         | "windows-sapi"
         | "metrotrance-qwen"
+        | "metrotrance-qwen-preset"
         | "metrotrance-chatterbox"
         | "openai-speech" => Box::new(
             OpenAiSpeechTts::new(
@@ -144,6 +145,7 @@ mod tests {
                 "piper",
                 "windows-sapi",
                 "metrotrance-qwen",
+                "metrotrance-qwen-preset",
                 "metrotrance-chatterbox",
             ] {
                 let result = build_tts_configured(
@@ -159,6 +161,26 @@ mod tests {
         assert!(is_loopback_speech_endpoint(
             "http://localhost:8897/v1/audio/speech"
         ));
+    }
+
+    #[test]
+    fn qwen_preset_uses_existing_server_owned_tts_port_only() {
+        let (tts, descriptor) = build_tts_configured(
+            "metrotrance-qwen-preset",
+            "http://127.0.0.1:8897/v1/audio/speech",
+            "private-token".into(),
+            "metrotrance-qwen-preset",
+            "local",
+        ).expect("preset voice must reuse existing PCM publication path");
+        assert_eq!(tts.descriptor().provider, "metrotrance-qwen-preset");
+        assert_eq!(descriptor.provider, "metrotrance-qwen-preset");
+        assert!(build_tts_configured(
+            "metrotrance-qwen-preset",
+            "https://external.example.test/v1/audio/speech",
+            "private-token".into(),
+            "metrotrance-qwen-preset",
+            "local",
+        ).is_err());
     }
 
     #[test]
