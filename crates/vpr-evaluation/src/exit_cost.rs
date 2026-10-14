@@ -2,7 +2,11 @@ use std::collections::HashSet;
 
 use crate::{CostEvidence, EvidenceOrigin, ProviderRole, Rt0ExitFailureCode};
 
-pub(crate) fn evaluate_cost(evidence: &CostEvidence, requires_tts: bool, failures: &mut Vec<Rt0ExitFailureCode>) {
+pub(crate) fn evaluate_cost(
+    evidence: &CostEvidence,
+    requires_tts: bool,
+    failures: &mut Vec<Rt0ExitFailureCode>,
+) {
     if evidence.origin != EvidenceOrigin::Real {
         failures.push(Rt0ExitFailureCode::CostEvidenceNotReal);
     }
@@ -27,7 +31,10 @@ pub(crate) fn evaluate_cost(evidence: &CostEvidence, requires_tts: bool, failure
     }
 }
 
-pub(crate) fn estimated_cost_per_minute(evidence: &CostEvidence, requires_tts: bool) -> Option<u64> {
+pub(crate) fn estimated_cost_per_minute(
+    evidence: &CostEvidence,
+    requires_tts: bool,
+) -> Option<u64> {
     cost_per_minute(
         evidence,
         evidence.estimated_cost_microunits,
@@ -36,7 +43,10 @@ pub(crate) fn estimated_cost_per_minute(evidence: &CostEvidence, requires_tts: b
     )
 }
 
-pub(crate) fn provider_charge_per_minute(evidence: &CostEvidence, requires_tts: bool) -> Option<u64> {
+pub(crate) fn provider_charge_per_minute(
+    evidence: &CostEvidence,
+    requires_tts: bool,
+) -> Option<u64> {
     cost_per_minute(
         evidence,
         evidence.provider_charge_microunits,
@@ -52,7 +62,9 @@ fn cost_per_minute(
     requires_tts: bool,
 ) -> Option<u64> {
     let cost = cost?;
-    if evidence.measured_duration_millis == 0 || !coverage_complete(covered_provider_roles, requires_tts) {
+    if evidence.measured_duration_millis == 0
+        || !coverage_complete(covered_provider_roles, requires_tts)
+    {
         return None;
     }
     let numerator = u128::from(cost).checked_mul(60_000)?;
@@ -60,7 +72,11 @@ fn cost_per_minute(
     u64::try_from(value).ok()
 }
 
-fn signal_complete(cost: Option<u64>, covered_provider_roles: &[ProviderRole], requires_tts: bool) -> bool {
+fn signal_complete(
+    cost: Option<u64>,
+    covered_provider_roles: &[ProviderRole],
+    requires_tts: bool,
+) -> bool {
     cost.is_some() && coverage_complete(covered_provider_roles, requires_tts)
 }
 
