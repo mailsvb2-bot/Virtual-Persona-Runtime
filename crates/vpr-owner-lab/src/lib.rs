@@ -5,6 +5,7 @@ mod persona_persistence;
 mod provider_credentials;
 mod providers;
 mod state;
+mod voice_profile;
 #[cfg(windows)]
 mod windows_secure_store;
 
@@ -41,6 +42,7 @@ pub use state::{
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};
+pub use voice_profile::{VoiceProfile, VoiceProfileStatus};
 
 #[cfg(all(test, windows))]
 mod windows_restart_script_tests {
