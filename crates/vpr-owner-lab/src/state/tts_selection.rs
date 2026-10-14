@@ -18,6 +18,9 @@ impl OwnerLabEngine {
     /// # Errors
     /// Refuses unknown engines and visitor-initiated configuration changes.
     pub fn select_tts_provider(&mut self, name: &str) -> Result<(), LabError> {
+        if self.session.is_some() {
+            return Err(LabError::InvalidState);
+        }
         if self.session_audience == Some(LabSessionAudience::Visitor) {
             return Err(LabError::InvalidState);
         }
