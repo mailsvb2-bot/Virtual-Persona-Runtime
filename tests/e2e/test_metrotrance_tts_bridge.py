@@ -217,7 +217,11 @@ class SpeechBridgeContract(unittest.TestCase):
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
         self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen"})[0], 400)
-        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0], 200)
+        # Exact preset identity is required by the bridge: an unspecified voice
+        # must never silently use a different speaker than the bound profile.
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0], 400)
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Ryan"})[0], 400)
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Vivian"})[0], 200)
 
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
