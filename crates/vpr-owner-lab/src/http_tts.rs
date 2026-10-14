@@ -37,7 +37,7 @@ pub(super) fn select(
         return Err(error_response(409, "VOICE_BUSY"));
     }
     if let Ok(engine) = state.engine.lock() {
-        if !matches!(engine.status().session_state, "none" | "closed") {
+        if !matches!(engine.status().session_state.as_str(), "none" | "closed") {
             return Err(error_response(409, "TTS_LOCKED_DURING_SESSION"));
         }
     }
