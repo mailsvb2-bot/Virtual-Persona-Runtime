@@ -103,6 +103,7 @@
     <section class="stage">
       <video id="avatar" autoplay playsinline></video>
       <audio id="avatar-audio" autoplay hidden></audio>
+      <button id="audio-unlock" type="button" hidden aria-label="Разрешить воспроизведение голоса аватара">Включить звук аватара</button>
       <div id="placeholder" class="placeholder">Видео появится после подключения realtime-транспорта</div>
     </section>
 
@@ -159,7 +160,8 @@
       <select id="microphone-device">
         <option value="">Системный микрофон по умолчанию</option>
       </select>
-      <p class="hint">Выберите конкретное устройство ввода, если браузер использует не тот микрофон. Названия устройств могут появиться только после разрешения доступа к микрофону.</p>
+      <button id="microphone-refresh" type="button">Найти встроенный и другие микрофоны</button>
+      <p class="hint">Выберите конкретное устройство ввода, если браузер использует не тот микрофон. Нажмите «Найти…», чтобы разрешить доступ и увидеть названия устройств. Можно переключать микрофон прямо во время записи, не прерывая голосовую реплику.</p>
       <label for="microphone-level">Уровень входного сигнала</label>
       <meter id="microphone-level" min="0" max="1" value="0"></meter>
       <p id="microphone-level-text" class="hint">Сигнал появится во время записи.</p>

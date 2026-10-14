@@ -33,6 +33,54 @@ impl TtsPort for TestCanonicalTts {
 }
 
 #[test]
+fn connection_greeting_uses_one_fresh_authorized_pcm_turn_without_browser_command() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine.with_named_tts(
+        "piper".to_owned(),
+        Box::new(TestCanonicalTts {
+            stats: Arc::clone(&stats),
+            qwen: true,
+        }),
+    );
+    let greeting = engine.prepare_connection_greeting().unwrap();
+    assert!(greeting.client_command.is_none());
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 1);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 1);
+    engine.revoke_authority().unwrap();
+    assert!(engine.prepare_connection_greeting().is_err());
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn interrupted_reply_resume_uses_same_tts_pcm_owner_and_no_browser_did_speak() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine.with_named_tts(
+        "piper".to_owned(),
+        Box::new(TestCanonicalTts {
+            stats: Arc::clone(&stats),
+            qwen: true,
+        }),
+    );
+    let original = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
+    assert!(original.client_command.is_none());
+    let pcm_before = stats.avatar_pcm.load(Ordering::SeqCst);
+    let tts_before = stats.tts_qwen.load(Ordering::SeqCst);
+    let result = engine.prepare_resumed_speech("Продолжаю ответ.").unwrap();
+    assert!(
+        result.client_command.is_none(),
+        "Echo never creates browser did.speak"
+    );
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), pcm_before + 1);
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), tts_before + 1);
+    assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
+    assert!(result.evidence_turn_sequence > original.evidence_turn_sequence);
+    engine.revoke_authority().unwrap();
+    assert!(engine.prepare_resumed_speech("После отзыва.").is_err());
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), pcm_before + 1);
+}
+
+#[test]
 fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
     let (engine, stats, _) = voice_engine(false);
     let mut engine = engine

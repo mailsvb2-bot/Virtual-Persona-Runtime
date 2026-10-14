@@ -4,7 +4,7 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use vpr_integration::ProviderErrorKind;
+use vpr_integration::{ProviderErrorKind, RealtimeAvatarCapability};
 
 struct Probe(AtomicBool);
 
@@ -758,6 +758,12 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    assert!(
+        provider
+            .capabilities()
+            .supports(RealtimeAvatarCapability::Interrupt),
+        "private Echo backend STOP must be available without browser publisher"
+    );
     let probe = Probe(AtomicBool::new(false));
     let session = provider.create_session(&probe).unwrap();
     let create = captured.recv().unwrap();

@@ -203,7 +203,9 @@ const server = http.createServer(async (request, response) => {
         250,
       );
     }
-    const reply = prompt.includes("Восстановление после отказа")
+    const reply = prompt.includes("Вопрос после исправления владельцем")
+      ? "Исправленное мнение учтено"
+      : prompt.includes("Восстановление после отказа")
       ? "Ответ после восстановления"
       : prompt.includes("Текстовый вопрос владельца")
       ? "Текстовый ответ владельцу"

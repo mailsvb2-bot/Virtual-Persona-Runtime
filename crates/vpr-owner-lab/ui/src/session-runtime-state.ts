@@ -11,6 +11,7 @@ export type LabStatus = {
   avatar_open: boolean;
   egress_enabled: boolean;
   conversation_readiness: ConversationReadiness;
+  greeting_available?: boolean;
   modality_readiness: ModalityReadinessStatus;
   session_audience: SessionAudience | null;
   owner_context_state: "missing" | "reviewed";
@@ -28,6 +29,7 @@ const INITIAL_LAB_STATUS: LabStatus = {
   avatar_open: false,
   egress_enabled: false,
   conversation_readiness: "none",
+  greeting_available: false,
   modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" },
   session_audience: null,
   owner_context_state: "missing",

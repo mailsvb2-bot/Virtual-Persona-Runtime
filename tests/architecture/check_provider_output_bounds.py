@@ -12,6 +12,7 @@ for required in (
     "MAX_PROVIDER_BINARY_BODY_BYTES",
     "MAX_PROVIDER_STREAM_LINE_BYTES",
     "read_bounded_provider_body",
+    "read_bounded_provider_stream",
     "BoundedProviderLineReader",
 ):
     if required not in HTTP:
@@ -82,8 +83,12 @@ for crate_name in json_body_crates | binary_body_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    if "read_bounded_provider_body" not in source:
-        raise SystemExit(f"{crate_name} bypasses bounded provider body reads")
+    bounded_body = "read_bounded_provider_body" in source
+    bounded_stream = "read_bounded_provider_stream" in source
+    # Media adapters may consume bounded chunks instead of waiting for EOF.
+    # Both entry points enforce the same maximum observed response body size.
+    if not (bounded_body or bounded_stream):
+        raise SystemExit(f"{crate_name} bypasses canonical bounded provider body/stream reads")
 
 if not reqwest_provider_crates:
     raise SystemExit("expected at least one reqwest-backed provider adapter")

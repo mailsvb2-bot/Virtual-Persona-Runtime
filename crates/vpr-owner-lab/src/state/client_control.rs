@@ -100,6 +100,19 @@ pub struct LabResumedSpeech {
 }
 
 impl OwnerLabEngine {
+    /// One fixed Russian greeting after video becomes visible. Consent, active
+    /// session authority and the private server-owned TTS path are mandatory;
+    /// no browser-provided script, no implicit LLM turn, no fake playback ACK.
+    ///
+    /// # Errors
+    /// Rejects an unavailable TTS engine or any inactive/unauthorized session.
+    pub fn prepare_connection_greeting(&mut self) -> Result<LabResumedSpeech, LabError> {
+        if self.tts.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.prepare_resumed_speech("Здравствуйте! Чем могу помочь?")
+    }
+
     /// Re-authorizes a suffix of a previously generated answer against the CURRENT
     /// session epoch, Persona and egress/consent policies before browser-provider delivery.
     ///
@@ -118,7 +131,27 @@ impl OwnerLabEngine {
         let browser_sends = handle
             .client_control()
             .is_some_and(|control| control.text_input);
-        let (delivery, command) = if browser_sends {
+        let (delivery, command) = if let Some(tts) = self.tts.as_deref() {
+            // Resume MUST follow the same server-owned TTS -> authorized PCM ->
+            // private Echo route as the original spoken answer. The text-only
+            // avatar route may acknowledge Sent without producing any audio.
+            let delivery = turn
+                .synthesize_and_deliver_realtime_avatar_audio(
+                    tts,
+                    self.provider.as_ref(),
+                    handle,
+                    suffix,
+                )
+                .map_err(|error| match error {
+                    vpr_runtime::RealtimeAvatarOutputError::Runtime(reason) => {
+                        LabError::Runtime(reason)
+                    }
+                    vpr_runtime::RealtimeAvatarOutputError::Provider(reason) => {
+                        super::map_provider_execution(reason)
+                    }
+                })?;
+            (delivery, None)
+        } else if browser_sends {
             let (delivery, command) = turn
                 .prepare_realtime_avatar_client_text(self.provider.as_ref(), handle, suffix)
                 .map_err(|error| match error {

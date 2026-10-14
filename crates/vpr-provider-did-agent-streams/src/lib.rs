@@ -5,14 +5,15 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
+    RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
+    RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
     build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
+mod capabilities;
 mod client_control;
 mod diagnostics;
 mod echo;
@@ -21,15 +22,15 @@ mod echo_python;
 mod protocol;
 mod provider_error;
 mod response_json;
+mod session_creation;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
 use echo::DidEchoRegistry;
 pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
-    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse,
-    CreateV2SessionResponse, IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest,
-    SpeakScript, parse_livekit_event,
+    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse, IceRequest, SdpRequest,
+    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
@@ -256,50 +257,6 @@ impl DidAgentStreamsAvatar {
         Ok(session)
     }
 
-    fn create_livekit_session(
-        &self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<RealtimeAvatarSession, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        // A viewer-side LiveKit token cannot be atomically revoked with a
-        // browser-published did.speak. No expressive session is issued without
-        // a separately credentialed server-owned Echo audio publisher.
-        if self.echo_backend.is_none() {
-            return Err(policy_denied());
-        }
-        let request = self.authorized(self.client.post(self.v2_sessions_url()?));
-        let request = if self.echo_backend.is_some() {
-            request.json(&serde_json::json!({"session_type": "echo"}))
-        } else {
-            request
-        };
-        let response = request
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
-        if let Some(backend) = &self.echo_backend {
-            let secret = body
-                .echo_token
-                .as_deref()
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(invalid_response)?
-                .to_owned();
-            let session_url = body.session_url.clone();
-            let session: RealtimeAvatarSession = body.try_into()?;
-            self.echo_sessions.open_session(
-                backend.as_ref(),
-                &session.provider_session_id,
-                &session_url,
-                &secret,
-                cancellation,
-            )?;
-            Ok(session)
-        } else {
-            body.try_into()
-        }
-    }
-
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
         request
             .header(AUTHORIZATION, format!("Basic {}", self.config.api_key))
@@ -321,12 +278,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
     }
 
     fn capabilities(&self) -> RealtimeAvatarCapabilities {
-        let audio_input = if self.echo_backend.is_some() {
-            RealtimeAvatarCapability::AudioPcmInput
-        } else {
-            RealtimeAvatarCapability::AudioUrlInput
-        };
-        RealtimeAvatarCapabilities::new([RealtimeAvatarCapability::TextInput, audio_input])
+        self.advertised_capabilities()
     }
 
     fn create_session(
@@ -452,6 +404,29 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
         echo_pcm::send_private_pcm(self, session, pcm, sample_rate_hz, channels, cancellation)
+    }
+
+    fn open_pcm_stream(
+        &self,
+        session: &RealtimeAvatarSession,
+        sample_rate_hz: u32,
+        channels: u16,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        Self::validate_session(session)?;
+        if !matches!(session.transport, RealtimeAvatarTransport::LiveKit { .. })
+            || !self.echo_sessions.contains(&session.provider_session_id)?
+        {
+            return Err(policy_denied());
+        }
+        let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
+        backend.open_pcm_stream(
+            &session.provider_session_id,
+            sample_rate_hz,
+            channels,
+            cancellation,
+        )
     }
 
     fn speak_audio_url(

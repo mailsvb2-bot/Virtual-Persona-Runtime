@@ -11,7 +11,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 )
 if ($parseErrors.Count -gt 0) { throw "Windows launcher has PowerShell parse errors" }
 
-foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate')) {
+foreach ($name in @('Assert-ExpectedListener', 'Stop-PortListener', 'Get-Rt0GitCandidate', 'Get-VerifiedExistingOwnerLabExe', 'Get-AvailablePrivateVoicePort', 'Get-AvailableCanaryPort', 'Assert-CanaryReadiness', 'Wait-CanaryLabReady', 'Stop-CanaryLab')) {
     $matching = @($ast.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -107,3 +107,133 @@ try {
 }
 Write-Host 'RT0 ZIP checkout diagnostic regression: PASS'
 
+
+
+# Optional Piper first use must never disable the frozen candidate or loosen
+# listener identity checks. Validate the real production entrypoint statically.
+$source = Get-Content -LiteralPath $launcher -Raw
+$prepareAt = $source.IndexOf('& py -3.11 $preparer --data-dir $piperRoot')
+$stopAt = $source.IndexOf('Stop-PortListener -ExpectedExe $oldExe')
+if ($prepareAt -lt 0 -or $stopAt -lt 0 -or $prepareAt -ge $stopAt) {
+    throw 'Piper provisioning must complete before any Owner Lab process is stopped'
+}
+foreach ($required in @(
+    '[switch]$Piper',
+    'function New-PiperPrivateToken',
+    '[System.Security.Cryptography.RandomNumberGenerator]::Create()',
+    'function Wait-PiperReady',
+    'function Test-VerifiedPiperListener',
+    '$owner.ParentProcessId -ne $Process.Id',
+    '$owner.CommandLine.IndexOf($BridgeScript, $compare)',
+    'Test-VerifiedPiperListener -Process $piperProcess -OwnerPid $piperListenerPid',
+    '$ownedChild.Handle',
+    '$ownedChild.Path -eq $piperBasePython',
+    '$ownedChild.Kill()',
+    '$ownedChild.Close()',
+    'VPR_OWNER_LAB_TTS_PROVIDER',
+    'VPR_OWNER_LAB_TTS_MODEL',
+    'VPR_OWNER_LAB_TTS_VOICE',
+    'VPR_METROTRANCE_TTS_TOKEN',
+    'Get-NetTCPConnection -LocalPort $candidate',
+    'Get-NetTCPConnection -LocalPort $privateVoicePort',
+    '$labProcess.WaitForExit()',
+    '$piperProcess.Kill()'
+)) {
+    if (-not $source.Contains($required)) {
+        throw "Piper process ownership / security contract missing: $required"
+    }
+}
+$click = Join-Path $PSScriptRoot '..\..\START_VPR_WITH_VOICE.cmd'
+$cmd = Get-Content -LiteralPath $click -Raw
+if (-not $cmd.Contains('scripts\start-rt0-sapi.cmd')) {
+    throw 'One-click entrypoint must use local female system voice by default'
+}
+$sapiLauncher = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-sapi.cmd') -Raw
+if (-not $sapiLauncher.Contains('-SystemVoice -Rt0Evidence')) {
+    throw 'Native female system voice must preserve strict RT0 evidence checks'
+}
+if (-not $source.Contains('[switch]$SystemVoice') -or
+    -not $source.Contains('scripts\windows_sapi_prepare.py') -or
+    -not $source.Contains('scripts\windows_sapi_tts_bridge.py') -or
+    -not $source.Contains("'windows-sapi'")) {
+    throw 'Native Windows voice setup must use its own isolated, server-owned provider path'
+}
+$delegate = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-piper.cmd') -Raw
+if (-not $delegate.Contains('-Piper -Rt0Evidence')) {
+    throw 'First-use Piper must preserve exact-candidate RT0 evidence'
+}
+# Expressive credentials are validated only after canonical Piper/Echo is
+# declared. A misplaced probe used to reject fully configured D-ID accounts.
+$piperBinding = $source.IndexOf('$env:VPR_OWNER_LAB_TTS_PROVIDER = if ($SystemVoice)')
+$credentialProbe = $source.IndexOf('& $credentialsExe probe-avatar')
+$piperLaunch = $source.IndexOf('$piperProcess = Start-Process')
+if ($piperBinding -lt 0 -or $credentialProbe -lt 0 -or $piperLaunch -lt 0 -or
+    $piperBinding -ge $credentialProbe -or $credentialProbe -ge $piperLaunch) {
+    throw 'Expressive Echo preflight must see selected Piper provider before spawning it'
+}
+Write-Host 'Windows Piper one-click provisioning and process ownership: PASS'
+
+# Virtualenv Windows python.exe can create a direct child base interpreter.
+# Never weaken identity validation to owning PID alone (or just localhost).
+$guardStart = $source.IndexOf('function Test-VerifiedPiperListener')
+$warmupStart = $source.IndexOf('function Wait-PiperReady')
+if ($guardStart -lt 0 -or $warmupStart -le $guardStart) {
+    throw 'The verified direct-child identity function must precede bearer warmup'
+}
+$guard = $source.Substring($guardStart, $warmupStart - $guardStart)
+foreach ($proof in @(
+    'ParentProcessId -ne $Process.Id',
+    'ExecutablePath -ne $BasePython',
+    'ExecutablePath -eq $VenvPython',
+    'CommandLine.IndexOf($BridgeScript, $compare)'
+)) {
+    if (-not $guard.Contains($proof)) {
+        throw "Refusing to accept a different Python process without identity proof: $proof"
+    }
+}
+$venvResolution = $source.IndexOf('Get-Content -LiteralPath $venvConfig -Encoding UTF8')
+if ($venvResolution -lt 0 -or -not $source.Contains("Substring('executable = '.Length)")) {
+    throw 'The virtualenv base Python path must be read in UTF-8, not mangled via native stdout'
+}
+if ($source.Contains('Stop-Process -Id $piperListenerPid')) {
+    throw 'Piper cleanup must use the verified child process handle, not a recyclable PID'
+}
+if ($source.IndexOf('if ($Piper -and $SystemVoice)') -lt 0) {
+    throw 'Local voice modes must be exclusive to avoid accidental provider switching'
+}
+Write-Host 'Windows Piper and female system voice child binding and cleanup: PASS'
+
+# Real launcher ordering: preparation and trust checks must all finish before
+# terminating the verified previous process.
+$build = $source.IndexOf('cargo build --locked -p vpr-owner-lab --bins')
+$copy = $source.IndexOf('Copy-Item -LiteralPath $builtExe -Destination $exe -Force')
+$probe = $source.IndexOf('& $credentialsExe probe-avatar')
+$warm = $source.IndexOf('Wait-PiperReady -Process $piperProcess')
+$canary = $source.IndexOf('Wait-CanaryLabReady -Process $canaryProcess')
+$canaryStop = $source.IndexOf('Stop-CanaryLab -Process $canaryProcess')
+$stop = $source.IndexOf('Stop-PortListener -ExpectedExe $oldExe')
+$launch = $source.IndexOf('$labProcess = Start-Process -FilePath $exe')
+if ($build -lt 0 -or $copy -le $build -or $probe -le $copy -or
+    $warm -le $probe -or $canary -le $warm -or $canaryStop -le $canary -or
+    $stop -le $canaryStop -or $launch -le $stop) {
+    throw 'Old Owner Lab is terminated before new binary/credentials/private voice are ready'
+}
+if (-not $source.Contains('target\rt0-staging') -or -not $source.Contains('target\rt0-live')) {
+    throw 'New binary must build in an isolated cache and start from alternating slots'
+}
+$script:listenerPresent = $true
+$script:runningExe = 'C:\Windows\System32\foreign.exe'
+$rejectedForeign = $false
+try {
+    $null = Get-VerifiedExistingOwnerLabExe -LegacyExe $script:expectedExe -SlotAExe 'C:\vpr\target\rt0-live\a\vpr-owner-lab.exe' -SlotBExe 'C:\vpr\target\rt0-live\b\vpr-owner-lab.exe'
+} catch { $rejectedForeign = $_.Exception.Message -match 'Foreign listener' }
+if (-not $rejectedForeign) { throw 'Foreign listener was accepted for termination' }
+$script:runningExe = $script:expectedExe
+$actual = Get-VerifiedExistingOwnerLabExe -LegacyExe $script:expectedExe -SlotAExe 'C:\vpr\target\rt0-live\a\vpr-owner-lab.exe' -SlotBExe 'C:\vpr\target\rt0-live\b\vpr-owner-lab.exe'
+if ($actual -ne $script:expectedExe) { throw 'Known legacy Lab was rejected' }
+function Get-NetTCPConnection {
+    param($LocalPort, $State, $ErrorAction)
+    if ($LocalPort -eq 8897) { [pscustomobject]@{ OwningProcess = 99999 } }
+}
+if ((Get-AvailablePrivateVoicePort) -ne 8898) { throw 'Port selection must preserve an existing voice listener' }
+Write-Host 'Windows transactional candidate preparation and port isolation: PASS'

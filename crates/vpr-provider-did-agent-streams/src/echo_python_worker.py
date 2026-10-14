@@ -13,8 +13,12 @@ import wave
 from urllib.parse import urlsplit
 
 MAX_WAV_BYTES = 8 * 1024 * 1024
+MAX_WAV_HEADER_BYTES = 64 * 1024
+WAV_STREAM_CHUNK_BYTES = 4 * 1024
 MAX_TEXT_BYTES = 4096
 MAX_PENDING_UTTERANCES = 16
+MAX_STREAMED_PCM_QUEUE = 8
+MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
 
 
@@ -22,8 +26,19 @@ def emit(identifier, ok):
     print(json.dumps({"id": identifier, "ok": bool(ok)}, separators=(",", ":")), flush=True)
 
 
-def synthesize(text):
-    """Blocking TTS lives in a worker thread; cancellation fences its result."""
+class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a private TTS token or voice text to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("TTS redirects are not authorized")
+
+
+def synthesize_chunks(text):
+    """Read validated PCM16 WAV as bounded provider chunks, not a whole file.
+
+    Called only by the private authorized Echo worker. The caller's generation
+    fence is checked before EVERY async LiveKit write, including after STOP.
+    """
     if not isinstance(text, str) or not text.strip():
         raise ValueError("invalid speech")
     if len(text.encode("utf-8")) > MAX_TEXT_BYTES:
@@ -43,21 +58,67 @@ def synthesize(text):
         },
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=TTS_TIMEOUT_SECONDS) as response:
-        wav_bytes = response.read(MAX_WAV_BYTES + 1)
-    if len(wav_bytes) > MAX_WAV_BYTES or not wav_bytes.startswith(b"RIFF"):
-        raise ValueError("invalid bounded WAV")
-    with wave.open(io.BytesIO(wav_bytes), "rb") as audio:
-        if (
-            audio.getcomptype() != "NONE"
-            or audio.getsampwidth() != 2
-            or audio.getnchannels() not in (1, 2)
-            or audio.getframerate() < 8000
-            or audio.getnframes() == 0
-            or audio.getnframes() > audio.getframerate() * 60
-        ):
-            raise ValueError("unsupported audio format")
-    return wav_bytes
+    opener = urllib.request.build_opener(NoCredentialRedirect())
+    with opener.open(request, timeout=TTS_TIMEOUT_SECONDS) as response:
+        declared = response.headers.get("Content-Length")
+        if declared is not None and int(declared) > MAX_WAV_BYTES:
+            raise ValueError("oversized declared WAV")
+        received = 0
+        expected_size = None
+        header = bytearray()
+        while True:
+            chunk = response.read(WAV_STREAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > MAX_WAV_BYTES:
+                raise ValueError("oversized streamed WAV")
+            if expected_size is None:
+                header.extend(chunk)
+                if len(header) < 12:
+                    continue
+                if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+                    raise ValueError("not PCM WAV")
+                expected = int.from_bytes(header[4:8], "little") + 8
+                if expected > MAX_WAV_BYTES or expected < 44 or received > expected:
+                    raise ValueError("invalid declared RIFF length")
+                try:
+                    with wave.open(io.BytesIO(header), "rb") as audio:
+                        if (
+                            audio.getcomptype() != "NONE"
+                            or audio.getsampwidth() != 2
+                            or audio.getnchannels() not in (1, 2)
+                            or not 8000 <= audio.getframerate() <= 96000
+                            or audio.getnframes() == 0
+                            or audio.getnframes() > audio.getframerate() * 60
+                        ):
+                            raise ValueError("unsupported audio format")
+                except (EOFError, wave.Error) as error:
+                    if len(header) >= MAX_WAV_HEADER_BYTES:
+                        raise ValueError("invalid streamed WAV header") from error
+                    continue
+                expected_size = expected
+                yield bytes(header)
+                header.clear()
+            else:
+                if received > expected_size:
+                    raise ValueError("extra untrusted WAV bytes")
+                yield chunk
+        if expected_size is None or received != expected_size:
+            raise ValueError("incomplete streamed WAV")
+
+
+def synthesize(text):
+    """Compatibility buffered helper; realtime Echo uses synthesize_chunks."""
+    return b"".join(synthesize_chunks(text))
+
+
+def next_speech_chunk(iterator):
+    """Avoid leaking StopIteration into asyncio.to_thread's Future."""
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
 
 
 async def run():
@@ -99,43 +160,136 @@ async def run():
     utterance_lock = asyncio.Lock()
     tasks = {}
     generation = 0
+    active_pcm = None
 
-    async def speak(identifier, phrase, generation_at_start, preauthorized_wav=None):
+    async def pump_pcm(state):
+        nonlocal generation, active_pcm
         writer = None
+        published = False
         try:
-            # Serialize synthesis as well as sending. Otherwise a later,
-            # faster TTS request can overtake an earlier spoken sentence.
+            async with utterance_lock:
+                if state["generation"] != generation:
+                    raise asyncio.CancelledError()
+                writer = await room.local_participant.stream_bytes(
+                    name=f'rt0-pcm-stream-{state["stream_id"]}',
+                    topic="did.audio-stream",
+                    attributes={
+                        "format": "pcm16",
+                        "sample_rate": str(state["rate"]),
+                        "channels": str(state["channels"]),
+                    },
+                    destination_identities=agents,
+                )
+                while True:
+                    chunk = await state["queue"].get()
+                    if state["generation"] != generation:
+                        raise asyncio.CancelledError()
+                    if chunk is None:
+                        break
+                    await writer.write(chunk)
+                    published = True
+                await writer.aclose()
+                writer = None
+                if state["generation"] != generation:
+                    raise asyncio.CancelledError()
+                if state["end_id"] is not None:
+                    emit(state["end_id"], True)
+                    state["end_id"] = None
+        except asyncio.CancelledError:
+            if state["end_id"] is not None:
+                emit(state["end_id"], False)
+                state["end_id"] = None
+        except Exception:
+            if state["generation"] == generation:
+                generation += 1
+                if published:
+                    try:
+                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                    except Exception:
+                        pass
+            if state["end_id"] is not None:
+                emit(state["end_id"], False)
+                state["end_id"] = None
+        finally:
+            if writer is not None:
+                try:
+                    await writer.aclose()
+                except Exception:
+                    pass
+            if active_pcm is state:
+                active_pcm = None
+
+    async def speak(identifier, phrase, generation_at_start, preauthorized_pcm=None):
+        nonlocal generation
+        writer = None
+        published = False
+        try:
+            # Serialize synthesis and publishing: later TTS cannot overtake the
+            # earlier sentence. Each blocking read occupies a worker thread,
+            # not the STOP/control event loop.
             async with utterance_lock:
                 if generation_at_start != generation:
                     emit(identifier, False)
                     return
-                wav = preauthorized_wav if preauthorized_wav is not None else await asyncio.to_thread(synthesize, phrase)
+                if preauthorized_pcm is None:
+                    source = synthesize_chunks(phrase)
+                    attributes = {"format": "wav"}
+                    async def next_chunk():
+                        return await asyncio.to_thread(next_speech_chunk, source)
+                else:
+                    pcm, rate, channels = preauthorized_pcm
+                    attributes = {
+                        "format": "pcm16", "sample_rate": str(rate),
+                        "channels": str(channels),
+                    }
+                    chunks = iter(pcm[offset:offset + 16 * 1024]
+                                  for offset in range(0, len(pcm), 16 * 1024))
+                    async def next_chunk():
+                        return next(chunks, None)
+
+                chunk = await next_chunk()
                 if generation_at_start != generation:
-                    emit(identifier, False)
-                    return
+                    raise asyncio.CancelledError()
+                if not chunk:
+                    raise ValueError("empty TTS stream")
                 writer = await room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
-                    attributes={"format": "wav"},
+                    attributes=attributes,
                     destination_identities=agents,
                 )
-                # Backpressure from LiveKit bounds outbound sender memory.
-                for offset in range(0, len(wav), 16 * 1024):
+                while chunk is not None:
                     if generation_at_start != generation:
                         raise asyncio.CancelledError()
-                    await writer.write(wav[offset:offset + 16 * 1024])
+                    await writer.write(chunk)
+                    published = True
+                    chunk = await next_chunk()
+                if generation_at_start != generation:
+                    raise asyncio.CancelledError()
                 await writer.aclose()
                 writer = None
-                # Closing a byte stream means D-ID received the utterance,
-                # not that audio played. A concurrent STOP must not turn a
-                # cancelled utterance into a successful sender receipt.
+                # A closed byte stream is only provider delivery, never verified
+                # RTP playout, audio hearing, or lip synchronisation.
                 if generation_at_start != generation:
-                    emit(identifier, False)
-                    return
+                    raise asyncio.CancelledError()
                 emit(identifier, True)
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
+            # A failed stream is terminal for this publisher generation.
+            # An incomplete WAV may already be in D-ID's playback queue.
+            # Fence every queued utterance before sending the remote interrupt;
+            # otherwise the next task can race ahead and publish stale sound.
+            if generation_at_start == generation:
+                generation += 1
+                for task in tuple(tasks.values()):
+                    if task is not asyncio.current_task():
+                        task.cancel()
+                if published:
+                    try:
+                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                    except Exception:
+                        pass
             emit(identifier, False)
         finally:
             if writer is not None:
@@ -143,7 +297,6 @@ async def run():
                     await writer.aclose()
                 except Exception:
                     pass
-            # A stale task must never remove a newer task's ownership.
             if tasks.get(identifier) is asyncio.current_task():
                 tasks.pop(identifier, None)
 
@@ -157,7 +310,7 @@ async def run():
                     text = request["text"]
                     # Request IDs identify exactly one in-flight utterance. A duplicate
                     # must not replace its task or evade STOP/close cancellation.
-                    if identifier in tasks or len(tasks) >= MAX_PENDING_UTTERANCES:
+                    if active_pcm is not None or identifier in tasks or len(tasks) >= MAX_PENDING_UTTERANCES:
                         emit(identifier, False)
                         continue
                     if (
@@ -176,7 +329,8 @@ async def run():
                     rate = request.get("sample_rate_hz")
                     channels = request.get("channels")
                     if (
-                        identifier in tasks
+                        active_pcm is not None
+                        or identifier in tasks
                         or len(tasks) >= MAX_PENDING_UTTERANCES
                         or not isinstance(raw_pcm, str)
                         or len(raw_pcm) > MAX_WAV_BYTES * 2
@@ -193,22 +347,95 @@ async def run():
                             raise ValueError("invalid PCM16")
                         if len(pcm) // (channels * 2) > rate * 60:
                             raise ValueError("audio too long")
-                        with io.BytesIO() as output:
-                            with wave.open(output, "wb") as writer:
-                                writer.setnchannels(channels)
-                                writer.setsampwidth(2)
-                                writer.setframerate(rate)
-                                writer.writeframes(pcm)
-                            wav = output.getvalue()
-                        if len(wav) > MAX_WAV_BYTES:
-                            raise ValueError("audio too large")
                     except (ValueError, OverflowError):
                         emit(identifier, False)
                         continue
-                    task = asyncio.create_task(speak(identifier, None, generation, wav))
+                    task = asyncio.create_task(speak(identifier, None, generation, (pcm, rate, channels)))
                     tasks[identifier] = task
+                elif command == "pcm_begin":
+                    rate = request.get("sample_rate_hz")
+                    channels = request.get("channels")
+                    if (
+                        active_pcm is not None or tasks
+                        or type(rate) is not int or type(channels) is not int
+                        or not 8000 <= rate <= 96000 or channels not in (1, 2)
+                    ):
+                        emit(identifier, False)
+                        continue
+                    active_pcm = {
+                        "stream_id": identifier,
+                        "generation": generation,
+                        "rate": rate,
+                        "channels": channels,
+                        "bytes": 0,
+                        "end_id": None,
+                        "queue": asyncio.Queue(maxsize=MAX_STREAMED_PCM_QUEUE),
+                    }
+                    active_pcm["task"] = asyncio.create_task(pump_pcm(active_pcm))
+                    emit(identifier, True)
+                elif command == "pcm_chunk":
+                    state = active_pcm
+                    raw_pcm = request.get("pcm_hex")
+                    if (
+                        state is None or state["stream_id"] != request.get("stream_id")
+                        or state["generation"] != generation or state["end_id"] is not None
+                        or not isinstance(raw_pcm, str) or not raw_pcm
+                        or len(raw_pcm) > MAX_PCM_COMMAND_HEX
+                        or state["queue"].full()
+                    ):
+                        emit(identifier, False)
+                        continue
+                    try:
+                        pcm = bytes.fromhex(raw_pcm)
+                        size = state["bytes"] + len(pcm)
+                        if (
+                            not pcm or len(pcm) % (state["channels"] * 2) != 0
+                            or size > MAX_WAV_BYTES - 44
+                            or size // (state["channels"] * 2) > state["rate"] * 60
+                        ):
+                            raise ValueError("invalid bounded PCM chunk")
+                        state["queue"].put_nowait(pcm)
+                        state["bytes"] = size
+                        emit(identifier, True)  # queued only, not played
+                    except (ValueError, OverflowError, asyncio.QueueFull):
+                        emit(identifier, False)
+                elif command == "pcm_end":
+                    state = active_pcm
+                    if (
+                        state is None or state["stream_id"] != request.get("stream_id")
+                        or state["generation"] != generation or state["end_id"] is not None
+                        or state["bytes"] == 0 or state["queue"].full()
+                    ):
+                        emit(identifier, False)
+                        continue
+                    state["end_id"] = identifier
+                    state["queue"].put_nowait(None)
+                    # The pump acknowledges end ONLY after LiveKit stream close.
+                elif command == "pcm_abort":
+                    state = active_pcm
+                    if state is None or state["stream_id"] != request.get("stream_id"):
+                        emit(identifier, False)
+                        continue
+                    generation += 1
+                    active_pcm = None
+                    state["task"].cancel()
+                    if state["end_id"] is not None:
+                        emit(state["end_id"], False)
+                        state["end_id"] = None
+                    try:
+                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        emit(identifier, True)
+                    except Exception:
+                        emit(identifier, False)
                 elif command == "interrupt":
                     generation += 1
+                    if active_pcm is not None:
+                        state = active_pcm
+                        active_pcm = None
+                        state["task"].cancel()
+                        if state["end_id"] is not None:
+                            emit(state["end_id"], False)
+                            state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
                     # This is a text STOP command, never browser-published audio.
@@ -216,6 +443,13 @@ async def run():
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
+                    if active_pcm is not None:
+                        state = active_pcm
+                        active_pcm = None
+                        state["task"].cancel()
+                        if state["end_id"] is not None:
+                            emit(state["end_id"], False)
+                            state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
                     await room.local_participant.send_text("{}", topic="did.interrupt")
@@ -230,6 +464,9 @@ async def run():
                 except Exception:
                     pass
     finally:
+        if active_pcm is not None:
+            active_pcm["task"].cancel()
+            await asyncio.gather(active_pcm["task"], return_exceptions=True)
         for task in tuple(tasks.values()):
             task.cancel()
         if tasks:

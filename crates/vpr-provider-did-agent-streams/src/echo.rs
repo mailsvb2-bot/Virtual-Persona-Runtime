@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Mutex;
 
-use vpr_integration::{CancellationProbe, ProviderError};
+use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarPcmStream};
 
 /// Server-owned D-ID Echo transport. Implementation must synthesize speech
 /// through a backend-only TTS path and send PCM/WAV on did.audio-stream with
@@ -45,6 +45,26 @@ pub trait DidEchoBackend: Send + Sync {
         _channels: u16,
         _cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        Err(super::unavailable())
+    }
+
+    /// Whether this concrete private publisher accepts one incremental PCM16
+    /// utterance. Advertise only after an implementation actually supports it.
+    fn supports_pcm_stream(&self) -> bool {
+        false
+    }
+
+    /// Opens a bounded private PCM16 stream after canonical TTS and avatar permits.
+    ///
+    /// # Errors
+    /// Returns unavailable unless the concrete sender implements native streaming.
+    fn open_pcm_stream(
+        &self,
+        _session_id: &str,
+        _sample_rate_hz: u32,
+        _channels: u16,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
         Err(super::unavailable())
     }
 

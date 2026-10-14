@@ -45,6 +45,7 @@ const visitorOption = audienceSelect.querySelector('option[value="visitor"]');
 const consent = byId("consent");
 const message = byId("message");
 const connectButton = byId("connect");
+const audioUnlockButton = byId("audio-unlock");
 const speakButton = byId("speak");
 const interruptButton = byId("interrupt");
 const resumeAnswerRow = byId("resume-answer-row");
@@ -55,6 +56,7 @@ const revokeButton = byId("revoke");
 const closeButton = byId("close");
 const voiceButton = byId("voice");
 const microphoneSelect = byId("microphone-device");
+const microphoneRefreshButton = byId("microphone-refresh");
 const microphoneLevel = byId("microphone-level");
 const microphoneLevelText = byId("microphone-level-text");
 const statusNode = byId("status");
@@ -84,6 +86,7 @@ const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
 let microphoneDeviceListenerInstalled = false;
+let microphoneSwitchGeneration = 0;
 let statusSyncTail = Promise.resolve();
 let peer = null;
 let liveKitRoom = null;
@@ -109,7 +112,13 @@ let recording = false;
 let recordingTimer = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let interruptOperation = null;
+let manualInterruptActionInFlight = false;
 let evidenceSessionSequence = 0;
+let greetingRequestedSequence = 0;
+let greetingPlaybackPending = false;
+let audioUnlockRequired = false;
+let audioUnlockInFlight = false;
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
 const sessionEgressFence = typeof BroadcastChannel === "undefined"
     ? null : new BroadcastChannel(SESSION_EGRESS_FENCE_CHANNEL);
@@ -140,6 +149,8 @@ let interruptedAnswerSentences = [];
 let resumeFromIndex = 0;
 let resumeCursorEdited = false;
 let resumedSpeechStartedAt = null;
+let resumeRequestInFlight = false;
+const RESUME_BUTTON_IDLE_LABEL = "Продолжить ответ";
 let interruptEvidenceWatch = null;
 let avSyncCollectionPending = false;
 let pendingAvSyncEvidence = null;
@@ -869,6 +880,54 @@ const attachRemoteAudioEvidence = async (track) => {
     if (remoteEvidenceFrame === null)
         monitorRemoteAudio();
 };
+const greetAfterFirstVideoFrame = async () => {
+    const sequence = evidenceSessionSequence;
+    if (!videoEvidencePosted || !sessionState.realtime.control
+        || audioUnlockRequired
+        || sessionState.backend.greeting_available !== true
+        || sessionState.backend.session_state !== "active" || sequence <= 0
+        || greetingRequestedSequence === sequence || textRequestInFlight
+        || voiceRequestInFlight || recording)
+        return;
+    greetingRequestedSequence = sequence;
+    greetingPlaybackPending = true;
+    const generation = voiceDeliveryGeneration;
+    providerPlaybackInFlight = true;
+    if (rt0EvidenceMode)
+        rt0PlaybackPending = true;
+    updateControls();
+    try {
+        const result = await api("/api/avatar/greeting", {
+            expected_session_sequence: sequence,
+        });
+        if (result.client_command !== null)
+            throw new Error("GREETING_MUST_USE_PRIVATE_PCM");
+        if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence
+            || sessionState.backend.session_state !== "active")
+            return;
+        setStatus("Аватар приветствует вас", "ready");
+    }
+    catch {
+        if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence)
+            return;
+        const stopped = await api("/api/avatar/interrupt", sessionEndRequest())
+            .then(() => true, () => false);
+        providerPlaybackInFlight = false;
+        greetingPlaybackPending = false;
+        rt0PlaybackPending = false;
+        if (!stopped) {
+            broadcastSessionEgressFence();
+            closePeerTransport();
+            await api("/api/session/revoke", sessionEndRequest()).catch(() => undefined);
+            await syncStatus().catch(() => undefined);
+            setStatus("Приветствие: STOP Echo не подтверждён, сессия отозвана", "error");
+        }
+        else {
+            setStatus("Сессия подключена, приветствие недоступно", "idle");
+        }
+        updateControls();
+    }
+};
 const recordFirstVideoFrame = () => {
     if (videoEvidencePosted || connectEvidenceStartedAt === 0)
         return;
@@ -878,8 +937,15 @@ const recordFirstVideoFrame = () => {
     if (connectJourneyStartedAt > 0) {
         queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
     }
+    const expectedSequence = evidenceSessionSequence;
     void connectionEvidenceTail
         .then(() => syncStatus())
+        .then(() => {
+        if (expectedSequence === evidenceSessionSequence) {
+            return greetAfterFirstVideoFrame();
+        }
+        return undefined;
+    })
         .catch(() => undefined);
 };
 const modalityLabel = (state) => {
@@ -950,6 +1016,10 @@ const selectedAudience = () => sessionState.backend.session_audience ?? audience
 const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
+const serverEchoStopAvailable = () => !!liveKitRoom && sessionState.backend.session_state === "active"
+    && capabilities.has("interrupt")
+    && activeClientControl?.interrupt === false
+    && activeClientControl?.text_input === false;
 const updateControls = () => {
     const transportReady = sessionState.realtime.control && sessionState.backend.session_state === "active";
     const textReady = sessionState.backend.conversation_readiness !== "none";
@@ -962,23 +1032,86 @@ const updateControls = () => {
         && playbackReady
         && providerPlaybackInFlight;
     const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
-    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-    interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
+    speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked || audioUnlockRequired;
+    const protectedServerStopReady = transportReady && serverEchoStopAvailable();
+    interruptButton.disabled = manualInterruptActionInFlight || interruptOperation !== null
+        || (!voiceRequestInFlight && !clientInterruptReady && !protectedServerStopReady);
     resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
-        || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
+        || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
+        || resumeRequestInFlight;
     voiceButton.disabled = recording
         ? false
-        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
+        : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
+            || (strictPlaybackBlocked && !greetingPlaybackPending) || audioUnlockRequired;
     voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
     revokeButton.disabled = !backendSessionPresent()
         || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
     closeButton.disabled = !backendSessionPresent()
         || (rt0EvidenceMode && avSyncCollectionPending);
     connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
+    audioUnlockButton.hidden = !transportReady || !audioUnlockRequired;
+    audioUnlockButton.disabled = audioUnlockInFlight;
     audienceSelect.disabled = backendSessionPresent();
     if (visitorOption)
         visitorOption.disabled = !ownerCaptureReviewed;
     updateAudienceMode();
+};
+const requireManualAudioUnlock = () => {
+    if (sessionState.backend.session_state !== "active" || evidenceSessionSequence <= 0
+        || locallyFencedSessionSequence === evidenceSessionSequence)
+        return;
+    audioUnlockRequired = true;
+    setStatus("Браузер не разрешил воспроизведение. Нажмите «Включить звук аватара», затем начнётся приветствие.", "error");
+    updateControls();
+};
+const unlockAudioPlayback = async () => {
+    if (audioUnlockInFlight || !audioUnlockRequired
+        || sessionState.backend.session_state !== "active"
+        || !sessionState.realtime.control
+        || locallyFencedSessionSequence === evidenceSessionSequence)
+        return;
+    audioUnlockInFlight = true;
+    const sequence = evidenceSessionSequence;
+    const room = liveKitRoom;
+    updateControls();
+    try {
+        const audioStart = room?.startAudio?.();
+        const element = room ? avatarAudio : video;
+        const playResult = (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+            ? element.play().then(() => true, () => false)
+            : null;
+        if (!audioStart && !playResult)
+            throw new Error("AUDIO_TRACK_NOT_READY");
+        if (audioStart) {
+            await audioStart;
+            if (playResult)
+                void playResult.then((playing) => {
+                    if (!playing && evidenceSessionSequence === sequence)
+                        requireManualAudioUnlock();
+                });
+        }
+        else if (!await playResult) {
+            throw new Error("AUDIO_PLAYBACK_DENIED");
+        }
+        if (evidenceSessionSequence !== sequence || sessionState.backend.session_state !== "active"
+            || locallyFencedSessionSequence === sequence)
+            return;
+        if (room?.canPlaybackAudio === false)
+            throw new Error("AUDIO_PLAYBACK_STILL_BLOCKED");
+        audioUnlockRequired = false;
+        setStatus("Звук разрешён браузером. Ожидаю фактическое аудио и синхронизацию аватара.", "ready");
+        await greetAfterFirstVideoFrame();
+    }
+    catch (error) {
+        if (evidenceSessionSequence === sequence && sessionState.backend.session_state === "active") {
+            audioUnlockRequired = true;
+            setStatus(`Звук не включён: ${error instanceof Error ? error.message : "AUDIO_PLAYBACK_DENIED"}`, "error");
+        }
+    }
+    finally {
+        audioUnlockInFlight = false;
+        updateControls();
+    }
 };
 const ownerCapture = mountOwnerCapture({
     api,
@@ -1132,6 +1265,15 @@ const attachLiveKitTrack = (track) => {
         liveKitAudioTrack = track;
         sessionState.setRealtimeReadiness({ audio: true });
         track.attach(avatarAudio);
+        const sequence = evidenceSessionSequence;
+        if (liveKitRoom?.canPlaybackAudio === false)
+            requireManualAudioUnlock();
+        if (avatarAudio.srcObject || avatarAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+            void avatarAudio.play().catch(() => {
+                if (evidenceSessionSequence === sequence)
+                    requireManualAudioUnlock();
+            });
+        }
         if (track.mediaStreamTrack) {
             void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
         }
@@ -1179,6 +1321,8 @@ const closePeerTransport = () => {
     voiceDeliveryGeneration += 1;
     voiceCommandScheduler.interrupt();
     rt0PlaybackPending = false;
+    greetingPlaybackPending = false;
+    audioUnlockRequired = false;
     providerPlaybackInFlight = false;
     stopMicrophoneCapture();
     stopRemoteEvidence();
@@ -1338,6 +1482,13 @@ const connectWebRtcTransport = async (transport, clientControl) => {
         }
         else if (event.track.kind === "audio") {
             sessionState.setRealtimeReadiness({ audio: true });
+            const sequence = evidenceSessionSequence;
+            if (video.srcObject || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+                void video.play().catch(() => {
+                    if (evidenceSessionSequence === sequence)
+                        requireManualAudioUnlock();
+                });
+            }
             void attachRemoteAudioEvidence(event.track).catch(() => undefined);
         }
         updateControls();
@@ -1394,6 +1545,12 @@ const connectLiveKitTransport = async (transport) => {
         if (track)
             handleLiveKitTrackUnsubscribed(track);
     });
+    if (sdk.RoomEvent.AudioPlaybackStatusChanged) {
+        room.on(sdk.RoomEvent.AudioPlaybackStatusChanged, () => {
+            if (room === liveKitRoom && room.canPlaybackAudio === false)
+                requireManualAudioUnlock();
+        });
+    }
     room.on(sdk.RoomEvent.DataReceived, (...args) => {
         const payload = args[0];
         if (!(payload instanceof Uint8Array))
@@ -1420,6 +1577,8 @@ const connectLiveKitTransport = async (transport) => {
         void handleUnexpectedLiveKitDisconnect(room, reason);
     });
     await room.connect(transport.server_url, transport.token);
+    if (room.canPlaybackAudio === false)
+        requireManualAudioUnlock();
     sessionState.setRealtimeReadiness({ control: true });
     updateControls();
 };
@@ -1440,6 +1599,9 @@ const connectAvatar = async () => {
     connectionEvidenceTail = Promise.resolve();
     connectionEvidenceFailure = null;
     evidenceSessionSequence = 0;
+    greetingRequestedSequence = 0;
+    greetingPlaybackPending = false;
+    audioUnlockRequired = false;
     nextTextRequestSequence = 0;
     nextVoiceRequestSequence = 0;
     setStatus("Создаю защищённую сессию…");
@@ -1481,6 +1643,8 @@ const connectAvatar = async () => {
         ensureMicrophoneDeviceMonitoring();
         await refreshMicrophoneDevices(storedMicrophoneDeviceId());
         await syncStatus();
+        if (videoEvidencePosted)
+            void greetAfterFirstVideoFrame();
         const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
         setStatus(selectedAudience() === "visitor"
             ? `Visitor-сессия ${transportName} согласована`
@@ -1529,6 +1693,8 @@ const cancelMicrophoneInput = async () => {
     resetMicrophoneUpload();
 };
 const stopMicrophoneCapture = () => {
+    microphoneSwitchGeneration += 1;
+    microphoneSelect.disabled = false;
     if (recordingTimer !== null)
         window.clearTimeout(recordingTimer);
     recordingTimer = null;
@@ -1662,10 +1828,87 @@ const microphoneCaptureError = (error) => {
             return new Error(`MIC_CAPTURE_FAILED:${error.name}`);
     }
 };
+const discoverMicrophones = async () => {
+    const devices = runtimeMediaDevices();
+    if (!devices?.getUserMedia) {
+        setStatus("Браузер не предоставляет доступ к микрофонам", "error");
+        return;
+    }
+    if (recording) {
+        await refreshMicrophoneDevices(microphoneSelect.value);
+        return;
+    }
+    microphoneRefreshButton.disabled = true;
+    try {
+        const permissionStream = await devices.getUserMedia({ audio: true });
+        try {
+            await refreshMicrophoneDevices(microphoneSelect.value || storedMicrophoneDeviceId());
+            setStatus("Микрофоны найдены. Выберите встроенный или системный.", "ready");
+        }
+        finally {
+            permissionStream.getTracks().forEach((track) => track.stop());
+        }
+    }
+    catch (error) {
+        const failure = microphoneCaptureError(error);
+        setStatus(`Список микрофонов: ${failure.message}`, "error");
+    }
+    finally {
+        microphoneRefreshButton.disabled = false;
+    }
+};
+const switchRecordingMicrophone = async (selectedDeviceId) => {
+    rememberMicrophoneDeviceId(selectedDeviceId);
+    if (!recording || !micStream || !micSource || !micWorklet || !audioContext)
+        return;
+    const devices = runtimeMediaDevices();
+    if (!devices?.getUserMedia)
+        return;
+    const generation = ++microphoneSwitchGeneration;
+    const previousStream = micStream;
+    const previousSource = micSource;
+    const previousId = previousStream.getAudioTracks()[0]?.getSettings().deviceId ?? "";
+    microphoneSelect.disabled = true;
+    let replacementStream = null;
+    try {
+        replacementStream = await devices.getUserMedia({
+            audio: {
+                ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+                channelCount: 1, sampleRate: 16_000,
+                echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+            },
+        });
+        if (generation !== microphoneSwitchGeneration || !recording
+            || micStream !== previousStream || !audioContext || !micWorklet)
+            return;
+        const nextSource = audioContext.createMediaStreamSource(replacementStream);
+        nextSource.connect(micWorklet);
+        previousSource.disconnect();
+        micStream = replacementStream;
+        micSource = nextSource;
+        replacementStream = null;
+        previousStream.getTracks().forEach((track) => track.stop());
+        await refreshMicrophoneDevices(selectedDeviceId);
+        setStatus("Микрофон переключён без прерывания текущей реплики", "ready");
+    }
+    catch (error) {
+        if (generation === microphoneSwitchGeneration && recording) {
+            await refreshMicrophoneDevices(previousId);
+            const failure = microphoneCaptureError(error);
+            setStatus(`Не удалось сменить микрофон: ${failure.message}`, "error");
+        }
+    }
+    finally {
+        replacementStream?.getTracks().forEach((track) => track.stop());
+        if (generation === microphoneSwitchGeneration)
+            microphoneSelect.disabled = false;
+    }
+};
 const startMicrophone = async () => {
     const mediaDevices = runtimeMediaDevices();
     if (!mediaDevices?.getUserMedia)
         throw new Error("MIC_UNAVAILABLE");
+    microphoneSelect.disabled = true;
     try {
         const selectedDeviceId = microphoneSelect.value.trim();
         micStream = await mediaDevices.getUserMedia({
@@ -1678,12 +1921,9 @@ const startMicrophone = async () => {
                 autoGainControl: true,
             },
         });
-        const activeDeviceId = micStream.getAudioTracks()[0]?.getSettings().deviceId ?? selectedDeviceId;
-        await refreshMicrophoneDevices(activeDeviceId);
-        if (activeDeviceId) {
-            microphoneSelect.value = activeDeviceId;
-            rememberMicrophoneDeviceId(activeDeviceId);
-        }
+        await refreshMicrophoneDevices(selectedDeviceId);
+        if (selectedDeviceId)
+            rememberMicrophoneDeviceId(selectedDeviceId);
     }
     catch (error) {
         throw microphoneCaptureError(error);
@@ -1737,6 +1977,7 @@ const startMicrophone = async () => {
             void finishMicrophoneTurn();
     };
     recording = true;
+    microphoneSelect.disabled = false;
     micSource.connect(micWorklet);
     micWorklet.connect(audioContext.destination);
     recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
@@ -1967,14 +2208,16 @@ const toggleVoice = async () => {
             await finishMicrophoneTurn();
         }
         else {
-            if (rt0EvidenceMode && rt0PlaybackPending) {
+            if (rt0EvidenceMode && rt0PlaybackPending && !greetingPlaybackPending) {
                 throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
             }
             clearInterruptedAnswer();
-            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
+            if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight
+                || greetingPlaybackPending) {
                 if (!await interruptAvatar()) {
                     throw new Error("PROVIDER_STOP_UNCONFIRMED");
                 }
+                greetingPlaybackPending = false;
             }
             await startMicrophone();
         }
@@ -2021,17 +2264,23 @@ const speak = async () => {
         }
     }
 };
-const interruptAvatar = async (recordEvidence = true) => {
+const performInterruptAvatar = async (recordEvidence = true) => {
     const voice = activeVoiceEvidence;
+    const requestSequenceForEvidence = recordEvidence && voice?.audioStarted && !voice.interrupted
+        ? voice.requestSequence : null;
+    const interruptedAt = performance.now();
     if (voice)
         voice.interrupted = true;
-    if (recordEvidence && voice?.audioStarted) {
-        interruptEvidenceWatch = {
-            requestSequence: voice.requestSequence,
-            startedAt: performance.now(),
-            silentFrames: 0,
-        };
-    }
+    interruptEvidenceWatch = null;
+    const observeConfirmedStop = () => {
+        if (requestSequenceForEvidence !== null) {
+            interruptEvidenceWatch = {
+                requestSequence: requestSequenceForEvidence,
+                startedAt: interruptedAt,
+                silentFrames: 0,
+            };
+        }
+    };
     setLocalAudioMuted(true);
     const playbackId = sessionState.playbackId;
     const playbackReady = activeClientControl?.interrupt_requires_playback_id
@@ -2050,10 +2299,21 @@ const interruptAvatar = async (recordEvidence = true) => {
         ? dispatchClientCommand(preparedInterrupt)
         : null;
     try {
+        if (serverEchoStopAvailable()) {
+            await api("/api/avatar/interrupt", sessionEndRequest());
+            rt0PlaybackPending = false;
+            sessionState.setPlaybackId(null);
+            greetingPlaybackPending = false;
+            observeConfirmedStop();
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
+        }
         if (providerStopRequired && !clientReady) {
             await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2068,6 +2328,7 @@ const interruptAvatar = async (recordEvidence = true) => {
                 await canonicalStop;
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2081,6 +2342,7 @@ const interruptAvatar = async (recordEvidence = true) => {
             await dispatchClientCommand(command);
             rt0PlaybackPending = false;
             sessionState.setPlaybackId(null);
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2088,6 +2350,14 @@ const interruptAvatar = async (recordEvidence = true) => {
         if (!voiceRequestInFlight) {
             await api("/api/avatar/interrupt", sessionEndRequest());
             rt0PlaybackPending = false;
+            observeConfirmedStop();
+            updateControls();
+            await refreshSessionEvidence();
+            return true;
+        }
+        if (canonicalStop) {
+            rt0PlaybackPending = false;
+            observeConfirmedStop();
             updateControls();
             await refreshSessionEvidence();
             return true;
@@ -2124,49 +2394,78 @@ const interruptAvatar = async (recordEvidence = true) => {
         return false;
     }
 };
-const interruptAndOfferResume = async () => {
-    const voice = activeVoiceEvidence;
-    const replaying = resumedSpeechStartedAt !== null;
-    const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
-        && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null));
-    const sentences = replaying
-        ? interruptedAnswerSentences
-        : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
-    const elapsed = replaying
-        ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
-        : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
-            ? 0
-            : voice.audibleDurationMillis;
-    const offset = replaying ? resumeFromIndex : 0;
-    const interrupted = await interruptAvatar();
-    resumedSpeechStartedAt = null;
-    if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
-        try {
-            if (resumeSourceRequest === null)
-                throw new Error("RESUME_SOURCE_UNAVAILABLE");
-            await api("/api/avatar/confirm-interruption", {
-                request_sequence: resumeSourceRequest,
-            });
-            offerInterruptedAnswer(sentences, elapsed, offset);
-            setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
-                + "Точное слово остановки D-ID не сообщает.", "ready");
-        }
-        catch (error) {
-            clearInterruptedAnswer();
-            setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
-                : "Продолжение не подтверждено сервером.", "error");
-        }
-    }
-    else {
-        clearInterruptedAnswer();
-        if (interrupted) {
-            setStatus("Ответ остановлен. Продолжение недоступно: исходный ответ ещё не сформирован полностью.", "idle");
-        }
-    }
+const interruptAvatar = (recordEvidence = true) => {
+    if (interruptOperation)
+        return interruptOperation;
+    const operation = performInterruptAvatar(recordEvidence);
+    interruptOperation = operation;
     updateControls();
+    void operation.finally(() => {
+        if (interruptOperation === operation) {
+            interruptOperation = null;
+            updateControls();
+        }
+    }).catch(() => undefined);
+    return operation;
+};
+const interruptAndOfferResume = async () => {
+    if (manualInterruptActionInFlight || interruptOperation)
+        return;
+    manualInterruptActionInFlight = true;
+    interruptButton.textContent = "Останавливаю…";
+    setStatus("Останавливаю звук: ожидаю подтверждённый STOP сервера Echo…");
+    updateControls();
+    try {
+        const voice = activeVoiceEvidence;
+        const replaying = resumedSpeechStartedAt !== null;
+        const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (replaying || (voice?.responseComplete === true && voice.audioStarted
+            && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null));
+        const sentences = replaying
+            ? interruptedAnswerSentences
+            : resumeSentences(completedAuthorizedReply ? [completedAuthorizedReply] : []);
+        const elapsed = replaying
+            ? performance.now() - (resumedSpeechStartedAt ?? performance.now())
+            : voice?.audioStartedElapsed === null || voice?.audioStartedElapsed === undefined
+                ? 0
+                : voice.audibleDurationMillis;
+        const offset = replaying ? resumeFromIndex : 0;
+        const interrupted = await interruptAvatar();
+        if (interrupted)
+            greetingPlaybackPending = false;
+        resumedSpeechStartedAt = null;
+        if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
+            try {
+                if (resumeSourceRequest === null)
+                    throw new Error("RESUME_SOURCE_UNAVAILABLE");
+                await api("/api/avatar/confirm-interruption", {
+                    request_sequence: resumeSourceRequest,
+                });
+                offerInterruptedAnswer(sentences, elapsed, offset);
+                setStatus("Ответ остановлен. Можно продолжить сохранённый текст с выбранного предложения. "
+                    + "Точное слово остановки D-ID не сообщает.", "ready");
+            }
+            catch (error) {
+                clearInterruptedAnswer();
+                setStatus(error instanceof Error ? `Продолжение недоступно: ${error.message}`
+                    : "Продолжение не подтверждено сервером.", "error");
+            }
+        }
+        else {
+            clearInterruptedAnswer();
+            if (interrupted) {
+                setStatus("Ответ остановлен. Продолжение недоступно: нет подтверждённого полного голосового ответа.", "idle");
+            }
+        }
+        updateControls();
+    }
+    finally {
+        manualInterruptActionInFlight = false;
+        interruptButton.textContent = "Прервать";
+        updateControls();
+    }
 };
 const resumeInterruptedAnswer = async () => {
-    if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
+    if (resumeRequestInFlight || resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
         || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
         return;
     }
@@ -2181,7 +2480,12 @@ const resumeInterruptedAnswer = async () => {
         setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
         return;
     }
-    resumeAnswerButton.disabled = true;
+    resumeRequestInFlight = true;
+    const resumeClickedAt = performance.now();
+    resumeAnswerButton.setAttribute("aria-busy", "true");
+    resumeAnswerButton.textContent = "Готовлю продолжение…";
+    setStatus("Продолжение запрошено: проверяю разрешение, синтезирую голос и отправляю в Echo…");
+    updateControls();
     let prepared = null;
     try {
         if (resumeSourceRequest === null)
@@ -2207,8 +2511,9 @@ const resumeInterruptedAnswer = async () => {
         resumedSpeechStartedAt = performance.now();
         providerPlaybackInFlight = true;
         resumeAnswerRow.hidden = true;
-        setStatus("Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
-            + "Это повторная отправка текста, а не подтверждение полного playback.", "ready");
+        const preparationMillis = Math.round(performance.now() - resumeClickedAt);
+        setStatus(`Продолжение отправлено за ${preparationMillis} мс (без повторного LLM-запроса). `
+            + "Начало звука зависит от Echo; полное воспроизведение ещё не подтверждено.", "ready");
     }
     catch (error) {
         if (prepared !== null) {
@@ -2233,7 +2538,12 @@ const resumeInterruptedAnswer = async () => {
         }
         setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
     }
-    updateControls();
+    finally {
+        resumeRequestInFlight = false;
+        resumeAnswerButton.textContent = RESUME_BUTTON_IDLE_LABEL;
+        resumeAnswerButton.removeAttribute("aria-busy");
+        updateControls();
+    }
 };
 const endSession = async (kind) => {
     if (!sessionEndRequest().expected_session_sequence) {
@@ -2318,6 +2628,7 @@ audienceSelect.addEventListener("change", () => {
     updateControls();
 });
 connectButton.addEventListener("click", () => void connectAvatar());
+audioUnlockButton.addEventListener("click", () => void unlockAudioPlayback());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
@@ -2328,8 +2639,9 @@ revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
-    rememberMicrophoneDeviceId(microphoneSelect.value.trim());
+    void switchRecordingMicrophone(microphoneSelect.value.trim());
 });
+microphoneRefreshButton.addEventListener("click", () => void discoverMicrophones());
 window.addEventListener("pagehide", closeBackendOnUnload);
 void api("/api/bootstrap")
     .then(async (bootstrap) => {

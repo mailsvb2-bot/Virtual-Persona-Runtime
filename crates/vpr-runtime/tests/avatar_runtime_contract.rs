@@ -1,15 +1,17 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use vpr_domain::{
     CorrelationId, OutputDeliveryState, PersonaId, PersonaIdentity, PersonaMode, PersonaVersion,
     SessionId, TurnId, TurnState,
 };
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
-    RealtimeAvatarCapability, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
-    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPort,
-    RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcIceServer,
-    WebRtcSessionDescription,
+    CancellationProbe, GeneratedAudioSink, PcmSampleFormat, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, RealtimeAvatarCapabilities, RealtimeAvatarCapability,
+    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
+    RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
+    RealtimeAvatarTransport, TtsPort, TtsRequest, UsageEvidence, WebRtcIceCandidate,
+    WebRtcIceServer, WebRtcSessionDescription,
 };
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
@@ -384,4 +386,223 @@ fn closed_handle_cannot_be_reused_by_a_later_turn() {
         ProviderExecutionError::Denied(RuntimeDenyReason::InvalidTurnState)
     );
     assert_eq!(provider.speaks.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Default)]
+struct StreamTrace {
+    bytes: Mutex<Vec<u8>>,
+    opens: AtomicUsize,
+    chunks: AtomicUsize,
+    finishes: AtomicUsize,
+    aborts: AtomicUsize,
+}
+
+struct SimulatedPcmStream(Arc<StreamTrace>);
+impl RealtimeAvatarPcmStream for SimulatedPcmStream {
+    fn push_pcm(
+        &mut self,
+        pcm: &[u8],
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(provider_cancelled());
+        }
+        self.0.bytes.lock().unwrap().extend_from_slice(pcm);
+        self.0.chunks.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn finish(&mut self, cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(provider_cancelled());
+        }
+        self.0.finishes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn abort(&mut self) -> Result<(), ProviderError> {
+        self.0.aborts.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+fn provider_cancelled() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Cancelled,
+        retryable: false,
+    }
+}
+
+struct NativePcmAvatar {
+    fallback: RecordingAvatar,
+    trace: Arc<StreamTrace>,
+}
+impl RealtimeAvatarPort for NativePcmAvatar {
+    fn descriptor(&self) -> ProviderDescriptor {
+        self.fallback.descriptor()
+    }
+    fn capabilities(&self) -> RealtimeAvatarCapabilities {
+        RealtimeAvatarCapabilities::new([
+            RealtimeAvatarCapability::AudioPcmInput,
+            RealtimeAvatarCapability::AudioPcmStreamInput,
+        ])
+    }
+    fn create_session(
+        &self,
+        probe: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        self.fallback.create_session(probe)
+    }
+    fn submit_answer(
+        &self,
+        session: &RealtimeAvatarSession,
+        answer: &WebRtcSessionDescription,
+        probe: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.fallback.submit_answer(session, answer, probe)
+    }
+    fn submit_ice_candidate(
+        &self,
+        session: &RealtimeAvatarSession,
+        ice: &WebRtcIceCandidate,
+        probe: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.fallback.submit_ice_candidate(session, ice, probe)
+    }
+    fn speak_text(
+        &self,
+        session: &RealtimeAvatarSession,
+        text: &str,
+        probe: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.fallback.speak_text(session, text, probe)
+    }
+    fn speak_audio_url(
+        &self,
+        session: &RealtimeAvatarSession,
+        url: &str,
+        probe: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.fallback.speak_audio_url(session, url, probe)
+    }
+    fn open_pcm_stream(
+        &self,
+        _session: &RealtimeAvatarSession,
+        rate: u32,
+        channels: u16,
+        probe: &dyn CancellationProbe,
+    ) -> Result<Box<dyn RealtimeAvatarPcmStream>, ProviderError> {
+        if probe.is_cancelled() || rate != 24_000 || channels != 1 {
+            return Err(provider_cancelled());
+        }
+        self.trace.opens.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(SimulatedPcmStream(Arc::clone(&self.trace))))
+    }
+    fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
+        self.fallback.close_session(session)
+    }
+}
+
+struct TwoChunkTts {
+    trace: Arc<StreamTrace>,
+    fail_after_first: bool,
+}
+impl TtsPort for TwoChunkTts {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "two-chunk-tts".into(),
+            model: "fake".into(),
+            representation: None,
+        }
+    }
+    fn synthesize(
+        &self,
+        _request: &TtsRequest,
+        probe: &dyn CancellationProbe,
+        sink: &mut dyn GeneratedAudioSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        if probe.is_cancelled() {
+            return Err(provider_cancelled());
+        }
+        sink.push_generated_audio(&[1, 0, 2, 0], 24_000, 1, PcmSampleFormat::S16Le)?;
+        assert_eq!(
+            self.trace.chunks.load(Ordering::SeqCst),
+            1,
+            "first generated PCM must reach private stream before full TTS finishes"
+        );
+        if self.fail_after_first {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            });
+        }
+        sink.push_generated_audio(&[3, 0, 4, 0], 24_000, 1, PcmSampleFormat::S16Le)?;
+        Ok(UsageEvidence::default())
+    }
+}
+
+#[test]
+fn canonical_pcm16_stream_delivers_first_audio_before_tts_finishes_without_claiming_playout() {
+    let identity = persona("pcm-stream-pass");
+    let session = active_session("pcm-stream-pass", &identity);
+    let opening = turn("pcm-open", &identity, &session);
+    let trace = Arc::new(StreamTrace::default());
+    let avatar = NativePcmAvatar {
+        fallback: RecordingAvatar::default(),
+        trace: Arc::clone(&trace),
+    };
+    let handle = opening.open_realtime_avatar(&avatar).unwrap();
+    let output = turn("pcm-output", &identity, &session);
+    output.begin_output().unwrap();
+    let tts = TwoChunkTts {
+        trace: Arc::clone(&trace),
+        fail_after_first: false,
+    };
+    let delivery = output
+        .synthesize_and_deliver_realtime_avatar_audio(&tts, &avatar, &handle, "Здравствуйте")
+        .unwrap();
+    assert_eq!(trace.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.chunks.load(Ordering::SeqCst), 2);
+    assert_eq!(trace.finishes.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.aborts.load(Ordering::SeqCst), 0);
+    assert_eq!(&*trace.bytes.lock().unwrap(), &[1, 0, 2, 0, 3, 0, 4, 0]);
+    assert_eq!(
+        output.output_segments()[0].state(),
+        OutputDeliveryState::Sent
+    );
+    assert_eq!(delivery.sequence(), 1);
+}
+
+#[test]
+fn partially_streamed_tts_failure_interrupts_avatar_and_never_promotes_sent_to_played() {
+    let identity = persona("pcm-stream-fail");
+    let session = active_session("pcm-stream-fail", &identity);
+    let opening = turn("pcm-fail-open", &identity, &session);
+    let trace = Arc::new(StreamTrace::default());
+    let avatar = NativePcmAvatar {
+        fallback: RecordingAvatar::default(),
+        trace: Arc::clone(&trace),
+    };
+    let handle = opening.open_realtime_avatar(&avatar).unwrap();
+    let output = turn("pcm-fail-output", &identity, &session);
+    output.begin_output().unwrap();
+    let tts = TwoChunkTts {
+        trace: Arc::clone(&trace),
+        fail_after_first: true,
+    };
+    assert!(
+        output
+            .synthesize_and_deliver_realtime_avatar_audio(&tts, &avatar, &handle, "Здравствуйте",)
+            .is_err()
+    );
+    assert_eq!(trace.chunks.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.aborts.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.finishes.load(Ordering::SeqCst), 0);
+    assert_ne!(
+        output.output_segments()[0].state(),
+        OutputDeliveryState::Sent
+    );
+    assert_ne!(
+        output.output_segments()[0].state(),
+        OutputDeliveryState::Played
+    );
 }

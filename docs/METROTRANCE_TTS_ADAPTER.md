@@ -58,11 +58,43 @@ For an **isolated** local adapter test (no MetroTrance install needed):
 python -m unittest discover -s tests/e2e -p test_metrotrance_tts_bridge.py
 ```
 
+## Reference-free Qwen CustomVoice preset (separate opt-in)
+
+This mode **does not clone anyone's voice** or require a MetroTrance checkout or
+reference audio. It uses the official Qwen3-TTS 0.6B CustomVoice model and a
+server-owned built-in speaker. It is an *experimental TTS provider*, not a new
+policy brain, Identity registry or browser publisher. Install the official
+`qwen-tts`, `torch` and `soundfile` dependencies separately in the selected
+Python environment; model weights are not distributed with VPR. Model download
+and inference can be slow on Windows CPU.
+
+```powershell
+$env:VPR_METROTRANCE_ENGINE = 'qwen-preset'
+$env:VPR_QWEN_PRESET_SPEAKER = 'Vivian'
+$env:VPR_METROTRANCE_TTS_PORT = '8897'
+$env:VPR_METROTRANCE_TTS_TOKEN = '<random-private-secret-at-least-24-characters>'
+python scripts/metrotrance_tts_bridge.py
+```
+
+`METROTRANCE_ROOT` is not used for this mode. Permitted speaker identifiers
+are hardcoded in the adapter; unknown identifiers fail before model loading.
+Configure Owner Lab `VPR_OWNER_LAB_TTS_PROVIDER` and
+`VPR_OWNER_LAB_TTS_MODEL` as `metrotrance-qwen-preset`, endpoint as
+`http://127.0.0.1:8897/v1/audio/speech`, voice as `local` and API key
+as the same private bridge token. Client requests cannot change the configured
+engine or choose a preset speaker. The canonical TTS permit/PCM/Echo/STOP route
+is unchanged.
+
+**Not production authorization:** listen to real Russian outputs and review
+model, speaker, and distribution/sector rights. Do not advertise commercial
+readiness, naturalness, warm turn latency or playback until real evidence passes
+the exact-candidate RT0 acceptance gates.
+
 ## Select and switch providers
 
 The VPR Owner Lab process accepts one mandatory primary and one optional
 fallback TTS provider. Both endpoints/keys remain in the backend environment.
-Provider identifiers are `metrotrance-qwen`,
+Provider identifiers include `metrotrance-qwen`, `metrotrance-qwen-preset`,
 `metrotrance-chatterbox`, `openai-speech`, or `elevenlabs`.
 
 For the Qwen bridge above, launch Owner Lab from an environment containing:

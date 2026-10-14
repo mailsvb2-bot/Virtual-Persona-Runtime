@@ -272,13 +272,30 @@
       // The first backend preparation is intentionally denied. No D-ID command
       // is allowed to escape; the same authorized reply may be retried.
       resumeButton.click();
+      // The click MUST be acknowledged before the private PCM provider has
+      // finished synthesizing; an immediate second click must be disabled.
+      if (resumeButton.getAttribute("aria-busy") !== "true"
+          || !resumeButton.disabled
+          || !resumeButton.textContent.includes("Готовлю продолжение")
+          || !element("status", HTMLElement).textContent.includes("Продолжение запрошено")) {
+        throw new Error("EXPRESSIVE_RESUME_CLICK_NOT_ACKNOWLEDGED_SYNCHRONOUSLY");
+      }
+      resumeButton.click();
       await waitStatus("INVALID_STATE_TRANSITION");
+      if (resumeButton.getAttribute("aria-busy") !== null
+          || !resumeButton.textContent.includes("Продолжить ответ")) {
+        throw new Error("EXPRESSIVE_RESUME_DENIAL_LEFT_UI_BUSY");
+      }
       await waitFor(() => !resumeButton.disabled, "resume-control-recovers-after-server-denial");
       if (resumeRow.hidden || commands().filter((command) => command.topic === "did.speak").length !== initialSpeakCount) {
         throw new Error("EXPRESSIVE_RESUME_DENIAL_LEAKED_PROVIDER_EGRESS");
       }
       await postPhase("resume-denied-no-egress");
       resumeButton.click();
+      if (resumeButton.getAttribute("aria-busy") !== "true"
+          || !element("status", HTMLElement).textContent.includes("Продолжение запрошено")) {
+        throw new Error("EXPRESSIVE_RESUME_SUCCESS_PATH_NOT_ACKNOWLEDGED");
+      }
       await waitFor(
         () => commands().filter((command) => command.topic === "did.speak").length === initialSpeakCount + 1,
         "resume-original-answer-suffix-sent",

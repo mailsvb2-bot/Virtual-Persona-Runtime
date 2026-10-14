@@ -53,6 +53,9 @@ for action, ref in action_refs:
 if "permissions:\n  contents: read" not in ci:
     raise SystemExit("CI token permissions must remain explicitly read-only")
 
+if "python3 tests/e2e/test_piper_tts_bridge.py" not in ci:
+    raise SystemExit("Piper audio/auth regression must run in required CI")
+
 for ecosystem in ("cargo", "npm", "github-actions"):
     if f'package-ecosystem: "{ecosystem}"' not in dependabot:
         raise SystemExit(f"Dependabot coverage missing for {ecosystem}")

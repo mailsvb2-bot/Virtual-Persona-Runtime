@@ -155,6 +155,70 @@ class SpeechBridgeContract(unittest.TestCase):
         self.assertTrue(module.validate_echo_wav(WAV))
         self.assertEqual(module.MAX_WAV_BYTES, 8 * 1024 * 1024)
 
+    def test_qwen_preset_without_reference_or_cloning(self):
+        import os
+        import sys
+        import types
+        from unittest.mock import patch
+        calls = []
+
+        class FakeModel:
+            @classmethod
+            def from_pretrained(cls, name, **kwargs):
+                calls.append(("load", name, kwargs))
+                return cls()
+
+            def generate_custom_voice(self, **kwargs):
+                calls.append(("generate", kwargs))
+                return ([object()], 16000)
+
+        fake_torch = types.SimpleNamespace(
+            cuda=types.SimpleNamespace(is_available=lambda: False),
+            float32="float32", float16="float16",
+        )
+        fake_sf = types.SimpleNamespace(
+            write=lambda out, data, rate, **kwargs: out.write(WAV)
+        )
+        with patch.dict(sys.modules, {
+            "torch": fake_torch,
+            "soundfile": fake_sf,
+            "qwen_tts": types.SimpleNamespace(Qwen3TTSModel=FakeModel),
+        }), patch.dict(os.environ, {"VPR_QWEN_PRESET_SPEAKER": "Vivian"}):
+            synth = module.make_custom_voice_synthesizer()
+            self.assertEqual(synth("Привет"), WAV)
+        self.assertIn("CustomVoice", calls[0][1])
+        self.assertEqual(calls[1], (
+            "generate",
+            {"text": "Привет", "language": "Russian", "speaker": "Vivian"},
+        ))
+
+    def test_qwen_preset_unknown_speaker_fails_before_loading_model(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"VPR_QWEN_PRESET_SPEAKER": "../../injected"}):
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                module.make_custom_voice_synthesizer()
+
+    def test_preset_model_cannot_be_selected_on_clone_handler(self):
+        self.assertEqual(
+            self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0],
+            400,
+        )
+        self.assertEqual(self.phrases, [])
+
+    def test_explicit_preset_handler_rejects_clone_model(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.worker.join(timeout=2)
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            module.make_handler(TOKEN, self._voice, "metrotrance-qwen-preset"),
+        )
+        self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.worker.start()
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen"})[0], 400)
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0], 200)
+
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
             module.make_handler("abc", lambda _: WAV)

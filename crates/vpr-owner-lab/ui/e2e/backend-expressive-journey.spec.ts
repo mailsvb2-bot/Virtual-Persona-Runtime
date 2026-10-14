@@ -185,11 +185,14 @@ test("Expressive Echo keeps its sender credentials private", async ({
   expect(payload).not.toContain("did.speak");
   const session = JSON.parse(payload) as {
     transport: { kind: string; token?: string };
-    client_control?: { text_input?: boolean } | null;
+    capabilities: string[];
+    client_control?: { text_input?: boolean; interrupt?: boolean } | null;
   };
   expect(session.transport.kind).toBe("live_kit");
   expect(session.transport.token).toMatch(/^fixture-livekit-token-/);
   expect(session.client_control?.text_input ?? false).toBe(false);
+  expect(session.client_control?.interrupt ?? false).toBe(false);
+  expect(session.capabilities).toContain("interrupt");
   const status = await request.get(`${ownerLabUrl}/api/status`);
   expect(status.ok()).toBeTruthy();
   expect(await status.json()).toMatchObject({
@@ -251,10 +254,84 @@ test("real browser owner voice reaches private server Echo audio", async ({ page
     return event?.status === "failed" ? `failed:${event.error ?? "unknown"}` : event?.status ?? "pending:voice";
   }, { timeout: 80000 }).toBe("ok");
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 20000 })
-    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "provider_stop_sent"]));
   const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(snapshot.ok()).toBeTruthy();
   expect(await snapshot.json()).toMatchObject({ canonical_playback_proven: false });
+});
+
+test("Expressive browser STOP failure revokes provider authority and closes viewer", async ({ page, request }) => {
+  test.setTimeout(120000);
+  const cleared = await request.delete(mailboxUrl);
+  expect(cleared.ok()).toBeTruthy();
+  await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
+  await installProviderAutoConnect(page);
+  await page.addInitScript({ path: "e2e/echo-stop-failure-driver.js" });
+
+  // Any internal start/greeting STOP is normal and must not be altered.
+  // Only after we prove a LIVE server-owned PCM publish is a user STOP faulted.
+  let failureArmed = false;
+  let faultedStopCount = 0;
+  await page.route("**/api/avatar/interrupt", async (route) => {
+    if (!failureArmed) {
+      await route.continue();
+      return;
+    }
+    faultedStopCount++;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "PROVIDER_UNAVAILABLE" }),
+    });
+  });
+  await page.goto("/");
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending";
+    const snapshot = await response.json() as {
+      events?: Array<{ phase?: string; status?: string; error?: string }>;
+    };
+    const failed = snapshot.events?.find((e) => e.status === "failed");
+    if (failed) return `failed:${failed.error ?? "unknown"}`;
+    return snapshot.events?.some((e) => e.phase === "private-echo-viewer-ready")
+      ? "ready" : "pending";
+  }, { timeout: 40000 }).toBe("ready");
+
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+  const before = (await echoEvents(request)).length;
+  const speech = await postJson(request, csrf, "/api/avatar/speak", {
+    text: "Это реальный серверный голос перед подтверждённой остановкой.",
+  });
+  expect(speech.ok(), "Rust must publish authorized private PCM before STOP fault").toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 30000,
+  }).toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+
+  failureArmed = true;
+  const posted = await request.post(mailboxUrl, {
+    data: { phase: "private-echo-audio-published" },
+  });
+  expect(posted.status()).toBe(204);
+
+  await expect.poll(async () => {
+    const response = await request.get(mailboxUrl);
+    if (!response.ok()) return "pending";
+    const snapshot = await response.json() as {
+      events?: Array<{ status?: string; error?: string }>;
+    };
+    const failed = snapshot.events?.find((e) => e.status === "failed");
+    if (failed) return `failed:${failed.error ?? "unknown"}`;
+    return snapshot.events?.some((e) => e.status === "ok") ? "ok" : "pending";
+  }, { timeout: 45000 }).toBe("ok");
+  expect(faultedStopCount).toBe(1);
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  expect(await status.json()).toMatchObject({ session_state: "revoked" });
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 20000,
+  }).toEqual(expect.arrayContaining(["provider_stop_sent"]));
 });
 
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {

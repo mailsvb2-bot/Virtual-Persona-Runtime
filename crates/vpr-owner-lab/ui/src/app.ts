@@ -191,6 +191,8 @@ type LiveKitRoom = {
   localParticipant: LiveKitParticipant;
   connect: (url: string, token: string) => Promise<void>;
   disconnect: () => Promise<void>;
+  startAudio?: () => Promise<void>;
+  canPlaybackAudio?: boolean;
   on: (event: string, listener: (...args: unknown[]) => void) => LiveKitRoom;
 };
 type LiveKitSdk = {
@@ -199,6 +201,7 @@ type LiveKitSdk = {
     TrackSubscribed: string;
     TrackUnsubscribed: string;
     DataReceived: string;
+    AudioPlaybackStatusChanged?: string;
     Reconnecting: string;
     Reconnected: string;
     Disconnected: string;
@@ -243,6 +246,7 @@ const visitorOption = audienceSelect.querySelector<HTMLOptionElement>('option[va
 const consent = byId<HTMLInputElement>("consent");
 const message = byId<HTMLTextAreaElement>("message");
 const connectButton = byId<HTMLButtonElement>("connect");
+const audioUnlockButton = byId<HTMLButtonElement>("audio-unlock");
 const speakButton = byId<HTMLButtonElement>("speak");
 const interruptButton = byId<HTMLButtonElement>("interrupt");
 const resumeAnswerRow = byId<HTMLElement>("resume-answer-row");
@@ -253,6 +257,7 @@ const revokeButton = byId<HTMLButtonElement>("revoke");
 const closeButton = byId<HTMLButtonElement>("close");
 const voiceButton = byId<HTMLButtonElement>("voice");
 const microphoneSelect = byId<HTMLSelectElement>("microphone-device");
+const microphoneRefreshButton = byId<HTMLButtonElement>("microphone-refresh");
 const microphoneLevel = byId<HTMLMeterElement>("microphone-level");
 const microphoneLevelText = byId<HTMLElement>("microphone-level-text");
 const statusNode = byId<HTMLElement>("status");
@@ -283,6 +288,7 @@ const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
 let bootstrapComplete = false;
 let microphoneDeviceListenerInstalled = false;
+let microphoneSwitchGeneration = 0;
 let statusSyncTail: Promise<void> = Promise.resolve();
 let peer: RTCPeerConnection | null = null;
 let liveKitRoom: LiveKitRoom | null = null;
@@ -308,7 +314,13 @@ let recording = false;
 let recordingTimer: number | null = null;
 let textRequestInFlight = false;
 let voiceRequestInFlight = false;
+let interruptOperation: Promise<boolean> | null = null;
+let manualInterruptActionInFlight = false;
 let evidenceSessionSequence = 0;
+let greetingRequestedSequence = 0;
+let greetingPlaybackPending = false;
+let audioUnlockRequired = false;
+let audioUnlockInFlight = false;
 // This fence is a same-origin, same-browser fast path, NOT a provider-atomic
 // substitute for a backend-owned LiveKit sender and receiver-only token.
 const SESSION_EGRESS_FENCE_CHANNEL = "vpr.owner-lab.session-egress-fence.v1";
@@ -341,6 +353,8 @@ let interruptedAnswerSentences: string[] = [];
 let resumeFromIndex = 0;
 let resumeCursorEdited = false;
 let resumedSpeechStartedAt: number | null = null;
+let resumeRequestInFlight = false;
+const RESUME_BUTTON_IDLE_LABEL = "Продолжить ответ";
 let interruptEvidenceWatch: InterruptEvidenceWatch | null = null;
 let avSyncCollectionPending = false;
 let pendingAvSyncEvidence: Promise<void> | null = null;
@@ -1193,6 +1207,51 @@ const attachRemoteAudioEvidence = async (track: MediaStreamTrack): Promise<void>
   if (remoteEvidenceFrame === null) monitorRemoteAudio();
 };
 
+
+const greetAfterFirstVideoFrame = async (): Promise<void> => {
+  const sequence = evidenceSessionSequence;
+  if (!videoEvidencePosted || !sessionState.realtime.control
+      || audioUnlockRequired
+      || sessionState.backend.greeting_available !== true
+      || sessionState.backend.session_state !== "active" || sequence <= 0
+      || greetingRequestedSequence === sequence || textRequestInFlight
+      || voiceRequestInFlight || recording) return;
+  greetingRequestedSequence = sequence;
+  greetingPlaybackPending = true;
+  const generation = voiceDeliveryGeneration;
+  providerPlaybackInFlight = true;
+  if (rt0EvidenceMode) rt0PlaybackPending = true;
+  updateControls();
+  try {
+    // Server owns the fixed welcome phrase and verifies consent / session epoch.
+    const result = await api<ResumedSpeech>("/api/avatar/greeting", {
+      expected_session_sequence: sequence,
+    });
+    if (result.client_command !== null) throw new Error("GREETING_MUST_USE_PRIVATE_PCM");
+    if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence
+        || sessionState.backend.session_state !== "active") return;
+    setStatus("Аватар приветствует вас", "ready");
+  } catch {
+    if (generation !== voiceDeliveryGeneration || evidenceSessionSequence !== sequence) return;
+    // Even after a failed HTTP response, private Echo may have accepted audio.
+    const stopped = await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest())
+      .then(() => true, () => false);
+    providerPlaybackInFlight = false;
+    greetingPlaybackPending = false;
+    rt0PlaybackPending = false;
+    if (!stopped) {
+      broadcastSessionEgressFence();
+      closePeerTransport();
+      await api<{ ok: true }>("/api/session/revoke", sessionEndRequest()).catch(() => undefined);
+      await syncStatus().catch(() => undefined);
+      setStatus("Приветствие: STOP Echo не подтверждён, сессия отозвана", "error");
+    } else {
+      setStatus("Сессия подключена, приветствие недоступно", "idle");
+    }
+    updateControls();
+  }
+};
+
 const recordFirstVideoFrame = (): void => {
   if (videoEvidencePosted || connectEvidenceStartedAt === 0) return;
   videoEvidencePosted = true;
@@ -1201,8 +1260,19 @@ const recordFirstVideoFrame = (): void => {
   if (connectJourneyStartedAt > 0) {
     queueConnectionMediaEvidence("end_to_end_video_ready", now - connectJourneyStartedAt);
   }
+  // The first video frame can arrive before /api/status has published
+  // greeting_available. Retry only after the existing evidence/status fence
+  // completes, under the same session sequence: do not lose the welcome phrase
+  // to a connection race or send it to a later session.
+  const expectedSequence = evidenceSessionSequence;
   void connectionEvidenceTail
     .then(() => syncStatus())
+    .then(() => {
+      if (expectedSequence === evidenceSessionSequence) {
+        return greetAfterFirstVideoFrame();
+      }
+      return undefined;
+    })
     .catch(() => undefined);
 };
 
@@ -1287,6 +1357,14 @@ const updateAudienceMode = (): void => {
   personaPanel.hidden = selectedAudience() === "visitor";
 };
 
+// D-ID Echo has a server-owned STOP with an epoch-bound HTTP receipt. Browser
+// client_control.interrupt=false is correct and must NOT hide the STOP control.
+const serverEchoStopAvailable = (): boolean =>
+  !!liveKitRoom && sessionState.backend.session_state === "active"
+  && capabilities.has("interrupt")
+  && activeClientControl?.interrupt === false
+  && activeClientControl?.text_input === false;
+
 const updateControls = (): void => {
   const transportReady = sessionState.realtime.control && sessionState.backend.session_state === "active";
   const textReady = sessionState.backend.conversation_readiness !== "none";
@@ -1301,22 +1379,85 @@ const updateControls = (): void => {
     && playbackReady
     && providerPlaybackInFlight;
   const strictPlaybackBlocked = rt0EvidenceMode && rt0PlaybackPending;
-  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
-  interruptButton.disabled = !voiceRequestInFlight && !clientInterruptReady;
+  speakButton.disabled = !transportReady || !textReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked || audioUnlockRequired;
+  const protectedServerStopReady = transportReady && serverEchoStopAvailable();
+  interruptButton.disabled = manualInterruptActionInFlight || interruptOperation !== null
+    || (!voiceRequestInFlight && !clientInterruptReady && !protectedServerStopReady);
   resumeAnswerButton.disabled = resumeAnswerRow.hidden || !transportReady
-    || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom;
+    || voiceRequestInFlight || textRequestInFlight || recording || !liveKitRoom
+    || resumeRequestInFlight;
   voiceButton.disabled = recording
     ? false
-    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight || strictPlaybackBlocked;
+    : !transportReady || !voiceReady || textRequestInFlight || voiceRequestInFlight
+      || (strictPlaybackBlocked && !greetingPlaybackPending) || audioUnlockRequired;
   voiceButton.textContent = recording ? "Остановить и отправить" : "Начать говорить";
   revokeButton.disabled = !backendSessionPresent()
     || (sessionState.backend.session_state === "revoked" && !sessionState.backend.avatar_open);
   closeButton.disabled = !backendSessionPresent()
     || (rt0EvidenceMode && avSyncCollectionPending);
   connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
+  audioUnlockButton.hidden = !transportReady || !audioUnlockRequired;
+  audioUnlockButton.disabled = audioUnlockInFlight;
   audienceSelect.disabled = backendSessionPresent();
   if (visitorOption) visitorOption.disabled = !ownerCaptureReviewed;
   updateAudienceMode();
+};
+
+// Browser autoplay permission is not proof of remote audio playout. When
+// blocked, stop the initial Echo greeting at its session-bound authorization
+// boundary until a genuine user gesture unlocks the receiving media element.
+const requireManualAudioUnlock = (): void => {
+  if (sessionState.backend.session_state !== "active" || evidenceSessionSequence <= 0
+      || locallyFencedSessionSequence === evidenceSessionSequence) return;
+  audioUnlockRequired = true;
+  setStatus("Браузер не разрешил воспроизведение. Нажмите «Включить звук аватара», затем начнётся приветствие.", "error");
+  updateControls();
+};
+
+const unlockAudioPlayback = async (): Promise<void> => {
+  if (audioUnlockInFlight || !audioUnlockRequired
+      || sessionState.backend.session_state !== "active"
+      || !sessionState.realtime.control
+      || locallyFencedSessionSequence === evidenceSessionSequence) return;
+  audioUnlockInFlight = true;
+  const sequence = evidenceSessionSequence;
+  const room = liveKitRoom;
+  updateControls();
+  try {
+    // Invoke media play/startAudio synchronously from the click handler before
+    // the user-activation window closes. Do not await a network request first.
+    const audioStart = room?.startAudio?.();
+    const element = room ? avatarAudio : video;
+    // play() may stay pending until Echo sends its FIRST audio frame. Never
+    // deadlock the greeting waiting for the media frame it must create.
+    const playResult = (element.srcObject || element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+      ? element.play().then(() => true, () => false)
+      : null;
+    if (!audioStart && !playResult) throw new Error("AUDIO_TRACK_NOT_READY");
+    if (audioStart) {
+      await audioStart;
+      if (playResult) void playResult.then((playing) => {
+        if (!playing && evidenceSessionSequence === sequence) requireManualAudioUnlock();
+      });
+    } else if (!await playResult) {
+      throw new Error("AUDIO_PLAYBACK_DENIED");
+    }
+    if (evidenceSessionSequence !== sequence || sessionState.backend.session_state !== "active"
+        || locallyFencedSessionSequence === sequence) return;
+    if (room?.canPlaybackAudio === false) throw new Error("AUDIO_PLAYBACK_STILL_BLOCKED");
+    // This records browser permission only, NEVER provider playback completion.
+    audioUnlockRequired = false;
+    setStatus("Звук разрешён браузером. Ожидаю фактическое аудио и синхронизацию аватара.", "ready");
+    await greetAfterFirstVideoFrame();
+  } catch (error) {
+    if (evidenceSessionSequence === sequence && sessionState.backend.session_state === "active") {
+      audioUnlockRequired = true;
+      setStatus(`Звук не включён: ${error instanceof Error ? error.message : "AUDIO_PLAYBACK_DENIED"}`, "error");
+    }
+  } finally {
+    audioUnlockInFlight = false;
+    updateControls();
+  }
 };
 
 const ownerCapture = mountOwnerCapture({
@@ -1498,6 +1639,13 @@ const attachLiveKitTrack = (track: LiveKitTrack): void => {
     liveKitAudioTrack = track;
     sessionState.setRealtimeReadiness({ audio: true });
     track.attach(avatarAudio);
+    const sequence = evidenceSessionSequence;
+    if (liveKitRoom?.canPlaybackAudio === false) requireManualAudioUnlock();
+    if (avatarAudio.srcObject || avatarAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      void avatarAudio.play().catch(() => {
+        if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
+      });
+    }
     if (track.mediaStreamTrack) {
       void attachRemoteAudioEvidence(track.mediaStreamTrack).catch(() => undefined);
     }
@@ -1555,6 +1703,8 @@ const closePeerTransport = (): void => {
   voiceDeliveryGeneration += 1;
   voiceCommandScheduler.interrupt();
   rt0PlaybackPending = false;
+  greetingPlaybackPending = false;
+  audioUnlockRequired = false;
   providerPlaybackInFlight = false;
   stopMicrophoneCapture();
   stopRemoteEvidence();
@@ -1750,6 +1900,12 @@ const connectWebRtcTransport = async (
       setStatus("Видео подключено", "ready");
     } else if (event.track.kind === "audio") {
       sessionState.setRealtimeReadiness({ audio: true });
+      const sequence = evidenceSessionSequence;
+      if (video.srcObject || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        void video.play().catch(() => {
+          if (evidenceSessionSequence === sequence) requireManualAudioUnlock();
+        });
+      }
       void attachRemoteAudioEvidence(event.track).catch(() => undefined);
     }
     updateControls();
@@ -1803,6 +1959,11 @@ const connectLiveKitTransport = async (
     const track = args[0] as LiveKitTrack | undefined;
     if (track) handleLiveKitTrackUnsubscribed(track);
   });
+  if (sdk.RoomEvent.AudioPlaybackStatusChanged) {
+    room.on(sdk.RoomEvent.AudioPlaybackStatusChanged, () => {
+      if (room === liveKitRoom && room.canPlaybackAudio === false) requireManualAudioUnlock();
+    });
+  }
   room.on(sdk.RoomEvent.DataReceived, (...args: unknown[]) => {
     const payload = args[0];
     if (!(payload instanceof Uint8Array)) return;
@@ -1832,6 +1993,7 @@ const connectLiveKitTransport = async (
     void handleUnexpectedLiveKitDisconnect(room, reason);
   });
   await room.connect(transport.server_url, transport.token);
+  if (room.canPlaybackAudio === false) requireManualAudioUnlock();
   sessionState.setRealtimeReadiness({ control: true });
   updateControls();
 };
@@ -1853,6 +2015,9 @@ const connectAvatar = async (): Promise<void> => {
   connectionEvidenceTail = Promise.resolve();
   connectionEvidenceFailure = null;
   evidenceSessionSequence = 0;
+  greetingRequestedSequence = 0;
+  greetingPlaybackPending = false;
+  audioUnlockRequired = false;
   nextTextRequestSequence = 0;
   nextVoiceRequestSequence = 0;
   setStatus("Создаю защищённую сессию…");
@@ -1910,6 +2075,7 @@ const connectAvatar = async (): Promise<void> => {
     ensureMicrophoneDeviceMonitoring();
     await refreshMicrophoneDevices(storedMicrophoneDeviceId());
     await syncStatus();
+    if (videoEvidencePosted) void greetAfterFirstVideoFrame();
     const transportName = start.transport.kind === "web_rtc" ? "WebRTC" : "LiveKit";
     setStatus(
       selectedAudience() === "visitor"
@@ -1967,6 +2133,8 @@ const cancelMicrophoneInput = async (): Promise<void> => {
 };
 
 const stopMicrophoneCapture = (): void => {
+  microphoneSwitchGeneration += 1;
+  microphoneSelect.disabled = false;
   if (recordingTimer !== null) window.clearTimeout(recordingTimer);
   recordingTimer = null;
   micSource?.disconnect();
@@ -2098,9 +2266,87 @@ const microphoneCaptureError = (error: unknown): Error => {
   }
 };
 
+
+const discoverMicrophones = async (): Promise<void> => {
+  const devices = runtimeMediaDevices();
+  if (!devices?.getUserMedia) {
+    setStatus("Браузер не предоставляет доступ к микрофонам", "error");
+    return;
+  }
+  if (recording) {
+    await refreshMicrophoneDevices(microphoneSelect.value);
+    return;
+  }
+  microphoneRefreshButton.disabled = true;
+  try {
+    // User-initiated request unlocks device names in Firefox. The short
+    // discovery stream is never uploaded and its tracks are stopped.
+    const permissionStream = await devices.getUserMedia({ audio: true });
+    try {
+      await refreshMicrophoneDevices(microphoneSelect.value || storedMicrophoneDeviceId());
+      setStatus("Микрофоны найдены. Выберите встроенный или системный.", "ready");
+    } finally {
+      permissionStream.getTracks().forEach((track) => track.stop());
+    }
+  } catch (error) {
+    const failure = microphoneCaptureError(error);
+    setStatus(`Список микрофонов: ${failure.message}`, "error");
+  } finally {
+    microphoneRefreshButton.disabled = false;
+  }
+};
+
+const switchRecordingMicrophone = async (selectedDeviceId: string): Promise<void> => {
+  rememberMicrophoneDeviceId(selectedDeviceId);
+  if (!recording || !micStream || !micSource || !micWorklet || !audioContext) return;
+  const devices = runtimeMediaDevices();
+  if (!devices?.getUserMedia) return;
+  const generation = ++microphoneSwitchGeneration;
+  const previousStream = micStream;
+  const previousSource = micSource;
+  const previousId = previousStream.getAudioTracks()[0]?.getSettings().deviceId ?? "";
+  microphoneSelect.disabled = true;
+  let replacementStream: MediaStream | null = null;
+  try {
+    replacementStream = await devices.getUserMedia({
+      audio: {
+        ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+        channelCount: 1, sampleRate: 16_000,
+        echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+      },
+    });
+    // An in-flight permission request may finish after STOP, revocation or
+    // another device switch. Never reconnect a stale microphone stream.
+    if (generation !== microphoneSwitchGeneration || !recording
+        || micStream !== previousStream || !audioContext || !micWorklet) return;
+    const nextSource = audioContext.createMediaStreamSource(replacementStream);
+    nextSource.connect(micWorklet);
+    previousSource.disconnect();
+    micStream = replacementStream;
+    micSource = nextSource;
+    replacementStream = null;
+    previousStream.getTracks().forEach((track) => track.stop());
+    await refreshMicrophoneDevices(selectedDeviceId);
+    setStatus("Микрофон переключён без прерывания текущей реплики", "ready");
+  } catch (error) {
+    if (generation === microphoneSwitchGeneration && recording) {
+      await refreshMicrophoneDevices(previousId);
+      const failure = microphoneCaptureError(error);
+      setStatus(`Не удалось сменить микрофон: ${failure.message}`, "error");
+    }
+  } finally {
+    replacementStream?.getTracks().forEach((track) => track.stop());
+    if (generation === microphoneSwitchGeneration) microphoneSelect.disabled = false;
+  }
+};
+
 const startMicrophone = async (): Promise<void> => {
   const mediaDevices = runtimeMediaDevices();
   if (!mediaDevices?.getUserMedia) throw new Error("MIC_UNAVAILABLE");
+  // Firefox may take time to show a capture permission prompt. A device
+  // change during that pending prompt would otherwise be silently discarded
+  // because no recording worklet exists yet, forcing STOP and a second start.
+  microphoneSelect.disabled = true;
   try {
     const selectedDeviceId = microphoneSelect.value.trim();
     micStream = await mediaDevices.getUserMedia({
@@ -2113,12 +2359,10 @@ const startMicrophone = async (): Promise<void> => {
         autoGainControl: true,
       },
     });
-    const activeDeviceId = micStream.getAudioTracks()[0]?.getSettings().deviceId ?? selectedDeviceId;
-    await refreshMicrophoneDevices(activeDeviceId);
-    if (activeDeviceId) {
-      microphoneSelect.value = activeDeviceId;
-      rememberMicrophoneDeviceId(activeDeviceId);
-    }
+    // Choosing the browser default is a persistent preference, not an alias
+    // for whichever device happened to be active during the last recording.
+    await refreshMicrophoneDevices(selectedDeviceId);
+    if (selectedDeviceId) rememberMicrophoneDeviceId(selectedDeviceId);
   } catch (error) {
     throw microphoneCaptureError(error);
   }
@@ -2174,6 +2418,7 @@ const startMicrophone = async (): Promise<void> => {
     if (micSamplesSent >= MAX_VOICE_SAMPLES) void finishMicrophoneTurn();
   };
   recording = true;
+  microphoneSelect.disabled = false;
   micSource.connect(micWorklet);
   micWorklet.connect(audioContext.destination);
   recordingTimer = window.setTimeout(() => void finishMicrophoneTurn(), AUTO_STOP_MILLIS);
@@ -2427,14 +2672,16 @@ const toggleVoice = async (): Promise<void> => {
     if (recording) {
       await finishMicrophoneTurn();
     } else {
-      if (rt0EvidenceMode && rt0PlaybackPending) {
+      if (rt0EvidenceMode && rt0PlaybackPending && !greetingPlaybackPending) {
         throw new Error("RT0_EVIDENCE_PLAYBACK_ACTIVE_USE_INTERRUPT");
       }
       clearInterruptedAnswer();
-      if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight) {
+      if (voiceCommandScheduler.hasActivePlayback || providerPlaybackInFlight
+          || greetingPlaybackPending) {
         if (!await interruptAvatar()) {
           throw new Error("PROVIDER_STOP_UNCONFIRMED");
         }
+        greetingPlaybackPending = false;
       }
       await startMicrophone();
     }
@@ -2479,16 +2726,23 @@ const speak = async (): Promise<void> => {
   }
 };
 
-const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
+const performInterruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   const voice = activeVoiceEvidence;
+  const requestSequenceForEvidence = recordEvidence && voice?.audioStarted && !voice.interrupted
+    ? voice.requestSequence : null;
+  const interruptedAt = performance.now();
   if (voice) voice.interrupted = true;
-  if (recordEvidence && voice?.audioStarted) {
-    interruptEvidenceWatch = {
-      requestSequence: voice.requestSequence,
-      startedAt: performance.now(),
-      silentFrames: 0,
-    };
-  }
+  // Local mute must not count as proof that remote audio STOP succeeded.
+  interruptEvidenceWatch = null;
+  const observeConfirmedStop = (): void => {
+    if (requestSequenceForEvidence !== null) {
+      interruptEvidenceWatch = {
+        requestSequence: requestSequenceForEvidence,
+        startedAt: interruptedAt,
+        silentFrames: 0,
+      };
+    }
+  };
 
   // Immediate user-visible silence is independent of the remote STOP receipt.
   // It must NOT create interruption_stopped or playback_completed evidence.
@@ -2518,6 +2772,18 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     : null;
 
   try {
+    if (serverEchoStopAvailable()) {
+      // Viewer cannot send did.interrupt. Use the private sender's epoch-fenced
+      // server STOP even before voice events or after stale playback status.
+      await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
+      rt0PlaybackPending = false;
+      sessionState.setPlaybackId(null);
+      greetingPlaybackPending = false;
+      observeConfirmedStop();
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
+    }
     if (providerStopRequired && !clientReady) {
       // Echo's viewer never publishes did.interrupt. An independent
       // server-owned STOP can run while STT/LLM holds the engine mutex.
@@ -2525,6 +2791,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2542,6 +2809,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       if (canonicalStop) await canonicalStop;
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2556,6 +2824,7 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
       await dispatchClientCommand(command);
       rt0PlaybackPending = false;
       sessionState.setPlaybackId(null);
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2563,6 +2832,16 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
     if (!voiceRequestInFlight) {
       await api<{ ok: true }>("/api/avatar/interrupt", sessionEndRequest());
       rt0PlaybackPending = false;
+      observeConfirmedStop();
+      updateControls();
+      await refreshSessionEvidence();
+      return true;
+    }
+    // A server-side in-flight voice turn may have no client playback command.
+    // A successfully acknowledged canonical STOP still counts as STOP success.
+    if (canonicalStop) {
+      rt0PlaybackPending = false;
+      observeConfirmedStop();
       updateControls();
       await refreshSessionEvidence();
       return true;
@@ -2608,11 +2887,32 @@ const interruptAvatar = async (recordEvidence = true): Promise<boolean> => {
   }
 };
 
+// Coalesce concurrent UI, microphone and silence-recovery STOP attempts.
+const interruptAvatar = (recordEvidence = true): Promise<boolean> => {
+  if (interruptOperation) return interruptOperation;
+  const operation = performInterruptAvatar(recordEvidence);
+  interruptOperation = operation;
+  updateControls();
+  void operation.finally(() => {
+    if (interruptOperation === operation) {
+      interruptOperation = null;
+      updateControls();
+    }
+  }).catch(() => undefined);
+  return operation;
+};
+
 const interruptAndOfferResume = async (): Promise<void> => {
+  if (manualInterruptActionInFlight || interruptOperation) return;
+  manualInterruptActionInFlight = true;
+  interruptButton.textContent = "Останавливаю…";
+  setStatus("Останавливаю звук: ожидаю подтверждённый STOP сервера Echo…");
+  updateControls();
+  try {
   const voice = activeVoiceEvidence;
   const replaying = resumedSpeechStartedAt !== null;
   const eligible = sessionState.backend.session_state === "active" && !!liveKitRoom && (
-    replaying || (voice?.responseComplete === true && voice.audioStarted && !voice.interrupted
+    replaying || (voice?.responseComplete === true && voice.audioStarted
       && resumeSourceRequest === voice.requestSequence && completedAuthorizedReply !== null)
   );
   const sentences = replaying
@@ -2625,6 +2925,7 @@ const interruptAndOfferResume = async (): Promise<void> => {
       : voice.audibleDurationMillis;
   const offset = replaying ? resumeFromIndex : 0;
   const interrupted = await interruptAvatar();
+  if (interrupted) greetingPlaybackPending = false;
   resumedSpeechStartedAt = null;
   if (interrupted && eligible && sentences.length > 0 && sessionState.backend.session_state === "active") {
     try {
@@ -2652,14 +2953,22 @@ const interruptAndOfferResume = async (): Promise<void> => {
   } else {
     clearInterruptedAnswer();
     if (interrupted) {
-      setStatus("Ответ остановлен. Продолжение недоступно: исходный ответ ещё не сформирован полностью.", "idle");
+      setStatus(
+        "Ответ остановлен. Продолжение недоступно: нет подтверждённого полного голосового ответа.",
+        "idle",
+      );
     }
   }
   updateControls();
+  } finally {
+    manualInterruptActionInFlight = false;
+    interruptButton.textContent = "Прервать";
+    updateControls();
+  }
 };
 
 const resumeInterruptedAnswer = async (): Promise<void> => {
-  if (resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
+  if (resumeRequestInFlight || resumeAnswerRow.hidden || sessionState.backend.session_state !== "active" || !liveKitRoom
       || !sessionState.realtime.control || recording || voiceRequestInFlight || textRequestInFlight) {
     return;
   }
@@ -2674,7 +2983,15 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     setStatus("Выберите предложение, с которого нужно продолжить ответ.", "error");
     return;
   }
-  resumeAnswerButton.disabled = true;
+  // Acknowledge the actual user click synchronously. The Rust backend may
+  // spend seconds synthesizing PCM and sending it through private Echo.
+  // Do not claim audible playback or generate an unguarded duplicate request.
+  resumeRequestInFlight = true;
+  const resumeClickedAt = performance.now();
+  resumeAnswerButton.setAttribute("aria-busy", "true");
+  resumeAnswerButton.textContent = "Готовлю продолжение…";
+  setStatus("Продолжение запрошено: проверяю разрешение, синтезирую голос и отправляю в Echo…");
+  updateControls();
   let prepared: ResumedSpeech | null = null;
   try {
     if (resumeSourceRequest === null) throw new Error("RESUME_SOURCE_UNAVAILABLE");
@@ -2705,9 +3022,10 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
     resumedSpeechStartedAt = performance.now();
     providerPlaybackInFlight = true;
     resumeAnswerRow.hidden = true;
+    const preparationMillis = Math.round(performance.now() - resumeClickedAt);
     setStatus(
-      "Продолжаю сохранённый ответ с выбранного предложения (без нового LLM-запроса). "
-        + "Это повторная отправка текста, а не подтверждение полного playback.",
+      `Продолжение отправлено за ${preparationMillis} мс (без повторного LLM-запроса). `
+        + "Начало звука зависит от Echo; полное воспроизведение ещё не подтверждено.",
       "ready",
     );
   } catch (error) {
@@ -2739,8 +3057,12 @@ const resumeInterruptedAnswer = async (): Promise<void> => {
       return;
     }
     setStatus(error instanceof Error ? error.message : "Не удалось продолжить ответ", "error");
+  } finally {
+    resumeRequestInFlight = false;
+    resumeAnswerButton.textContent = RESUME_BUTTON_IDLE_LABEL;
+    resumeAnswerButton.removeAttribute("aria-busy");
+    updateControls();
   }
-  updateControls();
 };
 
 const endSession = async (kind: "revoke" | "close"): Promise<void> => {
@@ -2844,6 +3166,7 @@ audienceSelect.addEventListener("change", () => {
   updateControls();
 });
 connectButton.addEventListener("click", () => void connectAvatar());
+audioUnlockButton.addEventListener("click", () => void unlockAudioPlayback());
 speakButton.addEventListener("click", () => void speak());
 interruptButton.addEventListener("click", () => void interruptAndOfferResume());
 resumeAnswerButton.addEventListener("click", () => void resumeInterruptedAnswer());
@@ -2855,8 +3178,9 @@ revokeButton.addEventListener("click", () => void endSession("revoke"));
 closeButton.addEventListener("click", () => void endSession("close"));
 voiceButton.addEventListener("click", () => void toggleVoice());
 microphoneSelect.addEventListener("change", () => {
-  rememberMicrophoneDeviceId(microphoneSelect.value.trim());
+  void switchRecordingMicrophone(microphoneSelect.value.trim());
 });
+microphoneRefreshButton.addEventListener("click", () => void discoverMicrophones());
 window.addEventListener("pagehide", closeBackendOnUnload);
 
 void api<Bootstrap>("/api/bootstrap")

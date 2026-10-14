@@ -1,0 +1,60 @@
+name: RT0 Chatterbox V3 and Qwen Base Comparison
+
+on:
+  push:
+    branches:
+      - feat/rt0-piper-lightweight-tts
+    paths:
+      - .github/workflows/rt0-chatterbox-qwen-base.yml
+      - scripts/windows_neural_voice_audition.ps1
+      - scripts/rt0_multilingual_voice_audition.py
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  chatterbox-v3:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Test actual Russian neural speech from permitted synthetic female reference
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & ./scripts/windows_neural_voice_audition.ps1 -Engine chatterbox-v3
+          if ($LASTEXITCODE -ne 0) { throw 'Real chatterbox-v3 Russian audition failed' }
+      - name: Publish public fixed-text WAV and timing only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rt0-chatterbox-v3
+          path: audio-candidates/chatterbox-v3.*
+          if-no-files-found: error
+          retention-days: 14
+  qwen-base:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Test actual Russian neural speech from permitted synthetic female reference
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          & ./scripts/windows_neural_voice_audition.ps1 -Engine qwen-base
+          if ($LASTEXITCODE -ne 0) { throw 'Real qwen-base Russian audition failed' }
+      - name: Publish public fixed-text WAV and timing only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rt0-qwen-base
+          path: audio-candidates/qwen-base.*
+          if-no-files-found: error
+          retention-days: 14

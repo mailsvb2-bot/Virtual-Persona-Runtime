@@ -3,6 +3,7 @@ const INITIAL_LAB_STATUS = {
     avatar_open: false,
     egress_enabled: false,
     conversation_readiness: "none",
+    greeting_available: false,
     modality_readiness: { text: "not_ready", voice: "not_ready", video: "not_ready" },
     session_audience: null,
     owner_context_state: "missing",

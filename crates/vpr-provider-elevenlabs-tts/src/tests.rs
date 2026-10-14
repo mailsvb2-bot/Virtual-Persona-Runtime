@@ -1,9 +1,10 @@
 use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 use vpr_integration::{GeneratedAudioBuffer, ProviderErrorKind, TtsRequest, UsageUnit};
 
 struct Probe(AtomicBool);
@@ -195,4 +196,84 @@ fn descriptor_does_not_expose_secret() {
     assert_eq!(descriptor.provider, "elevenlabs");
     assert_eq!(descriptor.model, "model-x");
     assert_eq!(descriptor.representation.as_deref(), Some("voice-x"));
+}
+
+struct CancelAfter {
+    calls: AtomicUsize,
+    threshold: usize,
+}
+impl CancellationProbe for CancelAfter {
+    fn is_cancelled(&self) -> bool {
+        self.calls.fetch_add(1, Ordering::SeqCst) >= self.threshold
+    }
+}
+
+fn serve_chunked_pcm(chunks: Vec<Vec<u8>>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _request = read_request(&mut stream);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        for bytes in chunks {
+            let header = format!("{:x}\r\n", bytes.len());
+            if stream.write_all(header.as_bytes()).is_err()
+                || stream.write_all(&bytes).is_err()
+                || stream.write_all(b"\r\n").is_err()
+                || stream.flush().is_err()
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        let _ = stream.write_all(b"0\r\n\r\n");
+    });
+    format!("http://{address}/v1/text-to-speech")
+}
+
+#[test]
+fn chunked_http_pcm_across_odd_boundaries_remains_frame_aligned() {
+    let samples = vec![1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0];
+    let endpoint = serve_chunked_pcm(vec![
+        samples[0..3].to_vec(),
+        samples[3..4].to_vec(),
+        samples[4..9].to_vec(),
+        samples[9..].to_vec(),
+    ]);
+    let mut sink = GeneratedAudioBuffer::default();
+    let usage = adapter(endpoint)
+        .synthesize(&request(), &Probe(AtomicBool::new(false)), &mut sink)
+        .unwrap();
+    assert_eq!(sink.pcm(), samples);
+    assert_eq!(usage.output_units, Some(0)); // Six 24 kHz samples are sub-millisecond.
+}
+
+#[test]
+fn streamed_pcm_cancellation_fences_a_partially_delivered_generation() {
+    let endpoint = serve_chunked_pcm(vec![vec![0; 480], vec![0; 480], vec![0; 480]]);
+    let cancellation = CancelAfter {
+        calls: AtomicUsize::new(0),
+        threshold: 3,
+    };
+    let mut sink = GeneratedAudioBuffer::default();
+    let error = adapter(endpoint)
+        .synthesize(&request(), &cancellation, &mut sink)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    // The generation sink may have private partial PCM, but no successful
+    // result or outbound avatar permit can be issued after cancellation.
+    assert!(sink.pcm().len() <= 480);
+}
+
+#[test]
+fn streamed_pcm_rejects_unpaired_final_byte() {
+    let endpoint = serve_chunked_pcm(vec![vec![1, 0], vec![2]]);
+    let result = adapter(endpoint).synthesize(
+        &request(),
+        &Probe(AtomicBool::new(false)),
+        &mut GeneratedAudioBuffer::default(),
+    );
+    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::InvalidResponse);
 }

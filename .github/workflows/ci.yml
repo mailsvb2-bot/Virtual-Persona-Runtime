@@ -28,6 +28,20 @@ jobs:
         run: python3 tests/e2e/test_echo_python_worker.py
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
+      - name: Piper speech bridge PCM and authorization contract
+        run: python3 tests/e2e/test_piper_tts_bridge.py
+      - name: Windows female voice private HTTP and Unicode contract
+        run: python3 tests/e2e/test_windows_sapi_tts_bridge.py
+      - name: RT0 live owner and visitor acceptance handoff (non-promoting)
+        run: python3 tests/e2e/test_rt0_live_acceptance.py
+      - name: Piper first-run download integrity and cache contract
+        run: python3 tests/e2e/test_windows_piper_prepare.py
+      - name: MIT Silero female audition integrity and whitelist contract
+        run: python3 tests/e2e/test_silero_cis_voice_preview.py
+      - name: Human-blind native Russian voice and legal-rights acceptance contract
+        run: |
+          python3 tests/e2e/test_rt0_multilingual_voice_audition.py
+          python3 tests/e2e/test_rt0_blind_voice_acceptance.py
       - name: Architecture boundaries
         run: python3 tests/architecture/check_boundaries.py
       - name: Release contracts
@@ -125,6 +139,16 @@ jobs:
       - name: Windows launcher listener ownership regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_launcher.ps1
+      - name: Windows full Owner Lab canary and rollback-safe preflight regression
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary.ps1
+      - name: Real Windows two-instance Owner Lab canary with no provider egress
+        shell: pwsh
+        run: |
+          cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Owner Lab build failed' }
+          pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary_real.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows Owner Lab canary E2E failed' }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
       - name: Windows clippy parity gate
@@ -135,6 +159,16 @@ jobs:
         run: cargo test --locked -p vpr-owner-lab --test http_contract
       - name: Windows owner-lab library tests
         run: cargo test --locked -p vpr-owner-lab --lib
+      - name: Real Windows Piper voice and authenticated PCM E2E
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'vpr-piper-windows-ci'
+          py -3.11 scripts/windows_piper_prepare.py --data-dir $root
+          if ($LASTEXITCODE -ne 0) { throw 'Piper first-use preparation failed on Windows' }
+          $python = Join-Path $root 'venv\Scripts\python.exe'
+          $model = Join-Path $root 'voices\ru_RU-denis-medium.onnx'
+          & $python tests/e2e/test_windows_piper_real_voice.py --model $model
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows Piper PCM E2E failed' }
 
   owner-lab-ui:
     runs-on: ubuntu-24.04

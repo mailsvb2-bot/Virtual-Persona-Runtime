@@ -111,6 +111,10 @@ test("owner and visitor voice turns cross the real backend with different contex
     phase: "not-started",
     error: null,
     ownerEvidence: null,
+    correctedOwnerEvidence: null,
+    correctedPersonaVersion: null,
+    visitorMutationDenied: false,
+    postRevokeLlmDenied: false,
     visitorEvidence: null,
     requestedMicrophones: [],
     interruptPayloads: [],
@@ -155,5 +159,8 @@ test("owner and visitor voice turns cross the real backend with different contex
   journey = await readJourney();
 
   assertBrowserJourneyEvidence(journey);
-  await assertProviderRequests(request, providerUrl, ownerAnswers);
+  await assertProviderRequests(
+    request, providerUrl, ownerAnswers,
+    "Проверяю факты перед ответом, никогда не выдумываю информацию",
+  );
 });

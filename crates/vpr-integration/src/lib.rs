@@ -5,13 +5,14 @@ mod transport;
 pub use provider_http::{
     BoundedProviderLineReader, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_JSON_BODY_BYTES,
     MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body,
+    read_bounded_provider_stream,
 };
 
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,
     RealtimeAvatarClientControl, RealtimeAvatarClientEvent, RealtimeAvatarClientRoute,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
-    WebRtcIceServer, WebRtcSessionDescription,
+    RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    WebRtcIceCandidate, WebRtcIceServer, WebRtcSessionDescription,
 };
 pub use transport::{
     MediaTimelineStamp, RealtimeAudioOutputEvent, RealtimeMediaFlushEvent, RealtimeOutputPort,
@@ -270,6 +271,81 @@ impl GeneratedAudioSink for GeneratedAudioBuffer {
         self.channels = Some(channels);
         self.sample_format = Some(sample_format);
         self.pcm.extend_from_slice(pcm);
+        Ok(())
+    }
+}
+
+/// Frame-aligned, strictly bounded generated PCM forwarded by the canonical runtime.
+/// This object does not carry provider credentials, an avatar session or egress grants.
+/// Only the authorized runtime may attach its callback to a private PCM publisher.
+/// Callback that forwards one frame-aligned generated PCM chunk into the canonical private publisher.
+pub type GeneratedPcmChunkReceiver<'a> =
+    dyn FnMut(&[u8], u32, u16) -> Result<(), ProviderError> + 'a;
+
+pub struct GeneratedAudioStreamingSink<'a> {
+    emit: &'a mut GeneratedPcmChunkReceiver<'a>,
+    bytes: usize,
+    rate: Option<u32>,
+    channels: Option<u16>,
+}
+
+impl<'a> GeneratedAudioStreamingSink<'a> {
+    #[must_use]
+    pub fn new(emit: &'a mut GeneratedPcmChunkReceiver<'a>) -> Self {
+        Self {
+            emit,
+            bytes: 0,
+            rate: None,
+            channels: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn received_bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+impl sealed::GeneratedAudioSink for GeneratedAudioStreamingSink<'_> {}
+
+impl GeneratedAudioSink for GeneratedAudioStreamingSink<'_> {
+    fn push_generated_audio(
+        &mut self,
+        pcm: &[u8],
+        sample_rate_hz: u32,
+        channels: u16,
+        sample_format: PcmSampleFormat,
+    ) -> Result<(), ProviderError> {
+        let frame_bytes = usize::from(channels).checked_mul(sample_format.bytes_per_sample());
+        if sample_rate_hz == 0
+            || channels == 0
+            || pcm.is_empty()
+            || self.rate.is_some_and(|rate| rate != sample_rate_hz)
+            || self.channels.is_some_and(|value| value != channels)
+            || !frame_bytes.is_some_and(|size| size > 0 && pcm.len() % size == 0)
+        {
+            return Err(invalid_generated_output());
+        }
+        let size = frame_bytes.ok_or_else(invalid_generated_output)?;
+        let prospective = self
+            .bytes
+            .checked_add(pcm.len())
+            .ok_or_else(invalid_generated_output)?;
+        let duration = u64::try_from(prospective)
+            .ok()
+            .and_then(|bytes| bytes.checked_div(u64::try_from(size).ok()?))
+            .and_then(|frames| frames.checked_mul(1_000))
+            .and_then(|millis| millis.checked_div(u64::from(sample_rate_hz)))
+            .ok_or_else(invalid_generated_output)?;
+        if prospective > MAX_GENERATED_AUDIO_BYTES || duration > MAX_GENERATED_AUDIO_DURATION_MILLIS
+        {
+            return Err(invalid_generated_output());
+        }
+        // A successful callback is an upload only, never a proof of playout.
+        (self.emit)(pcm, sample_rate_hz, channels)?;
+        self.bytes = prospective;
+        self.rate = Some(sample_rate_hz);
+        self.channels = Some(channels);
         Ok(())
     }
 }

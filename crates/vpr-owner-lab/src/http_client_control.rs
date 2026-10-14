@@ -61,6 +61,12 @@ pub(super) fn retain_completed_reply(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct GreetingBody {
+    expected_session_sequence: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResumeAnswerBody {
     request_sequence: u64,
     sentence_index: usize,
@@ -173,12 +179,59 @@ fn confirm_interruption(
     Ok(super::json_response(200, &serde_json::json!({"ok": true})))
 }
 
+fn greeting_response(
+    request: &mut Request,
+    state: &AppState,
+) -> Result<HttpResponse, HttpResponse> {
+    let body = parse_json::<GreetingBody>(request)?;
+    reject_if_session_ending(state)?;
+    let current = state.active_session_sequence.load(Ordering::Acquire);
+    if current == 0 || current != body.expected_session_sequence {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    if state
+        .voice_busy
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(super::error_response(409, "INVALID_STATE_TRANSITION"));
+    }
+    let _busy =
+        super::http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
+    reject_if_session_ending(state)?;
+    if state
+        .greeting_session_sequence
+        .compare_exchange(0, current, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err(super::error_response(409, "GREETING_ALREADY_SENT"));
+    }
+    let result = with_engine_result(state, |engine| {
+        if engine.status().session_state != "active" {
+            return Err(vpr_owner_lab::LabError::InvalidState);
+        }
+        engine
+            .prepare_connection_greeting()
+            .map(|response| super::json_response(200, &response))
+    });
+    if result.is_err() {
+        let _ = state.greeting_session_sequence.compare_exchange(
+            current,
+            0,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+    result
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut Request,
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     match path {
+        "/api/avatar/greeting" => Some(greeting_response(request, state)),
         "/api/avatar/confirm-interruption" => Some(confirm_interruption(request, state)),
         "/api/avatar/resume-answer" => {
             Some(parse_json::<ResumeAnswerBody>(request).and_then(|body| {

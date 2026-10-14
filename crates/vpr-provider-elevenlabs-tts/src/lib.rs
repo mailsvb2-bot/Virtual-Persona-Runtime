@@ -4,9 +4,9 @@ use reqwest::blocking::{Client, Response};
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
 use vpr_integration::{
-    AudioInput, CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
-    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest,
-    UsageEvidence, UsageUnit, build_provider_http_client, read_bounded_provider_body,
+    CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES, PcmSampleFormat,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence,
+    UsageUnit, build_provider_http_client, read_bounded_provider_stream,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -134,27 +134,21 @@ impl TtsPort for ElevenLabsTts {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
-        let pcm = read_body(response, cancellation)?;
-        let audio = AudioInput {
-            pcm,
-            sample_rate_hz: self.config.output_sample_rate_hz,
-            channels: 1,
-            sample_format: PcmSampleFormat::S16Le,
-        };
-        if !audio.is_well_formed() {
-            return Err(invalid_response());
-        }
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        sink.push_generated_audio(
-            &audio.pcm,
-            audio.sample_rate_hz,
-            audio.channels,
-            audio.sample_format,
+        // Deliver frame-aligned PCM as the provider produces it. This is a
+        // generation sink, not a browser/private network publisher: runtime
+        // authorization still gates avatar egress after synthesis.
+        let generated_bytes = stream_pcm(
+            response,
+            cancellation,
+            sink,
+            self.config.output_sample_rate_hz,
         )?;
         let input_chars = u64::try_from(request.text.chars().count()).unwrap_or(u64::MAX);
-        let output_millis = audio.duration_millis().ok_or_else(invalid_response)?;
+        let output_millis = u64::try_from(generated_bytes / 2)
+            .ok()
+            .and_then(|frames| frames.checked_mul(1_000))
+            .and_then(|millis| millis.checked_div(u64::from(self.config.output_sample_rate_hz)))
+            .ok_or_else(invalid_response)?;
         Ok(UsageEvidence {
             input_units: Some(input_chars),
             input_unit: Some(UsageUnit::TextCharacter),
@@ -173,16 +167,46 @@ struct SpeechRequest<'a> {
     language_code: Option<&'a str>,
 }
 
-fn read_body(
+/// Incremental provider PCM decoding. Frame alignment is preserved across
+/// arbitrary HTTP read boundaries (including one-byte chunks). Neither a
+/// declared Content-Length nor a chunked transfer can bypass the hard limit.
+fn stream_pcm(
     response: Response,
     cancellation: &dyn CancellationProbe,
-) -> Result<Vec<u8>, ProviderError> {
-    let output =
-        read_bounded_provider_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, Some(cancellation))?;
-    if output.is_empty() {
+    sink: &mut dyn GeneratedAudioSink,
+    sample_rate_hz: u32,
+) -> Result<usize, ProviderError> {
+    let mut pending = None::<u8>;
+    let total = read_bounded_provider_stream(
+        response,
+        MAX_PROVIDER_BINARY_BODY_BYTES,
+        Some(cancellation),
+        |bytes| {
+            let mut start = 0_usize;
+            if let Some(first) = pending.take() {
+                let pair = [first, bytes[0]];
+                sink.push_generated_audio(&pair, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+                start = 1;
+            }
+            let aligned_end = start + ((bytes.len() - start) / 2) * 2;
+            if aligned_end > start {
+                sink.push_generated_audio(
+                    &bytes[start..aligned_end],
+                    sample_rate_hz,
+                    1,
+                    PcmSampleFormat::S16Le,
+                )?;
+            }
+            if aligned_end < bytes.len() {
+                pending = Some(bytes[aligned_end]);
+            }
+            Ok(())
+        },
+    )?;
+    if total == 0 || pending.is_some() {
         return Err(invalid_response());
     }
-    Ok(output)
+    Ok(total)
 }
 
 fn language_code(locale: &str) -> Option<&str> {

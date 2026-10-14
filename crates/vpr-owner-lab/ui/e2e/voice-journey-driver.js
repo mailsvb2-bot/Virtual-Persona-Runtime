@@ -19,6 +19,21 @@
   };
 
   const statusText = () => byId("status").textContent ?? "";
+  const correctedOwnerPrinciple = "Проверяю факты перед ответом, никогда не выдумываю информацию";
+  const canonicalPost = async (path, body, headers = {}) => {
+    const bootstrap = await fetch("/api/bootstrap", { cache: "no-store" });
+    if (!bootstrap.ok) throw new Error("OWNER_JOURNEY_BOOTSTRAP_UNAVAILABLE");
+    const session = await bootstrap.json();
+    if (!session.csrf_token) throw new Error("OWNER_JOURNEY_CSRF_MISSING");
+    return fetch(path, {
+      method: "POST", credentials: "same-origin", cache: "no-store",
+      headers: {
+        "content-type": "application/json",
+        "x-vpr-csrf": session.csrf_token, ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+  };
 
   const waitForStatus = (expected) =>
     waitFor(() => statusText().includes(expected), `status:${expected}`);
@@ -81,6 +96,27 @@
       () => (byId("microphone-level-text").textContent ?? "").includes("RMS"),
       "microphone-sample",
     );
+    // Exercise the real browser input pipeline while the same canonical upload
+    // is open: headset -> internal mic -> headset, without ending this turn.
+    const micSelect = byId("microphone-device");
+    await waitFor(
+      () => [...micSelect.options].some((option) => option.value === "builtin-mic"),
+      "available-microphone-options",
+    );
+    const switchMic = async (deviceId) => {
+      micSelect.value = deviceId;
+      micSelect.dispatchEvent(new Event("change", { bubbles: true }));
+      await waitFor(
+        () => (window.__vprRequestedMicrophones ?? []).at(-1) === deviceId
+          && !micSelect.disabled,
+        `microphone-switched:${deviceId}`,
+      );
+      if (voice.textContent !== "Остановить и отправить") {
+        throw new Error("MICROPHONE_SWITCH_INTERRUPTED_RECORDING");
+      }
+    };
+    await switchMic("builtin-mic");
+    await switchMic("headset-mic");
     voice.click();
     await waitForStatus(`Ответ: ${expectedReply}`);
     await waitFor(() => !byId("interrupt").disabled, "playback-started");
@@ -200,7 +236,50 @@
     await waitForStatus("Сессия закрыта");
     await checkpoint("owner-closed");
 
+    // Preserve the old-session evidence and transition through the REAL
+    // owner correction endpoint. No in-flight media is rebound to a new version.
+    const correction = await canonicalPost("/api/persona/claims/correct", {
+      claim_id: "opinion-core-principle",
+      statement: correctedOwnerPrinciple,
+      kind: "opinion",
+    });
+    if (!correction.ok) throw new Error("OWNER_CORRECTION_HTTP_" + correction.status);
+    const correctedStatus = await correction.json();
+    if (correctedStatus.persona_version !== 3
+        || correctedStatus.owner_context_state !== "reviewed") {
+      throw new Error("OWNER_CORRECTION_VERSION_NOT_ADVANCED");
+    }
+    const reviewed = await canonicalPost("/api/persona/reviewed", {});
+    if (!reviewed.ok) throw new Error("OWNER_REVIEWED_CONTEXT_UNAVAILABLE");
+    const revisedProfile = await reviewed.json();
+    const revisedClaim = (revisedProfile.claims ?? []).find(
+      (claim) => claim.claim_id === "opinion-core-principle");
+    if (revisedProfile.persona_version !== 3
+        || revisedClaim?.statement !== correctedOwnerPrinciple
+        || (revisedProfile.claims ?? []).some((claim) =>
+          claim.statement === "Точность важнее уверенного выдумывания")) {
+      throw new Error("STALE_OWNER_CLAIM_STILL_CURRENT");
+    }
+    await checkpoint("owner-correction-version3");
+
+    // New owner session proves next actual LLM requests consume PersonaVersion 3.
     const audience = byId("session-audience");
+    audience.value = "owner";
+    audience.dispatchEvent(new Event("change", { bubbles: true }));
+    await waitForConnectReady();
+    byId("consent").checked = true;
+    byId("connect").click();
+    await waitForStatus("WebRTC согласован");
+    await checkpoint("corrected-owner-connected");
+    await recordTextTurn("Вопрос после исправления владельцем", "Ответ: Исправленное мнение учтено");
+    await checkpoint("corrected-owner-text-complete");
+    await recordVoiceTurn("В visitor scope нет подтверждённых данных владельца");
+    await checkpoint("corrected-owner-voice-complete");
+    const correctedOwnerEvidence = await fetchEvidence();
+    byId("close").click();
+    await waitForStatus("Сессия закрыта");
+    await checkpoint("corrected-owner-closed");
+
     audience.value = "visitor";
     audience.dispatchEvent(new Event("change", { bubbles: true }));
     await waitForConnectReady();
@@ -208,6 +287,18 @@
     byId("connect").click();
     await waitForStatus("Visitor-сессия WebRTC согласована");
     await checkpoint("visitor-connected");
+    const mutation = await canonicalPost("/api/persona/claims/correct", {
+      claim_id: "opinion-core-principle",
+      statement: "ПОСЕТИТЕЛЬ НЕ МОЖЕТ МЕНЯТЬ ЧАСТНЫЕ ФАКТЫ",
+      kind: "opinion",
+    });
+    const mutationResult = await mutation.json();
+    if (mutation.status !== 403 || mutationResult.code !== "AUTH_SCOPE_DENIED") {
+      throw new Error("VISITOR_PERSONA_MUTATION_NOT_DENIED");
+    }
+    const forbiddenRead = await canonicalPost("/api/persona/reviewed", {});
+    if (forbiddenRead.status !== 403) throw new Error("VISITOR_READ_OWNER_CLAIMS_ALLOWED");
+    await checkpoint("visitor-owner-mutation-denied");
 
     await recordTextTurn("Текстовый вопрос visitor", "Ответ: Текстовый ответ visitor");
     await checkpoint("visitor-text-complete");
@@ -217,6 +308,17 @@
 
     byId("revoke").click();
     await waitForStatus("Доступ отозван");
+    const afterRevoke = await canonicalPost(
+      "/api/text/turn",
+      { text: "Запретить запрос после отзыва доступа" },
+      { "x-vpr-evidence-request": "99" },
+    );
+    const revokedBody = await afterRevoke.json();
+    if (afterRevoke.status !== 409
+        || revokedBody.code !== "INVALID_STATE_TRANSITION") {
+      throw new Error("REVOKED_SESSION_ACCEPTED_NEW_LLM");
+    }
+    await checkpoint("revoke-protected-request-denied");
     byId("close").click();
     await waitForStatus("Сессия закрыта");
     await checkpoint("visitor-closed");
@@ -225,6 +327,10 @@
       stage: "complete",
       phase: "complete",
       ownerEvidence,
+      correctedOwnerEvidence,
+      correctedPersonaVersion: 3,
+      visitorMutationDenied: true,
+      postRevokeLlmDenied: true,
       visitorEvidence,
       requestedMicrophones: window.__vprRequestedMicrophones ?? [],
       interruptPayloads: window.__vprInterruptPayloads ?? [],

@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioBuffer, PcmSampleFormat, ProviderDescriptor,
+    CancellationProbe, GeneratedAudioBuffer, GeneratedAudioStreamingSink, PcmSampleFormat,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapability,
     RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
-    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, TtsPort, TtsRequest,
-    WebRtcIceCandidate, WebRtcSessionDescription,
+    RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport,
+    TtsPort, TtsRequest, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
@@ -289,6 +290,15 @@ impl ActiveTurn {
         handle: &RealtimeAvatarHandle,
         text: &str,
     ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        // Native D-ID Echo documents an explicit pcm16 byte stream. Route
+        // streaming TTS chunks through the SAME canonical TTS and avatar permits.
+        // Other adapters continue the existing buffered compatibility path.
+        if port
+            .capabilities()
+            .supports(RealtimeAvatarCapability::AudioPcmStreamInput)
+        {
+            return self.stream_and_deliver_realtime_avatar_pcm(tts, port, handle, text);
+        }
         self.validate_avatar_handle(port, handle)
             .map_err(RealtimeAvatarOutputError::Provider)?;
         let audio = self
@@ -311,6 +321,98 @@ impl ActiveTurn {
         )
         .map_err(ProviderExecutionError::from)
         .map_err(RealtimeAvatarOutputError::Provider)?;
+        self.acknowledge_output_sent(&delivery)
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        Ok(delivery)
+    }
+
+    /// Couples canonical TTS generation to the private avatar's native PCM16
+    /// utterance stream. Every provider chunk is validated in a sealed sink,
+    /// and every egress checks the SAME revocable avatar permit. A failed TTS
+    /// response aborts the provider stream; no incomplete output is marked sent.
+    fn stream_and_deliver_realtime_avatar_pcm(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        self.validate_avatar_handle(port, handle)
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let avatar_permit = self
+            .avatar_permit()
+            .map_err(RealtimeAvatarOutputError::Provider)?;
+        let segment_id = self
+            .begin_output_segment()
+            .map_err(RealtimeAvatarOutputError::Runtime)?;
+        let delivery = OutputDeliveryHandle::new(self.snapshot.turn_id().clone(), segment_id);
+
+        let mut published: Option<Box<dyn RealtimeAvatarPcmStream>> = None;
+        let (synthesis, received_bytes) = {
+            let mut send = |pcm: &[u8], rate: u32, channels: u16| -> Result<(), ProviderError> {
+                if avatar_permit.cancellation.is_cancelled() {
+                    return Err(ProviderError {
+                        kind: ProviderErrorKind::Cancelled,
+                        retryable: false,
+                    });
+                }
+                if published.is_none() {
+                    published = Some(port.open_pcm_stream(
+                        &handle.provider_session,
+                        rate,
+                        channels,
+                        &avatar_permit.cancellation,
+                    )?);
+                }
+                published
+                    .as_mut()
+                    .ok_or(ProviderError {
+                        kind: ProviderErrorKind::Unavailable,
+                        retryable: false,
+                    })?
+                    .push_pcm(pcm, &avatar_permit.cancellation)
+            };
+            let mut sink = GeneratedAudioStreamingSink::new(&mut send);
+            let synthesis = self.execute_tts(
+                tts,
+                &TtsRequest {
+                    text: text.to_owned(),
+                    locale_hint: Some("ru".to_owned()),
+                },
+                &mut sink,
+            );
+            (synthesis, sink.received_bytes())
+        };
+
+        if let Err(error) = synthesis {
+            if let Some(mut stream) = published {
+                let _ = stream.abort(); // Explicit provider STOP + transport fencing.
+            }
+            return Err(RealtimeAvatarOutputError::Provider(error));
+        }
+        if received_bytes == 0 {
+            if let Some(mut stream) = published {
+                let _ = stream.abort();
+            }
+            return Err(RealtimeAvatarOutputError::Provider(
+                ProviderExecutionError::from(ProviderError {
+                    kind: ProviderErrorKind::InvalidResponse,
+                    retryable: false,
+                }),
+            ));
+        }
+        let mut stream = published.ok_or_else(|| {
+            RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            }))
+        })?;
+        if let Err(error) = stream.finish(&avatar_permit.cancellation) {
+            let _ = stream.abort();
+            return Err(RealtimeAvatarOutputError::Provider(
+                ProviderExecutionError::from(error),
+            ));
+        }
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
         Ok(delivery)
