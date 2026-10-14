@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use vpr_integration::ProviderErrorKind;
 #[cfg(windows)]
 use vpr_owner_lab::{
-    ProviderCredentialProfile, delete_provider_profile, load_provider_profile,
+    ProviderCredentialProfile, StoredTtsCredential, delete_provider_profile, load_provider_profile,
     save_provider_profile,
 };
 #[cfg(windows)]
@@ -41,6 +41,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     match command.as_str() {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
+        "set-tts" => set_tts_profile(),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
         "import-env" => import_env_profile(),
@@ -49,7 +50,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "probe-avatar" => probe_avatar(),
         "clear" => clear(),
         _ => Err(
-            "usage: vpr-provider-credentials <set|set-did|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
+            "usage: vpr-provider-credentials <set|set-did|set-tts|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
         ),
     }
@@ -84,6 +85,25 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     probe_selected_avatar(&profile)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR profile is missing; configure avatar/STT/LLM first")?;
+    println!("Configure the selected voice route. Credentials stay in Windows Credential Manager.");
+    let stored = StoredTtsCredential {
+        provider: prompt_line("TTS provider (metrotrance-qwen-preset/piper/windows-sapi/openai-speech/elevenlabs): ")?.to_ascii_lowercase(),
+        endpoint: prompt_line("TTS endpoint: ")?,
+        api_key: prompt_secret("TTS API key (hidden): ")?,
+        model: prompt_line("TTS model: ")?,
+        voice: prompt_line("TTS voice: ")?,
+    };
+    profile.set_tts(stored)?;
+    save_provider_profile(&profile)?;
+    println!("TTS credential route saved securely.");
     print_safe_profile(&profile);
     Ok(())
 }
@@ -452,6 +472,11 @@ fn print_safe_profile(profile: &ProviderCredentialProfile) {
         "  LLM: {} {} ({})",
         profile.llm_provider, profile.llm_model, profile.llm_endpoint
     );
+    if let Some(tts) = &profile.tts {
+        println!("  TTS: {} {} voice={} · key: present", tts.provider, tts.model, tts.voice);
+    } else {
+        println!("  TTS: not configured · key: absent");
+    }
     println!("  API keys: stored; values are never printed");
 }
 
