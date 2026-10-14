@@ -99,17 +99,17 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
     "headset-mic",
   ]);
 
-  expect(journey.interruptPayloads).toHaveLength(1);
-  const interruptPayload = JSON.parse(journey.interruptPayloads[0] ?? "{}") as {
-    type?: string;
-    videoId?: string;
-    timestamp?: number;
-  };
-  expect(interruptPayload).toMatchObject({
-    type: "stream/interrupt",
-    videoId: "video-2",
-  });
-  expect(Number(interruptPayload.timestamp)).toBeGreaterThan(0);
+  // Two different authorized sessions must send separate provider STOP commands.
+  expect(journey.interruptPayloads).toHaveLength(2);
+  for (const [index, videoId] of ["video-2", "video-5"].entries()) {
+    const payload = JSON.parse(journey.interruptPayloads[index] ?? "{}") as {
+      type?: string;
+      videoId?: string;
+      timestamp?: number;
+    };
+    expect(payload).toMatchObject({ type: "stream/interrupt", videoId });
+    expect(Number(payload.timestamp)).toBeGreaterThan(0);
+  }
 
   const owner = journey.ownerEvidence;
   expect(owner).not.toBeNull();
@@ -166,6 +166,14 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
   }]);
   expect(visitor.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
   expect(visitor.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
+  expect(visitor.voice_attempts[1]).toMatchObject({
+    request_sequence: 2,
+    status: "completed",
+    canonical_playback_confirmed: false,
+  });
+  expect(visitor.media_events.some((event) =>
+    event.request_sequence === 2 && event.kind === "interruption_stopped"
+  )).toBeTruthy();
 };
 
 export const assertProviderRequests = async (
@@ -191,8 +199,8 @@ export const assertProviderRequests = async (
   const stt = requests.filter((entry) => entry.kind === "stt");
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
-  expect(stt).toHaveLength(4);
-  expect(llm).toHaveLength(9);
+  expect(stt).toHaveLength(5);
+  expect(llm).toHaveLength(10);
   expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(3);
   expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(3);
   expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(3);
@@ -220,7 +228,7 @@ export const assertProviderRequests = async (
   expect(ownerTextLlm).toBeDefined();
   expect(ownerVoiceLlm).toBeDefined();
   // Original owner, corrected owner and privacy-scoped visitor each ask this.
-  expect(scopedVoiceLlms).toHaveLength(3);
+  expect(scopedVoiceLlms).toHaveLength(4);
   expect(interruptedOwnerVoiceLlm).toBeDefined();
   expect(failedOwnerLlm).toBeDefined();
   expect(recoveredOwnerLlm).toBeDefined();
