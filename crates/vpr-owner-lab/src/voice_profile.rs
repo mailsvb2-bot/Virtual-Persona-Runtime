@@ -38,6 +38,13 @@ impl VoiceProfile {
         {
             return Err("INVALID_VOICE_PROFILE_IDENTITY".into());
         }
+        if profile.provider == "metrotrance-qwen-preset"
+            && !matches!(profile.voice.as_str(),
+                "Ryan" | "Aiden" | "Vivian" | "Serena" | "Uncle_Fu" |
+                "Dylan" | "Eric" | "Ono_Anna" | "Sohee")
+        {
+            return Err("UNSUPPORTED_QWEN_PRESET_VOICE".into());
+        }
         if profile.rights_ref_sha256.as_deref().is_some_and(|digest| !is_digest(digest))
             || profile.status == VoiceProfileStatus::Accepted && profile.rights_ref_sha256.is_none()
         {
@@ -103,6 +110,13 @@ mod tests {
         profile.status = VoiceProfileStatus::Candidate;
         assert!(profile.validate_strict().is_err());
     }
+    #[test]
+    fn rejects_unbound_local_preset_speaker() {
+        let mut profile = example();
+        profile.voice = "local".into();
+        assert!(VoiceProfile::parse(&serde_json::to_vec(&profile).unwrap()).is_err());
+    }
+
     #[test]
     fn rejects_invalid_identity_or_empty_and_oversized_input() {
         let mut profile = example();
