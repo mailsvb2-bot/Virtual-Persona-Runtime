@@ -15,6 +15,9 @@ fn provider(role: ProviderRole, name: &str) -> ProviderStateBinding {
         provider: name.into(),
         model_or_representation: "contract-v1".into(),
         configuration_fingerprint_sha256: sha256_hex(format!("{name}-config").as_bytes()),
+        voice_profile_status: None,
+        profile_id: None,
+        version: None,
     }
 }
 
