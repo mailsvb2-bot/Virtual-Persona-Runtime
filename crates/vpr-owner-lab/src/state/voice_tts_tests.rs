@@ -98,9 +98,7 @@ fn voice_tts_selection_is_frozen_during_active_avatar_session() {
                 qwen: false,
             }),
         );
-    // Switching is permitted before the first session starts.
-    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
-    engine.select_tts_provider("metrotrance-qwen").unwrap();
+    // The fixture already owns an active avatar session; selection must be immutable.
     let first = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     engine
         .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
