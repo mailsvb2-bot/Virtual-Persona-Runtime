@@ -481,7 +481,10 @@ for required in ("JanusDataChannel", "stream/started", "stream/done", "stream/in
 owner_lab_src = CRATES / "vpr-owner-lab" / "src"
 owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
 owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
-owner_lab_providers = (owner_lab_src / "providers.rs").read_text(encoding="utf-8")
+owner_lab_providers = "\n".join(
+    (owner_lab_src / path).read_text(encoding="utf-8")
+    for path in ("providers.rs", "providers/avatar_factory.rs", "providers/tts_factory.rs")
+)
 owner_lab_ui_root = CRATES / "vpr-owner-lab" / "ui"
 owner_lab_app = (owner_lab_ui_root / "src" / "app.ts").read_text(encoding="utf-8")
 owner_lab_media_runtime = (owner_lab_ui_root / "src" / "media-runtime.ts").read_text(encoding="utf-8")
