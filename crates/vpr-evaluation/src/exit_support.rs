@@ -2,9 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::binding::valid_sha256;
-use crate::known_limitations::{
-    parse_known_limitations_review_status, voice_marker_matches,
-};
+use crate::known_limitations::{parse_known_limitations_review_status, voice_marker_matches};
 use crate::{
     BoundGoldenReport, Rt0ExitEvidence, Rt0ExitEvidenceError, Rt0ExitReport,
     Rt0ExitVerificationContext, evaluate_rt0_exit_evidence, sha256_hex,
@@ -242,9 +240,12 @@ pub fn evaluate_verified_rt0_exit_evidence(
     supporting_artifacts: Rt0ExitSupportingArtifacts<'_>,
 ) -> Result<Rt0ExitReport, Rt0ExitEvidenceError> {
     validate_rt0_exit_supporting_artifacts(evidence, supporting_artifacts)?;
-    let voice = context.provider_state.providers.iter().find(|binding|
-        binding.role == crate::ProviderRole::Tts
-    ).and_then(|binding| binding.voice_profile_status.as_deref());
+    let voice = context
+        .provider_state
+        .providers
+        .iter()
+        .find(|binding| binding.role == crate::ProviderRole::Tts)
+        .and_then(|binding| binding.voice_profile_status.as_deref());
     if !voice_marker_matches(supporting_artifacts.known_limitations, voice) {
         return Err(Rt0ExitEvidenceError::InvalidArtifactDigest);
     }
