@@ -19,13 +19,17 @@ impl ProviderBundle {
             .llm_descriptor
             .as_ref()
             .ok_or_else(|| "provider state requires LLM configuration".to_owned())?;
-        Ok(ProviderStateManifest {
-            schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
-            providers: vec![
+        let mut providers = vec![
                 binding(ProviderRole::Stt, stt),
                 binding(ProviderRole::Llm, llm),
                 binding(ProviderRole::Avatar, &self.avatar_descriptor),
-            ],
+            ];
+        if let Some(tts) = &self.tts_descriptor {
+            providers.push(binding(ProviderRole::Tts, tts));
+        }
+        Ok(ProviderStateManifest {
+            schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
+            providers,
         })
     }
 }
