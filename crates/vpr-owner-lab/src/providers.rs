@@ -158,7 +158,7 @@ impl ProviderBundle {
                         let mut hasher = Sha256::new();
                         hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
                         hasher.update(serde_json::to_vec(voice).map_err(|_| "INVALID_VOICE_PROFILE")?);
-                        format!("{hasher:x}")
+                        format!("{:x}", hasher.finalize())
                     };
                 }
                 (Some(port), Some(descriptor))
