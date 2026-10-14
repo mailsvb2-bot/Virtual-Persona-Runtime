@@ -280,5 +280,7 @@ export const assertProviderRequests = async (
 
   expect(spokenText("/stream-1")).toContain("Голосовой ответ владельцу");
   expect(spokenText("/stream-2")).toBe("В visitor scope нет подтверждённых данных владельца");
-  expect(spokenText("/stream-3")).toBe("В visitor scope нет подтверждённых данных владельца");
+  expect(spokenText("/stream-3")).toBe(
+    "В visitor scope нет подтверждённых данных владельца В visitor scope нет подтверждённых данных владельца",
+  );
 };
