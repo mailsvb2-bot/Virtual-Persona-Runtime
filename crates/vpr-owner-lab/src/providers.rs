@@ -70,7 +70,9 @@ impl ProviderBundle {
         allow_secure_store: bool,
     ) -> Result<Self, String> {
         #[cfg(windows)]
-        let profile = if environment_provider_config_complete(require_voice) || !allow_secure_store
+        let profile = if !allow_secure_store
+            || (environment_provider_config_complete(require_voice)
+                && optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some())
         {
             None
         } else {
@@ -118,26 +120,43 @@ impl ProviderBundle {
                 ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
                 ("VPR_OWNER_LAB_TTS_VOICE", voice.voice.as_str()),
             ] {
-                if env::var(name).ok().as_deref() != Some(expected) {
+                let effective = env::var(name).ok().or_else(|| {
+                    let tts = profile.as_ref()?.tts.as_ref()?;
+                    match name {
+                        "VPR_OWNER_LAB_TTS_PROVIDER" => Some(tts.provider.clone()),
+                        "VPR_OWNER_LAB_TTS_MODEL" => Some(tts.model.clone()),
+                        "VPR_OWNER_LAB_TTS_VOICE" => Some(tts.voice.clone()),
+                        _ => None,
+                    }
+                });
+                if effective.as_deref() != Some(expected) {
                     return Err(format!("VOICE_PROFILE_ENV_CONFLICT: {name}"));
                 }
             }
         }
-        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok().is_some_and(|value| value == "true");
+        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok().is_some_and(|value| value.eq_ignore_ascii_case("true"));
         if strict {
             if let Some(voice) = &voice_profile { voice.validate_strict()?; }
             if optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some() {
                 return Err("RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN".into());
             }
-            if optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some() && voice_profile.is_none() {
+            if (optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some()
+                || profile.as_ref().and_then(|profile| profile.tts.as_ref()).is_some())
+                && voice_profile.is_none() {
                 return Err("RT0_EVIDENCE_VOICE_PROFILE_REQUIRED".into());
             }
         }
-        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER");
+        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
+            .or_else(|| profile.as_ref()?.tts.as_ref().map(|tts| tts.provider.to_ascii_lowercase()));
+        if voice_profile.is_some() && tts_name.is_none() {
+            return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
+        }
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
         }
-        let tts = tts_name.as_deref().map(build_tts).transpose()?;
+        let tts = tts_name.as_deref()
+            .map(|name| build_tts(name, profile.as_ref().and_then(|profile| profile.tts.as_ref())))
+            .transpose()?;
         let tts_fallback_name = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
         if tts_fallback_name.is_some() && tts_name.is_none() {
             return Err("TTS fallback requires a primary canonical TTS provider".into());
