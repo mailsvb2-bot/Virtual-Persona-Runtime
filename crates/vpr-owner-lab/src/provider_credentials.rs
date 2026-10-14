@@ -9,6 +9,32 @@ const WINDOWS_PROFILE_STORE_PREFIX: &str = "rt0-provider-profile-v2";
 const PROFILE_SCHEMA: &str = "vpr-rt0-provider-profile-1";
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StoredTtsCredential {
+    pub provider: String,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+    pub voice: String,
+}
+
+impl StoredTtsCredential {
+    /// Only provider-approved fields are persisted, never logged.
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.provider.as_str(),
+            "piper" | "windows-sapi" | "metrotrance-qwen" |
+            "metrotrance-qwen-preset" | "metrotrance-chatterbox" |
+            "openai-speech" | "elevenlabs")
+            || [&self.endpoint, &self.api_key, &self.model, &self.voice].iter()
+                .any(|field| field.is_empty() || field.trim() != field)
+        {
+            return Err("secure TTS credential profile is incomplete or unsupported".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderCredentialProfile {
     schema_version: String,
     pub did_api_key: String,
@@ -29,6 +55,8 @@ pub struct ProviderCredentialProfile {
     pub llm_endpoint: String,
     pub llm_api_key: String,
     pub llm_model: String,
+    #[serde(default)]
+    pub tts: Option<StoredTtsCredential>,
 }
 
 impl ProviderCredentialProfile {
@@ -56,6 +84,7 @@ impl ProviderCredentialProfile {
             llm_endpoint: "https://api.deepseek.com/chat/completions".into(),
             llm_api_key: deepseek_api_key,
             llm_model: "deepseek-flash".into(),
+            tts: None,
         }
     }
 
@@ -83,7 +112,15 @@ impl ProviderCredentialProfile {
             llm_endpoint: "https://api.deepseek.com/chat/completions".into(),
             llm_api_key: deepseek_api_key,
             llm_model: "deepseek-flash".into(),
+            tts: None,
         }
+    }
+
+    /// Configures a single explicit TTS route without changing avatar/STT/LLM identity.
+    pub fn set_tts(&mut self, stored: StoredTtsCredential) -> Result<(), String> {
+        stored.validate()?;
+        self.tts = Some(stored);
+        self.validate()
     }
 
     /// Replaces only D-ID credentials while preserving STT and LLM credentials.
@@ -138,6 +175,9 @@ impl ProviderCredentialProfile {
             if value.trim().is_empty() {
                 return Err(format!("secure provider profile field {label} is empty"));
             }
+        }
+        if let Some(tts) = &self.tts {
+            tts.validate()?;
         }
         match self.avatar_provider.as_str() {
             "did" | "d-id" | "did-agent-streams" => {
