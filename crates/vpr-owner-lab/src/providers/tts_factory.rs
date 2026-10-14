@@ -24,10 +24,22 @@ pub(super) fn build_tts(
     let stored = stored.filter(|credential| credential.provider.eq_ignore_ascii_case(name));
     build_tts_configured(
         name,
-        &required_value("VPR_OWNER_LAB_TTS_ENDPOINT", stored.map(|item| item.endpoint.as_str()))?,
-        required_value("VPR_OWNER_LAB_TTS_API_KEY", stored.map(|item| item.api_key.as_str()))?,
-        &required_value("VPR_OWNER_LAB_TTS_MODEL", stored.map(|item| item.model.as_str()))?,
-        &required_value("VPR_OWNER_LAB_TTS_VOICE", stored.map(|item| item.voice.as_str()))?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_ENDPOINT",
+            stored.map(|item| item.endpoint.as_str()),
+        )?,
+        required_value(
+            "VPR_OWNER_LAB_TTS_API_KEY",
+            stored.map(|item| item.api_key.as_str()),
+        )?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_MODEL",
+            stored.map(|item| item.model.as_str()),
+        )?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_VOICE",
+            stored.map(|item| item.voice.as_str()),
+        )?,
     )
 }
 
