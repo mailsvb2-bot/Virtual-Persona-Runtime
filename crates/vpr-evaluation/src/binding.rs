@@ -219,7 +219,7 @@ pub(crate) fn validate_provider_state(
                 || !provider.profile_id.as_deref().is_some_and(|id|
                     (3..=64).contains(&id.len()) && id.bytes().all(|b|
                         b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
-                || !provider.version.is_some_and(|version| version > 0)
+                || provider.version.is_none_or(|version| version == 0)
             {
                 return Err(EvidenceBindingError::BlankProviderDescriptor);
             }
