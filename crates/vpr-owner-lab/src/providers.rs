@@ -12,9 +12,9 @@ use sha2::{Digest, Sha256};
 use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
-use crate::voice_profile::VoiceProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
+use crate::voice_profile::VoiceProfile;
 use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
@@ -115,10 +115,16 @@ impl ProviderBundle {
         };
         let voice_profile = VoiceProfile::from_env()?;
         validate_voice_profile_configuration(voice_profile.as_ref(), profile.as_ref())?;
-        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok()
+        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
+            .ok()
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
-            .or_else(|| profile.as_ref()?.tts.as_ref().map(|tts| tts.provider.to_ascii_lowercase()));
+        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
+            profile
+                .as_ref()?
+                .tts
+                .as_ref()
+                .map(|tts| tts.provider.to_ascii_lowercase())
+        });
         if voice_profile.is_some() && tts_name.is_none() {
             return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
         }
@@ -132,8 +138,14 @@ impl ProviderBundle {
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
         }
-        let tts = tts_name.as_deref()
-            .map(|name| build_tts(name, profile.as_ref().and_then(|profile| profile.tts.as_ref())))
+        let tts = tts_name
+            .as_deref()
+            .map(|name| {
+                build_tts(
+                    name,
+                    profile.as_ref().and_then(|profile| profile.tts.as_ref()),
+                )
+            })
             .transpose()?;
         let (tts_fallback_name, tts_fallback) = configure_tts_fallback(tts_name.as_deref())?;
         let (tts, tts_descriptor) = match tts {
@@ -169,9 +181,7 @@ impl ProviderBundle {
 type ConfiguredTts = (Box<dyn TtsPort>, ProviderDescriptor);
 type TtsFallbackConfiguration = (Option<String>, Option<ConfiguredTts>);
 
-fn configure_tts_fallback(
-    primary: Option<&str>,
-) -> Result<TtsFallbackConfiguration, String> {
+fn configure_tts_fallback(primary: Option<&str>) -> Result<TtsFallbackConfiguration, String> {
     let fallback = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
     if fallback.is_some() && primary.is_none() {
         return Err("TTS fallback requires a primary canonical TTS provider".into());
@@ -187,7 +197,9 @@ fn validate_voice_profile_configuration(
     voice_profile: Option<&VoiceProfile>,
     credentials: Option<&ProviderCredentialProfile>,
 ) -> Result<(), String> {
-    let Some(voice) = voice_profile else { return Ok(()); };
+    let Some(voice) = voice_profile else {
+        return Ok(());
+    };
     for (name, expected) in [
         ("VPR_OWNER_LAB_TTS_PROVIDER", voice.provider.as_str()),
         ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
