@@ -1359,9 +1359,13 @@ const updateAudienceMode = (): void => {
 
 // D-ID Echo has a server-owned STOP with an epoch-bound HTTP receipt. Browser
 // client_control.interrupt=false is correct and must NOT hide the STOP control.
+// Do not require an interrupt capability in the *viewer* metadata or a local
+// LiveKit room to offer the backend-owned STOP: neither owns Echo's publisher.
+// The epoch-bound HTTP handler remains the authoritative STOP gate for both
+// owner and visitor, including failed/in-flight generation.
 const serverEchoStopAvailable = (): boolean =>
-  !!liveKitRoom && sessionState.backend.session_state === "active"
-  && capabilities.has("interrupt")
+  sessionState.backend.session_state === "active"
+  && sessionState.realtime.control
   && activeClientControl?.interrupt === false
   && activeClientControl?.text_input === false;
 
