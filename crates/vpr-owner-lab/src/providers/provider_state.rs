@@ -25,7 +25,17 @@ impl ProviderBundle {
                 binding(ProviderRole::Avatar, &self.avatar_descriptor),
             ];
         if let Some(tts) = &self.tts_descriptor {
-            providers.push(binding(ProviderRole::Tts, tts));
+            let mut active = binding(ProviderRole::Tts, tts);
+            if let Some(profile) = &self.voice_profile {
+                active.voice_profile_status = Some(match profile.status {
+                    crate::VoiceProfileStatus::Interim => "INTERIM",
+                    crate::VoiceProfileStatus::Candidate => "CANDIDATE",
+                    crate::VoiceProfileStatus::Accepted => "ACCEPTED",
+                }.into());
+                active.profile_id = Some(profile.profile_id.clone());
+                active.version = Some(profile.version);
+            }
+            providers.push(active);
         }
         Ok(ProviderStateManifest {
             schema_version: RT0_PROVIDER_STATE_SCHEMA.into(),
@@ -40,5 +50,8 @@ fn binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> ProviderState
         provider: descriptor.provider.clone(),
         model_or_representation: descriptor.model_or_representation.clone(),
         configuration_fingerprint_sha256: descriptor.configuration_fingerprint_sha256.clone(),
+        voice_profile_status: None,
+        profile_id: None,
+        version: None,
     }
 }
