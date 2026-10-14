@@ -27,7 +27,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
 
-pub use provider_credentials::ProviderCredentialProfile;
+pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
 pub use provider_credentials::{
     delete_provider_profile, load_provider_profile, save_provider_profile,
