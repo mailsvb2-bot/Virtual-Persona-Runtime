@@ -26,7 +26,7 @@ impl StoredTtsCredential {
             "metrotrance-qwen-preset" | "metrotrance-chatterbox" |
             "openai-speech" | "elevenlabs")
             || [&self.endpoint, &self.api_key, &self.model, &self.voice].iter()
-                .any(|field| field.is_empty() || field.trim() != field)
+                .any(|field| field.is_empty() || field.trim() != field.as_str())
         {
             return Err("secure TTS credential profile is incomplete or unsupported".into());
         }
