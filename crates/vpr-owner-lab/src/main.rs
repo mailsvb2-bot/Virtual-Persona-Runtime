@@ -277,7 +277,7 @@ fn route_request(
             with_engine(state, |engine| {
                 let mut status = serde_json::to_value(engine.status()).unwrap_or_default();
                 if let Some(profile) = state.voice_profile.as_ref() {
-                    status["voice_profile"] = voice_profile_public(profile);
+                    status["voice_profile"] = http_tts::voice_profile_public(profile);
                 }
                 json_response(200, &status)
             })
@@ -445,14 +445,6 @@ fn apply_input(state: &AppState, input: OwnerLabTurnInput) -> Result<HttpRespons
     })
 }
 
-fn voice_profile_public(profile: &VoiceProfile) -> serde_json::Value {
-    serde_json::json!({
-        "profile_id": profile.profile_id,
-        "version": profile.version,
-        "status": profile.status,
-    })
-}
-
 fn bootstrap_response(state: &AppState) -> HttpResponse {
     with_engine(state, |engine| {
         json_response(
@@ -461,7 +453,7 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
-                voice_profile: state.voice_profile.as_ref().map(voice_profile_public),
+                voice_profile: state.voice_profile.as_ref().map(http_tts::voice_profile_public),
             },
         )
     })
