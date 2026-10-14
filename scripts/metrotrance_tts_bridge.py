@@ -161,6 +161,13 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen")
                     return self.send_error_code(400, "invalid_input")
                 if payload.get("model") not in (None, provider_id):
                     return self.send_error_code(400, "provider_mismatch")
+                if provider_id == "metrotrance-qwen-preset":
+                    configured = os.environ.get("VPR_QWEN_PRESET_SPEAKER", "Vivian")
+                    # "local" remains a non-release legacy route. A versioned
+                    # profile always names a concrete preset speaker and cannot
+                    # silently render with a different voice.
+                    if payload.get("voice") not in ("local", configured):
+                        return self.send_error_code(400, "preset_voice_mismatch")
                 if payload.get("response_format", "wav") != "wav":
                     return self.send_error_code(400, "wav_required")
                 # Never queue unbounded callers behind a slow GPU/CPU inference.
