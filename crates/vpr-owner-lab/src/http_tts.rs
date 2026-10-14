@@ -24,8 +24,16 @@ pub(super) fn select(
     request: &mut Request,
     state: &Arc<AppState>,
 ) -> Result<HttpResponse, HttpResponse> {
+    if state.rt0_evidence_mode {
+        return Err(error_response(409, "TTS_LOCKED_IN_EVIDENCE_MODE"));
+    }
     if state.voice_busy.load(Ordering::Acquire) {
         return Err(error_response(409, "VOICE_BUSY"));
+    }
+    if let Ok(engine) = state.engine.lock() {
+        if !matches!(engine.status().session_state, "none" | "closed") {
+            return Err(error_response(409, "TTS_LOCKED_DURING_SESSION"));
+        }
     }
     let body = parse_json::<TtsSelectBody>(request)?;
     reject_if_session_ending(state)?;
