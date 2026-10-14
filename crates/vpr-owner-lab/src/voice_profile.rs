@@ -24,8 +24,11 @@ pub struct VoiceProfile {
 
 impl VoiceProfile {
     /// Parse a bounded, secret-free voice profile and validate its identity.
+    ///
+    /// # Errors
+    /// Rejects invalid schema, profile identity, or oversized JSON.
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.len() > MAX_PROFILE_BYTES as usize {
+        if bytes.len() > 16_384 {
             return Err("VOICE_PROFILE_TOO_LARGE".into());
         }
         let profile: Self = serde_json::from_slice(bytes)
@@ -54,6 +57,9 @@ impl VoiceProfile {
     }
 
     /// Reading from a local path is never an implicit provider egress.
+    ///
+    /// # Errors
+    /// Rejects unreadable, oversized, or malformed profiles.
     pub fn load(path: &Path) -> Result<Self, String> {
         let size = fs::metadata(path).map_err(|_| "VOICE_PROFILE_UNAVAILABLE")?.len();
         if size > MAX_PROFILE_BYTES {
@@ -63,6 +69,10 @@ impl VoiceProfile {
         Self::parse(&bytes)
     }
 
+    /// Resolves an optional external profile path from the environment.
+    ///
+    /// # Errors
+    /// Rejects malformed paths and invalid profile files.
     pub fn from_env() -> Result<Option<Self>, String> {
         match env::var("VPR_OWNER_LAB_VOICE_PROFILE_PATH") {
             Ok(path) if !path.trim().is_empty() => Self::load(Path::new(&path)).map(Some),
@@ -72,6 +82,10 @@ impl VoiceProfile {
         }
     }
 
+    /// Enforces RT0 evidence voice-status constraints.
+    ///
+    /// # Errors
+    /// Rejects unaccepted candidate voices.
     pub fn validate_strict(&self) -> Result<(), String> {
         if self.status == VoiceProfileStatus::Candidate {
             return Err("CANDIDATE_VOICE_NOT_ALLOWED_FOR_RT0_EVIDENCE".into());
