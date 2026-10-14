@@ -12,6 +12,7 @@ use sha2::{Digest, Sha256};
 use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
+use crate::voice_profile::VoiceProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
 use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
@@ -41,6 +42,9 @@ pub struct ProviderBundle {
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
+    pub tts_descriptor: Option<ProviderDescriptor>,
+    pub tts_fallback_descriptor: Option<ProviderDescriptor>,
+    pub voice_profile: Option<VoiceProfile>,
 }
 
 impl ProviderBundle {
@@ -107,6 +111,28 @@ impl ProviderBundle {
                 return Err("voice mode requires both STT and LLM provider configuration".into());
             }
         };
+        let voice_profile = VoiceProfile::from_env()?;
+        if let Some(voice) = &voice_profile {
+            for (name, expected) in [
+                ("VPR_OWNER_LAB_TTS_PROVIDER", voice.provider.as_str()),
+                ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
+                ("VPR_OWNER_LAB_TTS_VOICE", voice.voice.as_str()),
+            ] {
+                if env::var(name).ok().as_deref() != Some(expected) {
+                    return Err(format!("VOICE_PROFILE_ENV_CONFLICT: {name}"));
+                }
+            }
+        }
+        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok().is_some_and(|value| value == "true");
+        if strict {
+            if let Some(voice) = &voice_profile { voice.validate_strict()?; }
+            if optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some() {
+                return Err("RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN".into());
+            }
+            if optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some() && voice_profile.is_none() {
+                return Err("RT0_EVIDENCE_VOICE_PROFILE_REQUIRED".into());
+            }
+        }
         let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER");
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
@@ -123,17 +149,40 @@ impl ProviderBundle {
             .as_deref()
             .map(build_tts_fallback)
             .transpose()?;
+        let (tts, tts_descriptor) = match tts {
+            Some((port, mut descriptor)) => {
+                if let Some(voice) = &voice_profile {
+                    descriptor.model_or_representation = format!("{}#{}@{}:v{}", voice.model, voice.voice, voice.profile_id, voice.version);
+                    descriptor.configuration_fingerprint_sha256 = {
+                        use sha2::{Digest, Sha256};
+                        let mut hasher = Sha256::new();
+                        hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
+                        hasher.update(serde_json::to_vec(voice).map_err(|_| "INVALID_VOICE_PROFILE")?);
+                        format!("{hasher:x}")
+                    };
+                }
+                (Some(port), Some(descriptor))
+            }
+            None => (None, None),
+        };
+        let (tts_fallback, tts_fallback_descriptor) = match tts_fallback {
+            Some((port, descriptor)) => (Some(port), Some(descriptor)),
+            None => (None, None),
+        };
         Ok(Self {
             avatar,
             stt,
             llm,
-            tts: tts.map(|(port, _)| port),
+            tts,
             tts_name,
-            tts_fallback: tts_fallback.map(|(port, _)| port),
+            tts_fallback,
             tts_fallback_name,
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
+            tts_descriptor,
+            tts_fallback_descriptor,
+            voice_profile,
         })
     }
 }
