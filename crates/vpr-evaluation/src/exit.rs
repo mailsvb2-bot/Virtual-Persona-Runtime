@@ -330,9 +330,11 @@ pub fn evaluate_rt0_exit_evidence(
     evaluate_conversations(&evidence.conversations, &mut failures);
     evaluate_acceptance(&evidence.acceptance, &mut failures);
     evaluate_quality(&evidence.quality, &mut failures);
-    let requires_tts = context.provider_state.providers.iter().any(|provider|
-        provider.role == crate::ProviderRole::Tts
-    );
+    let requires_tts = context
+        .provider_state
+        .providers
+        .iter()
+        .any(|provider| provider.role == crate::ProviderRole::Tts);
     evaluate_cost(&evidence.cost, requires_tts, &mut failures);
     evaluate_privacy(&evidence.privacy_permissions, &mut failures);
     let interim_voice = context.provider_state.providers.iter().any(|provider| {
@@ -344,8 +346,10 @@ pub fn evaluate_rt0_exit_evidence(
         failures.push(Rt0ExitFailureCode::KnownLimitationsNotReviewed);
     }
 
-    let estimated_cost_per_minute_microunits = estimated_cost_per_minute(&evidence.cost, requires_tts);
-    let provider_charge_per_minute_microunits = provider_charge_per_minute(&evidence.cost, requires_tts);
+    let estimated_cost_per_minute_microunits =
+        estimated_cost_per_minute(&evidence.cost, requires_tts);
+    let provider_charge_per_minute_microunits =
+        provider_charge_per_minute(&evidence.cost, requires_tts);
     Ok(Rt0ExitReport {
         schema_version: RT0_EXIT_REPORT_SCHEMA.into(),
         candidate_sha: evidence.candidate_sha.clone(),
