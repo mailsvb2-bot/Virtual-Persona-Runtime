@@ -171,14 +171,7 @@ impl ProviderBundle {
         let (tts, tts_descriptor) = match tts {
             Some((port, mut descriptor)) => {
                 if let Some(voice) = &voice_profile {
-                    descriptor.model_or_representation = format!("{}#{}@{}:v{}", voice.model, voice.voice, voice.profile_id, voice.version);
-                    descriptor.configuration_fingerprint_sha256 = {
-                        use sha2::{Digest, Sha256};
-                        let mut hasher = Sha256::new();
-                        hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
-                        hasher.update(serde_json::to_vec(voice).map_err(|_| "INVALID_VOICE_PROFILE")?);
-                        format!("{:x}", hasher.finalize())
-                    };
+                    descriptor = bind_tts_descriptor(descriptor, voice)?;
                 }
                 (Some(port), Some(descriptor))
             }
@@ -205,6 +198,25 @@ impl ProviderBundle {
         })
     }
 }
+/// Binds exact nonsecret voice identity to the TTS configuration fingerprint.
+/// Any provider, model, speaker, status, rights digest or version change must
+/// invalidate all earlier RT0 evidence.
+fn bind_tts_descriptor(
+    mut descriptor: ProviderDescriptor,
+    profile: &VoiceProfile,
+) -> Result<ProviderDescriptor, String> {
+    descriptor.model_or_representation = format!(
+        "{}#{}@{}:v{}",
+        profile.model, profile.voice, profile.profile_id, profile.version,
+    );
+    let bytes = serde_json::to_vec(profile).map_err(|_| "INVALID_VOICE_PROFILE")?;
+    let mut hasher = Sha256::new();
+    hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
+    hasher.update(&bytes);
+    descriptor.configuration_fingerprint_sha256 = format!("{:x}", hasher.finalize());
+    Ok(descriptor)
+}
+
 #[cfg(windows)]
 fn environment_provider_config_complete(require_voice: bool) -> bool {
     provider_config_complete_with(require_voice, optional_env)
@@ -592,6 +604,49 @@ mod tests {
         assert!(matching_stt_profile("openai", Some(&profile)).is_none());
         assert!(matching_llm_profile("deepseek", Some(&profile)).is_some());
         assert!(matching_llm_profile("anthropic", Some(&profile)).is_none());
+    }
+
+    #[test]
+    fn every_voice_profile_change_invalidates_provider_state_fingerprint() {
+        use crate::{VoiceProfile, VoiceProfileStatus};
+        let baseline = VoiceProfile {
+            schema_version: "vpr-voice-profile-0.1".into(),
+            profile_id: "interim-qwen3-serena".into(),
+            version: 1,
+            status: VoiceProfileStatus::Interim,
+            provider: "metrotrance-qwen-preset".into(),
+            model: "metrotrance-qwen-preset".into(),
+            voice: "Serena".into(),
+            rights_ref_sha256: None,
+        };
+        let descriptor = super::descriptor(
+            "tts", "metrotrance-qwen-preset", "metrotrance-qwen-preset",
+            &["http://127.0.0.1:8897/v1/audio/speech", "metrotrance-qwen-preset", "Serena"],
+        );
+        let digest = |voice: &VoiceProfile| {
+            super::bind_tts_descriptor(descriptor.clone(), voice).unwrap()
+                .configuration_fingerprint_sha256
+        };
+        let original = digest(&baseline);
+        let mut changed = baseline.clone();
+        changed.version += 1;
+        assert_ne!(original, digest(&changed));
+        changed = baseline.clone();
+        changed.status = VoiceProfileStatus::Candidate;
+        assert_ne!(original, digest(&changed));
+        changed = baseline.clone();
+        changed.voice = "Ryan".into();
+        assert_ne!(original, digest(&changed));
+        changed = baseline.clone();
+        changed.provider = "openai-speech".into();
+        assert_ne!(original, digest(&changed));
+        changed = baseline.clone();
+        changed.model = "another-model".into();
+        assert_ne!(original, digest(&changed));
+        changed = baseline.clone();
+        changed.status = VoiceProfileStatus::Accepted;
+        changed.rights_ref_sha256 = Some("b".repeat(64));
+        assert_ne!(original, digest(&changed));
     }
 
     #[test]
