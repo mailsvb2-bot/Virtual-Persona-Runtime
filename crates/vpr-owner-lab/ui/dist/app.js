@@ -1016,8 +1016,8 @@ const selectedAudience = () => sessionState.backend.session_audience ?? audience
 const updateAudienceMode = () => {
     personaPanel.hidden = selectedAudience() === "visitor";
 };
-const serverEchoStopAvailable = () => !!liveKitRoom && sessionState.backend.session_state === "active"
-    && capabilities.has("interrupt")
+const serverEchoStopAvailable = () => sessionState.backend.session_state === "active"
+    && sessionState.realtime.control
     && activeClientControl?.interrupt === false
     && activeClientControl?.text_input === false;
 const updateControls = () => {

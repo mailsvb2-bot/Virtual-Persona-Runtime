@@ -150,7 +150,7 @@
     );
   };
 
-  const recordInterruptedVoiceTurn = async (expectedReply) => {
+  const recordInterruptedVoiceTurn = async (expectedReply, expectedRequestSequence = 2) => {
     const voice = byId("voice");
     await waitFor(() => !voice.disabled, "interrupt-turn-voice-enabled");
     voice.click();
@@ -176,14 +176,14 @@
     await waitFor(() => interrupt.disabled === false, "interrupt-enabled");
     await waitForEvidence(
       (snapshot) => snapshot.media_events?.some(
-        (event) => event.request_sequence === 2 && event.kind === "audio_started",
+        (event) => event.request_sequence === expectedRequestSequence && event.kind === "audio_started",
       ),
       "interrupt-audio-started",
     );
     interrupt.click();
     await waitForEvidence(
       (snapshot) => snapshot.media_events?.some(
-        (event) => event.request_sequence === 2 && event.kind === "interruption_stopped",
+        (event) => event.request_sequence === expectedRequestSequence && event.kind === "interruption_stopped",
       ),
       "interruption-stopped",
     );
@@ -304,6 +304,12 @@
     await checkpoint("visitor-text-complete");
     await recordVoiceTurn("В visitor scope нет подтверждённых данных владельца");
     await checkpoint("visitor-playback-proven");
+    // Regression: a visitor has the same session-bound STOP authority for
+    // their own Echo output as an owner, but not owner Persona mutation rights.
+    // Assert a second voice turn is interrupted and the backend/transport
+    // reports STOP before revoking the session.
+    await recordInterruptedVoiceTurn("В visitor scope нет подтверждённых данных владельца", 2);
+    await checkpoint("visitor-interrupt-proven");
     const visitorEvidence = await fetchEvidence();
 
     byId("revoke").click();
