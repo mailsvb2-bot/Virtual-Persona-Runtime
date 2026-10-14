@@ -104,10 +104,17 @@ fn voice_tts_selection_is_frozen_during_active_avatar_session() {
         .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
         .unwrap();
     // Changing provider mid-session would invalidate the frozen provider-state.
-    assert!(engine.select_tts_provider("metrotrance-chatterbox").is_err());
+    assert!(
+        engine
+            .select_tts_provider("metrotrance-chatterbox")
+            .is_err()
+    );
     let second = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     engine
-        .acknowledge_voice_playback(second.evidence_turn_sequence, second.evidence_output_sequence)
+        .acknowledge_voice_playback(
+            second.evidence_turn_sequence,
+            second.evidence_output_sequence,
+        )
         .unwrap();
     assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 2);
     assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 0);
