@@ -20,18 +20,21 @@ impl ProviderBundle {
             .as_ref()
             .ok_or_else(|| "provider state requires LLM configuration".to_owned())?;
         let mut providers = vec![
-                binding(ProviderRole::Stt, stt),
-                binding(ProviderRole::Llm, llm),
-                binding(ProviderRole::Avatar, &self.avatar_descriptor),
-            ];
+            binding(ProviderRole::Stt, stt),
+            binding(ProviderRole::Llm, llm),
+            binding(ProviderRole::Avatar, &self.avatar_descriptor),
+        ];
         if let Some(tts) = &self.tts_descriptor {
             let mut active = binding(ProviderRole::Tts, tts);
             if let Some(profile) = &self.voice_profile {
-                active.voice_profile_status = Some(match profile.status {
-                    crate::VoiceProfileStatus::Interim => "INTERIM",
-                    crate::VoiceProfileStatus::Candidate => "CANDIDATE",
-                    crate::VoiceProfileStatus::Accepted => "ACCEPTED",
-                }.into());
+                active.voice_profile_status = Some(
+                    match profile.status {
+                        crate::VoiceProfileStatus::Interim => "INTERIM",
+                        crate::VoiceProfileStatus::Candidate => "CANDIDATE",
+                        crate::VoiceProfileStatus::Accepted => "ACCEPTED",
+                    }
+                    .into(),
+                );
                 active.profile_id = Some(profile.profile_id.clone());
                 active.version = Some(profile.version);
             }
