@@ -17,7 +17,13 @@ struct TtsSelectBody {
 }
 
 pub(super) fn snapshot(state: &AppState) -> HttpResponse {
-    with_engine(state, |engine| json_response(200, &engine.tts_selection()))
+    with_engine(state, |engine| {
+        let mut selection = engine.tts_selection();
+        if let Some(profile) = state.voice_profile.as_ref() {
+            selection["voice_profile"] = super::voice_profile_public(profile);
+        }
+        json_response(200, &selection)
+    })
 }
 
 pub(super) fn select(
