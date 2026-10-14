@@ -69,7 +69,13 @@ impl ProviderBundle {
         require_voice: bool,
         allow_secure_store: bool,
     ) -> Result<Self, String> {
+        #[cfg(windows)]
         let profile = resolve_provider_credential_profile(require_voice, allow_secure_store)?;
+        #[cfg(not(windows))]
+        let profile: Option<ProviderCredentialProfile> = {
+            let _ = (require_voice, allow_secure_store);
+            None
+        };
         let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
@@ -165,25 +171,18 @@ impl ProviderBundle {
         })
     }
 }
+#[cfg(windows)]
 fn resolve_provider_credential_profile(
     require_voice: bool,
     allow_secure_store: bool,
 ) -> Result<Option<ProviderCredentialProfile>, String> {
-    #[cfg(windows)]
+    if !allow_secure_store
+        || (environment_provider_config_complete(require_voice)
+            && optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some())
     {
-        if !allow_secure_store
-            || (environment_provider_config_complete(require_voice)
-                && optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some())
-        {
-            Ok(None)
-        } else {
-            load_provider_profile()
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (require_voice, allow_secure_store);
         Ok(None)
+    } else {
+        load_provider_profile()
     }
 }
 
