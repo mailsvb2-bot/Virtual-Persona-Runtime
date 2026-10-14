@@ -24,12 +24,18 @@ impl StoredTtsCredential {
     /// # Errors
     /// Rejects incomplete or unsupported provider credentials.
     pub fn validate(&self) -> Result<(), String> {
-        if !matches!(self.provider.as_str(),
-            "piper" | "windows-sapi" | "metrotrance-qwen" |
-            "metrotrance-qwen-preset" | "metrotrance-chatterbox" |
-            "openai-speech" | "elevenlabs")
-            || [&self.endpoint, &self.api_key, &self.model, &self.voice].iter()
-                .any(|field| field.is_empty() || field.trim() != field.as_str())
+        if !matches!(
+            self.provider.as_str(),
+            "piper"
+                | "windows-sapi"
+                | "metrotrance-qwen"
+                | "metrotrance-qwen-preset"
+                | "metrotrance-chatterbox"
+                | "openai-speech"
+                | "elevenlabs"
+        ) || [&self.endpoint, &self.api_key, &self.model, &self.voice]
+            .iter()
+            .any(|field| field.is_empty() || field.trim() != field.as_str())
         {
             return Err("secure TTS credential profile is incomplete or unsupported".into());
         }
