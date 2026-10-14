@@ -47,7 +47,11 @@ fn build_tts_configured(
 ) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
     if matches!(
         name,
-        "piper" | "windows-sapi" | "metrotrance-qwen" | "metrotrance-qwen-preset" | "metrotrance-chatterbox"
+        "piper"
+            | "windows-sapi"
+            | "metrotrance-qwen"
+            | "metrotrance-qwen-preset"
+            | "metrotrance-chatterbox"
     ) && !is_loopback_speech_endpoint(endpoint)
     {
         return Err("local TTS must use a loopback HTTP speech endpoint".into());
@@ -171,16 +175,20 @@ mod tests {
             "private-token".into(),
             "metrotrance-qwen-preset",
             "local",
-        ).expect("preset voice must reuse existing PCM publication path");
+        )
+        .expect("preset voice must reuse existing PCM publication path");
         assert_eq!(tts.descriptor().provider, "metrotrance-qwen-preset");
         assert_eq!(descriptor.provider, "metrotrance-qwen-preset");
-        assert!(build_tts_configured(
-            "metrotrance-qwen-preset",
-            "https://external.example.test/v1/audio/speech",
-            "private-token".into(),
-            "metrotrance-qwen-preset",
-            "local",
-        ).is_err());
+        assert!(
+            build_tts_configured(
+                "metrotrance-qwen-preset",
+                "https://external.example.test/v1/audio/speech",
+                "private-token".into(),
+                "metrotrance-qwen-preset",
+                "local",
+            )
+            .is_err()
+        );
     }
 
     #[test]
