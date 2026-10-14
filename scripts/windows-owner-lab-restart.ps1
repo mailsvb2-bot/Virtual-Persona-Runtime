@@ -44,7 +44,7 @@ if ($VoiceProfile) {
     )) {
         $actual = [Environment]::GetEnvironmentVariable($pair[0], 'Process')
         $expected = [string]$voiceConfig.($pair[1])
-        if ($actual -cne $expected) { throw "VOICE_PROFILE_ENV_CONFLICT: $($pair[0])" }
+        if ($null -ne $actual -and $actual -cne $expected) { throw "VOICE_PROFILE_ENV_CONFLICT: $($pair[0])" }
     }
     Write-Host "Voice profile: $($voiceConfig.profile_id) v$($voiceConfig.version) $($voiceConfig.status)"
 }
