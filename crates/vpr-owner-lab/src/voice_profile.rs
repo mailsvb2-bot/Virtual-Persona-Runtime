@@ -34,7 +34,7 @@ impl VoiceProfile {
             || !(3..=64).contains(&profile.profile_id.len())
             || !profile.profile_id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
             || profile.version == 0
-            || [&profile.provider, &profile.model, &profile.voice].iter().any(|v| v.is_empty() || v.trim() != v || v.len() > 128)
+            || [&profile.provider, &profile.model, &profile.voice].iter().any(|v| v.is_empty() || v.trim() != v.as_str() || v.len() > 128)
         {
             return Err("INVALID_VOICE_PROFILE_IDENTITY".into());
         }
