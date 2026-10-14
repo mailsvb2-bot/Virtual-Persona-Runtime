@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const RT0_EVIDENCE_BINDING_SCHEMA: &str = "rt0-evidence-binding-0.1";
-pub const RT0_PROVIDER_STATE_SCHEMA: &str = "rt0-provider-state-0.1";
+pub const RT0_PROVIDER_STATE_SCHEMA: &str = "rt0-provider-state-0.2";
 
 use crate::{
     GoldenObservation, GoldenReport, GoldenSuite, GoldenSuiteError, evaluate_golden_suite,
@@ -16,6 +16,7 @@ pub enum ProviderRole {
     Stt,
     Llm,
     Avatar,
+    Tts,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
