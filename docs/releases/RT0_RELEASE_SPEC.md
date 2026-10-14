@@ -1,6 +1,6 @@
 # RT0 ReleaseSpec — Feasibility & Wow Proof
 
-**Spec version:** `RT0-0.1.3`
+**Spec version:** `RT0-0.1.4`
 **Status:** ACTIVE  
 **Normative parent:** `docs/CANON.md` v3.4  
 **Maturity ceiling during RT0:** `EXPERIMENTAL` until the RT0 exit gate is evidenced.
@@ -276,3 +276,7 @@ Provider replacement never changes `PersonaId`.
 ## 20. Exit gate
 
 RT0 is complete only when all Canon RT0 exit conditions are evidenced on one exact candidate. If any mandatory quality/privacy/attribution criterion fails, RT0 remains open and platform expansion waits.
+
+### Amendment A1 — INTERIM voice for RT0-0.1.4
+
+A server-owned standalone TTS is identified by a versioned VoiceProfile in provider-state schema 0.2 and exact release evidence; integrated avatar speech remains valid without a standalone TTS binding. When voice status is `INTERIM`, voice naturalness and similarity may be `DEFERRED_INTERIM_VOICE` with explicit `RT0-Voice-Status: INTERIM` in known limitations. This is the only human-review exemption; real audio playback and quantitative quality thresholds remain mandatory. A voice change after frozen RT0 acceptance belongs to a new candidate and must rebind evidence. RT1 requires `ACCEPTED` and rights/human review.
