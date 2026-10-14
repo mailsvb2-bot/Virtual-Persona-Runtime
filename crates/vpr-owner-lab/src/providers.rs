@@ -135,17 +135,7 @@ impl ProviderBundle {
         let tts = tts_name.as_deref()
             .map(|name| build_tts(name, profile.as_ref().and_then(|profile| profile.tts.as_ref())))
             .transpose()?;
-        let tts_fallback_name = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
-        if tts_fallback_name.is_some() && tts_name.is_none() {
-            return Err("TTS fallback requires a primary canonical TTS provider".into());
-        }
-        if tts_fallback_name == tts_name && tts_name.is_some() {
-            return Err("TTS fallback must use a distinct provider identifier".into());
-        }
-        let tts_fallback = tts_fallback_name
-            .as_deref()
-            .map(build_tts_fallback)
-            .transpose()?;
+        let (tts_fallback_name, tts_fallback) = configure_tts_fallback(tts_name.as_deref())?;
         let (tts, tts_descriptor) = match tts {
             Some((port, mut descriptor)) => {
                 if let Some(voice) = &voice_profile {
@@ -176,6 +166,20 @@ impl ProviderBundle {
         })
     }
 }
+fn configure_tts_fallback(
+    primary: Option<&str>,
+) -> Result<(Option<String>, Option<(Box<dyn TtsPort>, ProviderDescriptor)>), String> {
+    let fallback = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
+    if fallback.is_some() && primary.is_none() {
+        return Err("TTS fallback requires a primary canonical TTS provider".into());
+    }
+    if fallback.as_deref() == primary && fallback.is_some() {
+        return Err("TTS fallback must use a distinct provider identifier".into());
+    }
+    let configured = fallback.as_deref().map(build_tts_fallback).transpose()?;
+    Ok((fallback, configured))
+}
+
 fn validate_voice_profile_configuration(
     voice_profile: Option<&VoiceProfile>,
     credentials: Option<&ProviderCredentialProfile>,
