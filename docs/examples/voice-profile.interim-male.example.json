@@ -1,0 +1,10 @@
+{
+  "schema_version": "vpr-voice-profile-0.1",
+  "profile_id": "interim-qwen3-ryan",
+  "version": 1,
+  "status": "INTERIM",
+  "provider": "metrotrance-qwen-preset",
+  "model": "metrotrance-qwen-preset",
+  "voice": "Ryan",
+  "rights_ref_sha256": null
+}
