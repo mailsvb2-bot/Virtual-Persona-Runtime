@@ -114,26 +114,7 @@ impl ProviderBundle {
             }
         };
         let voice_profile = VoiceProfile::from_env()?;
-        if let Some(voice) = &voice_profile {
-            for (name, expected) in [
-                ("VPR_OWNER_LAB_TTS_PROVIDER", voice.provider.as_str()),
-                ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
-                ("VPR_OWNER_LAB_TTS_VOICE", voice.voice.as_str()),
-            ] {
-                let effective = env::var(name).ok().or_else(|| {
-                    let tts = profile.as_ref()?.tts.as_ref()?;
-                    match name {
-                        "VPR_OWNER_LAB_TTS_PROVIDER" => Some(tts.provider.clone()),
-                        "VPR_OWNER_LAB_TTS_MODEL" => Some(tts.model.clone()),
-                        "VPR_OWNER_LAB_TTS_VOICE" => Some(tts.voice.clone()),
-                        _ => None,
-                    }
-                });
-                if effective.as_deref() != Some(expected) {
-                    return Err(format!("VOICE_PROFILE_ENV_CONFLICT: {name}"));
-                }
-            }
-        }
+        validate_voice_profile_configuration(voice_profile.as_ref(), profile.as_ref())?;
         let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE").ok()
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER")
@@ -195,6 +176,32 @@ impl ProviderBundle {
         })
     }
 }
+fn validate_voice_profile_configuration(
+    voice_profile: Option<&VoiceProfile>,
+    credentials: Option<&ProviderCredentialProfile>,
+) -> Result<(), String> {
+    let Some(voice) = voice_profile else { return Ok(()); };
+    for (name, expected) in [
+        ("VPR_OWNER_LAB_TTS_PROVIDER", voice.provider.as_str()),
+        ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
+        ("VPR_OWNER_LAB_TTS_VOICE", voice.voice.as_str()),
+    ] {
+        let effective = env::var(name).ok().or_else(|| {
+            let tts = credentials?.tts.as_ref()?;
+            match name {
+                "VPR_OWNER_LAB_TTS_PROVIDER" => Some(tts.provider.clone()),
+                "VPR_OWNER_LAB_TTS_MODEL" => Some(tts.model.clone()),
+                "VPR_OWNER_LAB_TTS_VOICE" => Some(tts.voice.clone()),
+                _ => None,
+            }
+        });
+        if effective.as_deref() != Some(expected) {
+            return Err(format!("VOICE_PROFILE_ENV_CONFLICT: {name}"));
+        }
+    }
+    Ok(())
+}
+
 fn validate_strict_voice_selection(
     primary_tts: Option<&str>,
     profile: Option<&VoiceProfile>,
