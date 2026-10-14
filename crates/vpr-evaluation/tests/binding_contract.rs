@@ -208,3 +208,66 @@ fn provider_state_rejects_unknown_fields_instead_of_hiding_them() {
     });
     assert!(serde_json::from_value::<ProviderStateManifest>(value).is_err());
 }
+
+#[test]
+fn tts_manifest_v02_requires_bound_voice_and_rejects_stale_or_duplicate_profiles() {
+    use vpr_evaluation::validate_provider_state_manifest;
+    let mut state = provider_state();
+    assert_eq!(validate_provider_state_manifest(&state), Ok(()),
+        "integrated avatar speech is valid without standalone TTS");
+    state.schema_version = "rt0-provider-state-0.1".into();
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::UnsupportedProviderStateSchema));
+    state.schema_version = RT0_PROVIDER_STATE_SCHEMA.into();
+
+    let mut tts = provider(ProviderRole::Tts, "metrotrance-qwen-preset");
+    tts.model_or_representation = "metrotrance-qwen-preset#Serena@interim-qwen3-serena:v1".into();
+    tts.voice_profile_status = Some("INTERIM".into());
+    tts.profile_id = Some("interim-qwen3-serena".into());
+    tts.version = Some(1);
+    state.providers.push(tts.clone());
+    assert_eq!(validate_provider_state_manifest(&state), Ok(()));
+
+    let bytes = provider_state_bytes(&state);
+    let evidence = bundle(&bytes);
+    assert!(evaluate(&state, &bytes, &evidence, CANDIDATE).is_ok());
+
+    let mut changed = state.clone();
+    changed.providers[3].version = Some(2);
+    let changed_bytes = provider_state_bytes(&changed);
+    assert_ne!(sha256_hex(&bytes), sha256_hex(&changed_bytes));
+    assert_eq!(
+        evaluate(&changed, &changed_bytes, &evidence, CANDIDATE),
+        Err(EvidenceBindingError::ProviderStateDigestMismatch),
+    );
+
+    state.providers.push(tts);
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::DuplicateProviderRole));
+    state.providers.pop();
+    state.providers[3].voice_profile_status = None;
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::BlankProviderDescriptor));
+    state.providers[3].voice_profile_status = Some("INTERIM".into());
+    state.providers[3].model_or_representation.clear();
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::BlankProviderDescriptor));
+}
+
+#[test]
+fn candidate_or_ambiguous_tts_voice_metadata_never_passes_exit_validation() {
+    use vpr_evaluation::validate_provider_state_manifest;
+    let mut state = provider_state();
+    let mut tts = provider(ProviderRole::Tts, "metrotrance-qwen-preset");
+    tts.voice_profile_status = Some("CANDIDATE".into());
+    tts.profile_id = Some("interim-qwen3-serena".into());
+    tts.version = Some(1);
+    state.providers.push(tts);
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::BlankProviderDescriptor));
+    state.providers[3].voice_profile_status = Some("ACCEPTED".into());
+    assert!(validate_provider_state_manifest(&state).is_ok());
+    state.providers[0].voice_profile_status = Some("INTERIM".into());
+    assert_eq!(validate_provider_state_manifest(&state),
+        Err(EvidenceBindingError::BlankProviderDescriptor));
+}
