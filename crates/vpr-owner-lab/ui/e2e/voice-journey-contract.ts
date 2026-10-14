@@ -160,10 +160,11 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
   if (!visitor) throw new Error("VISITOR_EVIDENCE_CHECKPOINT_MISSING");
   expect(visitor.participant_role).toBe("visitor");
   assertCommonEvidence(visitor);
-  expect(visitor.text_attempts).toMatchObject([{
-    request_sequence: 1,
-    status: "completed",
-  }]);
+  expect(visitor.text_attempts).toMatchObject([
+    { request_sequence: 1, status: "completed", failure_code: null },
+    { request_sequence: 2, status: "failed", failure_code: "PROVIDER_UNAVAILABLE" },
+    { request_sequence: 3, status: "completed", failure_code: null },
+  ]);
   expect(visitor.text_attempts[0]?.canonical_turn_sequence).toBeGreaterThan(0);
   expect(visitor.text_attempts[0]?.canonical_output_sequence).toBeGreaterThan(0);
   expect(visitor.voice_attempts[1]).toMatchObject({
@@ -200,7 +201,7 @@ export const assertProviderRequests = async (
   const llm = requests.filter((entry) => entry.kind === "llm");
   const avatar = requests.filter((entry) => entry.kind === "avatar");
   expect(stt).toHaveLength(5);
-  expect(llm).toHaveLength(10);
+  expect(llm).toHaveLength(12);
   expect(avatar.filter((entry) => entry.path.endsWith("/streams"))).toHaveLength(3);
   expect(avatar.filter((entry) => entry.path.endsWith("/sdp"))).toHaveLength(3);
   expect(avatar.filter((entry) => entry.method === "DELETE")).toHaveLength(3);
@@ -236,6 +237,17 @@ export const assertProviderRequests = async (
   expect(revisedVoiceLlm).toBeDefined();
   expect(visitorTextLlm).toBeDefined();
   expect(visitorVoiceLlm).toBeDefined();
+  const visitorOutageLlm = llm.filter((entry) => entry.bodyText.includes("Спровоцируй отказ провайдера")
+    && entry.bodyText.includes("Visitor permissions do not expose owner-reviewed personal context"));
+  const visitorRecoveredLlm = llm.filter((entry) => entry.bodyText.includes("Восстановление после отказа")
+    && entry.bodyText.includes("Visitor permissions do not expose owner-reviewed personal context"));
+  expect(visitorOutageLlm).toHaveLength(1);
+  expect(visitorRecoveredLlm).toHaveLength(1);
+  for (const visitorTurn of [...visitorOutageLlm, ...visitorRecoveredLlm]) {
+    for (const ownerAnswer of ownerAnswers) {
+      expect(visitorTurn.bodyText).not.toContain(ownerAnswer);
+    }
+  }
 
   for (const ownerAnswer of ownerAnswers) {
     expect(ownerTextLlm?.bodyText).toContain(ownerAnswer);

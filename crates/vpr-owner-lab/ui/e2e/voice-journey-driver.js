@@ -310,6 +310,14 @@
     // reports STOP before revoking the session.
     await recordInterruptedVoiceTurn("В visitor scope нет подтверждённых данных владельца", 2);
     await checkpoint("visitor-interrupt-proven");
+
+    // A visitor provider outage must NOT silently revoke the test session,
+    // leak owner claims, or prevent a subsequent authorized turn. Explicitly
+    // exercise the same failure/recovery route previously tested for owner only.
+    await recordTextTurn("Спровоцируй отказ провайдера", "PROVIDER_UNAVAILABLE");
+    await checkpoint("visitor-provider-failure");
+    await recordTextTurn("Восстановление после отказа", "Ответ: Ответ после восстановления");
+    await checkpoint("visitor-provider-recovered");
     const visitorEvidence = await fetchEvidence();
 
     byId("revoke").click();
