@@ -20,7 +20,7 @@ pub(super) fn snapshot(state: &AppState) -> HttpResponse {
     with_engine(state, |engine| {
         let mut selection = engine.tts_selection();
         if let Some(profile) = state.voice_profile.as_ref() {
-            selection["voice_profile"] = super::voice_profile_public(profile);
+            selection["voice_profile"] = voice_profile_public(profile);
         }
         json_response(200, &selection)
     })
@@ -46,5 +46,13 @@ pub(super) fn select(
     with_engine_result(state, |engine| {
         engine.select_tts_provider(&body.provider)?;
         Ok(json_response(200, &engine.tts_selection()))
+    })
+}
+
+pub(super) fn voice_profile_public(profile: &vpr_owner_lab::VoiceProfile) -> serde_json::Value {
+    serde_json::json!({
+        "profile_id": profile.profile_id,
+        "version": profile.version,
+        "status": profile.status,
     })
 }
