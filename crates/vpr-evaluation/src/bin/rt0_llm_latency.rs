@@ -233,6 +233,27 @@ fn main() {
 mod tests {
     use super::{percentile, verdict};
     #[test]
+    fn session_relative_media_offsets_are_never_accepted_as_latency() {
+        let metrics = super::Metrics {
+            text_first_meaningful: None,
+            llm_full: None,
+            browser_audio_event_offset: percentile(vec![1; 20]),
+            stop_event_offset: percentile(vec![1; 5]),
+            first_audio: None,
+            stop: None,
+        };
+        assert_eq!(
+            verdict(metrics.first_audio.as_ref(), 20, 3000),
+            "INSUFFICIENT_EVIDENCE"
+        );
+        assert_eq!(
+            verdict(metrics.stop.as_ref(), 5, 500),
+            "INSUFFICIENT_EVIDENCE"
+        );
+        assert_eq!(metrics.browser_audio_event_offset.unwrap().n, 20);
+    }
+
+    #[test]
     fn nearest_rank_and_minimum_sample_contract() {
         let values: Vec<u64> = (1..=20).collect();
         let metric = percentile(values);
