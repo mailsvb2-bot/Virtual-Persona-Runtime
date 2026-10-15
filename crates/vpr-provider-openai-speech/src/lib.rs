@@ -56,8 +56,8 @@ impl OpenAiSpeechConfig {
 
     /// Enable raw PCM streaming only for the trusted loopback Piper bridge.
     #[must_use]
-    pub const fn with_stream_pcm(mut self) -> Self {
-        self.stream_pcm = true;
+    pub const fn with_stream_pcm(mut self, enabled: bool) -> Self {
+        self.stream_pcm = enabled;
         self
     }
 
