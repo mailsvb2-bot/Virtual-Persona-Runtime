@@ -222,3 +222,13 @@ fn deepseek_keeps_its_provider_identity_over_openai_compatible_transport() {
     );
     assert_eq!(openai_compatible_provider_name("anthropic"), None);
 }
+
+#[test]
+fn yandex_and_proxyapi_use_one_canonical_openai_compatible_llm_port() {
+    assert_eq!(openai_compatible_provider_name("yandex"), Some("yandex"));
+    assert_eq!(
+        openai_compatible_provider_name("proxyapi-deepseek"),
+        Some("proxyapi-deepseek")
+    );
+    assert_eq!(openai_compatible_provider_name("unknown"), None);
+}
