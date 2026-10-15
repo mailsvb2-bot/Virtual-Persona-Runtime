@@ -387,7 +387,11 @@ fn build_llm(
                 if endpoint != "https://ai.api.cloud.yandex.net/v1/chat/completions" {
                     return Err("YANDEX_LLM_ENDPOINT_MISMATCH".into());
                 }
-                let folder = required_value("VPR_OWNER_LAB_LLM_PROJECT_ID", None)?;
+                let stored_folder = profile
+                    .filter(|stored| stored.llm_provider == "yandex")
+                    .and_then(|_| model.strip_prefix("gpt://"))
+                    .and_then(|path| path.split('/').next());
+                let folder = required_value("VPR_OWNER_LAB_LLM_PROJECT_ID", stored_folder)?;
                 if !model.starts_with(&format!("gpt://{folder}/")) {
                     return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
                 }
