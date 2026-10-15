@@ -12,25 +12,10 @@ use vpr_integration::{
 };
 
 use crate::audio_stage_timing::{RealtimeAudioStageTimings, elapsed_stage};
+use crate::avatar_output_error::RealtimeAvatarOutputError;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::provider::ProviderOperation;
 use crate::{ActiveSession, ActiveTurn, OutputDeliveryHandle};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RealtimeAvatarOutputError {
-    Runtime(Rt0ReasonCode),
-    Provider(ProviderExecutionError),
-}
-
-impl RealtimeAvatarOutputError {
-    #[must_use]
-    pub const fn reason_code(&self) -> Rt0ReasonCode {
-        match self {
-            Self::Runtime(reason) => *reason,
-            Self::Provider(error) => error.reason_code(),
-        }
-    }
-}
 
 pub struct RealtimeAvatarHandle {
     session_id: SessionId,
