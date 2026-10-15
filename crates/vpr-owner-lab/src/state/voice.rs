@@ -10,8 +10,8 @@ use vpr_integration::{
     UsageEvidence,
 };
 use vpr_runtime::{
-    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAudioStageTimings, RealtimeAvatarHandle,
-    RealtimeAvatarOutputError, TurnInterruptHandle,
+    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAudioStageTimings,
+    RealtimeAvatarHandle, RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
 pub(super) use super::voice_metrics::{elapsed_millis, map_usage};
@@ -271,8 +271,12 @@ impl OwnerLabEngine {
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
             avatar_millis: generation.avatar_millis,
-            tts_first_pcm_millis: generation.audio_timings.map(|timing| timing.first_pcm_millis),
-            echo_first_send_millis: generation.audio_timings.map(|timing| timing.first_echo_send_millis),
+            tts_first_pcm_millis: generation
+                .audio_timings
+                .map(|timing| timing.first_pcm_millis),
+            echo_first_send_millis: generation
+                .audio_timings
+                .map(|timing| timing.first_echo_send_millis),
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&generation.usage),
@@ -353,8 +357,12 @@ impl OwnerLabEngine {
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
             avatar_millis: generation.avatar_millis,
-            tts_first_pcm_millis: generation.audio_timings.map(|timing| timing.first_pcm_millis),
-            echo_first_send_millis: generation.audio_timings.map(|timing| timing.first_echo_send_millis),
+            tts_first_pcm_millis: generation
+                .audio_timings
+                .map(|timing| timing.first_pcm_millis),
+            echo_first_send_millis: generation
+                .audio_timings
+                .map(|timing| timing.first_echo_send_millis),
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&generation.usage),
@@ -539,10 +547,19 @@ fn deliver_phrase(
     tts: Option<&dyn TtsPort>,
     handle: &RealtimeAvatarHandle,
     phrase: &str,
-) -> Result<(OutputDeliveryHandle, Option<LabClientCommand>, Option<RealtimeAudioStageTimings>), LabError> {
+) -> Result<
+    (
+        OutputDeliveryHandle,
+        Option<LabClientCommand>,
+        Option<RealtimeAudioStageTimings>,
+    ),
+    LabError,
+> {
     if let Some(tts) = tts {
         let (delivery, timings) = turn
-            .synthesize_and_deliver_realtime_avatar_audio_with_timings(tts, provider, handle, phrase)
+            .synthesize_and_deliver_realtime_avatar_audio_with_timings(
+                tts, provider, handle, phrase,
+            )
             .map_err(|error| terminalize_avatar_output_error(turn, error))?;
         return Ok((delivery, None, Some(timings)));
     }
@@ -595,4 +612,3 @@ pub(super) fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> Lab
         _ => error,
     }
 }
-
