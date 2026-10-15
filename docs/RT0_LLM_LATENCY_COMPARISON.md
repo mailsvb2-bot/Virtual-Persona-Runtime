@@ -27,7 +27,7 @@ cargo run --locked -p vpr-evaluation --bin vpr-rt0-llm-latency -- \
 Repeat with `proxyapi-deepseek` and the **exact** ProxyAPI model ID
 recorded in that run's provider-state. Do not substitute guessed model names.
 
-The report contains no transcript, API key or audio. It reports p50 and p95 (nearest-rank) for **LLM-call-relative** first meaningful chunk (`llm_first_meaningful`) and full LLM completion. Neither is the end-to-end microphone-to-text latency required by the release gate. Browser audio-start and interruption-stop events currently carry **session-relative offsets**, not request-relative or STOP-command-relative latency. The report retains their offsets only as diagnostics (`browser_audio_event_offset`, `stop_event_offset`); end-to-end first-text, first-audio and STOP latency metrics remain null and their verdicts remain `INSUFFICIENT_EVIDENCE` until paired start timestamps are recorded.
+The report contains no transcript, API key or audio. It reports p50 and p95 (nearest-rank) for **LLM-call-relative** first meaningful chunk (`llm_first_meaningful`) and full LLM completion. Neither is the end-to-end microphone-to-text latency required by the release gate. The browser records `audio_started` with `performance.now() - activeVoiceEvidence.startedAt`, where `startedAt` is set at **microphone finish**, and records `interruption_stopped` with `performance.now() - interruptEvidenceWatch.startedAt`, set when STOP is issued. These are valid *request-relative first-audio* and *STOP-to-observed-silence* latencies respectively. They are **not** microphone-start-to-audio timing or provider-confirmed STOP receipts. The end-to-end microphone-to-first-text metric remains unavailable; `llm_first_meaningful` is only LLM-call-relative.
 
 - Text first-meaningful p95: **2,500 ms**
 - Browser first-audio p95: **3,000 ms**
@@ -37,7 +37,7 @@ The report contains no transcript, API key or audio. It reports p50 and p95 (nea
   `INSUFFICIENT_EVIDENCE`.
 - A completed voice attempt without browser `audio_started` remains a missing
   observation, **not** a success. Do not synthesize or backfill observations.
-- **Instrumentation gap:** add monotonic request-start and STOP-issued timestamps under the same session clock and correlate them with the browser's observed audio and stop acknowledgments before attempting p95 compliance. An absolute session offset MUST NOT be compared with a latency threshold.
+- **Instrumentation gap:** capture microphone-start-to-first-text and separate TTS first-PCM and Echo-send milestones. Until collected, their p95 values must not be inferred from unrelated timers.
 
 The tool rejects missing or mismatched provider-state, unknown LLM identity,
 cross-candidate exports, stale schemas, duplicate session sequences, and
