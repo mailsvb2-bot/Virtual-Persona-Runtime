@@ -149,7 +149,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 6 {
         return Err(
-            "usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>..."
+            "usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <provider-state.json> <session.json>..."
                 .into(),
         );
     }
