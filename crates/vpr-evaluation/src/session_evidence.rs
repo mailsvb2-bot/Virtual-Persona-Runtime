@@ -489,7 +489,9 @@ impl SessionAggregateAccumulator {
             || output == 0
             || llm_first_meaningful_ms > llm_ms
             || llm_first_meaningful_ms > total_ms
-            || attempt.voice_first_text_millis.is_some_and(|ms| ms > total_ms || ms < llm_first_meaningful_ms)
+            || attempt
+                .voice_first_text_millis
+                .is_some_and(|ms| ms > total_ms || ms < llm_first_meaningful_ms)
             || attempt.failure_code.is_some()
         {
             return Err(LabSessionAggregateError::InvalidSnapshot);
@@ -501,7 +503,8 @@ impl SessionAggregateAccumulator {
         self.stt.push(stt_ms);
         self.llm.push(llm_ms);
         self.llm_first_meaningful.push(llm_first_meaningful_ms);
-        self.voice_first_text.extend(attempt.voice_first_text_millis);
+        self.voice_first_text
+            .extend(attempt.voice_first_text_millis);
         self.avatar.push(avatar_ms);
         self.server_total.push(total_ms);
         self.add_usage_costs(stt_usage, llm_usage)
