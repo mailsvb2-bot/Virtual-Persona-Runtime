@@ -25,9 +25,12 @@ struct Metrics {
 
 #[derive(Serialize)]
 struct Thresholds {
-    text_p95_ms: u64,
-    first_audio_p95_ms: u64,
-    stop_p95_ms: u64,
+    #[serde(rename = "text_p95_ms")]
+    text: u64,
+    #[serde(rename = "first_audio_p95_ms")]
+    first_audio: u64,
+    #[serde(rename = "stop_p95_ms")]
+    stop: u64,
 }
 
 #[derive(Serialize)]
@@ -64,12 +67,82 @@ fn percentile(mut values: Vec<u64>) -> Option<Metric> {
     })
 }
 
-fn verdict(metric: &Option<Metric>, minimum: usize, threshold: u64) -> &'static str {
+fn verdict(metric: Option<&Metric>, minimum: usize, threshold: u64) -> &'static str {
     match metric {
         Some(metric) if metric.n >= minimum && metric.p95_ms <= threshold => "PASS",
         Some(metric) if metric.n >= minimum => "FAIL",
         _ => "INSUFFICIENT_EVIDENCE",
     }
+}
+
+#[derive(Default)]
+struct Samples {
+    text: Vec<u64>,
+    full: Vec<u64>,
+    audio: Vec<u64>,
+    stop: Vec<u64>,
+    turns: usize,
+    errors: usize,
+}
+
+fn collect_samples(paths: &[String], candidate: &str, state_digest: &str) -> Result<Samples, String> {
+    let mut samples = Samples::default();
+    let mut session_ids = HashSet::new();
+    for path in paths {
+        let data = fs::read(path).map_err(|_| "session evidence unreadable")?;
+        if data.len() > 8_000_000 {
+            return Err("session evidence too large".into());
+        }
+        let session: LabSessionEvidenceSnapshot =
+            serde_json::from_slice(&data).map_err(|_| "invalid session evidence schema")?;
+        if session.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
+            || &session.candidate_sha != candidate
+        {
+            return Err("stale or cross-candidate session evidence".into());
+        }
+        if session.participant_role != ParticipantRole::Owner {
+            return Err("benchmark requires owner session evidence".into());
+        }
+        if !session_ids.insert(session.session_sequence) {
+            return Err("duplicate session sequence".into());
+        }
+        if session.provider_state_sha256 != state_digest {
+            return Err("session provider-state digest mismatch".into());
+        }
+        for attempt in &session.voice_attempts {
+            samples.turns += 1;
+            if attempt.status != LabVoiceAttemptStatus::Completed {
+                samples.errors += 1;
+                continue;
+            }
+            if let Some(ms) = attempt.llm_first_meaningful_millis {
+                samples.text.push(ms);
+            }
+            if let Some(ms) = attempt.llm_millis {
+                samples.full.push(ms);
+            }
+            if let Some(ms) = session
+                .media_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LabMediaEvidenceKind::AudioStarted
+                        && event.request_sequence == Some(attempt.request_sequence)
+                })
+                .map(|event| event.elapsed_millis)
+                .min()
+            {
+                samples.audio.push(ms);
+            }
+        }
+        samples.stop.extend(
+            session
+                .media_events
+                .iter()
+                .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
+                .map(|event| event.elapsed_millis),
+        );
+    }
+    Ok(samples)
 }
 
 fn run() -> Result<(), String> {
@@ -103,89 +176,29 @@ fn run() -> Result<(), String> {
         return Err("provider or model differs from canonical provider state".into());
     }
     let state_digest = sha256_hex(&state_bytes);
-    let mut text = Vec::new();
-    let mut full = Vec::new();
-    let mut audio = Vec::new();
-    let mut stop = Vec::new();
-    let mut turns = 0_usize;
-    let mut errors = 0_usize;
-    let mut session_ids = HashSet::new();
-    for path in &args[5..] {
-        let data = fs::read(path).map_err(|_| "session evidence unreadable")?;
-        if data.len() > 8_000_000 {
-            return Err("session evidence too large".into());
-        }
-        let session: LabSessionEvidenceSnapshot =
-            serde_json::from_slice(&data).map_err(|_| "invalid session evidence schema")?;
-        if session.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
-            || &session.candidate_sha != candidate
-        {
-            return Err("stale or cross-candidate session evidence".into());
-        }
-        if session.participant_role != ParticipantRole::Owner {
-            return Err("benchmark requires owner session evidence".into());
-        }
-        if !session_ids.insert(session.session_sequence) {
-            return Err("duplicate session sequence".into());
-        }
-        if session.provider_state_sha256 != state_digest {
-            return Err("session provider-state digest mismatch".into());
-        }
-        for attempt in &session.voice_attempts {
-            turns += 1;
-            if attempt.status != LabVoiceAttemptStatus::Completed {
-                errors += 1;
-                continue;
-            }
-            if let Some(ms) = attempt.llm_first_meaningful_millis {
-                text.push(ms);
-            }
-            if let Some(ms) = attempt.llm_millis {
-                full.push(ms);
-            }
-            if let Some(ms) = session
-                .media_events
-                .iter()
-                .filter(|event| {
-                    event.kind == LabMediaEvidenceKind::AudioStarted
-                        && event.request_sequence == Some(attempt.request_sequence)
-                })
-                .map(|event| event.elapsed_millis)
-                .min()
-            {
-                audio.push(ms);
-            }
-        }
-        stop.extend(
-            session
-                .media_events
-                .iter()
-                .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
-                .map(|event| event.elapsed_millis),
-        );
-    }
+    let samples = collect_samples(&args[5..], candidate, &state_digest)?;
     let metrics = Metrics {
-        text_first_meaningful: percentile(text),
-        llm_full: percentile(full),
-        first_audio: percentile(audio),
-        stop: percentile(stop),
+        text_first_meaningful: percentile(samples.text),
+        llm_full: percentile(samples.full),
+        first_audio: percentile(samples.audio),
+        stop: percentile(samples.stop),
     };
     let report = Report {
         schema: "vpr-llm-latency-compare-0.1",
         candidate_sha: candidate,
         provider,
         model,
-        turns,
-        errors,
+        turns: samples.turns,
+        errors: samples.errors,
         thresholds: Thresholds {
-            text_p95_ms: 2500,
-            first_audio_p95_ms: 3000,
-            stop_p95_ms: 500,
+            text: 2500,
+            first_audio: 3000,
+            stop: 500,
         },
         verdict: Verdict {
-            text: verdict(&metrics.text_first_meaningful, 20, 2500),
-            first_audio: verdict(&metrics.first_audio, 20, 3000),
-            stop: verdict(&metrics.stop, 5, 500),
+            text: verdict(metrics.text_first_meaningful.as_ref(), 20, 2500),
+            first_audio: verdict(metrics.first_audio.as_ref(), 20, 3000),
+            stop: verdict(metrics.stop.as_ref(), 5, 500),
         },
         metrics,
     };
@@ -210,10 +223,10 @@ mod tests {
         let metric = percentile(values);
         let metric = metric.as_ref().unwrap();
         assert_eq!((metric.p50_ms, metric.p95_ms), (10, 19));
-        assert_eq!(verdict(&None, 20, 2500), "INSUFFICIENT_EVIDENCE");
+        assert_eq!(verdict(None, 20, 2500), "INSUFFICIENT_EVIDENCE");
         assert_eq!(
             verdict(
-                &Some(super::Metric {
+                Some(&super::Metric {
                     n: 19,
                     p50_ms: 1,
                     p95_ms: 1
