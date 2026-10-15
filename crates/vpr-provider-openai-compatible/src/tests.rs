@@ -105,6 +105,42 @@ fn optional_realtime_generation_controls_are_sent_only_when_configured() {
 }
 
 #[test]
+fn project_and_api_key_auth_are_explicit_and_stream_usage_can_be_disabled() {
+    let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\\n\\n");
+    let config = OpenAiCompatibleConfig::new(endpoint, "redacted-test-value", "test-model")
+        .with_auth_scheme(AuthScheme::ApiKey)
+        .with_stream_usage(false)
+        .with_project_id("folder123").unwrap();
+    let provider = OpenAiCompatibleLlm::new(config).unwrap();
+    let usage = provider.stream(
+        &LlmRequest {
+            locale: "ru-RU".into(),
+            instructions: None,
+            user_input: "Проверка".into(),
+        },
+        &Probe(AtomicBool::new(false)),
+        &mut GeneratedTextBuffer::default(),
+    ).unwrap();
+    let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(request.to_ascii_lowercase().contains("authorization: api-key redacted-test-value"));
+    assert!(request.to_ascii_lowercase().contains("openai-project: folder123"));
+    assert!(!request.contains("stream_options"));
+    assert!(usage.input_units.is_none());
+    assert!(usage.output_units.is_none());
+}
+
+#[test]
+fn rejects_invalid_project_ids_before_network() {
+    for project in ["", "Folder", "a-b", "with space", "a/b"] {
+        assert!(OpenAiCompatibleConfig::new("https://example.test", "secret", "model")
+            .with_project_id(project).is_err());
+    }
+    let oversized = "a".repeat(65);
+    assert!(OpenAiCompatibleConfig::new("https://example.test", "secret", "model")
+        .with_project_id(&oversized).is_err());
+}
+
+#[test]
 fn streams_text_and_usage_from_openai_compatible_sse() {
     let body = concat!(
         "data: {\"choices\":[{\"delta\":{\"content\":\"Привет\"}}],\"usage\":null}\n\n",
