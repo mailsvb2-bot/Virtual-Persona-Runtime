@@ -1,6 +1,6 @@
-const FIRST_CLAUSE_MIN_CHARS: usize = 20;
+const FIRST_CLAUSE_MIN_CHARS: usize = 12;
 const NEXT_CLAUSE_MIN_CHARS: usize = 48;
-const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 36;
+const FIRST_PHRASE_SOFT_LIMIT_CHARS: usize = 24;
 const NEXT_PHRASE_SOFT_LIMIT_CHARS: usize = 96;
 
 #[derive(Default)]
@@ -99,10 +99,10 @@ mod tests {
     #[test]
     fn tiny_intro_commas_do_not_create_choppy_phrases() {
         let mut buffer = RealtimePhraseBuffer::default();
-        assert!(buffer.push("Да, конечно, отвечу подробно").is_empty());
+        assert!(buffer.push("Да, конечно, отвечу").is_empty());
         assert_eq!(
             buffer.finish().as_deref(),
-            Some("Да, конечно, отвечу подробно")
+            Some("Да, конечно, отвечу")
         );
     }
 
@@ -117,7 +117,7 @@ mod tests {
             "first phrase must not wait for 48+ characters"
         );
         assert!(!emitted[0].ends_with(' '));
-        assert!(emitted[0].chars().count() <= 36);
+        assert!(emitted[0].chars().count() <= 24);
         assert!(!buffer.finish().unwrap().is_empty());
     }
 
