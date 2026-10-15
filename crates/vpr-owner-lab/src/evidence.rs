@@ -276,8 +276,12 @@ impl LabSessionEvidenceRecorder {
             || result.llm_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_first_meaningful_millis > result.llm_millis
             || result.avatar_millis > MAX_MEDIA_ELAPSED_MILLIS
-            || result.tts_first_pcm_millis.is_some_and(|ms| ms > result.avatar_millis)
-            || result.echo_first_send_millis.is_some_and(|ms| ms > result.avatar_millis)
+            || result
+                .tts_first_pcm_millis
+                .is_some_and(|ms| ms > result.avatar_millis)
+            || result
+                .echo_first_send_millis
+                .is_some_and(|ms| ms > result.avatar_millis)
             || matches!((result.tts_first_pcm_millis, result.echo_first_send_millis), (Some(first), Some(sent)) if first > sent)
             || (result.tts_first_pcm_millis.is_some() != result.echo_first_send_millis.is_some())
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
