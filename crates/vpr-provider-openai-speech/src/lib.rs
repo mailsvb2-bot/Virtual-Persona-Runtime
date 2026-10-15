@@ -196,6 +196,7 @@ fn stream_pcm_body(
     }
     let mut buffer = [0_u8; 8192];
     let mut total = 0_usize;
+    let mut pending_byte = None;
     loop {
         if cancellation.is_cancelled() {
             return Err(cancelled());
@@ -204,13 +205,23 @@ fn stream_pcm_body(
         if size == 0 {
             break;
         }
-        total = total.checked_add(size).filter(|n| *n <= MAX_PROVIDER_BINARY_BODY_BYTES).ok_or_else(invalid_response)?;
-        if size % 2 != 0 {
-            return Err(invalid_response());
+        total = total
+            .checked_add(size)
+            .filter(|count| *count <= MAX_PROVIDER_BINARY_BODY_BYTES)
+            .ok_or_else(invalid_response)?;
+        let mut chunk = Vec::with_capacity(size + 1);
+        if let Some(byte) = pending_byte.take() {
+            chunk.push(byte);
         }
-        sink.push_generated_audio(&buffer[..size], sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+        chunk.extend_from_slice(&buffer[..size]);
+        if chunk.len() % 2 != 0 {
+            pending_byte = chunk.pop();
+        }
+        if !chunk.is_empty() {
+            sink.push_generated_audio(&chunk, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+        }
     }
-    if total == 0 {
+    if total == 0 || pending_byte.is_some() {
         return Err(invalid_response());
     }
     if cancellation.is_cancelled() {
