@@ -17,6 +17,7 @@ pub struct GeminiConfig {
     api_key: String,
     model: String,
     timeout: Duration,
+    max_output_tokens: Option<u32>,
 }
 
 impl GeminiConfig {
@@ -31,7 +32,15 @@ impl GeminiConfig {
             api_key: api_key.into(),
             model: model.into(),
             timeout: DEFAULT_TIMEOUT,
+            max_output_tokens: None,
         }
+    }
+
+    /// Caps response length for realtime persona conversations.
+    #[must_use]
+    pub const fn with_max_output_tokens(mut self, max_output_tokens: u32) -> Self {
+        self.max_output_tokens = Some(max_output_tokens);
+        self
     }
 
     #[must_use]
@@ -80,6 +89,7 @@ impl GeminiLlm {
             input: &request.user_input,
             system_instruction: request.instructions.as_deref(),
             stream: true,
+            generation_config: self.config.max_output_tokens.map(|max_output_tokens| GenerationConfig { max_output_tokens }),
         };
         self.client
             .post(&self.config.endpoint)
@@ -234,6 +244,13 @@ struct InteractionRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     system_instruction: Option<&'a str>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generation_config: Option<GenerationConfig>,
+}
+
+#[derive(Serialize)]
+struct GenerationConfig {
+    max_output_tokens: u32,
 }
 
 #[derive(Deserialize)]
