@@ -100,10 +100,7 @@ mod tests {
     fn tiny_intro_commas_do_not_create_choppy_phrases() {
         let mut buffer = RealtimePhraseBuffer::default();
         assert!(buffer.push("Да, ну, отвечу").is_empty());
-        assert_eq!(
-            buffer.finish().as_deref(),
-            Some("Да, ну, отвечу")
-        );
+        assert_eq!(buffer.finish().as_deref(), Some("Да, ну, отвечу"));
     }
 
     #[test]
