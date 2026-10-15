@@ -5,6 +5,9 @@ Never downloads weights at request time. The provider identifier is currently
 the existing OpenAI-compatible local TTS wire contract.
 """
 import os
+import io
+import time
+import wave
 from pathlib import Path
 
 from metrotrance_tts_bridge import make_handler, validate_echo_wav
@@ -75,6 +78,23 @@ def make_piper_synthesizer(model_path):
     return synthesize
 
 
+
+def warmup_piper(synthesize):
+    """Warm the actual synthesis path before accepting voice traffic.
+
+    RTF is processing seconds divided by generated audio seconds.
+    No user phrase or audio is persisted.
+    """
+    start = time.perf_counter()
+    audio = synthesize("Здравствуйте. Я готова говорить.")
+    elapsed = time.perf_counter() - start
+    with wave.open(io.BytesIO(audio), "rb") as source:
+        duration = source.getnframes() / source.getframerate()
+    if duration <= 0:
+        raise RuntimeError("Piper warmup produced no audio")
+    return round(elapsed / duration, 4)
+
+
 def main():
     model = os.environ.get("VPR_PIPER_MODEL")
     token = os.environ.get("VPR_METROTRANCE_TTS_TOKEN", "")
@@ -82,9 +102,10 @@ def main():
     if not model:
         raise SystemExit("VPR_PIPER_MODEL is required")
     synth = make_piper_synthesizer(model)
+    rtf = warmup_piper(synth)
     server = ThreadingHTTPServer(
         ("127.0.0.1", port),
-        make_handler(token, synth, provider_id="piper"),
+        make_handler(token, synth, provider_id="piper", health_status={"ready": True, "rtf": rtf}),
     )
     try:
         print("Piper TTS loopback ready", flush=True)
