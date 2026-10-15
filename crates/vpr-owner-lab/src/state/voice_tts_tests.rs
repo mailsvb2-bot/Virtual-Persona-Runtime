@@ -123,6 +123,37 @@ fn voice_tts_selection_is_frozen_during_active_avatar_session() {
     assert_eq!(stats.avatar_creates.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn tts_selection_after_closed_session_changes_only_next_session_provider() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine
+        .with_named_tts(
+            "metrotrance-qwen".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: true,
+            }),
+        )
+        .with_tts_fallback(
+            "metrotrance-chatterbox".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: false,
+            }),
+        );
+    assert!(engine.select_tts_provider("metrotrance-chatterbox").is_err());
+    engine.close().unwrap();
+    assert_eq!(engine.status().session_state, "closed");
+    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
+    assert_eq!(
+        engine.tts_selection()["active"],
+        "metrotrance-chatterbox"
+    );
+    assert_eq!(engine.tts_selection()["alternate"], "metrotrance-qwen");
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 0);
+}
+
 struct BlockingCanonicalTts {
     started: mpsc::Sender<()>,
 }
