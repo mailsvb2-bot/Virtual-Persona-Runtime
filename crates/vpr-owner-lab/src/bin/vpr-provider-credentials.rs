@@ -42,6 +42,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
         "set-tts" => set_tts_profile(),
+        "set-llm" => set_llm_profile(),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
         "import-env" => import_env_profile(),
@@ -50,7 +51,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "probe-avatar" => probe_avatar(),
         "clear" => clear(),
         _ => Err(
-            "usage: vpr-provider-credentials <set|set-did|set-tts|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
+            "usage: vpr-provider-credentials <set|set-did|set-tts|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
         ),
     }
@@ -107,6 +108,45 @@ fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     profile.set_tts(stored)?;
     save_provider_profile(&profile)?;
     println!("TTS credential route saved securely.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_llm_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR profile is missing; configure avatar/STT first")?;
+    println!("Select the realtime LLM; the key will remain in Windows Credential Manager.");
+    let provider = prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
+        .to_ascii_lowercase();
+    let (endpoint, model) = match provider.as_str() {
+        "yandex" => {
+            let folder = prompt_line("Yandex AI Studio folder ID: ")?;
+            if folder.is_empty()
+                || folder.len() > 64
+                || !folder.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            {
+                return Err("invalid Yandex AI Studio folder ID".into());
+            }
+            (
+                "https://ai.api.cloud.yandex.net/v1/chat/completions".to_owned(),
+                format!("gpt://{folder}/yandexgpt-lite/latest"),
+            )
+        }
+        "proxyapi-deepseek" => (
+            "https://api.proxyapi.ru/v1/chat/completions".to_owned(),
+            prompt_line("ProxyAPI DeepSeek exact model ID: ")?,
+        ),
+        "deepseek" => (
+            "https://api.deepseek.com/chat/completions".to_owned(),
+            prompt_line("DeepSeek exact model ID: ")?,
+        ),
+        _ => return Err("unsupported LLM provider".into()),
+    };
+    let key = prompt_secret("LLM API key (hidden): ")?;
+    profile.replace_llm(&provider, &endpoint, &model, key)?;
+    save_provider_profile(&profile)?;
+    println!("LLM route saved securely. No token was printed.");
     print_safe_profile(&profile);
     Ok(())
 }
