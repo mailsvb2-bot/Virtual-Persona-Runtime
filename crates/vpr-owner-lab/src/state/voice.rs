@@ -10,7 +10,7 @@ use vpr_integration::{
     UsageEvidence,
 };
 use vpr_runtime::{
-    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAvatarHandle,
+    ActiveTurn, OutputDeliveryHandle, ProviderExecutionError, RealtimeAudioStageTimings, RealtimeAvatarHandle,
     RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
@@ -41,6 +41,10 @@ pub struct LabVoiceResult {
     pub llm_millis: u64,
     pub llm_first_meaningful_millis: u64,
     pub avatar_millis: u64,
+    /// Time from first TTS phrase entry to first PCM in the canonical TTS sink.
+    pub tts_first_pcm_millis: Option<u64>,
+    /// Time from first TTS phrase entry to first successful Echo PCM send.
+    pub echo_first_send_millis: Option<u64>,
     pub total_millis: u64,
     pub stt_usage: LabVoiceUsage,
     pub llm_usage: LabVoiceUsage,
@@ -58,6 +62,7 @@ struct VoiceGeneration {
     llm_millis: u64,
     first_meaningful_millis: u64,
     avatar_millis: u64,
+    audio_timings: Option<RealtimeAudioStageTimings>,
     output_sequences: Vec<u64>,
     client_command: Option<LabClientCommand>,
 }
@@ -264,6 +269,8 @@ impl OwnerLabEngine {
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
             avatar_millis: generation.avatar_millis,
+            tts_first_pcm_millis: generation.audio_timings.map(|timing| timing.first_pcm_millis),
+            echo_first_send_millis: generation.audio_timings.map(|timing| timing.first_echo_send_millis),
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&generation.usage),
@@ -374,7 +381,7 @@ impl OwnerLabEngine {
 
         turn.begin_output().map_err(LabError::Runtime)?;
         let avatar_started = Instant::now();
-        let (delivery, client_command) = deliver_phrase(
+        let (delivery, client_command, audio_timings) = deliver_phrase(
             turn,
             self.provider.as_ref(),
             self.tts.as_deref(),
@@ -391,6 +398,7 @@ impl OwnerLabEngine {
             llm_millis,
             first_meaningful_millis: first_meaningful,
             avatar_millis,
+            audio_timings,
             output_sequences: vec![output_sequence],
             client_command,
         })
@@ -413,6 +421,7 @@ impl OwnerLabEngine {
             scope.spawn(move || produce(turn, llm, request, &sender));
             let mut output_sequences = Vec::new();
             let mut avatar_millis = 0_u64;
+            let mut first_audio_timings = None;
             let mut output_started = false;
             loop {
                 let event = receiver
@@ -432,6 +441,9 @@ impl OwnerLabEngine {
                             handle,
                             &phrase,
                         )?;
+                        if first_audio_timings.is_none() {
+                            first_audio_timings = audio_timings;
+                        }
                         avatar_millis =
                             avatar_millis.saturating_add(elapsed_millis(avatar_started));
                         let output_sequence = self.voice_playback.register_delivery(
@@ -467,6 +479,7 @@ impl OwnerLabEngine {
                             llm_millis,
                             first_meaningful_millis,
                             avatar_millis,
+                            audio_timings: first_audio_timings,
                             output_sequences,
                             client_command: None,
                         });
@@ -522,12 +535,12 @@ fn deliver_phrase(
     tts: Option<&dyn TtsPort>,
     handle: &RealtimeAvatarHandle,
     phrase: &str,
-) -> Result<(OutputDeliveryHandle, Option<LabClientCommand>), LabError> {
+) -> Result<(OutputDeliveryHandle, Option<LabClientCommand>, Option<RealtimeAudioStageTimings>), LabError> {
     if let Some(tts) = tts {
-        let delivery = turn
-            .synthesize_and_deliver_realtime_avatar_audio(tts, provider, handle, phrase)
+        let (delivery, timings) = turn
+            .synthesize_and_deliver_realtime_avatar_audio_with_timings(tts, provider, handle, phrase)
             .map_err(|error| terminalize_avatar_output_error(turn, error))?;
-        return Ok((delivery, None));
+        return Ok((delivery, None, Some(timings)));
     }
     let client_text = handle
         .client_control()
@@ -536,12 +549,12 @@ fn deliver_phrase(
         let (delivery, command) = turn
             .prepare_realtime_avatar_client_text(provider, handle, phrase)
             .map_err(|error| terminalize_avatar_output_error(turn, error))?;
-        Ok((delivery, Some(command.into())))
+        Ok((delivery, Some(command.into()), None))
     } else {
         let delivery = turn
             .deliver_realtime_avatar_text(provider, handle, phrase)
             .map_err(|error| terminalize_avatar_output_error(turn, error))?;
-        Ok((delivery, None))
+        Ok((delivery, None, None))
     }
 }
 
