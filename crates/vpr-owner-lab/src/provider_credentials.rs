@@ -147,9 +147,11 @@ impl ProviderCredentialProfile {
         api_key: String,
     ) -> Result<(), String> {
         let valid_endpoint = match provider {
-            "yandex" => endpoint == "https://ai.api.cloud.yandex.net/v1/chat/completions"
-                && model.starts_with("gpt://")
-                && model.split('/').nth(2).is_some_and(|id| !id.is_empty()),
+            "yandex" => {
+                endpoint == "https://ai.api.cloud.yandex.net/v1/chat/completions"
+                    && model.starts_with("gpt://")
+                    && model.split('/').nth(2).is_some_and(|id| !id.is_empty())
+            }
             "proxyapi-deepseek" => endpoint == "https://api.proxyapi.ru/v1/chat/completions",
             "deepseek" => endpoint == "https://api.deepseek.com/chat/completions",
             _ => false,
@@ -456,14 +458,19 @@ mod tests {
     #[test]
     fn replacing_llm_keeps_existing_voice_and_avatar_credentials() {
         let mut profile = ProviderCredentialProfile::canonical_rt0(
-            "did-private", "did-agent", "stt-private".into(), "old-llm-private".into(),
+            "did-private",
+            "did-agent",
+            "stt-private".into(),
+            "old-llm-private".into(),
         );
-        profile.replace_llm(
-            "yandex",
-            "https://ai.api.cloud.yandex.net/v1/chat/completions",
-            "gpt://folder123/yandexgpt-lite/latest",
-            "new-llm-private".into(),
-        ).unwrap();
+        profile
+            .replace_llm(
+                "yandex",
+                "https://ai.api.cloud.yandex.net/v1/chat/completions",
+                "gpt://folder123/yandexgpt-lite/latest",
+                "new-llm-private".into(),
+            )
+            .unwrap();
         assert_eq!(profile.llm_provider, "yandex");
         assert_eq!(profile.llm_model, "gpt://folder123/yandexgpt-lite/latest");
         assert_eq!(profile.llm_api_key, "new-llm-private");
@@ -471,7 +478,16 @@ mod tests {
         assert_eq!(profile.did_api_key, "did-private");
 
         let prior = profile.clone();
-        assert!(profile.replace_llm("yandex", "https://other.example", "gpt://wrong/test", "x".into()).is_err());
+        assert!(
+            profile
+                .replace_llm(
+                    "yandex",
+                    "https://other.example",
+                    "gpt://wrong/test",
+                    "x".into()
+                )
+                .is_err()
+        );
         assert!(profile == prior);
     }
 
