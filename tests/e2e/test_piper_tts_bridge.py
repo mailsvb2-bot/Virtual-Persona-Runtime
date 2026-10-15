@@ -141,6 +141,54 @@ class PiperContract(unittest.TestCase):
             server.server_close()
             worker.join(timeout=2)
 
+    def test_streamed_piper_pcm_delivers_sentences_in_order(self):
+        import http.client
+        import json
+        import threading
+        from http.server import ThreadingHTTPServer
+        from metrotrance_tts_bridge import make_handler
+
+        calls = []
+        def fake_synthesizer(text):
+            calls.append(text)
+            output = io.BytesIO()
+            with wave.open(output, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(22050)
+                wav.writeframes(b"\\x01\\x00" * 16)
+            return output.getvalue()
+
+        token = "test-stream-piper-token-123456789"
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            make_handler(token, fake_synthesizer, provider_id="piper"),
+        )
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        client = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            body = json.dumps({
+                "input": "Привет. Как дела?", "model": "piper",
+                "voice": "local", "response_format": "pcm",
+            }).encode("utf-8")
+            client.request(
+                "POST", "/v1/audio/speech", body,
+                {"Authorization": "Bearer " + token,
+                 "Content-Type": "application/json"},
+            )
+            result = client.getresponse()
+            self.assertEqual(result.status, 200)
+            self.assertEqual(result.getheader("X-VPR-Sample-Rate"), "22050")
+            self.assertEqual(result.getheader("Content-Type"), "application/octet-stream")
+            self.assertEqual(result.read(), b"\\x01\\x00" * 32)
+            self.assertEqual(calls, ["Привет.", "Как дела?"])
+        finally:
+            client.close()
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+
     def test_preset_synthesizes_pcm_wav(self):
         with tempfile.TemporaryDirectory() as d:
             model = Path(d) / "ru_RU-test.onnx"
