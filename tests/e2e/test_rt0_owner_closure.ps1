@@ -1,6 +1,14 @@
 # Offline safety contract for the guided RT0 owner closure script.
 $ErrorActionPreference = 'Stop'
 $sourcePath = Join-Path $PSScriptRoot '..\..\scripts\rt0-owner-closure.ps1'
+# Windows PowerShell 5.1 does not assume UTF-8 for BOM-less .ps1 files.
+# A parser invoked under modern pwsh alone missed a real Windows launch failure.
+$raw = [System.IO.File]::ReadAllBytes((Resolve-Path $sourcePath).Path)
+if ($raw.Length -lt 3 -or $raw[0] -ne 0xEF -or
+    $raw[1] -ne 0xBB -or $raw[2] -ne 0xBF) {
+    throw 'RT0 owner closure must have UTF-8 BOM for Windows PowerShell 5.1'
+}
+
 $parseErrors = $null
 $tokens = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
