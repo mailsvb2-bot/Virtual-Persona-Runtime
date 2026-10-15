@@ -203,6 +203,8 @@ impl LabSessionEvidenceRecorder {
                 stt_millis: None,
                 llm_millis: None,
                 llm_first_meaningful_millis: None,
+                tts_first_pcm_millis: None,
+                echo_first_send_millis: None,
                 avatar_millis: None,
                 server_total_millis: None,
                 stt_usage: None,
@@ -274,6 +276,10 @@ impl LabSessionEvidenceRecorder {
             || result.llm_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.llm_first_meaningful_millis > result.llm_millis
             || result.avatar_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.tts_first_pcm_millis.is_some_and(|ms| ms > result.avatar_millis)
+            || result.echo_first_send_millis.is_some_and(|ms| ms > result.avatar_millis)
+            || matches!((result.tts_first_pcm_millis, result.echo_first_send_millis), (Some(first), Some(sent)) if first > sent)
+            || (result.tts_first_pcm_millis.is_some() != result.echo_first_send_millis.is_some())
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
         {
             return Err(LabEvidenceError::InvalidInput);
@@ -285,6 +291,8 @@ impl LabSessionEvidenceRecorder {
         attempt.llm_millis = Some(result.llm_millis);
         attempt.llm_first_meaningful_millis = Some(result.llm_first_meaningful_millis);
         attempt.avatar_millis = Some(result.avatar_millis);
+        attempt.tts_first_pcm_millis = result.tts_first_pcm_millis;
+        attempt.echo_first_send_millis = result.echo_first_send_millis;
         attempt.server_total_millis = Some(result.total_millis);
         attempt.stt_usage = Some(result.stt_usage.clone());
         attempt.llm_usage = Some(result.llm_usage.clone());
