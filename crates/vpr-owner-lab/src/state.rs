@@ -548,10 +548,7 @@ fn map_ice_server(server: &WebRtcIceServer) -> LabIceServer {
 
 fn provider_authority() -> Result<EffectiveAuthority, LabError> {
     let scope = AuthorityScope::new(PROVIDER_SCOPE).ok_or(LabError::Internal)?;
-    Ok(EffectiveAuthority::compose(&[AuthorityLayer::new(
-        [scope],
-        [],
-    )]))
+    Ok(EffectiveAuthority::compose(&[AuthorityLayer::new([scope], [])]))
 }
 
 fn map_provider_execution(error: ProviderExecutionError) -> LabError {
