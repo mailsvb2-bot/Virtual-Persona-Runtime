@@ -2,7 +2,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
 use std::time::Instant;
 
-use vpr_domain::{Rt0ReasonCode, SessionId};
+use vpr_domain::SessionId;
 use vpr_integration::{
     CancellationProbe, GeneratedAudioBuffer, GeneratedAudioStreamingSink, PcmSampleFormat,
     ProviderDescriptor, ProviderError, ProviderErrorKind, RealtimeAvatarCapability,
@@ -416,27 +416,17 @@ impl ActiveTurn {
         }
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
-        Ok((
-            delivery,
-            RealtimeAudioStageTimings {
-                first_pcm_millis: first_pcm_millis.ok_or_else(|| {
-                    RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
-                        ProviderError {
-                            kind: ProviderErrorKind::InvalidResponse,
-                            retryable: false,
-                        },
-                    ))
-                })?,
-                first_echo_send_millis: first_echo_send_millis.ok_or_else(|| {
-                    RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
-                        ProviderError {
-                            kind: ProviderErrorKind::InvalidResponse,
-                            retryable: false,
-                        },
-                    ))
-                })?,
-            },
-        ))
+        let missing_stage = || {
+            RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError {
+                kind: ProviderErrorKind::InvalidResponse,
+                retryable: false,
+            }))
+        };
+        let timings = RealtimeAudioStageTimings {
+            first_pcm_millis: first_pcm_millis.ok_or_else(missing_stage)?,
+            first_echo_send_millis: first_echo_send_millis.ok_or_else(missing_stage)?,
+        };
+        Ok((delivery, timings))
     }
 
     /// Sends an HTTPS audio URL to an existing avatar using this turn's current authorization.
