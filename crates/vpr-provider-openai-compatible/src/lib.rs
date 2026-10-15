@@ -21,6 +21,15 @@ pub struct OpenAiCompatibleConfig {
     max_tokens: Option<u32>,
     reasoning_effort: Option<String>,
     thinking: Option<ThinkingConfig>,
+    project_id: Option<String>,
+    include_stream_usage: bool,
+    auth_scheme: AuthScheme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthScheme {
+    Bearer,
+    ApiKey,
 }
 
 impl OpenAiCompatibleConfig {
@@ -39,6 +48,9 @@ impl OpenAiCompatibleConfig {
             max_tokens: None,
             reasoning_effort: None,
             thinking: None,
+            project_id: None,
+            include_stream_usage: true,
+            auth_scheme: AuthScheme::Bearer,
         }
     }
 
@@ -78,6 +90,33 @@ impl OpenAiCompatibleConfig {
     pub const fn with_thinking_disabled(mut self) -> Self {
         self.thinking = Some(ThinkingConfig { r#type: "disabled" });
         self
+    }
+
+    #[must_use]
+    pub const fn with_auth_scheme(mut self, scheme: AuthScheme) -> Self {
+        self.auth_scheme = scheme;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_stream_usage(mut self, enabled: bool) -> Self {
+        self.include_stream_usage = enabled;
+        self
+    }
+
+    /// Project IDs contain no credentials; reject malformed identifiers before HTTP.
+    ///
+    /// # Errors
+    /// Returns an invalid-response error if the project ID is outside [a-z0-9]{1,64}.
+    pub fn with_project_id(mut self, project_id: &str) -> Result<Self, ProviderError> {
+        if project_id.is_empty()
+            || project_id.len() > 64
+            || !project_id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        {
+            return Err(invalid_response());
+        }
+        self.project_id = Some(project_id.to_owned());
+        Ok(self)
     }
 
     #[must_use]
@@ -130,18 +169,25 @@ impl OpenAiCompatibleLlm {
             model: &self.config.model,
             messages,
             stream: true,
-            stream_options: StreamOptions {
+            stream_options: self.config.include_stream_usage.then_some(StreamOptions {
                 include_usage: true,
-            },
+            }),
             max_tokens: self.config.max_tokens,
             reasoning_effort: self.config.reasoning_effort.as_deref(),
             thinking: self.config.thinking,
         };
-        self.client
+        let prefix = match self.config.auth_scheme {
+            AuthScheme::Bearer => "Bearer",
+            AuthScheme::ApiKey => "Api-Key",
+        };
+        let mut builder = self.client
             .post(&self.config.endpoint)
-            .header(AUTHORIZATION, format!("Bearer {}", self.config.api_key))
-            .header(CONTENT_TYPE, "application/json")
-            .json(&body)
+            .header(AUTHORIZATION, format!("{prefix} {}", self.config.api_key))
+            .header(CONTENT_TYPE, "application/json");
+        if let Some(project) = &self.config.project_id {
+            builder = builder.header("OpenAI-Project", project);
+        }
+        builder.json(&body)
             .send()
             .map_err(|error| map_transport_error(&error))
     }
@@ -266,7 +312,8 @@ struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
     stream: bool,
-    stream_options: StreamOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
