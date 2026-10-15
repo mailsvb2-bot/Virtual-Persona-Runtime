@@ -14,7 +14,7 @@ use vpr_runtime::{
     RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
-use super::voice_metrics::{elapsed_millis, map_usage};
+pub(super) use super::voice_metrics::{elapsed_millis, map_usage};
 
 use super::{
     LabClientCommand, LabError, OwnerLabEngine, map_provider_execution, voice_input::LabVoiceInput,
@@ -353,6 +353,8 @@ impl OwnerLabEngine {
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
             avatar_millis: generation.avatar_millis,
+            tts_first_pcm_millis: generation.audio_timings.map(|timing| timing.first_pcm_millis),
+            echo_first_send_millis: generation.audio_timings.map(|timing| timing.first_echo_send_millis),
             total_millis: elapsed_millis(total_started),
             stt_usage: map_usage(&stt_usage),
             llm_usage: map_usage(&generation.usage),
@@ -436,7 +438,7 @@ impl OwnerLabEngine {
                             output_started = true;
                         }
                         let avatar_started = Instant::now();
-                        let (delivery, client_command) = deliver_phrase(
+                        let (delivery, client_command, audio_timings) = deliver_phrase(
                             turn,
                             self.provider.as_ref(),
                             self.tts.as_deref(),
