@@ -633,8 +633,7 @@ for required_text_http in (
     if required_text_http not in owner_lab_http_text:
         raise SystemExit(f"Owner Lab text HTTP boundary missing {required_text_http}")
 
-owner_lab_voice = "
-".join(
+owner_lab_voice = "\n".join(
     (owner_lab_src / "state" / name).read_text(encoding="utf-8")
     for name in ("voice.rs", "voice_delivery.rs")
 )
