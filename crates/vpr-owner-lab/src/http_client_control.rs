@@ -381,7 +381,11 @@ mod resume_tests {
     #[test]
     fn replay_cursor_never_splits_dates_decimals_or_attached_words() {
         let reply = "Встреча 12.10.2026 и оценка 3.14. Следующий пункт.";
-        for prefix in ["Встреча 12.", "Встреча 12.10.", "Встреча 12.10.2026 и оценка 3."] {
+        for prefix in [
+            "Встреча 12.",
+            "Встреча 12.10.",
+            "Встреча 12.10.2026 и оценка 3.",
+        ] {
             assert!(
                 authorized_character_suffix(reply, prefix.chars().count()).is_none(),
                 "cursor must not split a numeric token"
