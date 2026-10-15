@@ -117,14 +117,16 @@ fn set_llm_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR profile is missing; configure avatar/STT first")?;
     println!("Select the realtime LLM; the key will remain in Windows Credential Manager.");
-    let provider = prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
-        .to_ascii_lowercase();
+    let provider =
+        prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?.to_ascii_lowercase();
     let (endpoint, model) = match provider.as_str() {
         "yandex" => {
             let folder = prompt_line("Yandex AI Studio folder ID: ")?;
             if folder.is_empty()
                 || folder.len() > 64
-                || !folder.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+                || !folder
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
             {
                 return Err("invalid Yandex AI Studio folder ID".into());
             }
