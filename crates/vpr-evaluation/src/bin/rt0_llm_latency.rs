@@ -1,9 +1,10 @@
 //! Non-promoting RT0 LLM latency comparison from sanitized session exports.
-//! Usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>...
+//! Usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <provider-state.json> <session.json>...
 use serde::Serialize;
 use std::{env, fs, process};
 use vpr_evaluation::{
-    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, ProviderRole,
+    ProviderStateManifest, validate_provider_state_manifest, sha256_hex,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
@@ -73,7 +74,7 @@ fn verdict(metric: &Option<Metric>, minimum: usize, threshold: u64) -> &'static 
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 5 {
+    if args.len() < 6 {
         return Err(
             "usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>..."
                 .into(),
@@ -89,14 +90,26 @@ fn run() -> Result<(), String> {
     if candidate.len() != 40 || !candidate.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("invalid candidate SHA".into());
     }
+    let state_bytes = fs::read(&args[4]).map_err(|_| "provider state unreadable")?;
+    if state_bytes.len() > 1_000_000 {
+        return Err("provider state too large".into());
+    }
+    let state: ProviderStateManifest = serde_json::from_slice(&state_bytes)
+        .map_err(|_| "invalid provider state")?;
+    validate_provider_state_manifest(&state).map_err(|_| "unsupported provider state")?;
+    let binding = state.providers.iter().find(|entry| entry.role == ProviderRole::Llm)
+        .ok_or("LLM provider binding missing")?;
+    if &binding.provider != provider || &binding.model_or_representation != model {
+        return Err("provider or model differs from canonical provider state".into());
+    }
+    let state_digest = sha256_hex(&state_bytes);
     let mut text = Vec::new();
     let mut full = Vec::new();
     let mut audio = Vec::new();
     let mut stop = Vec::new();
     let mut turns = 0_usize;
     let mut errors = 0_usize;
-    let mut provider_state = None::<String>;
-    for path in &args[4..] {
+    for path in &args[5..] {
         let data = fs::read(path).map_err(|_| "session evidence unreadable")?;
         if data.len() > 8_000_000 {
             return Err("session evidence too large".into());
@@ -108,13 +121,9 @@ fn run() -> Result<(), String> {
         {
             return Err("stale or cross-candidate session evidence".into());
         }
-        if provider_state
-            .as_ref()
-            .is_some_and(|sha| sha != &session.provider_state_sha256)
-        {
-            return Err("mixed provider-state digests".into());
+        if session.provider_state_sha256 != state_digest {
+            return Err("session provider-state digest mismatch".into());
         }
-        provider_state = Some(session.provider_state_sha256.clone());
         for attempt in &session.voice_attempts {
             turns += 1;
             if attempt.status != LabVoiceAttemptStatus::Completed {
