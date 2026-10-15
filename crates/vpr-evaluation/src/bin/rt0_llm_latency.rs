@@ -21,10 +21,6 @@ struct Metrics {
     llm_first_meaningful: Option<Metric>,
     text_first_meaningful: Option<Metric>,
     llm_full: Option<Metric>,
-    /// Session-relative event positions, NOT response latency.
-    browser_audio_event_offset: Option<Metric>,
-    /// Session-relative STOP event positions, NOT STOP latency.
-    stop_event_offset: Option<Metric>,
     first_audio: Option<Metric>,
     stop: Option<Metric>,
 }
@@ -195,19 +191,17 @@ fn run() -> Result<(), String> {
         llm_first_meaningful: percentile(samples.text),
         text_first_meaningful: None,
         llm_full: percentile(samples.full),
-        browser_audio_event_offset: percentile(samples.audio),
-        stop_event_offset: percentile(samples.stop),
-        first_audio: None,
-        stop: None,
+        first_audio: percentile(samples.audio),
+        stop: percentile(samples.stop),
     };
     let report = Report {
-        schema: "vpr-llm-latency-compare-0.3",
+        schema: "vpr-llm-latency-compare-0.4",
         candidate_sha: candidate,
         provider,
         model,
         turns: samples.turns,
         errors: samples.errors,
-        measurement_note: "LLM first meaningful time is relative to LLM start, not microphone input; media events are session-relative positions. The end-to-end text/audio/STOP p95 verdicts require aligned start timestamps and remain INSUFFICIENT_EVIDENCE.",
+        measurement_note: "LLM TTFT starts at LLM generation; audio_started is observed browser audio after microphone finish; interruption_stopped is observed silence after STOP issue. Full microphone-start-to-text timing is unavailable.",
         thresholds: Thresholds {
             text: 2500,
             first_audio: 3000,
@@ -236,15 +230,13 @@ fn main() {
 mod tests {
     use super::{percentile, verdict};
     #[test]
-    fn session_relative_media_offsets_are_never_accepted_as_latency() {
+    fn browser_media_observations_use_request_relative_clocks() {
         let metrics = super::Metrics {
             llm_first_meaningful: percentile(vec![1; 20]),
             text_first_meaningful: None,
             llm_full: None,
-            browser_audio_event_offset: percentile(vec![1; 20]),
-            stop_event_offset: percentile(vec![1; 5]),
-            first_audio: None,
-            stop: None,
+            first_audio: percentile(vec![1; 20]),
+            stop: percentile(vec![1; 5]),
         };
         assert_eq!(
             verdict(metrics.text_first_meaningful.as_ref(), 20, 2500),
@@ -253,13 +245,9 @@ mod tests {
         assert_eq!(metrics.llm_first_meaningful.unwrap().n, 20);
         assert_eq!(
             verdict(metrics.first_audio.as_ref(), 20, 3000),
-            "INSUFFICIENT_EVIDENCE"
+            "PASS"
         );
-        assert_eq!(
-            verdict(metrics.stop.as_ref(), 5, 500),
-            "INSUFFICIENT_EVIDENCE"
-        );
-        assert_eq!(metrics.browser_audio_event_offset.unwrap().n, 20);
+        assert_eq!(verdict(metrics.stop.as_ref(), 5, 500), "PASS");
     }
 
     #[test]
