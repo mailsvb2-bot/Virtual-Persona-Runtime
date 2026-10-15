@@ -106,7 +106,7 @@ fn optional_realtime_generation_controls_are_sent_only_when_configured() {
 
 #[test]
 fn project_and_api_key_auth_are_explicit_and_stream_usage_can_be_disabled() {
-    let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\\n\\n");
+    let (endpoint, captured) = serve_once_capture("200 OK", "data: [DONE]\n\n");
     let config = OpenAiCompatibleConfig::new(endpoint, "redacted-test-value", "test-model")
         .with_auth_scheme(AuthScheme::ApiKey)
         .with_stream_usage(false)
