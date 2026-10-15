@@ -21,6 +21,8 @@ struct Metrics {
     llm_first_meaningful: Option<Metric>,
     text_first_meaningful: Option<Metric>,
     llm_full: Option<Metric>,
+    tts_first_pcm: Option<Metric>,
+    echo_first_send: Option<Metric>,
     first_audio: Option<Metric>,
     stop: Option<Metric>,
 }
@@ -82,6 +84,8 @@ fn verdict(metric: Option<&Metric>, minimum: usize, threshold: u64) -> &'static 
 struct Samples {
     text: Vec<u64>,
     full: Vec<u64>,
+    tts_pcm: Vec<u64>,
+    echo_send: Vec<u64>,
     audio: Vec<u64>,
     stop: Vec<u64>,
     turns: usize,
@@ -127,6 +131,15 @@ fn collect_samples(
             }
             if let Some(ms) = attempt.llm_millis {
                 samples.full.push(ms);
+            }
+            if let (Some(pcm), Some(send)) = (attempt.tts_first_pcm_millis, attempt.echo_first_send_millis) {
+                if pcm > send || send > attempt.avatar_millis.unwrap_or(0) {
+                    return Err("invalid TTS/Echo stage timing order".into());
+                }
+                samples.tts_pcm.push(pcm);
+                samples.echo_send.push(send);
+            } else if attempt.tts_first_pcm_millis.is_some() || attempt.echo_first_send_millis.is_some() {
+                return Err("incomplete TTS/Echo stage evidence".into());
             }
             if let Some(ms) = session
                 .media_events
@@ -191,6 +204,8 @@ fn run() -> Result<(), String> {
         llm_first_meaningful: percentile(samples.text),
         text_first_meaningful: None,
         llm_full: percentile(samples.full),
+        tts_first_pcm: percentile(samples.tts_pcm),
+        echo_first_send: percentile(samples.echo_send),
         first_audio: percentile(samples.audio),
         stop: percentile(samples.stop),
     };
@@ -235,6 +250,8 @@ mod tests {
             llm_first_meaningful: percentile(vec![1; 20]),
             text_first_meaningful: None,
             llm_full: None,
+            tts_first_pcm: None,
+            echo_first_send: None,
             first_audio: percentile(vec![1; 20]),
             stop: percentile(vec![1; 5]),
         };
