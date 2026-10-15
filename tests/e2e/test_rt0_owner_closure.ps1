@@ -25,6 +25,10 @@ foreach ($required in @(
     'session-owner.json',
     'session-visitor.json',
     'PiperVoice',
+    # The private voice launcher blocks while supervising its child. The
+    # acceptance console must remain free to collect live session evidence.
+    "Start-Process -FilePath 'powershell.exe'",
+    'Verified running Owner Lab and exact provider-state',
     'Get-FileHash',
     'voice turns',
     'STOP'
