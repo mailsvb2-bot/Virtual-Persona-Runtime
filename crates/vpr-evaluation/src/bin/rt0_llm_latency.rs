@@ -238,7 +238,7 @@ mod tests {
         );
         assert_eq!(
             verdict(
-                &Some(super::Metric {
+                Some(&super::Metric {
                     n: 20,
                     p50_ms: 1,
                     p95_ms: 2501
