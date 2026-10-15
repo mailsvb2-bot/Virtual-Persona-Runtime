@@ -24,6 +24,13 @@ pub struct OpenAiCompatibleConfig {
     project_id: Option<String>,
     include_stream_usage: bool,
     auth_scheme: AuthScheme,
+    project_header: ProjectHeader,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectHeader {
+    OpenAiProject,
+    XFolderId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +58,7 @@ impl OpenAiCompatibleConfig {
             project_id: None,
             include_stream_usage: true,
             auth_scheme: AuthScheme::Bearer,
+            project_header: ProjectHeader::OpenAiProject,
         }
     }
 
@@ -95,6 +103,12 @@ impl OpenAiCompatibleConfig {
     #[must_use]
     pub const fn with_auth_scheme(mut self, scheme: AuthScheme) -> Self {
         self.auth_scheme = scheme;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_project_header(mut self, header: ProjectHeader) -> Self {
+        self.project_header = header;
         self
     }
 
@@ -188,7 +202,11 @@ impl OpenAiCompatibleLlm {
             .header(AUTHORIZATION, format!("{prefix} {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json");
         if let Some(project) = &self.config.project_id {
-            builder = builder.header("OpenAI-Project", project);
+            let header = match self.config.project_header {
+                ProjectHeader::OpenAiProject => "OpenAI-Project",
+                ProjectHeader::XFolderId => "x-folder-id",
+            };
+            builder = builder.header(header, project);
         }
         builder
             .json(&body)
