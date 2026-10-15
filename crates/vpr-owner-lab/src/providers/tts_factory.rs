@@ -93,7 +93,8 @@ fn build_tts_configured(
                     model.to_owned(),
                     voice.to_owned(),
                 )
-                .with_provider_name(name),
+                .with_provider_name(name)
+                .with_stream_pcm(name == "piper"),
             )
             .map_err(|_| "OpenAI-compatible speech provider configuration rejected")?,
         ),
