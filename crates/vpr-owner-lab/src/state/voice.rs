@@ -14,8 +14,8 @@ use vpr_runtime::{
     TurnInterruptHandle,
 };
 
-pub(super) use super::voice_metrics::{elapsed_millis, map_usage};
 use super::voice_delivery::deliver_phrase;
+pub(super) use super::voice_metrics::{elapsed_millis, map_usage};
 
 use super::{
     LabClientCommand, LabError, OwnerLabEngine, map_provider_execution, voice_input::LabVoiceInput,
