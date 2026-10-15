@@ -141,7 +141,7 @@ fn piper_streams_raw_pcm_into_canonical_sink() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     let sent = captured.recv().unwrap();
-    assert!(sent.contains("\\"response_format\\":\\"pcm\\""));
+    assert!(sent.contains(r#""response_format":"pcm""#));
 }
 
 #[test]
