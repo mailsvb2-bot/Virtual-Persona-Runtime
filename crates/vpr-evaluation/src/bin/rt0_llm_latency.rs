@@ -3,9 +3,9 @@
 use serde::Serialize;
 use std::{collections::HashSet, env, fs, process};
 use vpr_evaluation::{
-    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, ParticipantRole, ProviderRole,
-    ProviderStateManifest, validate_provider_state_manifest, sha256_hex,
-    RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, ParticipantRole,
+    ProviderRole, ProviderStateManifest, RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA, sha256_hex,
+    validate_provider_state_manifest,
 };
 
 #[derive(Serialize)]
@@ -85,7 +85,11 @@ struct Samples {
     errors: usize,
 }
 
-fn collect_samples(paths: &[String], candidate: &str, state_digest: &str) -> Result<Samples, String> {
+fn collect_samples(
+    paths: &[String],
+    candidate: &str,
+    state_digest: &str,
+) -> Result<Samples, String> {
     let mut samples = Samples::default();
     let mut session_ids = HashSet::new();
     for path in paths {
@@ -167,10 +171,13 @@ fn run() -> Result<(), String> {
     if state_bytes.len() > 1_000_000 {
         return Err("provider state too large".into());
     }
-    let state: ProviderStateManifest = serde_json::from_slice(&state_bytes)
-        .map_err(|_| "invalid provider state")?;
+    let state: ProviderStateManifest =
+        serde_json::from_slice(&state_bytes).map_err(|_| "invalid provider state")?;
     validate_provider_state_manifest(&state).map_err(|_| "unsupported provider state")?;
-    let binding = state.providers.iter().find(|entry| entry.role == ProviderRole::Llm)
+    let binding = state
+        .providers
+        .iter()
+        .find(|entry| entry.role == ProviderRole::Llm)
         .ok_or("LLM provider binding missing")?;
     if &binding.provider != provider || &binding.model_or_representation != model {
         return Err("provider or model differs from canonical provider state".into());
