@@ -19,6 +19,10 @@ struct Metric {
 struct Metrics {
     text_first_meaningful: Option<Metric>,
     llm_full: Option<Metric>,
+    /// Session-relative event positions, NOT response latency.
+    browser_audio_event_offset: Option<Metric>,
+    /// Session-relative STOP event positions, NOT STOP latency.
+    stop_event_offset: Option<Metric>,
     first_audio: Option<Metric>,
     stop: Option<Metric>,
 }
@@ -48,6 +52,7 @@ struct Report<'a> {
     model: &'a str,
     turns: usize,
     errors: usize,
+    measurement_note: &'static str,
     metrics: Metrics,
     thresholds: Thresholds,
     verdict: Verdict,
@@ -187,16 +192,19 @@ fn run() -> Result<(), String> {
     let metrics = Metrics {
         text_first_meaningful: percentile(samples.text),
         llm_full: percentile(samples.full),
-        first_audio: percentile(samples.audio),
-        stop: percentile(samples.stop),
+        browser_audio_event_offset: percentile(samples.audio),
+        stop_event_offset: percentile(samples.stop),
+        first_audio: None,
+        stop: None,
     };
     let report = Report {
-        schema: "vpr-llm-latency-compare-0.1",
+        schema: "vpr-llm-latency-compare-0.2",
         candidate_sha: candidate,
         provider,
         model,
         turns: samples.turns,
         errors: samples.errors,
+        measurement_note: "Browser audio and STOP events are session-relative positions; request/STOP-start timestamps are required for latency p95. Never treat offsets as latency.",
         thresholds: Thresholds {
             text: 2500,
             first_audio: 3000,
