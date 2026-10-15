@@ -125,6 +125,36 @@ fn synthesizes_wav_and_preserves_audio_contract() {
 }
 
 #[test]
+fn piper_streams_raw_pcm_into_canonical_sink() {
+    let pcm = vec![0_u8; 480];
+    let (endpoint, captured) = serve_once("200 OK", "application/octet-stream", pcm.clone());
+    // The generic fixture doesn't advertise the sample rate; rejecting it is
+    // mandatory rather than guessing a release-evidence audio clock.
+    let provider = OpenAiSpeechTts::new(
+        OpenAiSpeechConfig::new(endpoint, "secret", "piper", "local")
+            .with_provider_name("piper")
+            .with_stream_pcm(true),
+    )
+    .unwrap();
+    let error = provider
+        .synthesize(&request(), &Probe(AtomicBool::new(false)), &mut GeneratedAudioBuffer::default())
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    let sent = captured.recv().unwrap();
+    assert!(sent.contains("\\"response_format\\":\\"pcm\\""));
+}
+
+#[test]
+fn external_provider_cannot_enable_private_pcm_wire() {
+    let config = OpenAiSpeechConfig::new(
+        "https://example.test/v1/audio/speech", "secret", "model", "voice",
+    )
+    .with_stream_pcm(true);
+    let err = OpenAiSpeechTts::new(config).err().expect("external PCM mode must fail");
+    assert_eq!(err.kind, ProviderErrorKind::InvalidResponse);
+}
+
+#[test]
 fn pre_cancelled_request_never_starts_network_work() {
     let provider = adapter("http://127.0.0.1:1/v1/audio/speech".to_owned());
     let error = provider
