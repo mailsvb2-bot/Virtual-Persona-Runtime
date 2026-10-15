@@ -1,9 +1,9 @@
 //! Non-promoting RT0 LLM latency comparison from sanitized session exports.
 //! Usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <provider-state.json> <session.json>...
 use serde::Serialize;
-use std::{env, fs, process};
+use std::{collections::HashSet, env, fs, process};
 use vpr_evaluation::{
-    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, ProviderRole,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus, ParticipantRole, ProviderRole,
     ProviderStateManifest, validate_provider_state_manifest, sha256_hex,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
@@ -109,6 +109,7 @@ fn run() -> Result<(), String> {
     let mut stop = Vec::new();
     let mut turns = 0_usize;
     let mut errors = 0_usize;
+    let mut session_ids = HashSet::new();
     for path in &args[5..] {
         let data = fs::read(path).map_err(|_| "session evidence unreadable")?;
         if data.len() > 8_000_000 {
@@ -120,6 +121,12 @@ fn run() -> Result<(), String> {
             || &session.candidate_sha != candidate
         {
             return Err("stale or cross-candidate session evidence".into());
+        }
+        if session.participant_role != ParticipantRole::Owner {
+            return Err("benchmark requires owner session evidence".into());
+        }
+        if !session_ids.insert(session.session_sequence) {
+            return Err("duplicate session sequence".into());
         }
         if session.provider_state_sha256 != state_digest {
             return Err("session provider-state digest mismatch".into());
