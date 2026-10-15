@@ -141,14 +141,17 @@ fn tts_selection_after_closed_session_changes_only_next_session_provider() {
                 qwen: false,
             }),
         );
-    assert!(engine.select_tts_provider("metrotrance-chatterbox").is_err());
+    assert!(
+        engine
+            .select_tts_provider("metrotrance-chatterbox")
+            .is_err()
+    );
     engine.close().unwrap();
     assert_eq!(engine.status().session_state, "closed");
-    engine.select_tts_provider("metrotrance-chatterbox").unwrap();
-    assert_eq!(
-        engine.tts_selection()["active"],
-        "metrotrance-chatterbox"
-    );
+    engine
+        .select_tts_provider("metrotrance-chatterbox")
+        .unwrap();
+    assert_eq!(engine.tts_selection()["active"], "metrotrance-chatterbox");
     assert_eq!(engine.tts_selection()["alternate"], "metrotrance-qwen");
     assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 0);
     assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 0);
