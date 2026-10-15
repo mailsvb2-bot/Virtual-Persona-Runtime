@@ -19,7 +19,7 @@ struct Metric {
 struct Metrics {
     /// LLM call-relative first meaningful chunk, not microphone-to-first-text latency.
     llm_first_meaningful: Option<Metric>,
-    text_first_meaningful: Option<Metric>,
+    voice_first_text: Option<Metric>,
     llm_full: Option<Metric>,
     tts_first_pcm: Option<Metric>,
     echo_first_send: Option<Metric>,
@@ -83,6 +83,7 @@ fn verdict(metric: Option<&Metric>, minimum: usize, threshold: u64) -> &'static 
 #[derive(Default)]
 struct Samples {
     text: Vec<u64>,
+    first_text: Vec<u64>,
     full: Vec<u64>,
     tts_pcm: Vec<u64>,
     echo_send: Vec<u64>,
@@ -128,6 +129,9 @@ fn collect_samples(
             }
             if let Some(ms) = attempt.llm_first_meaningful_millis {
                 samples.text.push(ms);
+            }
+            if let Some(ms) = attempt.voice_first_text_millis {
+                samples.first_text.push(ms);
             }
             if let Some(ms) = attempt.llm_millis {
                 samples.full.push(ms);
@@ -206,7 +210,7 @@ fn run() -> Result<(), String> {
     let samples = collect_samples(&args[5..], candidate, &state_digest)?;
     let metrics = Metrics {
         llm_first_meaningful: percentile(samples.text),
-        text_first_meaningful: None,
+        voice_first_text: percentile(samples.first_text),
         llm_full: percentile(samples.full),
         tts_first_pcm: percentile(samples.tts_pcm),
         echo_first_send: percentile(samples.echo_send),
@@ -214,7 +218,7 @@ fn run() -> Result<(), String> {
         stop: percentile(samples.stop),
     };
     let report = Report {
-        schema: "vpr-llm-latency-compare-0.4",
+        schema: "vpr-llm-latency-compare-0.5",
         candidate_sha: candidate,
         provider,
         model,
@@ -227,7 +231,7 @@ fn run() -> Result<(), String> {
             stop: 500,
         },
         verdict: Verdict {
-            text: verdict(metrics.text_first_meaningful.as_ref(), 20, 2500),
+            text: verdict(metrics.voice_first_text.as_ref(), 20, 2500),
             first_audio: verdict(metrics.first_audio.as_ref(), 20, 3000),
             stop: verdict(metrics.stop.as_ref(), 5, 500),
         },
@@ -252,7 +256,7 @@ mod tests {
     fn browser_media_observations_use_request_relative_clocks() {
         let metrics = super::Metrics {
             llm_first_meaningful: percentile(vec![1; 20]),
-            text_first_meaningful: None,
+            voice_first_text: None,
             llm_full: None,
             tts_first_pcm: None,
             echo_first_send: None,
@@ -260,7 +264,7 @@ mod tests {
             stop: percentile(vec![1; 5]),
         };
         assert_eq!(
-            verdict(metrics.text_first_meaningful.as_ref(), 20, 2500),
+            verdict(metrics.voice_first_text.as_ref(), 20, 2500),
             "INSUFFICIENT_EVIDENCE"
         );
         assert_eq!(metrics.llm_first_meaningful.unwrap().n, 20);
