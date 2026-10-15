@@ -247,6 +247,11 @@ mod tests {
             stop: None,
         };
         assert_eq!(
+            verdict(metrics.text_first_meaningful.as_ref(), 20, 2500),
+            "INSUFFICIENT_EVIDENCE"
+        );
+        assert_eq!(metrics.llm_first_meaningful.unwrap().n, 20);
+        assert_eq!(
             verdict(metrics.first_audio.as_ref(), 20, 3000),
             "INSUFFICIENT_EVIDENCE"
         );
