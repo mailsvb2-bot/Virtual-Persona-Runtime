@@ -50,7 +50,11 @@ function Save-Summary {
 }
 function Invoke-Cargo {
     param([string]$Package,[string]$Bin,[string[]]$Arguments,[string]$StdoutFile,[int[]]$AllowedExit = @(0))
-    $args = @('run','--locked','-q','-p',$Package)
+    # Interactive setup must show Cargo's first-build progress. Silence here
+    # previously looked like a frozen console before any credential prompt.
+    $args = @('run','--locked')
+    if ($StdoutFile) { $args += '-q' }
+    $args += @('-p',$Package)
     if ($Bin) { $args += @('--bin',$Bin) }
     $args += '--'
     $args += $Arguments
