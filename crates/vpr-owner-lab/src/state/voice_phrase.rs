@@ -33,6 +33,18 @@ impl RealtimePhraseBuffer {
     fn next_boundary(&self) -> Option<usize> {
         for (index, ch) in self.pending.char_indices() {
             if matches!(ch, '.' | '!' | '?' | '…' | '\n') {
+                // A period between digits is part of a date or decimal number,
+                // not an audible sentence boundary. If the next LLM chunk has
+                // not arrived, defer the decision instead of emitting "12.".
+                if ch == '.' {
+                    let previous = self.pending[..index].chars().next_back();
+                    let next = self.pending[index + ch.len_utf8()..].chars().next();
+                    if previous.is_some_and(|value| value.is_ascii_digit())
+                        && next.is_none_or(|value| value.is_ascii_digit())
+                    {
+                        continue;
+                    }
+                }
                 return Some(index + ch.len_utf8());
             }
         }
@@ -116,6 +128,35 @@ mod tests {
         assert!(!emitted[0].ends_with(' '));
         assert!(emitted[0].chars().count() <= 24);
         assert!(!buffer.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn date_dots_do_not_split_russian_speech() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert_eq!(
+            buffer.push("Встреча назначена на 12.10.2026. Следующее событие"),
+            ["Встреча назначена на 12.10.2026."]
+        );
+        assert_eq!(buffer.finish().as_deref(), Some("Следующее событие"));
+    }
+
+    #[test]
+    fn date_split_across_llm_chunks_stays_whole() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert!(buffer.push("Дата 12.").is_empty());
+        assert!(buffer.push("10.").is_empty());
+        assert_eq!(buffer.push("2026. Всё готово"), ["Дата 12.10.2026."]);
+        assert_eq!(buffer.finish().as_deref(), Some("Всё готово"));
+    }
+
+    #[test]
+    fn decimal_digits_are_not_sentence_boundaries() {
+        let mut buffer = RealtimePhraseBuffer::default();
+        assert_eq!(
+            buffer.push("Получено 3.14 балла. Результат сохранён"),
+            ["Получено 3.14 балла."]
+        );
+        assert_eq!(buffer.finish().as_deref(), Some("Результат сохранён"));
     }
 
     #[test]
