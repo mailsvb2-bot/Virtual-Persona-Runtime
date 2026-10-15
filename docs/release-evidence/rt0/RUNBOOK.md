@@ -7,6 +7,8 @@ promotion.
 The governing rule is simple: one clean Git candidate, one exact sanitized provider state, one
 external evidence workspace, and no hand-edited canonical generated artifacts.
 
+On Windows, `scripts/rt0-owner-closure.ps1` (see `OWNER_CLOSURE.md`) guides the same order and pauses for real owner, visitor and reviewer input.
+
 ## 0. Freeze the exact candidate
 
 Run from a clean checkout of the commit that is actually being evaluated.
