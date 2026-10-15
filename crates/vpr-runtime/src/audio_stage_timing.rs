@@ -2,9 +2,7 @@ use std::time::Instant;
 
 use vpr_integration::{RealtimeAvatarPort, TtsPort};
 
-use crate::{
-    ActiveTurn, OutputDeliveryHandle, RealtimeAvatarHandle, RealtimeAvatarOutputError,
-};
+use crate::{ActiveTurn, OutputDeliveryHandle, RealtimeAvatarHandle, RealtimeAvatarOutputError};
 
 /// Monotonic elapsed milliseconds relative to the start of first phrase TTS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
