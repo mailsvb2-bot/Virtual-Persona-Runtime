@@ -423,14 +423,14 @@ fn build_llm(
                             endpoint.clone(),
                             api_key,
                             model.clone(),
-                        ))
+                        ).with_max_tokens(96))
                         .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
                 "gemini" => (
                     "gemini",
                     Box::new(
-                        GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()))
+                        GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()).with_max_output_tokens(96))
                             .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
@@ -442,6 +442,7 @@ fn build_llm(
         "yandex" => "max_tokens=96;stream_usage=off;auth=apikey;project=set",
         "proxyapi-deepseek" => "max_tokens=96;stream_usage=off;auth=bearer",
         "openai-compatible" => "max_tokens=96;stream_usage=on;auth=bearer",
+        "anthropic" | "gemini" => "max_tokens=96",
         _ => "provider-default",
     };
     Ok((
