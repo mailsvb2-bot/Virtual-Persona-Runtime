@@ -122,7 +122,7 @@ def validate_echo_wav(data: bytes) -> bool:
         return False
 
 
-def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen"):
+def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen", health_status=None):
     if not token or len(token) < 24:
         raise ValueError("VPR_METROTRANCE_TTS_TOKEN must contain at least 24 characters")
     if provider_id not in ("metrotrance-qwen", "metrotrance-chatterbox", "metrotrance-qwen-preset", "piper", "windows-sapi"):
@@ -138,6 +138,17 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen")
         def send_error_code(self, status: int, message: str):
             data = json.dumps({"error": message}).encode("utf-8")
             self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path != "/health" or health_status is None:
+                return self.send_error_code(404, "not_found")
+            # Only non-secret readiness and measured synthesis performance.
+            data = json.dumps(health_status).encode("utf-8")
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
