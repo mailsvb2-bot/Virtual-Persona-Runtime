@@ -26,11 +26,11 @@ On first use, it:
    `%LOCALAPPDATA%\Virtual-Persona-Runtime\Piper\venv`.
 2. Installs the fixed engine version `piper-tts==1.3.0`, separate from the
    existing Echo Python interpreter.
-3. Downloads the `ru_RU-denis-medium` Russian voice (approximately 63 MB)
-   from the official pinned `rhasspy/piper-voices` `v1.0.0` revision.
-   It verifies the SHA-256 of the model
-   `15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a`
-   and the accompanying Russian 22,050 Hz model configuration.
+3. Downloads the selected Russian voice (approximately 63 MB) from the pinned
+   `rhasspy/piper-voices` v1.0.0 revision, verifying SHA-256 and Russian 22,050 Hz configuration:
+   - Default female `ru_RU-irina-medium`: `8ff38212d23da300bbe3705c645e6e5b9475f0bfde01558eb17813e22acaaaaa`
+   - Alternative male `ru_RU-denis-medium`: `15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a`
+   Select via `-PiperVoice` or an explicit interim VoiceProfile.
    A failed or interrupted download cannot replace a validated voice.
 4. Starts only the local `127.0.0.1:8897` speech bridge with a fresh
    cryptographically random, per-launch bearer token. It rejects port
@@ -100,3 +100,5 @@ and visible moving video, measured first audio latency and A/V drift,
 interrupt/STOP and fail-closed revocation, verified cost/usage and human
 review on the frozen candidate. Never describe HTTP WAV generation as
 confirmed playback by the vendor or visitor.
+
+**Licensing warning:** Irina's RHVoice-derived dataset license is not verified. Irina is for development/interim use only and must be replaced before any commercial release. Denis model card states CC0; the Piper engine has GPL-3.0-or-later obligations that require independent review.
