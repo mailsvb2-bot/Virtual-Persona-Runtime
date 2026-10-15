@@ -4,7 +4,10 @@ use vpr_runtime::{
     RealtimeAvatarOutputError,
 };
 
-use super::{LabClientCommand, LabError, voice::{terminalize_failed_turn, terminalize_provider_error}};
+use super::{
+    LabClientCommand, LabError,
+    voice::{terminalize_failed_turn, terminalize_provider_error},
+};
 
 pub(super) fn deliver_phrase(
     turn: &ActiveTurn,
@@ -55,4 +58,3 @@ fn terminalize_avatar_output_error(
         RealtimeAvatarOutputError::Provider(error) => terminalize_provider_error(turn, error),
     }
 }
-
