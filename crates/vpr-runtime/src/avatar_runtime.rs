@@ -11,20 +11,10 @@ use vpr_integration::{
     TtsPort, TtsRequest, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
+use crate::audio_stage_timing::{RealtimeAudioStageTimings, elapsed_stage};
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::provider::ProviderOperation;
 use crate::{ActiveSession, ActiveTurn, OutputDeliveryHandle};
-
-/// Monotonic elapsed milliseconds from first phrase TTS delivery entry point.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RealtimeAudioStageTimings {
-    pub first_pcm_millis: u64,
-    pub first_echo_send_millis: u64,
-}
-
-fn elapsed_stage(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RealtimeAvatarOutputError {
@@ -295,21 +285,6 @@ impl ActiveTurn {
     /// # Errors
     /// Fails closed if either authorization epoch changed, TTS failed, or
     /// the selected avatar does not support private PCM publication.
-    /// Backward-compatible canonical audio delivery.
-    ///
-    /// # Errors
-    /// Propagates the same authorization and provider errors as the measured route.
-    pub fn synthesize_and_deliver_realtime_avatar_audio(
-        &self,
-        tts: &dyn TtsPort,
-        port: &dyn RealtimeAvatarPort,
-        handle: &RealtimeAvatarHandle,
-        text: &str,
-    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
-        self.synthesize_and_deliver_realtime_avatar_audio_with_timings(tts, port, handle, text)
-            .map(|(delivery, _)| delivery)
-    }
-
     pub fn synthesize_and_deliver_realtime_avatar_audio_with_timings(
         &self,
         tts: &dyn TtsPort,
