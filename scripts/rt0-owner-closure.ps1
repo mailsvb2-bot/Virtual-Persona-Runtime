@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Owner-run RT0 closure for a clean exact Git candidate.
 .DESCRIPTION
