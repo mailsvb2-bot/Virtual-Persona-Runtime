@@ -142,7 +142,6 @@ impl LabSessionEvidenceRecorder {
             || result.evidence_output_sequence == 0
             || result.first_meaningful_response_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
-            || result.voice_first_text_millis > result.total_millis
             || result.first_meaningful_response_millis > result.total_millis
         {
             return Err(LabEvidenceError::InvalidInput);
@@ -287,6 +286,7 @@ impl LabSessionEvidenceRecorder {
             || matches!((result.tts_first_pcm_millis, result.echo_first_send_millis), (Some(first), Some(sent)) if first > sent)
             || (result.tts_first_pcm_millis.is_some() != result.echo_first_send_millis.is_some())
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.voice_first_text_millis > result.total_millis
         {
             return Err(LabEvidenceError::InvalidInput);
         }
