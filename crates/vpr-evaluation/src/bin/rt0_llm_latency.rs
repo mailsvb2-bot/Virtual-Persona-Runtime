@@ -224,7 +224,7 @@ fn run() -> Result<(), String> {
         model,
         turns: samples.turns,
         errors: samples.errors,
-        measurement_note: "LLM TTFT starts at LLM generation; audio_started is observed browser audio after microphone finish; interruption_stopped is observed silence after STOP issue. Full microphone-start-to-text timing is unavailable.",
+        measurement_note: "voice_first_text starts at server receipt of microphone finish and includes STT + context + first meaningful LLM text; this drives the text verdict. LLM TTFT is LLM-call-relative. audio_started is observed browser audio after microphone finish; interruption_stopped is observed silence after STOP issue. Upload time preceding microphone finish is excluded.",
         thresholds: Thresholds {
             text: 2500,
             first_audio: 3000,
@@ -267,6 +267,8 @@ mod tests {
             verdict(metrics.voice_first_text.as_ref(), 20, 2500),
             "INSUFFICIENT_EVIDENCE"
         );
+        let observed = percentile((1_000..1_020).collect()).unwrap();
+        assert_eq!(verdict(Some(&observed), 20, 2500), "PASS");
         assert_eq!(metrics.llm_first_meaningful.unwrap().n, 20);
         assert_eq!(verdict(metrics.first_audio.as_ref(), 20, 3000), "PASS");
         assert_eq!(verdict(metrics.stop.as_ref(), 5, 500), "PASS");
