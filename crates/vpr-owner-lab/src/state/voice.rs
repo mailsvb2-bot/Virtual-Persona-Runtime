@@ -62,6 +62,72 @@ struct VoiceGeneration {
     client_command: Option<LabClientCommand>,
 }
 
+use std::sync::mpsc::{SyncSender, sync_channel};
+
+enum LlmEvent {
+    Phrase(String),
+    Finished {
+        reply: String,
+        usage: UsageEvidence,
+        llm_millis: u64,
+        first_meaningful_millis: Option<u64>,
+    },
+    Failed(ProviderExecutionError),
+}
+
+fn produce(
+    turn: &ActiveTurn,
+    llm: &dyn LlmPort,
+    request: &LlmRequest,
+    sender: &SyncSender<LlmEvent>,
+) {
+    let started = Instant::now();
+    let mut stream = match turn.open_llm_stream(llm, request) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let _ = sender.send(LlmEvent::Failed(error));
+            return;
+        }
+    };
+    let mut reply = String::new();
+    let mut first_meaningful = None;
+    let mut phrases = RealtimePhraseBuffer::default();
+    loop {
+        let next = match stream.next_chunk() {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                let _ = sender.send(LlmEvent::Failed(error));
+                return;
+            }
+        };
+        let Some(chunk) = next else {
+            break;
+        };
+        if first_meaningful.is_none() && !chunk.trim().is_empty() {
+            first_meaningful = Some(elapsed_millis(started));
+        }
+        reply.push_str(&chunk);
+        for phrase in phrases.push(&chunk) {
+            if sender.send(LlmEvent::Phrase(phrase)).is_err() {
+                return;
+            }
+        }
+    }
+    if let Some(phrase) = phrases.finish() {
+        if sender.send(LlmEvent::Phrase(phrase)).is_err() {
+            return;
+        }
+    }
+    let _ = sender.send(LlmEvent::Finished {
+        reply,
+        usage: stream.usage(),
+        llm_millis: elapsed_millis(started),
+        first_meaningful_millis: first_meaningful,
+    });
+}
+
+
+
 impl OwnerLabEngine {
     #[must_use]
     pub fn with_stt(mut self, stt: Box<dyn SttPort>) -> Self {
@@ -341,70 +407,6 @@ impl OwnerLabEngine {
         evidence_turn_sequence: u64,
         emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
     ) -> Result<VoiceGeneration, LabError> {
-        use std::sync::mpsc::{SyncSender, sync_channel};
-
-        enum LlmEvent {
-            Phrase(String),
-            Finished {
-                reply: String,
-                usage: UsageEvidence,
-                llm_millis: u64,
-                first_meaningful_millis: Option<u64>,
-            },
-            Failed(ProviderExecutionError),
-        }
-
-        fn produce(
-            turn: &ActiveTurn,
-            llm: &dyn LlmPort,
-            request: &LlmRequest,
-            sender: &SyncSender<LlmEvent>,
-        ) {
-            let started = Instant::now();
-            let mut stream = match turn.open_llm_stream(llm, request) {
-                Ok(stream) => stream,
-                Err(error) => {
-                    let _ = sender.send(LlmEvent::Failed(error));
-                    return;
-                }
-            };
-            let mut reply = String::new();
-            let mut first_meaningful = None;
-            let mut phrases = RealtimePhraseBuffer::default();
-            loop {
-                let next = match stream.next_chunk() {
-                    Ok(chunk) => chunk,
-                    Err(error) => {
-                        let _ = sender.send(LlmEvent::Failed(error));
-                        return;
-                    }
-                };
-                let Some(chunk) = next else {
-                    break;
-                };
-                if first_meaningful.is_none() && !chunk.trim().is_empty() {
-                    first_meaningful = Some(elapsed_millis(started));
-                }
-                reply.push_str(&chunk);
-                for phrase in phrases.push(&chunk) {
-                    if sender.send(LlmEvent::Phrase(phrase)).is_err() {
-                        return;
-                    }
-                }
-            }
-            if let Some(phrase) = phrases.finish() {
-                if sender.send(LlmEvent::Phrase(phrase)).is_err() {
-                    return;
-                }
-            }
-            let _ = sender.send(LlmEvent::Finished {
-                reply,
-                usage: stream.usage(),
-                llm_millis: elapsed_millis(started),
-                first_meaningful_millis: first_meaningful,
-            });
-        }
-
         // A bounded FIFO overlaps LLM generation with the authorized avatar
         // delivery, without moving the provider-owned (non-Send) stream or
         // starting multiple concurrent avatar speaks.
