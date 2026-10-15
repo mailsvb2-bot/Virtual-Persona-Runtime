@@ -213,5 +213,17 @@ class PiperContract(unittest.TestCase):
                 self.assertEqual(wav.getsampwidth(), 2)
 
 
+class PinnedVoiceIdentity(unittest.TestCase):
+    def test_declared_voice_matches_loaded_model(self):
+        bridge.check_selected_voice("C:/voice/ru_RU-irina-medium.onnx", "ru_RU-irina-medium")
+        bridge.check_selected_voice("C:/voice/ru_RU-denis-medium.onnx", None)
+        for model, selected in [
+            ("C:/voice/ru_RU-denis-medium.onnx", "ru_RU-irina-medium"),
+            ("C:/voice/ru_RU-unknown-medium.onnx", "ru_RU-unknown-medium"),
+        ]:
+            with self.assertRaises(SystemExit):
+                bridge.check_selected_voice(model, selected)
+
+
 if __name__ == "__main__":
     unittest.main()
