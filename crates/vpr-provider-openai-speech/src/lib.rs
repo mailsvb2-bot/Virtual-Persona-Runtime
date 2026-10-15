@@ -83,7 +83,9 @@ impl OpenAiSpeechTts {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: OpenAiSpeechConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        if config.stream_pcm && (config.provider_name != "piper" || !is_loopback_endpoint(&config.endpoint)) {
+        if config.stream_pcm
+            && (config.provider_name != "piper" || !is_loopback_endpoint(&config.endpoint))
+        {
             return Err(invalid_response());
         }
         if config.provider_name.trim().is_empty()
@@ -191,7 +193,12 @@ fn stream_pcm_body(
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|rate| (8_000..=48_000).contains(rate))
         .ok_or_else(invalid_response)?;
-    if response.headers().get("content-type").and_then(|v| v.to_str().ok()) != Some("application/octet-stream") {
+    if response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        != Some("application/octet-stream")
+    {
         return Err(invalid_response());
     }
     let mut buffer = [0_u8; 8192];
@@ -227,8 +234,10 @@ fn stream_pcm_body(
     if cancellation.is_cancelled() {
         return Err(cancelled());
     }
-    let duration = u64::try_from(total).unwrap_or(u64::MAX)
-        .saturating_mul(1000) / (u64::from(sample_rate_hz) * 2);
+    let duration = u64::try_from(total)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(1000)
+        / (u64::from(sample_rate_hz) * 2);
     Ok(UsageEvidence {
         input_units: Some(u64::try_from(text_chars).unwrap_or(u64::MAX)),
         input_unit: Some(UsageUnit::TextCharacter),
@@ -240,10 +249,13 @@ fn stream_pcm_body(
 
 fn is_loopback_endpoint(endpoint: &str) -> bool {
     reqwest::Url::parse(endpoint).ok().is_some_and(|url| {
-        url.scheme() == "http" && url.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
-        })
+        url.scheme() == "http"
+            && url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            })
     })
 }
 
