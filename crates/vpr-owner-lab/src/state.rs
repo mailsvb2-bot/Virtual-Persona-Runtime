@@ -578,6 +578,7 @@ mod session_revocation;
 mod status;
 mod text;
 mod voice;
+mod voice_delivery;
 mod voice_input;
 mod voice_metrics;
 mod voice_phrase;
