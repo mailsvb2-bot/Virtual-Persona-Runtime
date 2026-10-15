@@ -145,6 +145,33 @@ fn piper_streams_raw_pcm_into_canonical_sink() {
 }
 
 #[test]
+fn piper_pcm_stream_delivers_audio_and_measured_duration() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        read_request(&mut stream);
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nX-VPR-Sample-Rate: 16000\r\nContent-Length: 320\r\nConnection: close\r\n\r\n").unwrap();
+        stream.write_all(&[0_u8; 320]).unwrap();
+    });
+    let config = OpenAiSpeechConfig::new(
+        format!("http://{address}/v1/audio/speech"),
+        "secret", "piper", "local",
+    )
+    .with_provider_name("piper")
+    .with_stream_pcm(true);
+    let provider = OpenAiSpeechTts::new(config).unwrap();
+    let mut sink = GeneratedAudioBuffer::default();
+    let usage = provider.synthesize(
+        &request(), &Probe(AtomicBool::new(false)), &mut sink,
+    ).unwrap();
+    assert_eq!(sink.pcm(), vec![0_u8; 320]);
+    assert_eq!(sink.sample_rate_hz(), Some(16000));
+    assert_eq!(usage.output_units, Some(10));
+    server.join().unwrap();
+}
+
+#[test]
 fn external_provider_cannot_enable_private_pcm_wire() {
     let config = OpenAiSpeechConfig::new(
         "https://example.test/v1/audio/speech", "secret", "model", "voice",
