@@ -39,6 +39,50 @@ class PiperContract(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.stage_short_espeak_data(Path(d))
 
+    def test_warmup_reports_measured_rtf_without_storing_audio(self):
+        def fake_synthesizer(text):
+            self.assertEqual(text, "Здравствуйте. Я готова говорить.")
+            output = io.BytesIO()
+            with wave.open(output, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(bytes(3200))
+            return output.getvalue()
+
+        rtf = bridge.warmup_piper(fake_synthesizer)
+        self.assertGreaterEqual(rtf, 0)
+        self.assertLess(rtf, 1)
+
+    def test_health_reports_ready_and_rtf_only_after_warmup(self):
+        import http.client
+        import json
+        import threading
+        from http.server import ThreadingHTTPServer
+        from metrotrance_tts_bridge import make_handler
+
+        token = "piper-health-test-token-123456"
+        handler = make_handler(
+            token, lambda _text: b"", provider_id="piper",
+            health_status={"ready": True, "rtf": 0.1234},
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            try:
+                connection.request("GET", "/health")
+                result = connection.getresponse()
+                self.assertEqual(result.status, 200)
+                self.assertEqual(json.loads(result.read()), {"ready": True, "rtf": 0.1234})
+            finally:
+                connection.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_requires_local_model_and_config(self):
         with tempfile.TemporaryDirectory() as d:
             model = Path(d) / "ru_RU-test.onnx"
