@@ -142,6 +142,7 @@ impl LabSessionEvidenceRecorder {
             || result.evidence_output_sequence == 0
             || result.first_meaningful_response_millis > MAX_MEDIA_ELAPSED_MILLIS
             || result.total_millis > MAX_MEDIA_ELAPSED_MILLIS
+            || result.voice_first_text_millis > result.total_millis
             || result.first_meaningful_response_millis > result.total_millis
         {
             return Err(LabEvidenceError::InvalidInput);
@@ -203,6 +204,7 @@ impl LabSessionEvidenceRecorder {
                 stt_millis: None,
                 llm_millis: None,
                 llm_first_meaningful_millis: None,
+                voice_first_text_millis: None,
                 tts_first_pcm_millis: None,
                 echo_first_send_millis: None,
                 avatar_millis: None,
@@ -294,6 +296,7 @@ impl LabSessionEvidenceRecorder {
         attempt.stt_millis = Some(result.stt_millis);
         attempt.llm_millis = Some(result.llm_millis);
         attempt.llm_first_meaningful_millis = Some(result.llm_first_meaningful_millis);
+        attempt.voice_first_text_millis = Some(result.voice_first_text_millis);
         attempt.avatar_millis = Some(result.avatar_millis);
         attempt.tts_first_pcm_millis = result.tts_first_pcm_millis;
         attempt.echo_first_send_millis = result.echo_first_send_millis;
