@@ -43,6 +43,8 @@ pub struct LabVoiceResult {
     pub stt_millis: u64,
     pub llm_millis: u64,
     pub llm_first_meaningful_millis: u64,
+    /// Microphone-finish receipt to first meaningful LLM text, including STT and context.
+    pub voice_first_text_millis: u64,
     pub avatar_millis: u64,
     /// Time from first TTS phrase entry to first PCM in the canonical TTS sink.
     pub tts_first_pcm_millis: Option<u64>,
@@ -245,6 +247,7 @@ impl OwnerLabEngine {
             instructions: Some(instructions),
             user_input: transcript.text.clone(),
         };
+        let pre_llm_millis = elapsed_millis(total_started);
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
         let generation = self.streaming_generation(
@@ -271,6 +274,7 @@ impl OwnerLabEngine {
             stt_millis,
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
+            voice_first_text_millis: pre_llm_millis.saturating_add(generation.first_meaningful_millis),
             avatar_millis: generation.avatar_millis,
             tts_first_pcm_millis: generation
                 .audio_timings
@@ -322,6 +326,7 @@ impl OwnerLabEngine {
             instructions: Some(instructions),
             user_input: transcript.text.clone(),
         };
+        let pre_llm_millis = elapsed_millis(total_started);
 
         let generation = match &mut output_mode {
             VoiceOutputMode::Buffered => self.buffered_generation(
@@ -357,6 +362,7 @@ impl OwnerLabEngine {
             stt_millis,
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
+            voice_first_text_millis: pre_llm_millis.saturating_add(generation.first_meaningful_millis),
             avatar_millis: generation.avatar_millis,
             tts_first_pcm_millis: generation
                 .audio_timings
