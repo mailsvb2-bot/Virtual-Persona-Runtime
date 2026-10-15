@@ -189,11 +189,11 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
                     if rate != first_rate or len(pcm) % 2:
                         raise RuntimeError("Piper PCM format changed during stream")
                     if pcm:
-                        self.wfile.write(("%x\\r\\n" % len(pcm)).encode("ascii"))
+                        self.wfile.write(("%x\r\n" % len(pcm)).encode("ascii"))
                         self.wfile.write(pcm)
-                        self.wfile.write(b"\\r\\n")
+                        self.wfile.write(b"\r\n")
                         self.wfile.flush()
-                self.wfile.write(b"0\\r\\n\\r\\n")
+                self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError, RuntimeError):
                 self.close_connection = True
