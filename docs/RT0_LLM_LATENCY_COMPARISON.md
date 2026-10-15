@@ -27,7 +27,7 @@ cargo run --locked -p vpr-evaluation --bin vpr-rt0-llm-latency -- \
 Repeat with `proxyapi-deepseek` and the **exact** ProxyAPI model ID
 recorded in that run's provider-state. Do not substitute guessed model names.
 
-The report contains no transcript, API key or audio. It reports p50 and p95 (nearest-rank) for observed first meaningful LLM text and full LLM text. Browser audio-start and interruption-stop events currently carry **session-relative offsets**, not request-relative or STOP-command-relative latency. The report retains their offsets only as diagnostics (`browser_audio_event_offset`, `stop_event_offset`); first-audio and STOP latency metrics remain null and their verdicts remain `INSUFFICIENT_EVIDENCE` until paired start timestamps are recorded.
+The report contains no transcript, API key or audio. It reports p50 and p95 (nearest-rank) for **LLM-call-relative** first meaningful chunk (`llm_first_meaningful`) and full LLM completion. Neither is the end-to-end microphone-to-text latency required by the release gate. Browser audio-start and interruption-stop events currently carry **session-relative offsets**, not request-relative or STOP-command-relative latency. The report retains their offsets only as diagnostics (`browser_audio_event_offset`, `stop_event_offset`); end-to-end first-text, first-audio and STOP latency metrics remain null and their verdicts remain `INSUFFICIENT_EVIDENCE` until paired start timestamps are recorded.
 
 - Text first-meaningful p95: **2,500 ms**
 - Browser first-audio p95: **3,000 ms**
