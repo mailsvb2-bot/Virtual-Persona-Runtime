@@ -132,13 +132,17 @@ fn collect_samples(
             if let Some(ms) = attempt.llm_millis {
                 samples.full.push(ms);
             }
-            if let (Some(pcm), Some(send)) = (attempt.tts_first_pcm_millis, attempt.echo_first_send_millis) {
+            if let (Some(pcm), Some(send)) =
+                (attempt.tts_first_pcm_millis, attempt.echo_first_send_millis)
+            {
                 if pcm > send || send > attempt.avatar_millis.unwrap_or(0) {
                     return Err("invalid TTS/Echo stage timing order".into());
                 }
                 samples.tts_pcm.push(pcm);
                 samples.echo_send.push(send);
-            } else if attempt.tts_first_pcm_millis.is_some() || attempt.echo_first_send_millis.is_some() {
+            } else if attempt.tts_first_pcm_millis.is_some()
+                || attempt.echo_first_send_millis.is_some()
+            {
                 return Err("incomplete TTS/Echo stage evidence".into());
             }
             if let Some(ms) = session
