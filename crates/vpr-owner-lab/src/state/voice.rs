@@ -274,7 +274,8 @@ impl OwnerLabEngine {
             stt_millis,
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
-            voice_first_text_millis: pre_llm_millis.saturating_add(generation.first_meaningful_millis),
+            voice_first_text_millis: pre_llm_millis
+                .saturating_add(generation.first_meaningful_millis),
             avatar_millis: generation.avatar_millis,
             tts_first_pcm_millis: generation
                 .audio_timings
@@ -362,7 +363,8 @@ impl OwnerLabEngine {
             stt_millis,
             llm_millis: generation.llm_millis,
             llm_first_meaningful_millis: generation.first_meaningful_millis,
-            voice_first_text_millis: pre_llm_millis.saturating_add(generation.first_meaningful_millis),
+            voice_first_text_millis: pre_llm_millis
+                .saturating_add(generation.first_meaningful_millis),
             avatar_millis: generation.avatar_millis,
             tts_first_pcm_millis: generation
                 .audio_timings
