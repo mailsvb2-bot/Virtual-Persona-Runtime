@@ -17,6 +17,8 @@ struct Metric {
 
 #[derive(Serialize)]
 struct Metrics {
+    /// LLM call-relative first meaningful chunk, not microphone-to-first-text latency.
+    llm_first_meaningful: Option<Metric>,
     text_first_meaningful: Option<Metric>,
     llm_full: Option<Metric>,
     /// Session-relative event positions, NOT response latency.
@@ -190,7 +192,8 @@ fn run() -> Result<(), String> {
     let state_digest = sha256_hex(&state_bytes);
     let samples = collect_samples(&args[5..], candidate, &state_digest)?;
     let metrics = Metrics {
-        text_first_meaningful: percentile(samples.text),
+        llm_first_meaningful: percentile(samples.text),
+        text_first_meaningful: None,
         llm_full: percentile(samples.full),
         browser_audio_event_offset: percentile(samples.audio),
         stop_event_offset: percentile(samples.stop),
@@ -198,13 +201,13 @@ fn run() -> Result<(), String> {
         stop: None,
     };
     let report = Report {
-        schema: "vpr-llm-latency-compare-0.2",
+        schema: "vpr-llm-latency-compare-0.3",
         candidate_sha: candidate,
         provider,
         model,
         turns: samples.turns,
         errors: samples.errors,
-        measurement_note: "Browser audio and STOP events are session-relative positions; request/STOP-start timestamps are required for latency p95. Never treat offsets as latency.",
+        measurement_note: "LLM first meaningful time is relative to LLM start, not microphone input; media events are session-relative positions. The end-to-end text/audio/STOP p95 verdicts require aligned start timestamps and remain INSUFFICIENT_EVIDENCE.",
         thresholds: Thresholds {
             text: 2500,
             first_audio: 3000,
@@ -235,6 +238,7 @@ mod tests {
     #[test]
     fn session_relative_media_offsets_are_never_accepted_as_latency() {
         let metrics = super::Metrics {
+            llm_first_meaningful: percentile(vec![1; 20]),
             text_first_meaningful: None,
             llm_full: None,
             browser_audio_event_offset: percentile(vec![1; 20]),
