@@ -109,9 +109,15 @@ fn build_tts_configured(
         ),
         _ => return Err(format!("unsupported TTS provider: {name}")),
     };
+    // A fresh private loopback port is transport detail, not provider identity.
+    let fingerprint_endpoint = if is_loopback_speech_endpoint(endpoint) {
+        "http://127.0.0.1:<private-loopback>/v1/audio/speech"
+    } else {
+        endpoint
+    };
     Ok((
         provider,
-        descriptor("tts", name, model, &[endpoint, model, voice]),
+        descriptor("tts", name, model, &[fingerprint_endpoint, model, voice]),
     ))
 }
 
@@ -133,6 +139,22 @@ fn is_loopback_speech_endpoint(endpoint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_loopback_port_does_not_change_tts_fingerprint() {
+        let build = |endpoint: &str, voice: &str| {
+            build_tts_configured("metrotrance-qwen", endpoint, "token".into(), "model", voice)
+                .unwrap()
+                .1
+                .configuration_fingerprint_sha256
+        };
+        let a = build("http://127.0.0.1:8897/v1/audio/speech", "local");
+        let b = build("http://127.0.0.1:49152/v1/audio/speech", "local");
+        let c = build("http://127.0.0.1:8897/v1/audio/speech", "other");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
     use std::sync::Arc;
     use vpr_provider_did_agent_streams::{
         DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,
