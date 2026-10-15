@@ -111,7 +111,9 @@ impl OpenAiCompatibleConfig {
     pub fn with_project_id(mut self, project_id: &str) -> Result<Self, ProviderError> {
         if project_id.is_empty()
             || project_id.len() > 64
-            || !project_id.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            || !project_id
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         {
             return Err(invalid_response());
         }
@@ -187,7 +189,8 @@ impl OpenAiCompatibleLlm {
         if let Some(project) = &self.config.project_id {
             builder = builder.header("OpenAI-Project", project);
         }
-        builder.json(&body)
+        builder
+            .json(&body)
             .send()
             .map_err(|error| map_transport_error(&error))
     }
