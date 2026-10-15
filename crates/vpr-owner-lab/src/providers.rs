@@ -422,19 +422,21 @@ fn build_llm(
                 "anthropic" => (
                     "anthropic",
                     Box::new(
-                        AnthropicLlm::new(AnthropicConfig::new(
-                            endpoint.clone(),
-                            api_key,
-                            model.clone(),
-                        ).with_max_tokens(96))
+                        AnthropicLlm::new(
+                            AnthropicConfig::new(endpoint.clone(), api_key, model.clone())
+                                .with_max_tokens(96),
+                        )
                         .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
                 "gemini" => (
                     "gemini",
                     Box::new(
-                        GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()).with_max_output_tokens(96))
-                            .map_err(|_| "LLM provider configuration rejected")?,
+                        GeminiLlm::new(
+                            GeminiConfig::new(endpoint.clone(), api_key, model.clone())
+                                .with_max_output_tokens(96),
+                        )
+                        .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
                 _ => return Err(format!("unsupported LLM provider: {name}")),
