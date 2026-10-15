@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::Arc;
+use std::time::Instant;
 
 use vpr_domain::{Rt0ReasonCode, SessionId};
 use vpr_integration::{
@@ -13,6 +14,17 @@ use vpr_integration::{
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::provider::ProviderOperation;
 use crate::{ActiveSession, ActiveTurn, OutputDeliveryHandle};
+
+/// Monotonic elapsed milliseconds from first phrase TTS delivery entry point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RealtimeAudioStageTimings {
+    pub first_pcm_millis: u64,
+    pub first_echo_send_millis: u64,
+}
+
+fn elapsed_stage(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RealtimeAvatarOutputError {
@@ -283,6 +295,10 @@ impl ActiveTurn {
     /// # Errors
     /// Fails closed if either authorization epoch changed, TTS failed, or
     /// the selected avatar does not support private PCM publication.
+    /// Backward-compatible canonical audio delivery.
+    ///
+    /// # Errors
+    /// Propagates the same authorization and provider errors as the measured route.
     pub fn synthesize_and_deliver_realtime_avatar_audio(
         &self,
         tts: &dyn TtsPort,
@@ -290,6 +306,18 @@ impl ActiveTurn {
         handle: &RealtimeAvatarHandle,
         text: &str,
     ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+        self.synthesize_and_deliver_realtime_avatar_audio_with_timings(tts, port, handle, text)
+            .map(|(delivery, _)| delivery)
+    }
+
+    pub fn synthesize_and_deliver_realtime_avatar_audio_with_timings(
+        &self,
+        tts: &dyn TtsPort,
+        port: &dyn RealtimeAvatarPort,
+        handle: &RealtimeAvatarHandle,
+        text: &str,
+    ) -> Result<(OutputDeliveryHandle, RealtimeAudioStageTimings), RealtimeAvatarOutputError> {
+        let stage_started = Instant::now();
         // Native D-ID Echo documents an explicit pcm16 byte stream. Route
         // streaming TTS chunks through the SAME canonical TTS and avatar permits.
         // Other adapters continue the existing buffered compatibility path.
@@ -304,6 +332,7 @@ impl ActiveTurn {
         let audio = self
             .authorized_realtime_pcm(tts, text)
             .map_err(RealtimeAvatarOutputError::Provider)?;
+        let first_pcm_millis = elapsed_stage(stage_started);
         // A fresh permit is mandatory AFTER potentially slow synthesis.
         let permit = self
             .avatar_permit()
@@ -323,7 +352,10 @@ impl ActiveTurn {
         .map_err(RealtimeAvatarOutputError::Provider)?;
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
-        Ok(delivery)
+        Ok((delivery, RealtimeAudioStageTimings {
+            first_pcm_millis,
+            first_echo_send_millis: elapsed_stage(stage_started),
+        }))
     }
 
     /// Couples canonical TTS generation to the private avatar's native PCM16
@@ -336,7 +368,10 @@ impl ActiveTurn {
         port: &dyn RealtimeAvatarPort,
         handle: &RealtimeAvatarHandle,
         text: &str,
-    ) -> Result<OutputDeliveryHandle, RealtimeAvatarOutputError> {
+    ) -> Result<(OutputDeliveryHandle, RealtimeAudioStageTimings), RealtimeAvatarOutputError> {
+        let stage_started = Instant::now();
+        let mut first_pcm_millis = None;
+        let mut first_echo_send_millis = None;
         self.validate_avatar_handle(port, handle)
             .map_err(RealtimeAvatarOutputError::Provider)?;
         let avatar_permit = self
@@ -356,6 +391,7 @@ impl ActiveTurn {
                         retryable: false,
                     });
                 }
+                first_pcm_millis.get_or_insert_with(|| elapsed_stage(stage_started));
                 if published.is_none() {
                     published = Some(port.open_pcm_stream(
                         &handle.provider_session,
@@ -370,7 +406,9 @@ impl ActiveTurn {
                         kind: ProviderErrorKind::Unavailable,
                         retryable: false,
                     })?
-                    .push_pcm(pcm, &avatar_permit.cancellation)
+                    .push_pcm(pcm, &avatar_permit.cancellation)?;
+                first_echo_send_millis.get_or_insert_with(|| elapsed_stage(stage_started));
+                Ok(())
             };
             let mut sink = GeneratedAudioStreamingSink::new(&mut send);
             let synthesis = self.execute_tts(
@@ -415,7 +453,10 @@ impl ActiveTurn {
         }
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
-        Ok(delivery)
+        Ok((delivery, RealtimeAudioStageTimings {
+            first_pcm_millis: first_pcm_millis.ok_or_else(|| RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false })))?,
+            first_echo_send_millis: first_echo_send_millis.ok_or_else(|| RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false })))?,
+        }))
     }
 
     /// Sends an HTTPS audio URL to an existing avatar using this turn's current authorization.
