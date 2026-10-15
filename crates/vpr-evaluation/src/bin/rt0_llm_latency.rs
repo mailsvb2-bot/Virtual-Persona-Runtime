@@ -1,9 +1,9 @@
 //! Non-promoting RT0 LLM latency comparison from sanitized session exports.
 //! Usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>...
-use std::{env, fs, process};
 use serde::Serialize;
+use std::{env, fs, process};
 use vpr_evaluation::{
-    LabSessionEvidenceSnapshot, LabMediaEvidenceKind, LabVoiceAttemptStatus,
+    LabMediaEvidenceKind, LabSessionEvidenceSnapshot, LabVoiceAttemptStatus,
     RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA,
 };
 
@@ -56,7 +56,11 @@ fn percentile(mut values: Vec<u64>) -> Option<Metric> {
     values.sort_unstable();
     let len = values.len();
     let rank = |pct: usize| len.saturating_mul(pct).div_ceil(100).max(1) - 1;
-    Some(Metric { n: len, p50_ms: values[rank(50)], p95_ms: values[rank(95)] })
+    Some(Metric {
+        n: len,
+        p50_ms: values[rank(50)],
+        p95_ms: values[rank(95)],
+    })
 }
 
 fn verdict(metric: &Option<Metric>, minimum: usize, threshold: u64) -> &'static str {
@@ -70,10 +74,16 @@ fn verdict(metric: &Option<Metric>, minimum: usize, threshold: u64) -> &'static 
 fn run() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 5 {
-        return Err("usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>...".into());
+        return Err(
+            "usage: vpr-rt0-llm-latency <provider> <model> <candidate-sha> <session.json>..."
+                .into(),
+        );
     }
     let (provider, model, candidate) = (&args[1], &args[2], &args[3]);
-    if !matches!(provider.as_str(), "yandex" | "proxyapi-deepseek" | "deepseek") {
+    if !matches!(
+        provider.as_str(),
+        "yandex" | "proxyapi-deepseek" | "deepseek"
+    ) {
         return Err("unsupported provider".into());
     }
     if candidate.len() != 40 || !candidate.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -88,13 +98,20 @@ fn run() -> Result<(), String> {
     let mut provider_state = None::<String>;
     for path in &args[4..] {
         let data = fs::read(path).map_err(|_| "session evidence unreadable")?;
-        if data.len() > 8_000_000 { return Err("session evidence too large".into()); }
-        let session: LabSessionEvidenceSnapshot = serde_json::from_slice(&data)
-            .map_err(|_| "invalid session evidence schema")?;
+        if data.len() > 8_000_000 {
+            return Err("session evidence too large".into());
+        }
+        let session: LabSessionEvidenceSnapshot =
+            serde_json::from_slice(&data).map_err(|_| "invalid session evidence schema")?;
         if session.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
             || &session.candidate_sha != candidate
-        { return Err("stale or cross-candidate session evidence".into()); }
-        if provider_state.as_ref().is_some_and(|sha| sha != &session.provider_state_sha256) {
+        {
+            return Err("stale or cross-candidate session evidence".into());
+        }
+        if provider_state
+            .as_ref()
+            .is_some_and(|sha| sha != &session.provider_state_sha256)
+        {
             return Err("mixed provider-state digests".into());
         }
         provider_state = Some(session.provider_state_sha256.clone());
@@ -104,17 +121,32 @@ fn run() -> Result<(), String> {
                 errors += 1;
                 continue;
             }
-            if let Some(ms) = attempt.llm_first_meaningful_millis { text.push(ms); }
-            if let Some(ms) = attempt.llm_millis { full.push(ms); }
-            if let Some(ms) = session.media_events.iter()
-                .filter(|event| event.kind == LabMediaEvidenceKind::AudioStarted
-                    && event.request_sequence == Some(attempt.request_sequence))
-                .map(|event| event.elapsed_millis).min()
-            { audio.push(ms); }
+            if let Some(ms) = attempt.llm_first_meaningful_millis {
+                text.push(ms);
+            }
+            if let Some(ms) = attempt.llm_millis {
+                full.push(ms);
+            }
+            if let Some(ms) = session
+                .media_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LabMediaEvidenceKind::AudioStarted
+                        && event.request_sequence == Some(attempt.request_sequence)
+                })
+                .map(|event| event.elapsed_millis)
+                .min()
+            {
+                audio.push(ms);
+            }
         }
-        stop.extend(session.media_events.iter()
-            .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
-            .map(|event| event.elapsed_millis));
+        stop.extend(
+            session
+                .media_events
+                .iter()
+                .filter(|event| event.kind == LabMediaEvidenceKind::InterruptionStopped)
+                .map(|event| event.elapsed_millis),
+        );
     }
     let metrics = Metrics {
         text_first_meaningful: percentile(text),
@@ -123,8 +155,17 @@ fn run() -> Result<(), String> {
         stop: percentile(stop),
     };
     let report = Report {
-        schema: "vpr-llm-latency-compare-0.1", candidate_sha: candidate, provider, model, turns,
-        errors, thresholds: Thresholds { text_p95_ms: 2500, first_audio_p95_ms: 3000, stop_p95_ms: 500 },
+        schema: "vpr-llm-latency-compare-0.1",
+        candidate_sha: candidate,
+        provider,
+        model,
+        turns,
+        errors,
+        thresholds: Thresholds {
+            text_p95_ms: 2500,
+            first_audio_p95_ms: 3000,
+            stop_p95_ms: 500,
+        },
         verdict: Verdict {
             text: verdict(&metrics.text_first_meaningful, 20, 2500),
             first_audio: verdict(&metrics.first_audio, 20, 3000),
@@ -154,7 +195,29 @@ mod tests {
         let metric = metric.as_ref().unwrap();
         assert_eq!((metric.p50_ms, metric.p95_ms), (10, 19));
         assert_eq!(verdict(&None, 20, 2500), "INSUFFICIENT_EVIDENCE");
-        assert_eq!(verdict(&Some(super::Metric { n: 19, p50_ms: 1, p95_ms: 1 }), 20, 2500), "INSUFFICIENT_EVIDENCE");
-        assert_eq!(verdict(&Some(super::Metric { n: 20, p50_ms: 1, p95_ms: 2501 }), 20, 2500), "FAIL");
+        assert_eq!(
+            verdict(
+                &Some(super::Metric {
+                    n: 19,
+                    p50_ms: 1,
+                    p95_ms: 1
+                }),
+                20,
+                2500
+            ),
+            "INSUFFICIENT_EVIDENCE"
+        );
+        assert_eq!(
+            verdict(
+                &Some(super::Metric {
+                    n: 20,
+                    p50_ms: 1,
+                    p95_ms: 2501
+                }),
+                20,
+                2500
+            ),
+            "FAIL"
+        );
     }
 }
