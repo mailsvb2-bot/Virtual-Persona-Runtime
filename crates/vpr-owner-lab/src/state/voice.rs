@@ -14,6 +14,8 @@ use vpr_runtime::{
     RealtimeAvatarOutputError, TurnInterruptHandle,
 };
 
+use super::voice_metrics::{elapsed_millis, map_usage};
+
 use super::{
     LabClientCommand, LabError, OwnerLabEngine, map_provider_execution, voice_input::LabVoiceInput,
     voice_phrase::RealtimePhraseBuffer, voice_stt::transcribe_voice_audio,
@@ -592,15 +594,3 @@ pub(super) fn terminalize_failed_turn(turn: &ActiveTurn, error: LabError) -> Lab
     }
 }
 
-pub(super) fn map_usage(usage: &UsageEvidence) -> LabVoiceUsage {
-    LabVoiceUsage {
-        input_units: usage.input_units,
-        output_units: usage.output_units,
-        estimated_cost_microunits: usage.estimated_cost_microunits,
-        provider_charge_microunits: usage.provider_charge_microunits,
-    }
-}
-
-pub(super) fn elapsed_millis(started: Instant) -> u64 {
-    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
