@@ -42,7 +42,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
         "set-tts" => set_tts_profile(),
-        "set-llm" => set_llm_profile(),
+        "set-llm" => set_llm_profile(env::args().nth(2).as_deref()),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
         "import-env" => import_env_profile(),
@@ -113,12 +113,27 @@ fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
 }
 
 #[cfg(windows)]
-fn set_llm_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
+fn set_llm_profile(requested_provider: Option<&str>) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR profile is missing; configure avatar/STT first")?;
     println!("Select the realtime LLM; the key will remain in Windows Credential Manager.");
-    let provider =
-        prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?.to_ascii_lowercase();
+    let provider = if let Some(selected) = requested_provider {
+        if !matches!(selected, "yandex" | "proxyapi-deepseek" | "deepseek") {
+            return Err("unsupported LLM provider argument".into());
+        }
+        println!("Selected LLM provider: {selected}");
+        selected.to_owned()
+    } else {
+        loop {
+            let input =
+                prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
+                    .to_ascii_lowercase();
+            if matches!(input.as_str(), "yandex" | "proxyapi-deepseek" | "deepseek") {
+                break input;
+            }
+            eprintln!("Unsupported provider. Type exactly yandex, proxyapi-deepseek, or deepseek; do not paste a CMD command.");
+        }
+    };
     let (endpoint, model) = match provider.as_str() {
         "yandex" => {
             let folder = prompt_line("Yandex AI Studio folder ID: ")?;
