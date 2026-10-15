@@ -330,6 +330,27 @@ fn rejects_plain_http_for_non_loopback_endpoint() {
     assert!(!error.retryable);
 }
 
+
+#[test]
+fn yandex_project_header_is_selected_explicitly_and_credentials_remain_private() {
+    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Да\"}}]}\n\ndata: [DONE]\n\n";
+    let (endpoint, received) = serve_once_capture("200 OK", body);
+    let config = OpenAiCompatibleConfig::new(endpoint, "private-credential", "model")
+        .with_auth_scheme(AuthScheme::ApiKey)
+        .with_project_header(ProjectHeader::XFolderId)
+        .with_project_id("folder123").unwrap();
+    let provider = OpenAiCompatibleLlm::new(config).unwrap();
+    provider.stream(
+        &LlmRequest { locale: "ru-RU".into(), instructions: None, user_input: "x".into() },
+        &Probe(AtomicBool::new(false)),
+        &mut GeneratedTextBuffer::default(),
+    ).unwrap();
+    let wire = received.recv_timeout(Duration::from_secs(2)).unwrap().to_ascii_lowercase();
+    assert!(wire.contains("x-folder-id: folder123"));
+    assert!(!wire.contains("openai-project:"));
+    assert!(wire.contains("authorization: api-key private-credential"));
+}
+
 #[test]
 fn descriptor_does_not_expose_secret() {
     let config = OpenAiCompatibleConfig::new("https://example.invalid", "super-secret", "model-x");
