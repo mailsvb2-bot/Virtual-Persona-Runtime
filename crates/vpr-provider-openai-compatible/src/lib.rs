@@ -182,7 +182,8 @@ impl OpenAiCompatibleLlm {
             AuthScheme::Bearer => "Bearer",
             AuthScheme::ApiKey => "Api-Key",
         };
-        let mut builder = self.client
+        let mut builder = self
+            .client
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("{prefix} {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json");
