@@ -29,6 +29,8 @@ fn voice_result() -> LabVoiceResult {
         llm_millis: 200,
         llm_first_meaningful_millis: 80,
         avatar_millis: 50,
+        tts_first_pcm_millis: None,
+        echo_first_send_millis: None,
         total_millis: 350,
         stt_usage: LabVoiceUsage {
             input_units: Some(1000),
