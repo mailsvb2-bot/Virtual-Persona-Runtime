@@ -150,9 +150,34 @@ function Probe-Llm {
 }
 function Launch-OwnerLab([string]$StateOut) {
     $env:VPR_OWNER_LAB_PROVIDER_STATE_OUT = $StateOut
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\windows-owner-lab-restart.ps1') -Rt0Evidence -Piper -PiperVoice $PiperVoice
-    if ($LASTEXITCODE -ne 0) { throw 'Owner Lab launch failed' }
-    if (-not (Test-Path -LiteralPath $StateOut)) { throw 'Exact provider-state was not published' }
+    $launcher = Join-Path $repoRoot 'scripts\windows-owner-lab-restart.ps1'
+    # The voice launcher deliberately supervises its subprocess until session exit.
+    # Run it in a separate console so the acceptance driver can collect evidence.
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '" -Rt0Evidence -Piper -PiperVoice ' + $PiperVoice
+    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WorkingDirectory $repoRoot -PassThru
+    $deadline = [DateTime]::UtcNow.AddMinutes(10)
+    $ready = $false
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($process.HasExited) {
+            throw "Owner Lab launcher exited before readiness (exit code $($process.ExitCode)); inspect its console"
+        }
+        if (Test-Path -LiteralPath $StateOut -PathType Leaf) {
+            try {
+                $status = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8787/api/status' -TimeoutSec 2
+                if ($status.session_state -in @('none','closed') -and
+                    $status.conversation_readiness -eq 'text_and_voice' -and
+                    $status.egress_enabled) {
+                    $ready = $true
+                    break
+                }
+            } catch {
+                # Server and speech worker may still be starting.
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $ready) { throw 'Owner Lab readiness or exact provider-state export did not complete' }
+    Write-Host "Verified running Owner Lab and exact provider-state: $StateOut"
 }
 function Collect-Sessions {
     param([string]$Dir,[datetime]$Since,[string]$Role,[int]$MinVoice,[int]$MinStop)
