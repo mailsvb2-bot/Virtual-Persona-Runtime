@@ -15,6 +15,7 @@ import tempfile
 import wave
 import threading
 import re
+import itertools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -184,7 +185,7 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
             self.send_header("Connection", "close")
             self.end_headers()
             try:
-                for rate, pcm in [(first_rate, first_pcm), *parts]:
+                for rate, pcm in itertools.chain(((first_rate, first_pcm),), parts):
                     if rate != first_rate or len(pcm) % 2:
                         raise RuntimeError("Piper PCM format changed during stream")
                     if pcm:
