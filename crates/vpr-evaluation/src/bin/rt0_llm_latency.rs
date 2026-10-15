@@ -100,7 +100,7 @@ fn collect_samples(
         let session: LabSessionEvidenceSnapshot =
             serde_json::from_slice(&data).map_err(|_| "invalid session evidence schema")?;
         if session.schema_version != RT0_OWNER_LAB_SESSION_EVIDENCE_SCHEMA
-            || &session.candidate_sha != candidate
+            || session.candidate_sha != candidate
         {
             return Err("stale or cross-candidate session evidence".into());
         }
