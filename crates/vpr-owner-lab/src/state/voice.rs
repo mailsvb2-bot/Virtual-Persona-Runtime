@@ -126,8 +126,6 @@ fn produce(
     });
 }
 
-
-
 impl OwnerLabEngine {
     #[must_use]
     pub fn with_stt(mut self, stt: Box<dyn SttPort>) -> Self {
