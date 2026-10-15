@@ -14,6 +14,7 @@ import sys
 import tempfile
 import wave
 import threading
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -122,6 +123,22 @@ def validate_echo_wav(data: bytes) -> bool:
         return False
 
 
+
+def piper_pcm_parts(phrase, synthesizer):
+    """Yield validated sentence PCM, without buffering the full utterance."""
+    sentences = re.findall(r"[^.!?…]+[.!?…]*", phrase)
+    for sentence in sentences:
+        if not sentence.strip():
+            continue
+        data = synthesizer(sentence.strip())
+        if not validate_echo_wav(data):
+            raise RuntimeError("Piper returned invalid WAV")
+        with wave.open(io.BytesIO(data), "rb") as source:
+            if source.getnchannels() != 1 or source.getsampwidth() != 2:
+                raise RuntimeError("Piper requires mono 16-bit PCM")
+            yield source.getframerate(), source.readframes(source.getnframes())
+
+
 def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen", health_status=None):
     if not token or len(token) < 24:
         raise ValueError("VPR_METROTRANCE_TTS_TOKEN must contain at least 24 characters")
@@ -154,6 +171,32 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
             self.end_headers()
             self.wfile.write(data)
 
+        def send_piper_pcm(self, phrase, synthesizer):
+            parts = piper_pcm_parts(phrase, synthesizer)
+            try:
+                first_rate, first_pcm = next(parts)
+            except (StopIteration, RuntimeError, wave.Error):
+                return self.send_error_code(502, "synthesis_failed")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("X-VPR-Sample-Rate", str(first_rate))
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            try:
+                for rate, pcm in [(first_rate, first_pcm), *parts]:
+                    if rate != first_rate or len(pcm) % 2:
+                        raise RuntimeError("Piper PCM format changed during stream")
+                    if pcm:
+                        self.wfile.write(("%x\\r\\n" % len(pcm)).encode("ascii"))
+                        self.wfile.write(pcm)
+                        self.wfile.write(b"\\r\\n")
+                        self.wfile.flush()
+                self.wfile.write(b"0\\r\\n\\r\\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                self.close_connection = True
+
         def do_POST(self):
             if self.path != "/v1/audio/speech":
                 return self.send_error_code(404, "not_found")
@@ -179,13 +222,16 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
                     # silently render with a different voice.
                     if payload.get("voice") not in ("local", configured):
                         return self.send_error_code(400, "preset_voice_mismatch")
-                if payload.get("response_format", "wav") != "wav":
+                stream_pcm = provider_id == "piper" and payload.get("response_format") == "pcm"
+                if not stream_pcm and payload.get("response_format", "wav") != "wav":
                     return self.send_error_code(400, "wav_required")
                 # Never queue unbounded callers behind a slow GPU/CPU inference.
                 # Busy requests fail immediately; callers may retry under runtime policy.
                 if not inference_slot.acquire(blocking=False):
                     return self.send_error_code(429, "synthesizer_busy")
                 try:
+                    if stream_pcm:
+                        return self.send_piper_pcm(phrase, synthesizer)
                     wav = synthesizer(phrase)
                 finally:
                     inference_slot.release()
