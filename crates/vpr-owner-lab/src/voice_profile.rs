@@ -5,7 +5,7 @@ use std::{env, fs, path::Path};
 pub const VOICE_PROFILE_SCHEMA: &str = "vpr-voice-profile-0.1";
 const MAX_PROFILE_BYTES: u64 = 16 * 1024;
 /// Only explicitly pinned developer/interim voices; neither qualifies as an accepted release voice.
-/// Irina: dataset rights unresolved (RHVoice provenance). Denis: CC0 per model card.
+/// `Irina`: dataset rights unresolved (`RHVoice` provenance). `Denis`: `CC0` per model card.
 /// The piper-tts engine itself requires a separate GPL license review.
 pub const PIPER_INTERIM_VOICES: [&str; 2] = ["ru_RU-irina-medium", "ru_RU-denis-medium"];
 
