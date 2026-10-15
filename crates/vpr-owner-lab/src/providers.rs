@@ -380,7 +380,9 @@ fn build_llm(
                 .with_provider_name(canonical);
             config = config.with_max_tokens(96);
             if canonical == "deepseek" {
-                config = config.with_reasoning_effort("none").with_thinking_disabled();
+                config = config
+                    .with_reasoning_effort("none")
+                    .with_thinking_disabled();
             } else if canonical == "yandex" {
                 if endpoint != "https://ai.api.cloud.yandex.net/v1/chat/completions" {
                     return Err("YANDEX_LLM_ENDPOINT_MISMATCH".into());
@@ -389,7 +391,8 @@ fn build_llm(
                 if !model.starts_with(&format!("gpt://{folder}/")) {
                     return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
                 }
-                config = config.with_auth_scheme(AuthScheme::ApiKey)
+                config = config
+                    .with_auth_scheme(AuthScheme::ApiKey)
                     .with_stream_usage(false)
                     .with_project_id(&folder)
                     .map_err(|_| "YANDEX_LLM_PROJECT_ID_INVALID")?;
