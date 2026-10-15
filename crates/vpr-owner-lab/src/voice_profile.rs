@@ -4,6 +4,10 @@ use std::{env, fs, path::Path};
 
 pub const VOICE_PROFILE_SCHEMA: &str = "vpr-voice-profile-0.1";
 const MAX_PROFILE_BYTES: u64 = 16 * 1024;
+/// Only explicitly pinned developer/interim voices; neither qualifies as an accepted release voice.
+/// Irina: dataset rights unresolved (RHVoice provenance). Denis: CC0 per model card.
+/// The piper-tts engine itself requires a separate GPL license review.
+pub const PIPER_INTERIM_VOICES: [&str; 2] = ["ru_RU-irina-medium", "ru_RU-denis-medium"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -65,6 +69,13 @@ impl VoiceProfile {
             )
         {
             return Err("UNSUPPORTED_QWEN_PRESET_VOICE".into());
+        }
+        if profile.provider == "piper"
+            && (profile.model != "piper"
+                || !PIPER_INTERIM_VOICES.contains(&profile.voice.as_str())
+                || profile.status == VoiceProfileStatus::Accepted)
+        {
+            return Err("UNSUPPORTED_PIPER_INTERIM_VOICE".into());
         }
         if profile
             .rights_ref_sha256
