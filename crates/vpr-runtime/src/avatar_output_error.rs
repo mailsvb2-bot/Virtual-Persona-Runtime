@@ -1,5 +1,5 @@
-use vpr_domain::Rt0ReasonCode;
 use crate::ProviderExecutionError;
+use vpr_domain::Rt0ReasonCode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RealtimeAvatarOutputError {
@@ -16,4 +16,3 @@ impl RealtimeAvatarOutputError {
         }
     }
 }
-
