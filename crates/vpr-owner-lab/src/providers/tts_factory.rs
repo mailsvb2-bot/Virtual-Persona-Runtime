@@ -76,7 +76,10 @@ fn build_tts_configured(
     if name == "windows-sapi" && (model != "windows-sapi" || voice != "local") {
         return Err("Windows SAPI requires model=windows-sapi and voice=local".into());
     }
-    if name == "piper" && (model != "piper" || voice != "local") {
+    if name == "piper"
+        && (model != "piper"
+            || (voice != "local" && !crate::voice_profile::PIPER_INTERIM_VOICES.contains(&voice)))
+    {
         return Err("Piper requires model=piper and voice=local".into());
     }
     let provider: Box<dyn TtsPort> = match name {
