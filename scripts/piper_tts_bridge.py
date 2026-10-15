@@ -95,12 +95,27 @@ def warmup_piper(synthesize):
     return round(elapsed / duration, 4)
 
 
+PINNED_PIPER_VOICES = ("ru_RU-irina-medium", "ru_RU-denis-medium")
+
+
+def check_selected_voice(model, selected):
+    """Fail closed when the declared speech voice differs from the verified model."""
+    if selected is None:
+        return
+    stem = os.path.basename(model)
+    if stem.endswith(".onnx"):
+        stem = stem[:-5]
+    if selected not in PINNED_PIPER_VOICES or stem != selected:
+        raise SystemExit("VPR_PIPER_VOICE does not match the pinned Piper model")
+
+
 def main():
     model = os.environ.get("VPR_PIPER_MODEL")
     token = os.environ.get("VPR_METROTRANCE_TTS_TOKEN", "")
     port = int(os.environ.get("VPR_METROTRANCE_TTS_PORT", "8897"))
     if not model:
         raise SystemExit("VPR_PIPER_MODEL is required")
+    check_selected_voice(model, os.environ.get("VPR_PIPER_VOICE"))
     synth = make_piper_synthesizer(model)
     rtf = warmup_piper(synth)
     server = ThreadingHTTPServer(
