@@ -1,4 +1,4 @@
-use vpr_integration::{RealtimeAvatarPort, TtsPort};
+use vpr_integration::TtsPort;
 use vpr_runtime::{
     ActiveTurn, OutputDeliveryHandle, RealtimeAudioStageTimings, RealtimeAvatarHandle,
     RealtimeAvatarOutputError,
