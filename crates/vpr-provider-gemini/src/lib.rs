@@ -89,7 +89,10 @@ impl GeminiLlm {
             input: &request.user_input,
             system_instruction: request.instructions.as_deref(),
             stream: true,
-            generation_config: self.config.max_output_tokens.map(|max_output_tokens| GenerationConfig { max_output_tokens }),
+            generation_config: self
+                .config
+                .max_output_tokens
+                .map(|max_output_tokens| GenerationConfig { max_output_tokens }),
         };
         self.client
             .post(&self.config.endpoint)
