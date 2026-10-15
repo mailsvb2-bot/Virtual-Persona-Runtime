@@ -28,6 +28,10 @@ class PiperFirstUseContract(unittest.TestCase):
                 "num_speakers": 1,
             }
             path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertTrue(bootstrap.config_is_valid(path, "ru_RU-denis-medium"))
+            self.assertFalse(bootstrap.config_is_valid(path, "ru_RU-irina-medium"))
+            data["dataset"] = "irina"
+            path.write_text(json.dumps(data), encoding="utf-8")
             self.assertTrue(bootstrap.config_is_valid(path))
             data["language"]["code"] = "en_US"
             path.write_text(json.dumps(data), encoding="utf-8")
@@ -103,8 +107,14 @@ class PiperFirstUseContract(unittest.TestCase):
             self.assertEqual(result, voice)
             download.assert_not_called()
 
+    def test_unknown_voice_never_reaches_network(self):
+        with tempfile.TemporaryDirectory() as root, patch.object(bootstrap, "download_checked") as download:
+            with self.assertRaises(ValueError):
+                bootstrap.provision_voice(Path(root), "ru_RU-unknown-medium")
+            download.assert_not_called()
+
     def test_pinned_voice_and_package_versions(self):
-        self.assertEqual(bootstrap.VOICE, "ru_RU-denis-medium")
+        self.assertEqual(bootstrap.VOICE, "ru_RU-irina-medium")
         self.assertEqual(bootstrap.PIPER_VERSION, "1.3.0")
         self.assertEqual(bootstrap.ECHO_LIVEKIT_VERSION, "1.1.19")
         self.assertEqual(len(bootstrap.MODEL_SHA256), 64)
