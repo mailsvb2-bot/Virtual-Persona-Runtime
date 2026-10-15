@@ -4,14 +4,31 @@ param(
     [switch]$Rt0Evidence,
     [switch]$Piper,
     [switch]$SystemVoice,
-    [string]$VoiceProfile
+    [string]$VoiceProfile,
+    # Dev/interim voices only; Irina dataset rights are not cleared for release.
+    [ValidateSet('ru_RU-irina-medium','ru_RU-denis-medium')]
+    [string]$PiperVoice = 'ru_RU-irina-medium'
 )
 
 $ErrorActionPreference = 'Stop'
 if ($Piper -and $SystemVoice) { throw 'Select exactly one local speech engine' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-if ($VoiceProfile -and ($Piper -or $SystemVoice)) {
-    throw 'choose one voice source: -VoiceProfile cannot be combined with -Piper/-SystemVoice'
+if ($Piper -and -not $VoiceProfile) {
+    if (-not $env:LOCALAPPDATA) { throw 'LocalAppData is required for interim Piper VoiceProfile' }
+    $exampleName = if ($PiperVoice -eq 'ru_RU-denis-medium') {
+        'voice-profile.interim-male.example.json'
+    } else {
+        'voice-profile.interim.example.json'
+    }
+    $profileDir = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\voice-profiles'
+    $null = New-Item -ItemType Directory -Force -Path $profileDir
+    $VoiceProfile = Join-Path $profileDir ($exampleName -replace '\.example', '')
+    Copy-Item -LiteralPath (Join-Path $repoRoot ('docs\examples\' + $exampleName)) -Destination $VoiceProfile -Force
+    Write-Host "Interim Piper VoiceProfile: $VoiceProfile (dev/interim only)"
+}
+
+if ($VoiceProfile -and $SystemVoice) {
+    throw 'choose one voice source: -VoiceProfile cannot be combined with -SystemVoice'
 }
 if ($VoiceProfile) {
     if (-not (Test-Path -LiteralPath $VoiceProfile -PathType Leaf)) {
@@ -30,6 +47,19 @@ if ($VoiceProfile) {
         $voiceConfig.profile_id -notmatch '^[a-z0-9-]{3,64}$' -or
         [int]$voiceConfig.version -lt 1) {
         throw 'INVALID_VOICE_PROFILE_IDENTITY'
+    }
+    if ($voiceConfig.provider -ceq 'piper') {
+        if ($voiceConfig.model -cne 'piper' -or
+            $voiceConfig.voice -notin @('ru_RU-irina-medium','ru_RU-denis-medium')) {
+            throw 'UNSUPPORTED_PIPER_INTERIM_VOICE'
+        }
+        if ($PSBoundParameters.ContainsKey('PiperVoice') -and $PiperVoice -cne $voiceConfig.voice) {
+            throw 'VOICE_PROFILE_ENV_CONFLICT: PiperVoice'
+        }
+        $Piper = [switch]$true
+        $PiperVoice = [string]$voiceConfig.voice
+    } elseif ($Piper) {
+        throw 'choose one voice source: -Piper requires Piper VoiceProfile'
     }
     if ($Rt0Evidence -and $voiceConfig.status -eq 'CANDIDATE') {
         throw 'CANDIDATE_VOICE_NOT_ALLOWED_FOR_RT0_EVIDENCE'
@@ -494,12 +524,13 @@ if ($Piper -or $SystemVoice) {
     }
     $preparer = Join-Path $repoRoot $(if ($SystemVoice) { 'scripts\windows_sapi_prepare.py' } else { 'scripts\windows_piper_prepare.py' })
     Write-Host $(if ($SystemVoice) { 'Preparing native Russian female voice and private Echo...' } else { 'Preparing small Russian Piper voice; only first use needs a download...' })
-    & py -3.11 $preparer --data-dir $piperRoot
+    if ($SystemVoice) { & py -3.11 $preparer --data-dir $piperRoot }
+    else { & py -3.11 $preparer --data-dir $piperRoot --voice $PiperVoice }
     if ($LASTEXITCODE -ne 0) {
         throw 'Piper setup failed before any Owner Lab session was stopped'
     }
     $piperPython = Join-Path $piperRoot 'venv\Scripts\python.exe'
-    $piperModel = Join-Path $piperRoot 'voices\ru_RU-denis-medium.onnx'
+    $piperModel = Join-Path $piperRoot ('voices\' + $PiperVoice + '.onnx')
     # Windows PowerShell 5.1 can corrupt non-ASCII paths emitted by native
     # Python stdout (e.g. C:\Users\Пользователь). Read Python's UTF-8 venv
     # configuration directly instead of guessing via terminal code pages.
@@ -583,7 +614,8 @@ try {
         $env:VPR_OWNER_LAB_TTS_ENDPOINT = "http://127.0.0.1:$privateVoicePort/v1/audio/speech"
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
         $env:VPR_OWNER_LAB_TTS_MODEL = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
-        $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
+        $env:VPR_OWNER_LAB_TTS_VOICE = if ($SystemVoice) { 'local' } else { $PiperVoice }
+        if ($Piper) { $env:VPR_PIPER_VOICE = $PiperVoice }
         $env:VPR_DID_ECHO_PYTHON = $piperPython
     }
     & $credentialsExe probe-avatar
