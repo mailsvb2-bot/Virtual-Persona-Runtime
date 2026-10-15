@@ -35,7 +35,9 @@ pub(super) fn resolve_wire(
         "VPR_OWNER_LAB_LLM_PROJECT_HEADER",
         "VPR_OWNER_LAB_LLM_STREAM_USAGE",
     ] {
-        let Some(value) = get(name).map(|s| s.trim().to_ascii_lowercase()) else { continue };
+        let Some(value) = get(name).map(|s| s.trim().to_ascii_lowercase()) else {
+            continue;
+        };
         if !matches!(canonical, "yandex" | "proxyapi-deepseek")
             || (canonical != "yandex" && name != "VPR_OWNER_LAB_LLM_STREAM_USAGE")
         {
@@ -72,7 +74,9 @@ pub(super) fn realtime_profile(canonical: &str, wire: LlmWire) -> String {
         AuthScheme::Bearer => "bearer",
     };
     match canonical {
-        "deepseek" => format!("thinking=disabled;reasoning=none;max_tokens=96;stream_usage={usage};auth={auth}"),
+        "deepseek" => format!(
+            "thinking=disabled;reasoning=none;max_tokens=96;stream_usage={usage};auth={auth}"
+        ),
         "yandex" => {
             let header = match wire.project_header {
                 ProjectHeader::OpenAiProject => "",
@@ -80,8 +84,9 @@ pub(super) fn realtime_profile(canonical: &str, wire: LlmWire) -> String {
             };
             format!("max_tokens=96;stream_usage={usage};auth={auth};project=set{header}")
         }
-        "proxyapi-deepseek" | "openai-compatible" =>
-            format!("max_tokens=96;stream_usage={usage};auth={auth}"),
+        "proxyapi-deepseek" | "openai-compatible" => {
+            format!("max_tokens=96;stream_usage={usage};auth={auth}")
+        }
         "anthropic" | "gemini" => "max_tokens=96".to_owned(),
         _ => "provider-default".to_owned(),
     }
@@ -90,12 +95,23 @@ pub(super) fn realtime_profile(canonical: &str, wire: LlmWire) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn none(_: &'static str) -> Option<String> { None }
+    fn none(_: &'static str) -> Option<String> {
+        None
+    }
 
     #[test]
     fn default_wires_preserve_existing_provider_fingerprints() {
-        assert_eq!(realtime_profile("yandex", resolve_wire("yandex", none).unwrap()), "max_tokens=96;stream_usage=off;auth=apikey;project=set");
-        assert_eq!(realtime_profile("proxyapi-deepseek", resolve_wire("proxyapi-deepseek", none).unwrap()), "max_tokens=96;stream_usage=off;auth=bearer");
+        assert_eq!(
+            realtime_profile("yandex", resolve_wire("yandex", none).unwrap()),
+            "max_tokens=96;stream_usage=off;auth=apikey;project=set"
+        );
+        assert_eq!(
+            realtime_profile(
+                "proxyapi-deepseek",
+                resolve_wire("proxyapi-deepseek", none).unwrap()
+            ),
+            "max_tokens=96;stream_usage=off;auth=bearer"
+        );
     }
 
     #[test]
@@ -105,10 +121,23 @@ mod tests {
             "VPR_OWNER_LAB_LLM_PROJECT_HEADER" => Some("x-folder-id".into()),
             "VPR_OWNER_LAB_LLM_STREAM_USAGE" => Some("on".into()),
             _ => None,
-        }).unwrap();
-        assert_eq!(realtime_profile("yandex", w), "max_tokens=96;stream_usage=on;auth=bearer;project=set;project_header=x-folder-id");
+        })
+        .unwrap();
+        assert_eq!(
+            realtime_profile("yandex", w),
+            "max_tokens=96;stream_usage=on;auth=bearer;project=set;project_header=x-folder-id"
+        );
         assert!(resolve_wire("deepseek", |_| Some("on".into())).is_err());
-        assert!(resolve_wire("yandex", |name| (name == "VPR_OWNER_LAB_LLM_AUTH_SCHEME").then(|| "basic".into())).is_err());
-        assert!(resolve_wire("proxyapi-deepseek", |name| (name == "VPR_OWNER_LAB_LLM_AUTH_SCHEME").then(|| "apikey".into())).is_err());
+        assert!(
+            resolve_wire("yandex", |name| (name == "VPR_OWNER_LAB_LLM_AUTH_SCHEME")
+                .then(|| "basic".into()))
+            .is_err()
+        );
+        assert!(
+            resolve_wire("proxyapi-deepseek", |name| (name
+                == "VPR_OWNER_LAB_LLM_AUTH_SCHEME")
+                .then(|| "apikey".into()))
+            .is_err()
+        );
     }
 }
