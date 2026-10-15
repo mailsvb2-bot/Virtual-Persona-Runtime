@@ -27,9 +27,7 @@ cargo run --locked -p vpr-evaluation --bin vpr-rt0-llm-latency -- \
 Repeat with `proxyapi-deepseek` and the **exact** ProxyAPI model ID
 recorded in that run's provider-state. Do not substitute guessed model names.
 
-The report contains no transcript, API key or audio. It reports p50 and p95
-(nearest-rank) for observed first meaningful LLM text, full LLM text, browser
-first-audio and interruption stop latency, with sample counts and errors.
+The report contains no transcript, API key or audio. It reports p50 and p95 (nearest-rank) for observed first meaningful LLM text and full LLM text. Browser audio-start and interruption-stop events currently carry **session-relative offsets**, not request-relative or STOP-command-relative latency. The report retains their offsets only as diagnostics (`browser_audio_event_offset`, `stop_event_offset`); first-audio and STOP latency metrics remain null and their verdicts remain `INSUFFICIENT_EVIDENCE` until paired start timestamps are recorded.
 
 - Text first-meaningful p95: **2,500 ms**
 - Browser first-audio p95: **3,000 ms**
@@ -38,7 +36,8 @@ first-audio and interruption stop latency, with sample counts and errors.
   five for STOP before assigning PASS/FAIL. Missing or fewer samples produce
   `INSUFFICIENT_EVIDENCE`.
 - A completed voice attempt without browser `audio_started` remains a missing
-  audio sample, **not** a success. Do not synthesize or backfill observations.
+  observation, **not** a success. Do not synthesize or backfill observations.
+- **Instrumentation gap:** add monotonic request-start and STOP-issued timestamps under the same session clock and correlate them with the browser's observed audio and stop acknowledgments before attempting p95 compliance. An absolute session offset MUST NOT be compared with a latency threshold.
 
 The tool rejects missing or mismatched provider-state, unknown LLM identity,
 cross-candidate exports, stale schemas, duplicate session sequences, and
