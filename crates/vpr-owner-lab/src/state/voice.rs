@@ -341,7 +341,7 @@ impl OwnerLabEngine {
         evidence_turn_sequence: u64,
         emit_segment: &mut dyn FnMut(LabVoiceSegment) -> Result<(), LabError>,
     ) -> Result<VoiceGeneration, LabError> {
-        use std::sync::mpsc::{sync_channel, SyncSender};
+        use std::sync::mpsc::{SyncSender, sync_channel};
 
         enum LlmEvent {
             Phrase(String),
@@ -475,7 +475,6 @@ impl OwnerLabEngine {
             }
         })
     }
-
 }
 
 impl OwnerLabEngine {
