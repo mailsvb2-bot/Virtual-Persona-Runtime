@@ -327,10 +327,13 @@ impl ActiveTurn {
         .map_err(RealtimeAvatarOutputError::Provider)?;
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
-        Ok((delivery, RealtimeAudioStageTimings {
-            first_pcm_millis,
-            first_echo_send_millis: elapsed_stage(stage_started),
-        }))
+        Ok((
+            delivery,
+            RealtimeAudioStageTimings {
+                first_pcm_millis,
+                first_echo_send_millis: elapsed_stage(stage_started),
+            },
+        ))
     }
 
     /// Couples canonical TTS generation to the private avatar's native PCM16
@@ -428,10 +431,27 @@ impl ActiveTurn {
         }
         self.acknowledge_output_sent(&delivery)
             .map_err(RealtimeAvatarOutputError::Runtime)?;
-        Ok((delivery, RealtimeAudioStageTimings {
-            first_pcm_millis: first_pcm_millis.ok_or_else(|| RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false })))?,
-            first_echo_send_millis: first_echo_send_millis.ok_or_else(|| RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(ProviderError { kind: ProviderErrorKind::InvalidResponse, retryable: false })))?,
-        }))
+        Ok((
+            delivery,
+            RealtimeAudioStageTimings {
+                first_pcm_millis: first_pcm_millis.ok_or_else(|| {
+                    RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
+                        ProviderError {
+                            kind: ProviderErrorKind::InvalidResponse,
+                            retryable: false,
+                        },
+                    ))
+                })?,
+                first_echo_send_millis: first_echo_send_millis.ok_or_else(|| {
+                    RealtimeAvatarOutputError::Provider(ProviderExecutionError::from(
+                        ProviderError {
+                            kind: ProviderErrorKind::InvalidResponse,
+                            retryable: false,
+                        },
+                    ))
+                })?,
+            },
+        ))
     }
 
     /// Sends an HTTPS audio URL to an existing avatar using this turn's current authorization.
