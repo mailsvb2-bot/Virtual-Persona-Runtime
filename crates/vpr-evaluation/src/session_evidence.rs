@@ -147,6 +147,8 @@ pub struct LabVoiceAttemptEvidence {
     pub llm_millis: Option<u64>,
     pub llm_first_meaningful_millis: Option<u64>,
     #[serde(default)]
+    pub voice_first_text_millis: Option<u64>,
+    #[serde(default)]
     pub tts_first_pcm_millis: Option<u64>,
     #[serde(default)]
     pub echo_first_send_millis: Option<u64>,
@@ -202,6 +204,8 @@ pub struct LabSessionEvidenceAggregate {
     pub stt_latency: Option<LatencyDistributionMillis>,
     pub llm_latency: Option<LatencyDistributionMillis>,
     pub llm_first_meaningful_response: Option<LatencyDistributionMillis>,
+    #[serde(default)]
+    pub voice_first_text_response: Option<LatencyDistributionMillis>,
     pub avatar_submit_latency: Option<LatencyDistributionMillis>,
     pub server_total_latency: Option<LatencyDistributionMillis>,
     pub first_meaningful_audio: Option<LatencyDistributionMillis>,
@@ -274,6 +278,7 @@ struct SessionAggregateAccumulator {
     stt: Vec<u64>,
     llm: Vec<u64>,
     llm_first_meaningful: Vec<u64>,
+    voice_first_text: Vec<u64>,
     avatar: Vec<u64>,
     server_total: Vec<u64>,
     audio: Vec<u64>,
@@ -437,6 +442,7 @@ impl SessionAggregateAccumulator {
             || attempt.stt_millis.is_some()
             || attempt.llm_millis.is_some()
             || attempt.llm_first_meaningful_millis.is_some()
+            || attempt.voice_first_text_millis.is_some()
             || attempt.avatar_millis.is_some()
             || attempt.server_total_millis.is_some()
             || attempt.stt_usage.is_some()
@@ -483,6 +489,7 @@ impl SessionAggregateAccumulator {
             || output == 0
             || llm_first_meaningful_ms > llm_ms
             || llm_first_meaningful_ms > total_ms
+            || attempt.voice_first_text_millis.is_some_and(|ms| ms > total_ms || ms < llm_first_meaningful_ms)
             || attempt.failure_code.is_some()
         {
             return Err(LabSessionAggregateError::InvalidSnapshot);
@@ -494,6 +501,7 @@ impl SessionAggregateAccumulator {
         self.stt.push(stt_ms);
         self.llm.push(llm_ms);
         self.llm_first_meaningful.push(llm_first_meaningful_ms);
+        self.voice_first_text.extend(attempt.voice_first_text_millis);
         self.avatar.push(avatar_ms);
         self.server_total.push(total_ms);
         self.add_usage_costs(stt_usage, llm_usage)
@@ -549,6 +557,7 @@ impl SessionAggregateAccumulator {
             stt_latency: distribution(self.stt)?,
             llm_latency: distribution(self.llm)?,
             llm_first_meaningful_response: distribution(self.llm_first_meaningful)?,
+            voice_first_text_response: distribution(self.voice_first_text)?,
             avatar_submit_latency: distribution(self.avatar)?,
             server_total_latency: distribution(self.server_total)?,
             first_meaningful_audio: distribution(self.audio)?,
