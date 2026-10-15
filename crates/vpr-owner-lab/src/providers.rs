@@ -19,7 +19,7 @@ use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
-use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
+use vpr_provider_openai_compatible::{AuthScheme, OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
@@ -378,11 +378,27 @@ fn build_llm(
         if let Some(canonical) = openai_compatible_provider_name(name) {
             let mut config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
                 .with_provider_name(canonical);
+            config = config.with_max_tokens(96);
             if canonical == "deepseek" {
-                config = config
-                    .with_reasoning_effort("none")
-                    .with_thinking_disabled()
-                    .with_max_tokens(96);
+                config = config.with_reasoning_effort("none").with_thinking_disabled();
+            } else if canonical == "yandex" {
+                if endpoint != "https://ai.api.cloud.yandex.net/v1/chat/completions" {
+                    return Err("YANDEX_LLM_ENDPOINT_MISMATCH".into());
+                }
+                let folder = required_value("VPR_OWNER_LAB_LLM_PROJECT_ID", None)?;
+                if !model.starts_with(&format!("gpt://{folder}/")) {
+                    return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
+                }
+                config = config.with_auth_scheme(AuthScheme::ApiKey)
+                    .with_stream_usage(false)
+                    .with_project_id(&folder)
+                    .map_err(|_| "YANDEX_LLM_PROJECT_ID_INVALID")?;
+            } else if canonical == "proxyapi-deepseek" {
+                if endpoint != "https://api.proxyapi.ru/v1/chat/completions" {
+                    return Err("PROXYAPI_LLM_ENDPOINT_MISMATCH".into());
+                }
+                // No DeepSeek-specific controls without a verified ProxyAPI wire contract.
+                config = config.with_stream_usage(false);
             }
             (
                 canonical,
@@ -414,10 +430,12 @@ fn build_llm(
                 _ => return Err(format!("unsupported LLM provider: {name}")),
             }
         };
-    let realtime_profile = if canonical == "deepseek" {
-        "thinking=disabled;reasoning=none;max_tokens=96"
-    } else {
-        "provider-default"
+    let realtime_profile = match canonical {
+        "deepseek" => "thinking=disabled;reasoning=none;max_tokens=96;stream_usage=on;auth=bearer",
+        "yandex" => "max_tokens=96;stream_usage=off;auth=apikey;project=set",
+        "proxyapi-deepseek" => "max_tokens=96;stream_usage=off;auth=bearer",
+        "openai-compatible" => "max_tokens=96;stream_usage=on;auth=bearer",
+        _ => "provider-default",
     };
     Ok((
         provider,
@@ -434,6 +452,8 @@ fn openai_compatible_provider_name(name: &str) -> Option<&'static str> {
     match name {
         "openai" | "openai-compatible" => Some("openai-compatible"),
         "deepseek" => Some("deepseek"),
+        "yandex" => Some("yandex"),
+        "proxyapi-deepseek" => Some("proxyapi-deepseek"),
         _ => None,
     }
 }
