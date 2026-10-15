@@ -216,8 +216,8 @@ function State-Llm([string]$StatePath) {
 }
 function Set-Llm([string]$Llm) {
     if ($SkipSetLlm) { return }
-    Write-Host "Configure $Llm with set-llm in Windows Credential Manager (secret input hidden)."
-    if ((Invoke-Cargo -Package 'vpr-owner-lab' -Bin 'vpr-provider-credentials' -Arguments @('set-llm')) -ne 0) { throw 'set-llm failed' }
+    Write-Host "Configure $Llm. The provider is preselected; enter only the requested folder/model and hidden API key."
+    if ((Invoke-Cargo -Package 'vpr-owner-lab' -Bin 'vpr-provider-credentials' -Arguments @('set-llm', $Llm)) -ne 0) { throw 'set-llm failed' }
 }
 if ($Stage -eq 'Compare') {
     $results = [ordered]@{}
