@@ -45,6 +45,26 @@ The model and environment are cached outside Git. The second launch should
 not download them again. The Windows PowerShell console remains open while
 the lab is running because it supervises the local TTS worker.
 
+## Startup latency and readiness (RT0)
+
+The Piper bridge loads the installed model and synthesizes a fixed Russian warmup
+sentence **before** binding its loopback listener. An invalid WAV or warmup
+failure prevents the service from starting; readiness is never fabricated.
+
+After successful warmup, `GET http://127.0.0.1:8897/health` returns only
+`{"ready": true, "rtf": <measured value>}`. RTF is elapsed synthesis time
+divided by generated audio duration, not an end-to-end latency estimate.
+The endpoint contains no bearer token, input transcript, voice audio or
+model path. It is loopback-only. The existing Windows launcher independently
+verifies listener ownership and the authenticated speech endpoint.
+
+This warmup reduces cold-start exposure but does **not** demonstrate the
+QualityContract first-audio p95: collect real browser evidence before asserting
+a pass. The original dev-only Denis download remains separate from any final
+rights-cleared female voice choice. The requested Irina dataset's licensing is
+unverified and it must **not** be promoted into a commercial/release preset
+without an independent rights review.
+
 ## Boundaries and license
 
 The bridge is **only a synthesis provider**. Browser clients cannot choose
