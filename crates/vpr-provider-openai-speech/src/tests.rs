@@ -137,7 +137,11 @@ fn piper_streams_raw_pcm_into_canonical_sink() {
     )
     .unwrap();
     let error = provider
-        .synthesize(&request(), &Probe(AtomicBool::new(false)), &mut GeneratedAudioBuffer::default())
+        .synthesize(
+            &request(),
+            &Probe(AtomicBool::new(false)),
+            &mut GeneratedAudioBuffer::default(),
+        )
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     let sent = captured.recv().unwrap();
@@ -156,15 +160,17 @@ fn piper_pcm_stream_delivers_audio_and_measured_duration() {
     });
     let config = OpenAiSpeechConfig::new(
         format!("http://{address}/v1/audio/speech"),
-        "secret", "piper", "local",
+        "secret",
+        "piper",
+        "local",
     )
     .with_provider_name("piper")
     .with_stream_pcm(true);
     let provider = OpenAiSpeechTts::new(config).unwrap();
     let mut sink = GeneratedAudioBuffer::default();
-    let usage = provider.synthesize(
-        &request(), &Probe(AtomicBool::new(false)), &mut sink,
-    ).unwrap();
+    let usage = provider
+        .synthesize(&request(), &Probe(AtomicBool::new(false)), &mut sink)
+        .unwrap();
     assert_eq!(sink.pcm(), vec![0_u8; 320]);
     assert_eq!(sink.sample_rate_hz(), Some(16000));
     assert_eq!(usage.output_units, Some(10));
@@ -174,10 +180,15 @@ fn piper_pcm_stream_delivers_audio_and_measured_duration() {
 #[test]
 fn external_provider_cannot_enable_private_pcm_wire() {
     let config = OpenAiSpeechConfig::new(
-        "https://example.test/v1/audio/speech", "secret", "model", "voice",
+        "https://example.test/v1/audio/speech",
+        "secret",
+        "model",
+        "voice",
     )
     .with_stream_pcm(true);
-    let err = OpenAiSpeechTts::new(config).err().expect("external PCM mode must fail");
+    let err = OpenAiSpeechTts::new(config)
+        .err()
+        .expect("external PCM mode must fail");
     assert_eq!(err.kind, ProviderErrorKind::InvalidResponse);
 }
 
