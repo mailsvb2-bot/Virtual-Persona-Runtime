@@ -139,9 +139,9 @@ jobs:
       - name: Windows launcher listener ownership regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_launcher.ps1
-      - name: RT0 owner closure script static safety contract
+      - name: RT0 owner closure script safety under Windows PowerShell 5.1
         shell: pwsh
-        run: pwsh -NoProfile -File tests/e2e/test_rt0_owner_closure.ps1
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/e2e/test_rt0_owner_closure.ps1
       - name: Windows full Owner Lab canary and rollback-safe preflight regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary.ps1
