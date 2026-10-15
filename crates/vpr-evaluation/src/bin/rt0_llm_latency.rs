@@ -243,10 +243,7 @@ mod tests {
             "INSUFFICIENT_EVIDENCE"
         );
         assert_eq!(metrics.llm_first_meaningful.unwrap().n, 20);
-        assert_eq!(
-            verdict(metrics.first_audio.as_ref(), 20, 3000),
-            "PASS"
-        );
+        assert_eq!(verdict(metrics.first_audio.as_ref(), 20, 3000), "PASS");
         assert_eq!(verdict(metrics.stop.as_ref(), 5, 500), "PASS");
     }
 
