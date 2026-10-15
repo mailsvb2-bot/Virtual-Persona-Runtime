@@ -526,3 +526,33 @@ fn expanded_connection_evidence_uses_new_wire_versions() {
         "rt0-owner-lab-session-aggregate-binding-0.8"
     );
 }
+
+#[test]
+fn first_text_latency_is_measured_and_invalid_outliers_fail_closed() {
+    let report = aggregate_owner_lab_session_evidence(&[snapshot(71, 1, 100)]).unwrap();
+    let first = report.voice_first_text_response.unwrap();
+    assert_eq!((first.p50, first.p95), (150, 150));
+
+    let mut late = snapshot(72, 1, 100);
+    late.voice_attempts[0].voice_first_text_millis = Some(10_000);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[late]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+
+    let mut before_generation = snapshot(73, 1, 100);
+    before_generation.voice_attempts[0].voice_first_text_millis = Some(1);
+    assert_eq!(
+        aggregate_owner_lab_session_evidence(&[before_generation]),
+        Err(LabSessionAggregateError::InvalidSnapshot)
+    );
+
+    let mut old_snapshot = snapshot(74, 1, 100);
+    old_snapshot.voice_attempts[0].voice_first_text_millis = None;
+    assert!(
+        aggregate_owner_lab_session_evidence(&[old_snapshot])
+            .unwrap()
+            .voice_first_text_response
+            .is_none()
+    );
+}
