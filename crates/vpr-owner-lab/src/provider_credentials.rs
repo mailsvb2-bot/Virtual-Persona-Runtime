@@ -135,6 +135,38 @@ impl ProviderCredentialProfile {
         self.validate()
     }
 
+    /// Atomically replace the active LLM route while retaining avatar, STT, and TTS.
+    ///
+    /// # Errors
+    /// Rejects incomplete routes, unsupported identities, or malformed combined profiles.
+    pub fn replace_llm(
+        &mut self,
+        provider: &str,
+        endpoint: &str,
+        model: &str,
+        api_key: String,
+    ) -> Result<(), String> {
+        let valid_endpoint = match provider {
+            "yandex" => endpoint == "https://ai.api.cloud.yandex.net/v1/chat/completions"
+                && model.starts_with("gpt://")
+                && model.split('/').nth(2).is_some_and(|id| !id.is_empty()),
+            "proxyapi-deepseek" => endpoint == "https://api.proxyapi.ru/v1/chat/completions",
+            "deepseek" => endpoint == "https://api.deepseek.com/chat/completions",
+            _ => false,
+        };
+        if !valid_endpoint || model.trim().is_empty() || api_key.trim().is_empty() {
+            return Err("unsupported or incomplete secure LLM route".into());
+        }
+        let mut updated = self.clone();
+        updated.llm_provider = provider.into();
+        updated.llm_endpoint = endpoint.into();
+        updated.llm_model = model.into();
+        updated.llm_api_key = api_key;
+        updated.validate()?;
+        *self = updated;
+        Ok(())
+    }
+
     /// Replaces only D-ID credentials while preserving STT and LLM credentials.
     pub fn replace_did_credentials(&mut self, did_api_key: &str, did_agent_id: &str) {
         self.did_api_key = normalize_did_api_key(did_api_key);
