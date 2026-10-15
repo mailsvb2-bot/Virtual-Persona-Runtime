@@ -146,6 +146,10 @@ pub struct LabVoiceAttemptEvidence {
     pub stt_millis: Option<u64>,
     pub llm_millis: Option<u64>,
     pub llm_first_meaningful_millis: Option<u64>,
+    #[serde(default)]
+    pub tts_first_pcm_millis: Option<u64>,
+    #[serde(default)]
+    pub echo_first_send_millis: Option<u64>,
     pub avatar_millis: Option<u64>,
     pub server_total_millis: Option<u64>,
     pub stt_usage: Option<SessionUsageEvidence>,
