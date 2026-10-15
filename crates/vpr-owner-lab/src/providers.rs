@@ -2,6 +2,7 @@ use std::env;
 
 mod avatar_factory;
 mod avatar_selection;
+mod llm_wire;
 mod provider_state;
 mod tts_factory;
 use avatar_factory::build_avatar;
@@ -19,7 +20,7 @@ use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
 use vpr_provider_gemini::{GeminiConfig, GeminiLlm};
-use vpr_provider_openai_compatible::{AuthScheme, OpenAiCompatibleConfig, OpenAiCompatibleLlm};
+use vpr_provider_openai_compatible::{OpenAiCompatibleConfig, OpenAiCompatibleLlm};
 use vpr_provider_openai_transcription::{OpenAiTranscriptionConfig, OpenAiTranscriptionStt};
 
 const PROVIDER_CREDENTIAL_SOURCE_ENV: &str = "VPR_PROVIDER_CREDENTIAL_SOURCE";
@@ -374,6 +375,10 @@ fn build_llm(
         "VPR_OWNER_LAB_LLM_MODEL",
         profile.map(|profile| profile.llm_model.as_str()),
     )?;
+    let wire = llm_wire::resolve_wire(
+        openai_compatible_provider_name(name).unwrap_or(name),
+        optional_env,
+    )?;
     let (canonical, provider): (&str, Box<dyn LlmPort>) =
         if let Some(canonical) = openai_compatible_provider_name(name) {
             let mut config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
@@ -395,9 +400,7 @@ fn build_llm(
                 if !model.starts_with(&format!("gpt://{folder}/")) {
                     return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
                 }
-                config = config
-                    .with_auth_scheme(AuthScheme::ApiKey)
-                    .with_stream_usage(false)
+                config = llm_wire::apply_wire(config, wire)
                     .with_project_id(&folder)
                     .map_err(|_| "YANDEX_LLM_PROJECT_ID_INVALID")?;
             } else if canonical == "proxyapi-deepseek" {
@@ -405,7 +408,7 @@ fn build_llm(
                     return Err("PROXYAPI_LLM_ENDPOINT_MISMATCH".into());
                 }
                 // No DeepSeek-specific controls without a verified ProxyAPI wire contract.
-                config = config.with_stream_usage(false);
+                config = llm_wire::apply_wire(config, wire);
             }
             (
                 canonical,
@@ -437,21 +440,14 @@ fn build_llm(
                 _ => return Err(format!("unsupported LLM provider: {name}")),
             }
         };
-    let realtime_profile = match canonical {
-        "deepseek" => "thinking=disabled;reasoning=none;max_tokens=96;stream_usage=on;auth=bearer",
-        "yandex" => "max_tokens=96;stream_usage=off;auth=apikey;project=set",
-        "proxyapi-deepseek" => "max_tokens=96;stream_usage=off;auth=bearer",
-        "openai-compatible" => "max_tokens=96;stream_usage=on;auth=bearer",
-        "anthropic" | "gemini" => "max_tokens=96",
-        _ => "provider-default",
-    };
+    let realtime_profile = llm_wire::realtime_profile(canonical, wire);
     Ok((
         provider,
         descriptor(
             "llm",
             canonical,
             &model,
-            &[&endpoint, &model, realtime_profile],
+            &[&endpoint, &model, &realtime_profile],
         ),
     ))
 }
