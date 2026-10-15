@@ -1,4 +1,5 @@
 mod authority;
+mod audio_stage_timing;
 mod avatar_runtime;
 mod cancellation;
 mod clock;
@@ -13,8 +14,9 @@ mod session;
 mod turn;
 mod turn_state;
 
+pub use audio_stage_timing::RealtimeAudioStageTimings;
 pub use avatar_runtime::{
-    RealtimeAudioStageTimings, RealtimeAvatarHandle, RealtimeAvatarOutputError,
+    RealtimeAvatarHandle, RealtimeAvatarOutputError,
     RealtimeAvatarStopHandle,
 };
 pub use delivery::{OutputDeliveryError, OutputDeliveryHandle};
