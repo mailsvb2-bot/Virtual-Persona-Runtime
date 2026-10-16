@@ -125,13 +125,14 @@ fn set_llm_profile(requested_provider: Option<&str>) -> Result<(), Box<dyn Error
         selected.to_owned()
     } else {
         loop {
-            let input =
-                prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
-                    .to_ascii_lowercase();
+            let input = prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
+                .to_ascii_lowercase();
             if matches!(input.as_str(), "yandex" | "proxyapi-deepseek" | "deepseek") {
                 break input;
             }
-            eprintln!("Unsupported provider. Type exactly yandex, proxyapi-deepseek, or deepseek; do not paste a CMD command.");
+            eprintln!(
+                "Unsupported provider. Type exactly yandex, proxyapi-deepseek, or deepseek; do not paste a CMD command."
+            );
         }
     };
     let (endpoint, model) = match provider.as_str() {
