@@ -101,6 +101,7 @@ pub(crate) fn evaluate_privacy(
 
 pub(crate) fn evaluate_human(
     evidence: &HumanEvaluationEvidence,
+    interim_voice: bool,
     failures: &mut Vec<Rt0ExitFailureCode>,
 ) {
     if evidence.origin != EvidenceOrigin::Real {
@@ -113,8 +114,8 @@ pub(crate) fn evaluate_human(
         failures.push(Rt0ExitFailureCode::VisitorDistinctNonOwnerHumanNotVerified);
     }
     if evidence.reviewer_count == 0
-        || evidence.dimensions.voice_similarity != RecordStatus::Recorded
-        || evidence.dimensions.voice_naturalness != RecordStatus::Recorded
+        || !voice_review_valid(evidence.dimensions.voice_similarity, interim_voice)
+        || !voice_review_valid(evidence.dimensions.voice_naturalness, interim_voice)
         || evidence.dimensions.appearance_plausibility != RecordStatus::Recorded
         || evidence.dimensions.persona_similarity != RecordStatus::Recorded
         || evidence.dimensions.conversation_naturalness != RecordStatus::Recorded
@@ -124,4 +125,9 @@ pub(crate) fn evaluate_human(
     if evidence.usable_for_continuation != CheckStatus::Passed {
         failures.push(Rt0ExitFailureCode::HumanEvaluationNotUsable);
     }
+}
+
+fn voice_review_valid(status: RecordStatus, interim_voice: bool) -> bool {
+    status == RecordStatus::Recorded
+        || interim_voice && status == RecordStatus::DeferredInterimVoice
 }

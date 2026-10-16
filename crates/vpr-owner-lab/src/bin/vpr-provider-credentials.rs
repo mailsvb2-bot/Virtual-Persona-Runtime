@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use vpr_integration::ProviderErrorKind;
 #[cfg(windows)]
 use vpr_owner_lab::{
-    ProviderCredentialProfile, delete_provider_profile, load_provider_profile,
+    ProviderCredentialProfile, StoredTtsCredential, delete_provider_profile, load_provider_profile,
     save_provider_profile,
 };
 #[cfg(windows)]
@@ -41,6 +41,8 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     match command.as_str() {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
+        "set-tts" => set_tts_profile(),
+        "set-llm" => set_llm_profile(env::args().nth(2).as_deref()),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
         "import-env" => import_env_profile(),
@@ -49,7 +51,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "probe-avatar" => probe_avatar(),
         "clear" => clear(),
         _ => Err(
-            "usage: vpr-provider-credentials <set|set-did|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
+            "usage: vpr-provider-credentials <set|set-did|set-tts|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
         ),
     }
@@ -84,6 +86,85 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     probe_selected_avatar(&profile)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR profile is missing; configure avatar/STT/LLM first")?;
+    println!("Configure the selected voice route. Credentials stay in Windows Credential Manager.");
+    let stored = StoredTtsCredential {
+        provider: prompt_line(
+            "TTS provider (metrotrance-qwen-preset/piper/windows-sapi/openai-speech/elevenlabs): ",
+        )?
+        .to_ascii_lowercase(),
+        endpoint: prompt_line("TTS endpoint: ")?,
+        api_key: prompt_secret("TTS API key (hidden): ")?,
+        model: prompt_line("TTS model: ")?,
+        voice: prompt_line("TTS voice: ")?,
+    };
+    profile.set_tts(stored)?;
+    save_provider_profile(&profile)?;
+    println!("TTS credential route saved securely.");
+    print_safe_profile(&profile);
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_llm_profile(requested_provider: Option<&str>) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let mut profile = load_provider_profile()?
+        .ok_or("secure VPR profile is missing; configure avatar/STT first")?;
+    println!("Select the realtime LLM; the key will remain in Windows Credential Manager.");
+    let provider = if let Some(selected) = requested_provider {
+        if !matches!(selected, "yandex" | "proxyapi-deepseek" | "deepseek") {
+            return Err("unsupported LLM provider argument".into());
+        }
+        println!("Selected LLM provider: {selected}");
+        selected.to_owned()
+    } else {
+        loop {
+            let input = prompt_line("LLM provider (yandex/proxyapi-deepseek/deepseek): ")?
+                .to_ascii_lowercase();
+            if matches!(input.as_str(), "yandex" | "proxyapi-deepseek" | "deepseek") {
+                break input;
+            }
+            eprintln!(
+                "Unsupported provider. Type exactly yandex, proxyapi-deepseek, or deepseek; do not paste a CMD command."
+            );
+        }
+    };
+    let (endpoint, model) = match provider.as_str() {
+        "yandex" => {
+            let folder = prompt_line("Yandex AI Studio folder ID: ")?;
+            if folder.is_empty()
+                || folder.len() > 64
+                || !folder
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+            {
+                return Err("invalid Yandex AI Studio folder ID".into());
+            }
+            (
+                "https://ai.api.cloud.yandex.net/v1/chat/completions".to_owned(),
+                format!("gpt://{folder}/yandexgpt-lite/latest"),
+            )
+        }
+        "proxyapi-deepseek" => (
+            "https://api.proxyapi.ru/v1/chat/completions".to_owned(),
+            prompt_line("ProxyAPI DeepSeek exact model ID: ")?,
+        ),
+        "deepseek" => (
+            "https://api.deepseek.com/chat/completions".to_owned(),
+            prompt_line("DeepSeek exact model ID: ")?,
+        ),
+        _ => return Err("unsupported LLM provider".into()),
+    };
+    let key = prompt_secret("LLM API key (hidden): ")?;
+    profile.replace_llm(&provider, &endpoint, &model, key)?;
+    save_provider_profile(&profile)?;
+    println!("LLM route saved securely. No token was printed.");
     print_safe_profile(&profile);
     Ok(())
 }
@@ -452,6 +533,14 @@ fn print_safe_profile(profile: &ProviderCredentialProfile) {
         "  LLM: {} {} ({})",
         profile.llm_provider, profile.llm_model, profile.llm_endpoint
     );
+    if let Some(tts) = &profile.tts {
+        println!(
+            "  TTS: {} {} voice={} · key: present",
+            tts.provider, tts.model, tts.voice
+        );
+    } else {
+        println!("  TTS: not configured · key: absent");
+    }
     println!("  API keys: stored; values are never printed");
 }
 

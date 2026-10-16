@@ -6,7 +6,7 @@ use vpr_evaluation::{
 
 fn provider_state() -> Vec<u8> {
     serde_json::to_vec(&json!({
-        "schema_version":"rt0-provider-state-0.1",
+        "schema_version":vpr_evaluation::RT0_PROVIDER_STATE_SCHEMA,
         "providers":[
             {
                 "role":"stt",

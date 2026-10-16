@@ -158,12 +158,18 @@ mod tests {
                     provider: "deepgram".into(),
                     model_or_representation: "nova-3".into(),
                     configuration_fingerprint_sha256: "a".repeat(64),
+                    voice_profile_status: None,
+                    profile_id: None,
+                    version: None,
                 },
                 ProviderStateBinding {
                     role: ProviderRole::Llm,
                     provider: "deepseek".into(),
                     model_or_representation: "deepseek-flash".into(),
                     configuration_fingerprint_sha256: "b".repeat(64),
+                    voice_profile_status: None,
+                    profile_id: None,
+                    version: None,
                 },
             ],
         };

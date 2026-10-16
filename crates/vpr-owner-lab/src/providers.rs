@@ -2,6 +2,7 @@ use std::env;
 
 mod avatar_factory;
 mod avatar_selection;
+mod llm_wire;
 mod provider_state;
 mod tts_factory;
 use avatar_factory::build_avatar;
@@ -14,6 +15,7 @@ use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 use crate::provider_credentials::ProviderCredentialProfile;
 #[cfg(windows)]
 use crate::provider_credentials::load_provider_profile;
+use crate::voice_profile::VoiceProfile;
 use vpr_integration::{LlmPort, RealtimeAvatarPort, SttPort, TtsPort};
 use vpr_provider_anthropic::{AnthropicConfig, AnthropicLlm};
 use vpr_provider_deepgram_stt::{DeepgramStt, DeepgramSttConfig};
@@ -41,6 +43,9 @@ pub struct ProviderBundle {
     pub avatar_descriptor: ProviderDescriptor,
     pub stt_descriptor: Option<ProviderDescriptor>,
     pub llm_descriptor: Option<ProviderDescriptor>,
+    pub tts_descriptor: Option<ProviderDescriptor>,
+    pub tts_fallback_descriptor: Option<ProviderDescriptor>,
+    pub voice_profile: Option<VoiceProfile>,
 }
 
 impl ProviderBundle {
@@ -66,15 +71,10 @@ impl ProviderBundle {
         allow_secure_store: bool,
     ) -> Result<Self, String> {
         #[cfg(windows)]
-        let profile = if environment_provider_config_complete(require_voice) || !allow_secure_store
-        {
-            None
-        } else {
-            load_provider_profile()?
-        };
+        let profile = resolve_provider_credential_profile(require_voice, allow_secure_store)?;
         #[cfg(not(windows))]
         let profile: Option<ProviderCredentialProfile> = {
-            let _ = allow_secure_store;
+            let _ = (require_voice, allow_secure_store);
             None
         };
         let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
@@ -107,36 +107,165 @@ impl ProviderBundle {
                 return Err("voice mode requires both STT and LLM provider configuration".into());
             }
         };
-        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER");
+        let voice_profile = VoiceProfile::from_env()?;
+        validate_voice_profile_configuration(voice_profile.as_ref(), profile.as_ref())?;
+        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
+            .ok()
+            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
+            profile
+                .as_ref()?
+                .tts
+                .as_ref()
+                .map(|tts| tts.provider.to_ascii_lowercase())
+        });
+        if voice_profile.is_some() && tts_name.is_none() {
+            return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
+        }
+        if strict {
+            validate_strict_voice_selection(
+                tts_name.as_deref(),
+                voice_profile.as_ref(),
+                optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
+            )?;
+        }
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
         }
-        let tts = tts_name.as_deref().map(build_tts).transpose()?;
-        let tts_fallback_name = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
-        if tts_fallback_name.is_some() && tts_name.is_none() {
-            return Err("TTS fallback requires a primary canonical TTS provider".into());
-        }
-        if tts_fallback_name == tts_name && tts_name.is_some() {
-            return Err("TTS fallback must use a distinct provider identifier".into());
-        }
-        let tts_fallback = tts_fallback_name
+        let tts = tts_name
             .as_deref()
-            .map(build_tts_fallback)
+            .map(|name| {
+                build_tts(
+                    name,
+                    profile.as_ref().and_then(|profile| profile.tts.as_ref()),
+                )
+            })
             .transpose()?;
+        let (tts_fallback_name, tts_fallback) = configure_tts_fallback(tts_name.as_deref())?;
+        let (tts, tts_descriptor) = match tts {
+            Some((port, mut descriptor)) => {
+                if let Some(voice) = &voice_profile {
+                    descriptor = bind_tts_descriptor(descriptor, voice)?;
+                }
+                (Some(port), Some(descriptor))
+            }
+            None => (None, None),
+        };
+        let (tts_fallback, tts_fallback_descriptor) = match tts_fallback {
+            Some((port, descriptor)) => (Some(port), Some(descriptor)),
+            None => (None, None),
+        };
         Ok(Self {
             avatar,
             stt,
             llm,
-            tts: tts.map(|(port, _)| port),
+            tts,
             tts_name,
-            tts_fallback: tts_fallback.map(|(port, _)| port),
+            tts_fallback,
             tts_fallback_name,
             avatar_descriptor,
             stt_descriptor,
             llm_descriptor,
+            tts_descriptor,
+            tts_fallback_descriptor,
+            voice_profile,
         })
     }
 }
+#[cfg(windows)]
+fn resolve_provider_credential_profile(
+    require_voice: bool,
+    allow_secure_store: bool,
+) -> Result<Option<ProviderCredentialProfile>, String> {
+    if !allow_secure_store
+        || (environment_provider_config_complete(require_voice)
+            && optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").is_some())
+    {
+        Ok(None)
+    } else {
+        load_provider_profile()
+    }
+}
+
+type ConfiguredTts = (Box<dyn TtsPort>, ProviderDescriptor);
+type TtsFallbackConfiguration = (Option<String>, Option<ConfiguredTts>);
+
+fn configure_tts_fallback(primary: Option<&str>) -> Result<TtsFallbackConfiguration, String> {
+    let fallback = optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER");
+    if fallback.is_some() && primary.is_none() {
+        return Err("TTS fallback requires a primary canonical TTS provider".into());
+    }
+    if fallback.as_deref() == primary && fallback.is_some() {
+        return Err("TTS fallback must use a distinct provider identifier".into());
+    }
+    let configured = fallback.as_deref().map(build_tts_fallback).transpose()?;
+    Ok((fallback, configured))
+}
+
+fn validate_voice_profile_configuration(
+    voice_profile: Option<&VoiceProfile>,
+    credentials: Option<&ProviderCredentialProfile>,
+) -> Result<(), String> {
+    let Some(voice) = voice_profile else {
+        return Ok(());
+    };
+    for (name, expected) in [
+        ("VPR_OWNER_LAB_TTS_PROVIDER", voice.provider.as_str()),
+        ("VPR_OWNER_LAB_TTS_MODEL", voice.model.as_str()),
+        ("VPR_OWNER_LAB_TTS_VOICE", voice.voice.as_str()),
+    ] {
+        let effective = env::var(name).ok().or_else(|| {
+            let tts = credentials?.tts.as_ref()?;
+            match name {
+                "VPR_OWNER_LAB_TTS_PROVIDER" => Some(tts.provider.clone()),
+                "VPR_OWNER_LAB_TTS_MODEL" => Some(tts.model.clone()),
+                "VPR_OWNER_LAB_TTS_VOICE" => Some(tts.voice.clone()),
+                _ => None,
+            }
+        });
+        if effective.as_deref() != Some(expected) {
+            return Err(format!("VOICE_PROFILE_ENV_CONFLICT: {name}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_strict_voice_selection(
+    primary_tts: Option<&str>,
+    profile: Option<&VoiceProfile>,
+    fallback_configured: bool,
+) -> Result<(), String> {
+    if fallback_configured {
+        return Err("RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN".into());
+    }
+    if primary_tts.is_some() && profile.is_none() {
+        return Err("RT0_EVIDENCE_VOICE_PROFILE_REQUIRED".into());
+    }
+    if let Some(profile) = profile {
+        profile.validate_strict()?;
+    }
+    Ok(())
+}
+
+/// Binds exact nonsecret voice identity to the TTS configuration fingerprint.
+/// Any provider, model, speaker, status, rights digest or version change must
+/// invalidate all earlier RT0 evidence.
+fn bind_tts_descriptor(
+    mut descriptor: ProviderDescriptor,
+    profile: &VoiceProfile,
+) -> Result<ProviderDescriptor, String> {
+    descriptor.model_or_representation = format!(
+        "{}#{}@{}:v{}",
+        profile.model, profile.voice, profile.profile_id, profile.version,
+    );
+    let bytes = serde_json::to_vec(profile).map_err(|_| "INVALID_VOICE_PROFILE")?;
+    let mut hasher = Sha256::new();
+    hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
+    hasher.update(&bytes);
+    descriptor.configuration_fingerprint_sha256 = format!("{:x}", hasher.finalize());
+    Ok(descriptor)
+}
+
 #[cfg(windows)]
 fn environment_provider_config_complete(require_voice: bool) -> bool {
     provider_config_complete_with(require_voice, optional_env)
@@ -246,15 +375,40 @@ fn build_llm(
         "VPR_OWNER_LAB_LLM_MODEL",
         profile.map(|profile| profile.llm_model.as_str()),
     )?;
+    let wire = llm_wire::resolve_wire(
+        openai_compatible_provider_name(name).unwrap_or(name),
+        optional_env,
+    )?;
     let (canonical, provider): (&str, Box<dyn LlmPort>) =
         if let Some(canonical) = openai_compatible_provider_name(name) {
             let mut config = OpenAiCompatibleConfig::new(endpoint.clone(), api_key, model.clone())
                 .with_provider_name(canonical);
+            config = config.with_max_tokens(96);
             if canonical == "deepseek" {
                 config = config
                     .with_reasoning_effort("none")
-                    .with_thinking_disabled()
-                    .with_max_tokens(96);
+                    .with_thinking_disabled();
+            } else if canonical == "yandex" {
+                if endpoint != "https://ai.api.cloud.yandex.net/v1/chat/completions" {
+                    return Err("YANDEX_LLM_ENDPOINT_MISMATCH".into());
+                }
+                let stored_folder = profile
+                    .filter(|stored| stored.llm_provider == "yandex")
+                    .and_then(|_| model.strip_prefix("gpt://"))
+                    .and_then(|path| path.split('/').next());
+                let folder = required_value("VPR_OWNER_LAB_LLM_PROJECT_ID", stored_folder)?;
+                if !model.starts_with(&format!("gpt://{folder}/")) {
+                    return Err("YANDEX_LLM_MODEL_FOLDER_MISMATCH".into());
+                }
+                config = llm_wire::apply_wire(config, wire)
+                    .with_project_id(&folder)
+                    .map_err(|_| "YANDEX_LLM_PROJECT_ID_INVALID")?;
+            } else if canonical == "proxyapi-deepseek" {
+                if endpoint != "https://api.proxyapi.ru/v1/chat/completions" {
+                    return Err("PROXYAPI_LLM_ENDPOINT_MISMATCH".into());
+                }
+                // No DeepSeek-specific controls without a verified ProxyAPI wire contract.
+                config = llm_wire::apply_wire(config, wire);
             }
             (
                 canonical,
@@ -268,36 +422,34 @@ fn build_llm(
                 "anthropic" => (
                     "anthropic",
                     Box::new(
-                        AnthropicLlm::new(AnthropicConfig::new(
-                            endpoint.clone(),
-                            api_key,
-                            model.clone(),
-                        ))
+                        AnthropicLlm::new(
+                            AnthropicConfig::new(endpoint.clone(), api_key, model.clone())
+                                .with_max_tokens(96),
+                        )
                         .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
                 "gemini" => (
                     "gemini",
                     Box::new(
-                        GeminiLlm::new(GeminiConfig::new(endpoint.clone(), api_key, model.clone()))
-                            .map_err(|_| "LLM provider configuration rejected")?,
+                        GeminiLlm::new(
+                            GeminiConfig::new(endpoint.clone(), api_key, model.clone())
+                                .with_max_output_tokens(96),
+                        )
+                        .map_err(|_| "LLM provider configuration rejected")?,
                     ),
                 ),
                 _ => return Err(format!("unsupported LLM provider: {name}")),
             }
         };
-    let realtime_profile = if canonical == "deepseek" {
-        "thinking=disabled;reasoning=none;max_tokens=96"
-    } else {
-        "provider-default"
-    };
+    let realtime_profile = llm_wire::realtime_profile(canonical, wire);
     Ok((
         provider,
         descriptor(
             "llm",
             canonical,
             &model,
-            &[&endpoint, &model, realtime_profile],
+            &[&endpoint, &model, &realtime_profile],
         ),
     ))
 }
@@ -306,6 +458,8 @@ fn openai_compatible_provider_name(name: &str) -> Option<&'static str> {
     match name {
         "openai" | "openai-compatible" => Some("openai-compatible"),
         "deepseek" => Some("deepseek"),
+        "yandex" => Some("yandex"),
+        "proxyapi-deepseek" => Some("proxyapi-deepseek"),
         _ => None,
     }
 }
@@ -388,154 +542,4 @@ fn resolved_bool(name: &'static str, stored: Option<bool>, default: bool) -> Res
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        credential_source_allows_secure_store_with, matching_llm_profile, matching_stt_profile,
-        openai_compatible_provider_name, provider_config_complete_with,
-    };
-    use crate::ProviderCredentialProfile;
-
-    fn profile() -> ProviderCredentialProfile {
-        ProviderCredentialProfile::canonical_rt0(
-            "did-secret",
-            "did-agent",
-            "deepgram-secret".into(),
-            "deepseek-secret".into(),
-        )
-    }
-
-    #[test]
-    fn credential_source_policy_is_explicit_and_fail_closed() {
-        assert_eq!(credential_source_allows_secure_store_with(None), Ok(true));
-        assert_eq!(
-            credential_source_allows_secure_store_with(Some("auto")),
-            Ok(true)
-        );
-        assert_eq!(
-            credential_source_allows_secure_store_with(Some("environment")),
-            Ok(false)
-        );
-        assert!(credential_source_allows_secure_store_with(Some("mixed")).is_err());
-    }
-
-    #[test]
-    fn complete_explicit_environment_does_not_need_secure_store() {
-        let values = [
-            "VPR_DID_API_KEY",
-            "VPR_DID_AGENT_ID",
-            "VPR_OWNER_LAB_STT_PROVIDER",
-            "VPR_OWNER_LAB_STT_ENDPOINT",
-            "VPR_OWNER_LAB_STT_API_KEY",
-            "VPR_OWNER_LAB_STT_MODEL",
-            "VPR_OWNER_LAB_LLM_PROVIDER",
-            "VPR_OWNER_LAB_LLM_ENDPOINT",
-            "VPR_OWNER_LAB_LLM_API_KEY",
-            "VPR_OWNER_LAB_LLM_MODEL",
-        ];
-        assert!(provider_config_complete_with(true, |name| {
-            values.contains(&name).then(|| "configured".into())
-        }));
-    }
-
-    #[test]
-    fn stored_avatar_selection_can_supply_local_worker_without_did_env() {
-        let mut profile = profile();
-        profile
-            .select_local_avatar("https://avatar.example.test", "worker-secret")
-            .unwrap();
-        let (avatar, descriptor) = super::build_avatar(Some(&profile)).unwrap();
-        assert_eq!(descriptor.provider, "local-open-source");
-        assert_eq!(avatar.descriptor().provider, "local-open-source");
-    }
-
-    #[test]
-    fn local_avatar_environment_is_complete_without_any_did_configuration() {
-        let values = [
-            ("VPR_LOCAL_AVATAR_ENDPOINT", "https://avatar.example.test"),
-            ("VPR_LOCAL_AVATAR_API_TOKEN", "worker-token"),
-            ("VPR_OWNER_LAB_STT_PROVIDER", "deepgram"),
-            ("VPR_OWNER_LAB_STT_ENDPOINT", "https://stt.example.test"),
-            ("VPR_OWNER_LAB_STT_API_KEY", "stt-secret"),
-            ("VPR_OWNER_LAB_STT_MODEL", "nova-3"),
-            ("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek"),
-            ("VPR_OWNER_LAB_LLM_ENDPOINT", "https://llm.example.test"),
-            ("VPR_OWNER_LAB_LLM_API_KEY", "llm-secret"),
-            ("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash"),
-        ];
-        assert!(provider_config_complete_with(true, |name| {
-            values
-                .iter()
-                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
-        }));
-    }
-
-    #[test]
-    fn ambiguous_avatar_environment_requires_explicit_selection() {
-        let values = [
-            "VPR_DID_API_KEY",
-            "VPR_DID_AGENT_ID",
-            "VPR_LOCAL_AVATAR_ENDPOINT",
-            "VPR_LOCAL_AVATAR_API_TOKEN",
-        ];
-        assert!(!provider_config_complete_with(false, |name| {
-            values.contains(&name).then(|| "configured".into())
-        }));
-    }
-
-    #[test]
-    fn local_avatar_environment_can_replace_did_without_changing_voice_stack() {
-        let values = [
-            ("VPR_OWNER_LAB_AVATAR_PROVIDER", "local-open-source"),
-            ("VPR_LOCAL_AVATAR_ENDPOINT", "https://avatar.example.test"),
-            ("VPR_LOCAL_AVATAR_API_TOKEN", "worker-token"),
-            ("VPR_OWNER_LAB_STT_PROVIDER", "deepgram"),
-            ("VPR_OWNER_LAB_STT_ENDPOINT", "https://stt.example.test"),
-            ("VPR_OWNER_LAB_STT_API_KEY", "stt-secret"),
-            ("VPR_OWNER_LAB_STT_MODEL", "nova-3"),
-            ("VPR_OWNER_LAB_LLM_PROVIDER", "deepseek"),
-            ("VPR_OWNER_LAB_LLM_ENDPOINT", "https://llm.example.test"),
-            ("VPR_OWNER_LAB_LLM_API_KEY", "llm-secret"),
-            ("VPR_OWNER_LAB_LLM_MODEL", "deepseek-flash"),
-        ];
-        assert!(provider_config_complete_with(true, |name| {
-            values
-                .iter()
-                .find_map(|(key, value)| (*key == name).then(|| (*value).to_owned()))
-        }));
-    }
-
-    #[test]
-    fn partial_voice_environment_requires_secure_store_fallback() {
-        let values = [
-            "VPR_DID_API_KEY",
-            "VPR_DID_AGENT_ID",
-            "VPR_OWNER_LAB_STT_PROVIDER",
-            "VPR_OWNER_LAB_LLM_PROVIDER",
-        ];
-        assert!(!provider_config_complete_with(true, |name| {
-            values.contains(&name).then(|| "configured".into())
-        }));
-    }
-
-    #[test]
-    fn secure_profile_is_used_only_for_the_matching_provider_identity() {
-        let profile = profile();
-        assert!(matching_stt_profile("deepgram", Some(&profile)).is_some());
-        assert!(matching_stt_profile("openai", Some(&profile)).is_none());
-        assert!(matching_llm_profile("deepseek", Some(&profile)).is_some());
-        assert!(matching_llm_profile("anthropic", Some(&profile)).is_none());
-    }
-
-    #[test]
-    fn deepseek_keeps_its_provider_identity_over_openai_compatible_transport() {
-        assert_eq!(
-            openai_compatible_provider_name("deepseek"),
-            Some("deepseek")
-        );
-        assert_eq!(
-            openai_compatible_provider_name("openai"),
-            Some("openai-compatible")
-        );
-        assert_eq!(openai_compatible_provider_name("anthropic"), None);
-    }
-}
+mod tests;

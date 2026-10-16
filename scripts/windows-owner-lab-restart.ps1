@@ -3,12 +3,91 @@ param(
     [switch]$NoBrowser,
     [switch]$Rt0Evidence,
     [switch]$Piper,
-    [switch]$SystemVoice
+    [switch]$SystemVoice,
+    [string]$VoiceProfile,
+    # Dev/interim voices only; Irina dataset rights are not cleared for release.
+    [ValidateSet('ru_RU-irina-medium','ru_RU-denis-medium')]
+    [string]$PiperVoice = 'ru_RU-irina-medium'
 )
 
 $ErrorActionPreference = 'Stop'
 if ($Piper -and $SystemVoice) { throw 'Select exactly one local speech engine' }
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+if ($Piper -and -not $VoiceProfile) {
+    if (-not $env:LOCALAPPDATA) { throw 'LocalAppData is required for interim Piper VoiceProfile' }
+    $exampleName = if ($PiperVoice -eq 'ru_RU-denis-medium') {
+        'voice-profile.interim-male.example.json'
+    } else {
+        'voice-profile.interim.example.json'
+    }
+    $profileDir = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\voice-profiles'
+    $null = New-Item -ItemType Directory -Force -Path $profileDir
+    $VoiceProfile = Join-Path $profileDir ($exampleName -replace '\.example', '')
+    Copy-Item -LiteralPath (Join-Path $repoRoot ('docs\examples\' + $exampleName)) -Destination $VoiceProfile -Force
+    Write-Host "Interim Piper VoiceProfile: $VoiceProfile (dev/interim only)"
+}
+
+if ($VoiceProfile -and $SystemVoice) {
+    throw 'choose one voice source: -VoiceProfile cannot be combined with -SystemVoice'
+}
+if ($VoiceProfile) {
+    if (-not (Test-Path -LiteralPath $VoiceProfile -PathType Leaf)) {
+        throw 'VOICE_PROFILE_UNAVAILABLE'
+    }
+    $resolvedVoiceProfile = (Resolve-Path -LiteralPath $VoiceProfile).Path
+    $repositoryPrefix = $repoRoot.TrimEnd('\') + '\'
+    if ($resolvedVoiceProfile.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'VOICE_PROFILE_INSIDE_REPOSITORY_FORBIDDEN'
+    }
+    $voiceInfo = Get-Item -LiteralPath $resolvedVoiceProfile
+    if ($voiceInfo.Length -gt 16384) { throw 'VOICE_PROFILE_TOO_LARGE' }
+    try { $voiceConfig = Get-Content -LiteralPath $resolvedVoiceProfile -Raw -Encoding UTF8 | ConvertFrom-Json }
+    catch { throw 'INVALID_VOICE_PROFILE_JSON' }
+    if ($voiceConfig.schema_version -ne 'vpr-voice-profile-0.1' -or
+        $voiceConfig.profile_id -notmatch '^[a-z0-9-]{3,64}$' -or
+        [int]$voiceConfig.version -lt 1) {
+        throw 'INVALID_VOICE_PROFILE_IDENTITY'
+    }
+    if ($voiceConfig.provider -ceq 'piper') {
+        if ($voiceConfig.model -cne 'piper' -or
+            $voiceConfig.voice -notin @('ru_RU-irina-medium','ru_RU-denis-medium')) {
+            throw 'UNSUPPORTED_PIPER_INTERIM_VOICE'
+        }
+        if ($PSBoundParameters.ContainsKey('PiperVoice') -and $PiperVoice -cne $voiceConfig.voice) {
+            throw 'VOICE_PROFILE_ENV_CONFLICT: PiperVoice'
+        }
+        $Piper = [switch]$true
+        $PiperVoice = [string]$voiceConfig.voice
+    } elseif ($Piper) {
+        throw 'choose one voice source: -Piper requires Piper VoiceProfile'
+    }
+    if ($Rt0Evidence -and $voiceConfig.status -eq 'CANDIDATE') {
+        throw 'CANDIDATE_VOICE_NOT_ALLOWED_FOR_RT0_EVIDENCE'
+    }
+    if ($Rt0Evidence -and $voiceConfig.status -notin @('INTERIM','ACCEPTED')) {
+        throw 'RT0_EVIDENCE_VOICE_STATUS_INVALID'
+    }
+    foreach ($pair in @(
+        @('VPR_OWNER_LAB_TTS_PROVIDER', 'provider'),
+        @('VPR_OWNER_LAB_TTS_MODEL', 'model'),
+        @('VPR_OWNER_LAB_TTS_VOICE', 'voice')
+    )) {
+        $actual = [Environment]::GetEnvironmentVariable($pair[0], 'Process')
+        $expected = [string]$voiceConfig.($pair[1])
+        if ($null -ne $actual -and $actual -cne $expected) { throw "VOICE_PROFILE_ENV_CONFLICT: $($pair[0])" }
+    }
+    Write-Host "Voice profile: $($voiceConfig.profile_id) v$($voiceConfig.version) $($voiceConfig.status)"
+}
+if ($Rt0Evidence) {
+    if ($env:VPR_OWNER_LAB_TTS_ALT_PROVIDER) { throw 'RT0_EVIDENCE_TTS_FALLBACK_FORBIDDEN' }
+    if (($Piper -or $SystemVoice -or $env:VPR_OWNER_LAB_TTS_PROVIDER) -and -not $VoiceProfile) {
+        throw 'RT0_EVIDENCE_VOICE_PROFILE_REQUIRED'
+    }
+}
+if (($Piper -or $SystemVoice) -and $env:VPR_OWNER_LAB_TTS_PROVIDER -and
+    $env:VPR_OWNER_LAB_TTS_PROVIDER -notin @('piper','windows-sapi')) {
+    throw 'choose one voice source: configured TTS cannot be overwritten'
+}
 $baseUrl = "http://127.0.0.1:$Port"
 
 function Get-Bootstrap {
@@ -169,6 +248,9 @@ function Clear-ProviderEnvironmentOverrides {
     )
     foreach ($name in $names) {
         Remove-Item -Path "Env:$name" -ErrorAction SilentlyContinue
+    }
+    if (-not $VoiceProfile) {
+        Remove-Item Env:VPR_OWNER_LAB_VOICE_PROFILE_PATH -ErrorAction SilentlyContinue
     }
     Write-Host "Cleared inherited provider env overrides; canonical Windows credential profile is authoritative."
 }
@@ -442,12 +524,13 @@ if ($Piper -or $SystemVoice) {
     }
     $preparer = Join-Path $repoRoot $(if ($SystemVoice) { 'scripts\windows_sapi_prepare.py' } else { 'scripts\windows_piper_prepare.py' })
     Write-Host $(if ($SystemVoice) { 'Preparing native Russian female voice and private Echo...' } else { 'Preparing small Russian Piper voice; only first use needs a download...' })
-    & py -3.11 $preparer --data-dir $piperRoot
+    if ($SystemVoice) { & py -3.11 $preparer --data-dir $piperRoot }
+    else { & py -3.11 $preparer --data-dir $piperRoot --voice $PiperVoice }
     if ($LASTEXITCODE -ne 0) {
         throw 'Piper setup failed before any Owner Lab session was stopped'
     }
     $piperPython = Join-Path $piperRoot 'venv\Scripts\python.exe'
-    $piperModel = Join-Path $piperRoot 'voices\ru_RU-denis-medium.onnx'
+    $piperModel = Join-Path $piperRoot ('voices\' + $PiperVoice + '.onnx')
     # Windows PowerShell 5.1 can corrupt non-ASCII paths emitted by native
     # Python stdout (e.g. C:\Users\Пользователь). Read Python's UTF-8 venv
     # configuration directly instead of guessing via terminal code pages.
@@ -511,6 +594,7 @@ try {
     Copy-Item -LiteralPath $builtExe -Destination $exe -Force
 
     Clear-ProviderEnvironmentOverrides
+    if ($VoiceProfile) { $env:VPR_OWNER_LAB_VOICE_PROFILE_PATH = $resolvedVoiceProfile }
     if ($Piper -or $SystemVoice) {
         # The D-ID Expressive credential probe must see the actual selected
         # server-owned TTS path BEFORE evaluating its Echo safety gate.
@@ -530,7 +614,8 @@ try {
         $env:VPR_OWNER_LAB_TTS_ENDPOINT = "http://127.0.0.1:$privateVoicePort/v1/audio/speech"
         $env:VPR_OWNER_LAB_TTS_API_KEY = $env:VPR_METROTRANCE_TTS_TOKEN
         $env:VPR_OWNER_LAB_TTS_MODEL = if ($SystemVoice) { 'windows-sapi' } else { 'piper' }
-        $env:VPR_OWNER_LAB_TTS_VOICE = 'local'
+        $env:VPR_OWNER_LAB_TTS_VOICE = if ($SystemVoice) { 'local' } else { $PiperVoice }
+        if ($Piper) { $env:VPR_PIPER_VOICE = $PiperVoice }
         $env:VPR_DID_ECHO_PYTHON = $piperPython
     }
     & $credentialsExe probe-avatar

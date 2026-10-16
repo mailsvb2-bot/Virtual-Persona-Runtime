@@ -178,6 +178,7 @@ mod tests {
                 stt_latency: None,
                 llm_latency: None,
                 llm_first_meaningful_response: None,
+                voice_first_text_response: None,
                 avatar_submit_latency: None,
                 server_total_latency: None,
                 first_meaningful_audio: None,

@@ -38,7 +38,7 @@ impl Drop for TempDir {
 
 fn provider_state() -> Value {
     json!({
-        "schema_version":"rt0-provider-state-0.1",
+        "schema_version":vpr_evaluation::RT0_PROVIDER_STATE_SCHEMA,
         "providers":[
             {"role":"stt","provider":"openai-transcription","model_or_representation":"stt-model","configuration_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
             {"role":"llm","provider":"anthropic","model_or_representation":"llm-model","configuration_fingerprint_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},

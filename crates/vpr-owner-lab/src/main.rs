@@ -31,15 +31,13 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabError, LabSessionEvidenceRecorder, LabVoicePlaybackRegistry, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
+    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle, VoiceProfile,
     restore_reviewed_persona,
 };
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
-// The Owner Lab UI loads a graph of ES modules and polls canonical APIs
-// concurrently. Reserve enough request handlers that slow response writers
-// cannot starve browser bootstrap and terminal evidence export.
+// Browser bootstrap, playback and evidence export must not starve one another.
 const HTTP_WORKERS: usize = 16;
 const DEFAULT_PORT: u16 = 8787;
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
@@ -63,6 +61,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
     rt0_evidence_mode: bool,
+    voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
     reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
@@ -87,6 +86,7 @@ struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
     rt0_evidence_mode: bool,
+    voice_profile: Option<serde_json::Value>,
 }
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
@@ -145,6 +145,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .unwrap_or(DEFAULT_PORT);
     let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
+    let voice_profile = providers.voice_profile.clone();
     let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
@@ -164,6 +165,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         rt0_evidence_mode,
+        voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
@@ -269,9 +271,13 @@ fn route_request(
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
         (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
-        (&Method::Get, "/api/status") => {
-            with_engine(state, |engine| json_response(200, &engine.status()))
-        }
+        (&Method::Get, "/api/status") => with_engine(state, |engine| {
+            let mut status = serde_json::to_value(engine.status()).unwrap_or_default();
+            if let Some(profile) = state.voice_profile.as_ref() {
+                status["voice_profile"] = http_tts::voice_profile_public(profile);
+            }
+            json_response(200, &status)
+        }),
         (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
         (&Method::Get, "/api/references") => {
             http_references::snapshot_response(&state.reference_intake)
@@ -443,6 +449,10 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
+                voice_profile: state
+                    .voice_profile
+                    .as_ref()
+                    .map(http_tts::voice_profile_public),
             },
         )
     })

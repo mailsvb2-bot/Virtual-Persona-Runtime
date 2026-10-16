@@ -21,7 +21,12 @@ fn temp_dir(label: &str) -> PathBuf {
 }
 
 fn provider_state() -> Vec<u8> {
-    include_bytes!("../../../docs/evaluation/rt0_provider_state.synthetic.example.json").to_vec()
+    let mut fixture: Value = serde_json::from_slice(include_bytes!(
+        "../../../docs/evaluation/rt0_provider_state.synthetic.example.json"
+    ))
+    .unwrap();
+    fixture["schema_version"] = json!(vpr_evaluation::RT0_PROVIDER_STATE_SCHEMA);
+    serde_json::to_vec(&fixture).unwrap()
 }
 
 fn digest(ch: char) -> String {

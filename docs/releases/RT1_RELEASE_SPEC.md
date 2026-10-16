@@ -677,3 +677,7 @@ RT1 is complete only when:
 - the exact candidate has a complete reviewed RT1 ReleaseEvidence bundle.
 
 Until then RT1 MUST NOT claim `PRODUCTION_READY`.
+
+### RT1 entry and voice acceptance — Amendment A1
+
+An RT0-approved `INTERIM` voice is explicitly provisional. RT1 acceptance requires an `ACCEPTED` VoiceProfile, usage-rights digest, and independent reviewer plus owner approval of naturalness/similarity. No candidate or implicit fallback can be presented as accepted.

@@ -67,8 +67,11 @@ export const replayTextFrom = (sentences: string[], index: number): string | nul
 // normalized reply retained by the server. Never send reply text as authority.
 export const resumeWordOffset = (reply: string, utf16Cursor: number): number | null => {
   if (!Number.isInteger(utf16Cursor) || utf16Cursor < 0 || utf16Cursor >= reply.length) return null;
+  // Browser and server must agree on replay authority. Only whitespace is
+  // a safe restart boundary: punctuation may be inside 12.10.2026, 3.14,
+  // initials or a word. The server will validate the same normalized reply.
   let cursor = utf16Cursor;
-  while (cursor > 0 && !/[\s.,!?…:;—–()«»]/u.test(reply[cursor - 1] ?? "")) {
+  while (cursor > 0 && !/\s/u.test(reply[cursor - 1] ?? "")) {
     cursor -= 1;
   }
   return Array.from(reply.slice(0, cursor)).length;

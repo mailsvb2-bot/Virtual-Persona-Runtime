@@ -39,6 +39,50 @@ class PiperContract(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.stage_short_espeak_data(Path(d))
 
+    def test_warmup_reports_measured_rtf_without_storing_audio(self):
+        def fake_synthesizer(text):
+            self.assertEqual(text, "Здравствуйте. Я готова говорить.")
+            output = io.BytesIO()
+            with wave.open(output, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(bytes(3200))
+            return output.getvalue()
+
+        rtf = bridge.warmup_piper(fake_synthesizer)
+        self.assertGreaterEqual(rtf, 0)
+        self.assertLess(rtf, 1)
+
+    def test_health_reports_ready_and_rtf_only_after_warmup(self):
+        import http.client
+        import json
+        import threading
+        from http.server import ThreadingHTTPServer
+        from metrotrance_tts_bridge import make_handler
+
+        token = "piper-health-test-token-123456"
+        handler = make_handler(
+            token, lambda _text: b"", provider_id="piper",
+            health_status={"ready": True, "rtf": 0.1234},
+        )
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            try:
+                connection.request("GET", "/health")
+                result = connection.getresponse()
+                self.assertEqual(result.status, 200)
+                self.assertEqual(json.loads(result.read()), {"ready": True, "rtf": 0.1234})
+            finally:
+                connection.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_requires_local_model_and_config(self):
         with tempfile.TemporaryDirectory() as d:
             model = Path(d) / "ru_RU-test.onnx"
@@ -97,6 +141,54 @@ class PiperContract(unittest.TestCase):
             server.server_close()
             worker.join(timeout=2)
 
+    def test_streamed_piper_pcm_delivers_sentences_in_order(self):
+        import http.client
+        import json
+        import threading
+        from http.server import ThreadingHTTPServer
+        from metrotrance_tts_bridge import make_handler
+
+        calls = []
+        def fake_synthesizer(text):
+            calls.append(text)
+            output = io.BytesIO()
+            with wave.open(output, "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(22050)
+                wav.writeframes(b"\\x01\\x00" * 16)
+            return output.getvalue()
+
+        token = "test-stream-piper-token-123456789"
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            make_handler(token, fake_synthesizer, provider_id="piper"),
+        )
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        client = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+        try:
+            body = json.dumps({
+                "input": "Привет. Как дела?", "model": "piper",
+                "voice": "local", "response_format": "pcm",
+            }).encode("utf-8")
+            client.request(
+                "POST", "/v1/audio/speech", body,
+                {"Authorization": "Bearer " + token,
+                 "Content-Type": "application/json"},
+            )
+            result = client.getresponse()
+            self.assertEqual(result.status, 200)
+            self.assertEqual(result.getheader("X-VPR-Sample-Rate"), "22050")
+            self.assertEqual(result.getheader("Content-Type"), "application/octet-stream")
+            self.assertEqual(result.read(), b"\\x01\\x00" * 32)
+            self.assertEqual(calls, ["Привет.", "Как дела?"])
+        finally:
+            client.close()
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=2)
+
     def test_preset_synthesizes_pcm_wav(self):
         with tempfile.TemporaryDirectory() as d:
             model = Path(d) / "ru_RU-test.onnx"
@@ -119,6 +211,18 @@ class PiperContract(unittest.TestCase):
             with wave.open(io.BytesIO(audio)) as wav:
                 self.assertEqual(wav.getframerate(), 22050)
                 self.assertEqual(wav.getsampwidth(), 2)
+
+
+class PinnedVoiceIdentity(unittest.TestCase):
+    def test_declared_voice_matches_loaded_model(self):
+        bridge.check_selected_voice("C:/voice/ru_RU-irina-medium.onnx", "ru_RU-irina-medium")
+        bridge.check_selected_voice("C:/voice/ru_RU-denis-medium.onnx", None)
+        for model, selected in [
+            ("C:/voice/ru_RU-denis-medium.onnx", "ru_RU-irina-medium"),
+            ("C:/voice/ru_RU-unknown-medium.onnx", "ru_RU-unknown-medium"),
+        ]:
+            with self.assertRaises(SystemExit):
+                bridge.check_selected_voice(model, selected)
 
 
 if __name__ == "__main__":

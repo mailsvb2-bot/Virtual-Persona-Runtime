@@ -9,6 +9,41 @@ const WINDOWS_PROFILE_STORE_PREFIX: &str = "rt0-provider-profile-v2";
 const PROFILE_SCHEMA: &str = "vpr-rt0-provider-profile-1";
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StoredTtsCredential {
+    pub provider: String,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+    pub voice: String,
+}
+
+impl StoredTtsCredential {
+    /// Only provider-approved fields are persisted, never logged.
+    ///
+    /// # Errors
+    /// Rejects incomplete or unsupported provider credentials.
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(
+            self.provider.as_str(),
+            "piper"
+                | "windows-sapi"
+                | "metrotrance-qwen"
+                | "metrotrance-qwen-preset"
+                | "metrotrance-chatterbox"
+                | "openai-speech"
+                | "elevenlabs"
+        ) || [&self.endpoint, &self.api_key, &self.model, &self.voice]
+            .iter()
+            .any(|field| field.is_empty() || field.trim() != field.as_str())
+        {
+            return Err("secure TTS credential profile is incomplete or unsupported".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProviderCredentialProfile {
     schema_version: String,
     pub did_api_key: String,
@@ -29,6 +64,8 @@ pub struct ProviderCredentialProfile {
     pub llm_endpoint: String,
     pub llm_api_key: String,
     pub llm_model: String,
+    #[serde(default)]
+    pub tts: Option<StoredTtsCredential>,
 }
 
 impl ProviderCredentialProfile {
@@ -56,6 +93,7 @@ impl ProviderCredentialProfile {
             llm_endpoint: "https://api.deepseek.com/chat/completions".into(),
             llm_api_key: deepseek_api_key,
             llm_model: "deepseek-flash".into(),
+            tts: None,
         }
     }
 
@@ -83,7 +121,52 @@ impl ProviderCredentialProfile {
             llm_endpoint: "https://api.deepseek.com/chat/completions".into(),
             llm_api_key: deepseek_api_key,
             llm_model: "deepseek-flash".into(),
+            tts: None,
         }
+    }
+
+    /// Configures a single explicit TTS route without changing avatar/STT/LLM identity.
+    ///
+    /// # Errors
+    /// Rejects invalid TTS credentials or an invalid combined profile.
+    pub fn set_tts(&mut self, stored: StoredTtsCredential) -> Result<(), String> {
+        stored.validate()?;
+        self.tts = Some(stored);
+        self.validate()
+    }
+
+    /// Atomically replace the active LLM route while retaining avatar, STT, and TTS.
+    ///
+    /// # Errors
+    /// Rejects incomplete routes, unsupported identities, or malformed combined profiles.
+    pub fn replace_llm(
+        &mut self,
+        provider: &str,
+        endpoint: &str,
+        model: &str,
+        api_key: String,
+    ) -> Result<(), String> {
+        let valid_endpoint = match provider {
+            "yandex" => {
+                endpoint == "https://ai.api.cloud.yandex.net/v1/chat/completions"
+                    && model.starts_with("gpt://")
+                    && model.split('/').nth(2).is_some_and(|id| !id.is_empty())
+            }
+            "proxyapi-deepseek" => endpoint == "https://api.proxyapi.ru/v1/chat/completions",
+            "deepseek" => endpoint == "https://api.deepseek.com/chat/completions",
+            _ => false,
+        };
+        if !valid_endpoint || model.trim().is_empty() || api_key.trim().is_empty() {
+            return Err("unsupported or incomplete secure LLM route".into());
+        }
+        let mut updated = self.clone();
+        updated.llm_provider = provider.into();
+        updated.llm_endpoint = endpoint.into();
+        updated.llm_model = model.into();
+        updated.llm_api_key = api_key;
+        updated.validate()?;
+        *self = updated;
+        Ok(())
     }
 
     /// Replaces only D-ID credentials while preserving STT and LLM credentials.
@@ -138,6 +221,9 @@ impl ProviderCredentialProfile {
             if value.trim().is_empty() {
                 return Err(format!("secure provider profile field {label} is empty"));
             }
+        }
+        if let Some(tts) = &self.tts {
+            tts.validate()?;
         }
         match self.avatar_provider.as_str() {
             "did" | "d-id" | "did-agent-streams" => {
@@ -367,6 +453,42 @@ mod tests {
         assert!(profile.did_api_key.is_empty());
         assert!(profile.did_agent_id.is_empty());
         assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn replacing_llm_keeps_existing_voice_and_avatar_credentials() {
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "did-private",
+            "did-agent",
+            "stt-private".into(),
+            "old-llm-private".into(),
+        );
+        profile
+            .replace_llm(
+                "yandex",
+                "https://ai.api.cloud.yandex.net/v1/chat/completions",
+                "gpt://folder123/yandexgpt-lite/latest",
+                "new-llm-private".into(),
+            )
+            .unwrap();
+        assert_eq!(profile.llm_provider, "yandex");
+        assert_eq!(profile.llm_model, "gpt://folder123/yandexgpt-lite/latest");
+        assert_eq!(profile.llm_api_key, "new-llm-private");
+        assert_eq!(profile.stt_api_key, "stt-private");
+        assert_eq!(profile.did_api_key, "did-private");
+
+        let prior = profile.clone();
+        assert!(
+            profile
+                .replace_llm(
+                    "yandex",
+                    "https://other.example",
+                    "gpt://wrong/test",
+                    "x".into()
+                )
+                .is_err()
+        );
+        assert!(profile == prior);
     }
 
     #[test]

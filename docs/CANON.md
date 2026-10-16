@@ -3178,3 +3178,7 @@ Short product principle:
 
 > **Create one digital identity. Keep control of it. Let it become smarter, more natural and more useful without having to create it again.**
 
+
+## Amendment A1 — Interim RT0 voice (owner decision, 2026-10-14)
+
+RT0 MAY exit using a declared `INTERIM` voice profile bound to the exact candidate's provider-state and known limitations. Human subjective voice-naturalness and voice-similarity acceptance are deferred **only** for this declared interim voice. This does not waive real audible playback, first-audio latency, interruption latency, A/V synchronization, provider costs, privacy, consent, attribution, Golden Set or other RT0 exit gates. RT1 exit MUST include an `ACCEPTED` voice with verified usage rights and human listening approval by the owner and one independent reviewer. Replacing the interim voice after RT0 does not retroactively reopen evidence for the frozen RT0 candidate, but requires new evidence for every later candidate.

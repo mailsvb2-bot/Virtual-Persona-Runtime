@@ -81,7 +81,7 @@ fn interrupted_reply_resume_uses_same_tts_pcm_owner_and_no_browser_did_speak() {
 }
 
 #[test]
-fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
+fn voice_tts_selection_is_frozen_during_active_avatar_session() {
     let (engine, stats, _) = voice_engine(false);
     let mut engine = engine
         .with_named_tts(
@@ -98,13 +98,17 @@ fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
                 qwen: false,
             }),
         );
+    // The fixture already owns an active avatar session; selection must be immutable.
     let first = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     engine
         .acknowledge_voice_playback(first.evidence_turn_sequence, first.evidence_output_sequence)
         .unwrap();
-    engine
-        .select_tts_provider("metrotrance-chatterbox")
-        .unwrap();
+    // Changing provider mid-session would invalidate the frozen provider-state.
+    assert!(
+        engine
+            .select_tts_provider("metrotrance-chatterbox")
+            .is_err()
+    );
     let second = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
     engine
         .acknowledge_voice_playback(
@@ -112,16 +116,45 @@ fn voice_turn_switches_canonical_tts_both_ways_without_new_avatar_session() {
             second.evidence_output_sequence,
         )
         .unwrap();
-    engine.select_tts_provider("metrotrance-qwen").unwrap();
-    let third = engine.voice_turn(sample_pcm(), |_| {}).unwrap();
-    engine
-        .acknowledge_voice_playback(third.evidence_turn_sequence, third.evidence_output_sequence)
-        .unwrap();
     assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 2);
-    assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 1);
-    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 3);
+    assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.avatar_pcm.load(Ordering::SeqCst), 2);
     assert_eq!(stats.avatar_text.load(Ordering::SeqCst), 0);
     assert_eq!(stats.avatar_creates.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn tts_selection_after_closed_session_changes_only_next_session_provider() {
+    let (engine, stats, _) = voice_engine(false);
+    let mut engine = engine
+        .with_named_tts(
+            "metrotrance-qwen".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: true,
+            }),
+        )
+        .with_tts_fallback(
+            "metrotrance-chatterbox".to_owned(),
+            Box::new(TestCanonicalTts {
+                stats: Arc::clone(&stats),
+                qwen: false,
+            }),
+        );
+    assert!(
+        engine
+            .select_tts_provider("metrotrance-chatterbox")
+            .is_err()
+    );
+    engine.close().unwrap();
+    assert_eq!(engine.status().session_state, "closed");
+    engine
+        .select_tts_provider("metrotrance-chatterbox")
+        .unwrap();
+    assert_eq!(engine.tts_selection()["active"], "metrotrance-chatterbox");
+    assert_eq!(engine.tts_selection()["alternate"], "metrotrance-qwen");
+    assert_eq!(stats.tts_qwen.load(Ordering::SeqCst), 0);
+    assert_eq!(stats.tts_chatterbox.load(Ordering::SeqCst), 0);
 }
 
 struct BlockingCanonicalTts {

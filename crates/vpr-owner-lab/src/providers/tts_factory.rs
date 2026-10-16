@@ -1,6 +1,7 @@
 //! Provider-neutral compatibility gate and configured speech adapter construction.
 //! A valid TTS provider is not sufficient: the selected avatar must accept private PCM.
 use super::{ProviderDescriptor, descriptor, required_value};
+use crate::StoredTtsCredential;
 use vpr_integration::{RealtimeAvatarCapability, RealtimeAvatarPort, TtsPort};
 use vpr_provider_elevenlabs_tts::{ElevenLabsTts, ElevenLabsTtsConfig};
 use vpr_provider_openai_speech::{OpenAiSpeechConfig, OpenAiSpeechTts};
@@ -16,13 +17,29 @@ pub(super) fn ensure_avatar_pcm_compatible(avatar: &dyn RealtimeAvatarPort) -> R
     }
 }
 
-pub(super) fn build_tts(name: &str) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+pub(super) fn build_tts(
+    name: &str,
+    stored: Option<&StoredTtsCredential>,
+) -> Result<(Box<dyn TtsPort>, ProviderDescriptor), String> {
+    let stored = stored.filter(|credential| credential.provider.eq_ignore_ascii_case(name));
     build_tts_configured(
         name,
-        &required_value("VPR_OWNER_LAB_TTS_ENDPOINT", None)?,
-        required_value("VPR_OWNER_LAB_TTS_API_KEY", None)?,
-        &required_value("VPR_OWNER_LAB_TTS_MODEL", None)?,
-        &required_value("VPR_OWNER_LAB_TTS_VOICE", None)?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_ENDPOINT",
+            stored.map(|item| item.endpoint.as_str()),
+        )?,
+        required_value(
+            "VPR_OWNER_LAB_TTS_API_KEY",
+            stored.map(|item| item.api_key.as_str()),
+        )?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_MODEL",
+            stored.map(|item| item.model.as_str()),
+        )?,
+        &required_value(
+            "VPR_OWNER_LAB_TTS_VOICE",
+            stored.map(|item| item.voice.as_str()),
+        )?,
     )
 }
 
@@ -59,7 +76,10 @@ fn build_tts_configured(
     if name == "windows-sapi" && (model != "windows-sapi" || voice != "local") {
         return Err("Windows SAPI requires model=windows-sapi and voice=local".into());
     }
-    if name == "piper" && (model != "piper" || voice != "local") {
+    if name == "piper"
+        && (model != "piper"
+            || (voice != "local" && !crate::voice_profile::PIPER_INTERIM_VOICES.contains(&voice)))
+    {
         return Err("Piper requires model=piper and voice=local".into());
     }
     let provider: Box<dyn TtsPort> = match name {
@@ -76,7 +96,8 @@ fn build_tts_configured(
                     model.to_owned(),
                     voice.to_owned(),
                 )
-                .with_provider_name(name),
+                .with_provider_name(name)
+                .with_stream_pcm(name == "piper"),
             )
             .map_err(|_| "OpenAI-compatible speech provider configuration rejected")?,
         ),
@@ -91,9 +112,15 @@ fn build_tts_configured(
         ),
         _ => return Err(format!("unsupported TTS provider: {name}")),
     };
+    // A fresh private loopback port is transport detail, not provider identity.
+    let fingerprint_endpoint = if is_loopback_speech_endpoint(endpoint) {
+        "http://127.0.0.1:<private-loopback>/v1/audio/speech"
+    } else {
+        endpoint
+    };
     Ok((
         provider,
-        descriptor("tts", name, model, &[endpoint, model, voice]),
+        descriptor("tts", name, model, &[fingerprint_endpoint, model, voice]),
     ))
 }
 
@@ -115,6 +142,22 @@ fn is_loopback_speech_endpoint(endpoint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_loopback_port_does_not_change_tts_fingerprint() {
+        let build = |endpoint: &str, voice: &str| {
+            build_tts_configured("metrotrance-qwen", endpoint, "token".into(), "model", voice)
+                .unwrap()
+                .1
+                .configuration_fingerprint_sha256
+        };
+        let a = build("http://127.0.0.1:8897/v1/audio/speech", "local");
+        let b = build("http://127.0.0.1:49152/v1/audio/speech", "local");
+        let c = build("http://127.0.0.1:8897/v1/audio/speech", "other");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
     use std::sync::Arc;
     use vpr_provider_did_agent_streams::{
         DidAgentStreamsAvatar, DidAgentStreamsConfig, EchoPythonBackend, EchoPythonConfig,

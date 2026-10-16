@@ -500,6 +500,9 @@ fn livekit_client_text_streams_first_phrase_before_generation_finishes() {
     worker.join().unwrap();
 }
 
+// Keep lifecycle coverage separate from the bounded streaming fixtures.
+include!("voice_streaming_lifecycle_tests.rs");
+
 #[test]
 fn streaming_voice_without_final_stt_transcript_is_diagnostic_not_internal_error() {
     let stats = Arc::new(StreamingStats::default());
