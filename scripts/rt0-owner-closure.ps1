@@ -105,7 +105,7 @@ function Probe-Llm {
         if ($folder -notmatch '^[a-z0-9]{1,64}$') { throw 'invalid Yandex folder ID' }
         $key = Read-SecretOnce 'Yandex key for one-off wire probe'
         $uri = 'https://ai.api.cloud.yandex.net/v1/chat/completions'
-        $model = "gpt://$folder/yandexgpt-lite/latest"
+        $model = "gpt://$folder/yandexgpt-5.1"
         $chosen = $null
         foreach ($auth in @('apikey','bearer')) {
             foreach ($projectHeader in @('openai-project','x-folder-id')) {
@@ -120,7 +120,12 @@ function Probe-Llm {
                 }
             }
         }
-        if (-not $chosen) { throw 'Yandex rejected every wire variant; verify folder/key/billing' }
+        if (-not $chosen) {
+            $probePath = Join-Path $Dir 'llm-wire-probe.json'
+            ($result | ConvertTo-Json -Depth 7) | Set-Content -LiteralPath $probePath -Encoding UTF8
+            $codes = @($result.variants | ForEach-Object { "$($_.auth)/$($_.project_header)=$($_.status)" }) -join ', '
+            throw "Yandex wire probe rejected ($codes). Sanitized statuses saved to $probePath. Check API key scope, account permissions, billing, and model access."
+        }
         $usage = Probe-Http -Uri $uri -Headers $chosen.headers -Body @{model=$model;messages=$messages;stream=$true;max_tokens=8;stream_options=@{include_usage=$true}}
         $usage['variant'] = 'stream_options.include_usage'
         $result.variants += $usage
