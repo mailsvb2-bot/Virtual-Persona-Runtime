@@ -126,7 +126,15 @@ function Probe-Llm {
             try {
                 $key = [string](Get-Clipboard -Raw -ErrorAction Stop)
             } finally {
-                Set-Clipboard -Value '' -ErrorAction SilentlyContinue
+                # Set-Clipboard -Value '' raises ArgumentNullException on
+                # Windows PowerShell 5.1. Clear via WinForms, and do not let
+                # cleanup mask the actual probe result.
+                try {
+                    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+                    [System.Windows.Forms.Clipboard]::Clear()
+                } catch {
+                    Write-Warning 'Clipboard could not be cleared automatically; clear it manually.'
+                }
             }
         } else {
             $key = Read-SecretOnce 'Yandex key for one-off wire probe'
