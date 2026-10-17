@@ -15,6 +15,7 @@ param(
     [int]$MinTurns = 20,
     [int]$MinStops = 5,
     [switch]$SkipSetLlm,
+    [switch]$YandexKeyFromClipboard,
     [string]$PrivateInputDir
 )
 $ErrorActionPreference = 'Stop'
@@ -117,7 +118,19 @@ function Probe-Llm {
     if ($Llm -eq 'yandex') {
         $folder = Read-Host 'Yandex folder ID (same as set-llm)'
         if ($folder -notmatch '^[a-z0-9]{1,64}$') { throw 'invalid Yandex folder ID' }
-        $key = Read-SecretOnce 'Yandex key for one-off wire probe'
+        if ($YandexKeyFromClipboard) {
+            # Windows PowerShell 5.1's secure console prompt can consume a paste
+            # as one literal character on legacy Windows terminals.
+            # Opt-in only: user copies the key before launch; clear clipboard
+            # immediately after reading. Never echo, log, or persist the token.
+            try {
+                $key = [string](Get-Clipboard -Raw -ErrorAction Stop)
+            } finally {
+                Set-Clipboard -Value '' -ErrorAction SilentlyContinue
+            }
+        } else {
+            $key = Read-SecretOnce 'Yandex key for one-off wire probe'
+        }
         if ($key.Length -lt 20 -or $key -cnotmatch '^[!-~]+$') {
             throw "Yandex API key must be a complete single-line ASCII secret (length=$($key.Length)); a masked preview or key ID is not sufficient."
         }
