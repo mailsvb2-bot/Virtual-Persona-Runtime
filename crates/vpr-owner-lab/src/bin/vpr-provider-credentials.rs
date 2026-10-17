@@ -148,7 +148,7 @@ fn set_llm_profile(requested_provider: Option<&str>) -> Result<(), Box<dyn Error
             }
             (
                 "https://ai.api.cloud.yandex.net/v1/chat/completions".to_owned(),
-                format!("gpt://{folder}/yandexgpt-lite/latest"),
+                format!("gpt://{folder}/yandexgpt-5.1"),
             )
         }
         "proxyapi-deepseek" => (
