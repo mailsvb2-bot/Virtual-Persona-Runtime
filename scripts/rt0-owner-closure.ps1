@@ -78,6 +78,12 @@ function Read-SecretOnce([string]$Label) {
 }
 function Probe-Http {
     param([string]$Uri,[hashtable]$Headers,[hashtable]$Body)
+    # Windows PowerShell 5.1 on older Windows often defaults to TLS 1.0.
+    # Yandex AI Studio requires modern TLS; add TLS 1.2 without disabling
+    # other negotiated protocols used elsewhere by the hosting process.
+    [Net.ServicePointManager]::SecurityProtocol = (
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    )
     $watch = [Diagnostics.Stopwatch]::StartNew()
     try {
         $bytes = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Compress -Depth 6))
@@ -93,7 +99,11 @@ function Probe-Http {
         $watch.Stop()
         $status = 0
         if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
-        return [ordered]@{ status = $status; elapsed_ms = [int]$watch.ElapsedMilliseconds; sse = $false; usage_chunk = $false }
+        # Diagnostic class only: never persist exception messages, URLs with
+        # credentials, request headers, response bodies or the secret key.
+        $exceptionType = $_.Exception.GetType().Name
+        $webStatus = if ($_.Exception -is [Net.WebException]) { [string]$_.Exception.Status } else { 'not-web-exception' }
+        return [ordered]@{ status = $status; elapsed_ms = [int]$watch.ElapsedMilliseconds; sse = $false; usage_chunk = $false; exception_type = $exceptionType; transport_status = $webStatus }
     }
 }
 function Probe-Llm {
