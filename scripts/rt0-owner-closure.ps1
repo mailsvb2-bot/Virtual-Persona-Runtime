@@ -85,8 +85,10 @@ function Probe-Http {
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     )
     $watch = [Diagnostics.Stopwatch]::StartNew()
+    $step = 'json'
     try {
         $bytes = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Compress -Depth 6))
+        $step = 'http'
         $r = Invoke-WebRequest -UseBasicParsing -Method Post -Uri $Uri -Headers $Headers -ContentType 'application/json' -Body $bytes -TimeoutSec 30
         $watch.Stop()
         return [ordered]@{
@@ -103,7 +105,9 @@ function Probe-Http {
         # credentials, request headers, response bodies or the secret key.
         $exceptionType = $_.Exception.GetType().Name
         $webStatus = if ($_.Exception -is [Net.WebException]) { [string]$_.Exception.Status } else { 'not-web-exception' }
-        return [ordered]@{ status = $status; elapsed_ms = [int]$watch.ElapsedMilliseconds; sse = $false; usage_chunk = $false; exception_type = $exceptionType; transport_status = $webStatus }
+        $errorCode = if ($_.Exception -is [ArgumentException]) { [string]$_.Exception.ParamName } else { '' }
+        $innerType = if ($_.Exception.InnerException) { $_.Exception.InnerException.GetType().Name } else { '' }
+        return [ordered]@{ status = $status; elapsed_ms = [int]$watch.ElapsedMilliseconds; sse = $false; usage_chunk = $false; exception_type = $exceptionType; transport_status = $webStatus; failed_step = $step; argument_parameter = $errorCode; inner_exception_type = $innerType }
     }
 }
 function Probe-Llm {
@@ -121,7 +125,8 @@ function Probe-Llm {
             foreach ($projectHeader in @('openai-project','x-folder-id')) {
                 $prefix = if ($auth -eq 'apikey') { 'Api-Key' } else { 'Bearer' }
                 $hName = if ($projectHeader -eq 'openai-project') { 'OpenAI-Project' } else { 'x-folder-id' }
-                $headers = @{ Authorization = "$prefix $key"; $hName = $folder }
+                $headers = @{ Authorization = "$prefix $key" }
+                $headers[$hName] = $folder
                 $r = Probe-Http -Uri $uri -Headers $headers -Body @{model=$model;messages=$messages;stream=$true;max_tokens=8}
                 $r['auth'] = $auth; $r['project_header'] = $projectHeader
                 $result.variants += $r
