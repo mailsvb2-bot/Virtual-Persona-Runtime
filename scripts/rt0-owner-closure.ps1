@@ -120,7 +120,10 @@ function Probe-Llm {
         $key = Read-SecretOnce 'Yandex key for one-off wire probe'
         # Fail before any HTTP request when the console received a placeholder,
         # an ID, or a malformed/pasted multiline secret. No secret contents logged.
-        if ($key.Length -lt 20 -or $key -cnotmatch '^[\x21-\x7E]+ 'https://ai.api.cloud.yandex.net/v1/chat/completions'
+        if ($key.Length -lt 20 -or $key -cnotmatch '^[\\x21-\\x7E]+$') {
+            throw "Yandex API key was not received as a complete single-line token (length=$($key.Length)). Paste the full secret value, not a masked preview."
+        }
+        $uri = 'https://ai.api.cloud.yandex.net/v1/chat/completions'
         $model = "gpt://$folder/yandexgpt-5.1"
         $chosen = $null
         foreach ($auth in @('apikey','bearer')) {
