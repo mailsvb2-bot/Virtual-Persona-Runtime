@@ -241,6 +241,7 @@ impl OwnerLabEngine {
         let stt = self.stt.as_ref().ok_or(LabError::InvalidState)?;
         let (transcript, stt_usage) = stt_input.finish(&turn, stt.as_ref())?;
         let stt_millis = elapsed_millis(stt_started);
+        eprintln!("VPR voice stage=stt_complete");
         let instructions = self.conversation_instructions()?;
         let request = LlmRequest {
             locale: transcript.locale.clone(),
@@ -461,7 +462,10 @@ impl OwnerLabEngine {
                             self.tts.as_deref(),
                             handle,
                             &phrase,
-                        )?;
+                        ).map_err(|error| {
+                            eprintln!("VPR voice stage=avatar_delivery failed code={}", error.code());
+                            error
+                        })?;
                         if first_audio_timings.is_none() {
                             first_audio_timings = audio_timings;
                         }
@@ -481,6 +485,7 @@ impl OwnerLabEngine {
                         output_sequences.push(output_sequence);
                     }
                     LlmEvent::Failed(error) => {
+                        eprintln!("VPR voice stage=llm_stream failed");
                         return Err(terminalize_provider_error(turn, error));
                     }
                     LlmEvent::Finished {
