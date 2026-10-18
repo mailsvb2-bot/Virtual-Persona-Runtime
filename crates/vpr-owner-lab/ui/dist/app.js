@@ -2,6 +2,7 @@ import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
+import { providerEventStillCurrent } from "./provider-event-fence.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import { createRuntimeAudioContext, createRuntimeAudioWorkletNode, createRuntimeMediaStream, createRuntimePeerConnection, mediaRuntime, requestVideoFrame, runtimeFetch, runtimeMediaDevices, setMediaSrcObject, } from "./media-runtime.js";
 import { SessionRuntimeState, } from "./session-runtime-state.js";
@@ -1126,8 +1127,12 @@ const ownerCapture = mountOwnerCapture({
 const handleProviderClientEvent = (raw) => {
     if (!raw)
         return;
+    const receivingVoice = activeVoiceEvidence;
+    const receivingSessionSequence = evidenceSessionSequence;
     void api("/api/avatar/client-event", { message: raw })
         .then(async (normalized) => {
+        if (!providerEventStillCurrent(receivingVoice, activeVoiceEvidence, receivingSessionSequence, evidenceSessionSequence, locallyFencedSessionSequence))
+            return;
         if (normalized?.kind === "playback_started") {
             sessionState.setPlaybackId(normalized.playback_id);
             providerPlaybackInFlight = true;
