@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use vpr_integration::{RealtimeAvatarPort, TtsPort};
+use vpr_integration::{ProviderErrorKind, RealtimeAvatarPort, TtsPort};
 
 use crate::{ActiveTurn, OutputDeliveryHandle, RealtimeAvatarHandle, RealtimeAvatarOutputError};
 
@@ -9,6 +9,11 @@ use crate::{ActiveTurn, OutputDeliveryHandle, RealtimeAvatarHandle, RealtimeAvat
 pub struct RealtimeAudioStageTimings {
     pub first_pcm_millis: u64,
     pub first_echo_send_millis: u64,
+}
+
+pub(crate) fn log_pcm_stage_failure(stage: &'static str, kind: ProviderErrorKind) {
+    // Only fixed stage labels and a typed error kind; never log text or credentials.
+    eprintln!("VPR audio stage={stage} failed kind={kind:?}");
 }
 
 pub(crate) fn elapsed_stage(started: Instant) -> u64 {
