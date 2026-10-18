@@ -2,6 +2,7 @@ import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
+import { providerEventStillCurrent } from "./provider-event-fence.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import {
   createRuntimeAudioContext,
@@ -1483,10 +1484,10 @@ const handleProviderClientEvent = (raw: string): void => {
   const receivingSessionSequence = evidenceSessionSequence;
   void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
     .then(async (normalized) => {
-      if (evidenceSessionSequence !== receivingSessionSequence
-          || activeVoiceEvidence !== receivingVoice
-          || (receivingSessionSequence > 0
-            && locallyFencedSessionSequence === receivingSessionSequence)) return;
+      if (!providerEventStillCurrent(
+        receivingVoice, activeVoiceEvidence, receivingSessionSequence,
+        evidenceSessionSequence, locallyFencedSessionSequence,
+      )) return;
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
         providerPlaybackInFlight = true;
