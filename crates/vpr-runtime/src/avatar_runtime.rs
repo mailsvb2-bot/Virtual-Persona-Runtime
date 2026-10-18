@@ -364,7 +364,10 @@ impl ActiveTurn {
                             &avatar_permit.cancellation,
                         )
                         .inspect_err(|error| {
-                            eprintln!("VPR audio stage=echo_pcm_begin failed kind={:?}", error.kind);
+                            eprintln!(
+                                "VPR audio stage=echo_pcm_begin failed kind={:?}",
+                                error.kind
+                            );
                         })?,
                     );
                 }
@@ -376,7 +379,10 @@ impl ActiveTurn {
                     })?
                     .push_pcm(pcm, &avatar_permit.cancellation)
                     .inspect_err(|error| {
-                        eprintln!("VPR audio stage=echo_pcm_chunk failed kind={:?}", error.kind);
+                        eprintln!(
+                            "VPR audio stage=echo_pcm_chunk failed kind={:?}",
+                            error.kind
+                        );
                     })?;
                 first_echo_send_millis.get_or_insert_with(|| elapsed_stage(stage_started));
                 Ok(())
