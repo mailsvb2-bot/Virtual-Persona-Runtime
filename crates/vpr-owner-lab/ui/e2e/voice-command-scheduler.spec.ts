@@ -90,7 +90,7 @@ test("late send completion after STOP cannot revive playback or dispatch stale q
   expect(scheduler.hasPendingPlayback).toBe(false);
 });
 
-test("duplicate provider playback_done never sends the next phrase without its own ACK", async () => {
+test("each playback barrier release advances exactly one queued phrase", async () => {
   const sent: string[] = [];
   const scheduler = new PlaybackAwareCommandScheduler<string>(async (command) => {
     sent.push(command);
@@ -100,8 +100,8 @@ test("duplicate provider playback_done never sends the next phrase without its o
   const third = scheduler.dispatch("three");
   scheduler.playbackDone();
   await expect(second).resolves.toBe(true);
-  // An extraneous playback_done is never a substitute for a provider-correlated receipt:
-  // the scheduler itself has no receipt identity, so exercise the documented limitation.
+  // Scheduler barriers are deliberately receipt-agnostic: provider correlation must
+  // happen at the caller boundary before playbackDone() is invoked.
   expect(sent).toEqual(["one", "two"]);
   scheduler.playbackDone();
   await expect(third).resolves.toBe(true);
