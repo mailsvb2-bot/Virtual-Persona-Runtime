@@ -235,7 +235,7 @@ class SpeechBridgeContract(unittest.TestCase):
         )
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
-        pcm = b"\\x01\\x00" * 160
+        pcm = bytes([1, 0]) * 160
         with patch.object(module, "piper_pcm_parts", return_value=iter([(16000, pcm)])):
             connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
             body = json.dumps({"input": "Привет", "model": "piper", "voice": "local",
