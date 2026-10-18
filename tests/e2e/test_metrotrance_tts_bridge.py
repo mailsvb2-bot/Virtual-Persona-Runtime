@@ -223,6 +223,23 @@ class SpeechBridgeContract(unittest.TestCase):
         self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Ryan"})[0], 400)
         self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Vivian"})[0], 200)
 
+    def test_piper_aborted_client_does_not_attempt_secondary_502(self):
+        from unittest.mock import Mock
+
+        handler_type = module.make_handler(TOKEN, lambda _: WAV, "piper")
+        handler = handler_type.__new__(handler_type)
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        handler.wfile.write.side_effect = ConnectionAbortedError(10053, "client aborted")
+        handler.close_connection = False
+
+        handler.send_piper_pcm("Привет", lambda _: WAV)
+
+        handler.send_response.assert_called_once_with(200)
+        self.assertTrue(handler.close_connection)
+
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):
             module.make_handler("abc", lambda _: WAV)
