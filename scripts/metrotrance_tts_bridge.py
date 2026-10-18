@@ -195,7 +195,8 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
                         self.wfile.flush()
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, RuntimeError):
+                # Streaming headers have already been sent. A cancelled client cannot receive a 502.
                 self.close_connection = True
 
         def do_POST(self):
