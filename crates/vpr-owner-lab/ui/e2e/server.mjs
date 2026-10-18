@@ -11,6 +11,7 @@ const files = new Map([
   ["/interrupted-answer.js", "dist/interrupted-answer.js"],
   ["/owner-capture.js", "dist/owner-capture.js"],
   ["/voice-command-scheduler.js", "dist/voice-command-scheduler.js"],
+  ["/provider-event-fence.js", "dist/provider-event-fence.js"],
   ["/bootstrap-context.js", "dist/bootstrap-context.js"],
   ["/media-runtime.js", "dist/media-runtime.js"],
   ["/session-runtime-state.js", "dist/session-runtime-state.js"],
