@@ -95,33 +95,28 @@ struct ErrorResponse<'a> {
     ok: bool,
     code: &'a str,
 }
-
 #[derive(Deserialize)]
 struct StartBody {
     consent: bool,
     audience: Option<String>,
 }
-
 #[derive(Deserialize)]
 struct AnswerBody {
     kind: String,
     sdp: String,
 }
-
 #[derive(Deserialize)]
 struct IceBody {
     candidate: Option<String>,
     sdp_mid: Option<String>,
     sdp_mline_index: Option<u16>,
 }
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
         std::process::exit(1);
     }
 }
-
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let launch_options = launch::parse_launch_options(env::args().skip(1))
         .map_err(|error| format!("invalid owner-lab launch options: {error}"))?;
