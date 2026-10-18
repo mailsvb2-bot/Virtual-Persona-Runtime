@@ -136,6 +136,10 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
     event.request_sequence === 2 && event.kind === "interruption_stopped"
   )).toBeTruthy();
   expect(owner.media_events.some((event) =>
+    event.request_sequence === 2
+      && ["playback_completed", "provider_playback_done_received"].includes(event.kind)
+  )).toBeFalsy();
+  expect(owner.media_events.some((event) =>
     event.request_sequence === 1 && event.kind === "playback_completed"
   )).toBeTruthy();
   expect(owner.media_events.some((event) =>
@@ -175,6 +179,10 @@ export const assertBrowserJourneyEvidence = (journey: BrowserJourneyState): void
   expect(visitor.media_events.some((event) =>
     event.request_sequence === 2 && event.kind === "interruption_stopped"
   )).toBeTruthy();
+  expect(visitor.media_events.some((event) =>
+    event.request_sequence === 2
+      && ["playback_completed", "provider_playback_done_received"].includes(event.kind)
+  )).toBeFalsy();
 };
 
 export const assertProviderRequests = async (
