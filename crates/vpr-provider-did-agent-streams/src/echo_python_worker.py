@@ -18,6 +18,7 @@ WAV_STREAM_CHUNK_BYTES = 4 * 1024
 MAX_TEXT_BYTES = 4096
 MAX_PENDING_UTTERANCES = 16
 MAX_STREAMED_PCM_QUEUE = 8
+PCM_QUEUE_BACKPRESSURE_SECONDS = 0.15
 MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
 
@@ -381,7 +382,6 @@ async def run():
                         or state["generation"] != generation or state["end_id"] is not None
                         or not isinstance(raw_pcm, str) or not raw_pcm
                         or len(raw_pcm) > MAX_PCM_COMMAND_HEX
-                        or state["queue"].full()
                     ):
                         emit(identifier, False)
                         continue
@@ -394,10 +394,10 @@ async def run():
                             or size // (state["channels"] * 2) > state["rate"] * 60
                         ):
                             raise ValueError("invalid bounded PCM chunk")
-                        state["queue"].put_nowait(pcm)
+                        await asyncio.wait_for(state["queue"].put(pcm), timeout=PCM_QUEUE_BACKPRESSURE_SECONDS)
                         state["bytes"] = size
                         emit(identifier, True)  # queued only, not played
-                    except (ValueError, OverflowError, asyncio.QueueFull):
+                    except (ValueError, OverflowError, asyncio.TimeoutError):
                         emit(identifier, False)
                 elif command == "pcm_end":
                     state = active_pcm
