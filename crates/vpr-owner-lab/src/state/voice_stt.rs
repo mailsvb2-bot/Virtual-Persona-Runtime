@@ -57,12 +57,10 @@ impl VoiceSttInput {
         match &mut self.mode {
             VoiceSttMode::Streaming(stream) => {
                 for chunk in pcm.chunks(STT_STREAM_CHUNK_BYTES) {
-                    stream
-                        .push_audio(chunk)
-                        .map_err(|error| {
-                            eprintln!("VPR voice STT stage=stream operation failed");
-                            terminalize_provider_error(turn, error)
-                        })?;
+                    stream.push_audio(chunk).map_err(|error| {
+                        eprintln!("VPR voice STT stage=stream operation failed");
+                        terminalize_provider_error(turn, error)
+                    })?;
                 }
             }
             VoiceSttMode::Buffered(buffer) => buffer.extend_from_slice(pcm),
