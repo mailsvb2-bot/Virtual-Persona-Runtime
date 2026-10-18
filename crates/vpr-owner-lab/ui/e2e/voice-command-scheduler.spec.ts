@@ -144,3 +144,62 @@ test("intermittent transport error with queued commands preserves FIFO and recov
   scheduler.playbackDone();
   expect(scheduler.hasPendingPlayback).toBe(false);
 });
+
+test("stress: 100 consecutive phrases drain without orphaned playback barriers", async () => {
+  const sent: number[] = [];
+  const scheduler = new PlaybackAwareCommandScheduler<number>(async (command) => {
+    sent.push(command);
+  });
+  for (let index = 0; index < 100; index += 1) {
+    await expect(scheduler.dispatch(index)).resolves.toBe(true);
+    expect(scheduler.hasActivePlayback).toBe(true);
+    scheduler.playbackDone();
+    expect(scheduler.hasPendingPlayback).toBe(false);
+    expect(scheduler.hasActivePlayback).toBe(false);
+  }
+  expect(sent).toEqual(Array.from({ length: 100 }, (_, index) => index));
+});
+
+test("stress: 60 STOP and restart cycles never allow cancelled queued audio to escape", async () => {
+  const sent: string[] = [];
+  const scheduler = new PlaybackAwareCommandScheduler<string>(async (command) => {
+    sent.push(command);
+  });
+  for (let cycle = 0; cycle < 60; cycle += 1) {
+    const active = `active-${cycle}`;
+    await expect(scheduler.dispatch(active)).resolves.toBe(true);
+    const queued = scheduler.dispatch(`stale-${cycle}`);
+    scheduler.interrupt();
+    scheduler.interrupt();
+    await expect(queued).resolves.toBe(false);
+    expect(scheduler.hasActivePlayback).toBe(false);
+    expect(scheduler.hasPendingPlayback).toBe(false);
+  }
+  await expect(scheduler.dispatch("final-recovery")).resolves.toBe(true);
+  scheduler.playbackDone();
+  expect(sent).toEqual([
+    ...Array.from({ length: 60 }, (_, cycle) => `active-${cycle}`),
+    "final-recovery",
+  ]);
+  expect(scheduler.hasPendingPlayback).toBe(false);
+});
+
+test("stress: 40 intermittent transport outages recover without stale commands", async () => {
+  const sent: number[] = [];
+  const scheduler = new PlaybackAwareCommandScheduler<number>(async (command) => {
+    if (command % 3 === 1) throw new Error("injected intermittent outage");
+    sent.push(command);
+  });
+  for (let index = 0; index < 120; index += 1) {
+    if (index % 3 === 1) {
+      await expect(scheduler.dispatch(index)).rejects.toThrow("injected intermittent outage");
+    } else {
+      await expect(scheduler.dispatch(index)).resolves.toBe(true);
+      scheduler.playbackDone();
+    }
+    expect(scheduler.hasPendingPlayback).toBe(false);
+    expect(scheduler.hasActivePlayback).toBe(false);
+  }
+  expect(sent).toEqual(Array.from({ length: 120 }, (_, index) => index)
+    .filter((index) => index % 3 !== 1));
+});
