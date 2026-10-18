@@ -1477,8 +1477,16 @@ const ownerCapture = mountOwnerCapture({
 
 const handleProviderClientEvent = (raw: string): void => {
   if (!raw) return;
+  // Normalization is asynchronous. A reply belonging to an earlier turn/session
+  // must never advance the current turn's playback barrier or evidence.
+  const receivingVoice = activeVoiceEvidence;
+  const receivingSessionSequence = evidenceSessionSequence;
   void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
     .then(async (normalized) => {
+      if (evidenceSessionSequence !== receivingSessionSequence
+          || activeVoiceEvidence !== receivingVoice
+          || (receivingSessionSequence > 0
+            && locallyFencedSessionSequence === receivingSessionSequence)) return;
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
         providerPlaybackInFlight = true;
