@@ -43,7 +43,7 @@ impl VoiceSttInput {
             Err(error) => {
                 eprintln!("VPR voice STT stage=open stage_detail=redacted");
                 Err(terminalize_provider_error(turn, error))
-            },
+            }
         }
     }
 
