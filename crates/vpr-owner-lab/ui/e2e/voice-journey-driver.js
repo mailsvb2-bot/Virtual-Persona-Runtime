@@ -187,6 +187,23 @@
       ),
       "interruption-stopped",
     );
+    // STOP is not a provider playback-complete acknowledgement. A manual
+    // interruption must never mint canonical playback evidence for this turn.
+    const snapshot = await fetchEvidence();
+    const interrupted = snapshot.voice_attempts?.find(
+      (attempt) => attempt.request_sequence === expectedRequestSequence,
+    );
+    if (interrupted?.canonical_playback_confirmed === true
+      || snapshot.media_events?.some((event) =>
+        event.request_sequence === expectedRequestSequence
+        && (event.kind === "playback_completed" || event.kind === "provider_playback_done_received"))) {
+      throw new Error("INTERRUPTED_TURN_FALSIFIED_PLAYBACK_COMPLETION");
+    }
+    if (snapshot.media_events?.filter((event) =>
+      event.request_sequence === expectedRequestSequence && event.kind === "interruption_stopped",
+    ).length !== 1) {
+      throw new Error("INTERRUPT_STOP_EVIDENCE_NOT_UNIQUE");
+    }
   };
 
   const waitForConnectReady = async () => {
