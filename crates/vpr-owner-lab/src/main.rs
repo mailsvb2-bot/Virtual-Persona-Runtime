@@ -40,6 +40,7 @@ const MAX_VOICE_BODY_BYTES: u64 = 960_000;
 // Browser bootstrap, playback and evidence export must not starve one another.
 const HTTP_WORKERS: usize = 16;
 const DEFAULT_PORT: u16 = 8787;
+const JS_MIME: &str = "text/javascript; charset=utf-8";
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
@@ -228,39 +229,23 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
 fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
-        "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
-        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, "text/javascript; charset=utf-8"),
-        "/interrupted-answer.js" => {
-            static_response(INTERRUPTED_ANSWER_JS, "text/javascript; charset=utf-8")
-        }
-        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8"),
-        "/voice-command-scheduler.js" => {
-            static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
-        }
-        "/provider-event-fence.js" => {
-            static_response(PROVIDER_EVENT_FENCE_JS, "text/javascript; charset=utf-8")
-        }
-        "/bootstrap-context.js" => {
-            static_response(BOOTSTRAP_CONTEXT_JS, "text/javascript; charset=utf-8")
-        }
-        "/media-runtime.js" => static_response(MEDIA_RUNTIME_JS, "text/javascript; charset=utf-8"),
-        "/session-runtime-state.js" => {
-            static_response(SESSION_RUNTIME_STATE_JS, "text/javascript; charset=utf-8")
-        }
-        "/evidence-export.js" => {
-            static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
-        }
-        "/vendor/livekit-client.umd.js" => {
-            static_response(LIVEKIT_CLIENT_JS, "text/javascript; charset=utf-8")
-        }
+        "/app.js" => static_response(APP_JS, JS_MIME),
+        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
+        "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
+        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, JS_MIME),
+        "/voice-command-scheduler.js" => static_response(VOICE_COMMAND_SCHEDULER_JS, JS_MIME),
+        "/provider-event-fence.js" => static_response(PROVIDER_EVENT_FENCE_JS, JS_MIME),
+        "/bootstrap-context.js" => static_response(BOOTSTRAP_CONTEXT_JS, JS_MIME),
+        "/media-runtime.js" => static_response(MEDIA_RUNTIME_JS, JS_MIME),
+        "/session-runtime-state.js" => static_response(SESSION_RUNTIME_STATE_JS, JS_MIME),
+        "/evidence-export.js" => static_response(EVIDENCE_EXPORT_JS, JS_MIME),
+        "/vendor/livekit-client.umd.js" => static_response(LIVEKIT_CLIENT_JS, JS_MIME),
         "/vendor/livekit-client.umd.js.sha256" => {
             static_response(LIVEKIT_CLIENT_SHA256, "text/plain; charset=utf-8")
         }
-        "/reference-capture.js" => {
-            static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
-        }
+        "/reference-capture.js" => static_response(REFERENCE_CAPTURE_JS, JS_MIME),
         "/styles.css" => static_response(STYLES_CSS, "text/css; charset=utf-8"),
-        "/mic-worklet.js" => static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8"),
+        "/mic-worklet.js" => static_response(MIC_WORKLET_JS, JS_MIME),
         _ => return None,
     };
     Some(response)
