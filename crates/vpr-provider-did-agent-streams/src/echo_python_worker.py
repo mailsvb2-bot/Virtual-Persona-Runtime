@@ -404,12 +404,19 @@ async def run():
                     if (
                         state is None or state["stream_id"] != request.get("stream_id")
                         or state["generation"] != generation or state["end_id"] is not None
-                        or state["bytes"] == 0 or state["queue"].full()
+                        or state["bytes"] == 0
                     ):
                         emit(identifier, False)
                         continue
+                    try:
+                        await asyncio.wait_for(
+                            state["queue"].put(None),
+                            timeout=PCM_QUEUE_BACKPRESSURE_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        emit(identifier, False)
+                        continue
                     state["end_id"] = identifier
-                    state["queue"].put_nowait(None)
                     # The pump acknowledges end ONLY after LiveKit stream close.
                 elif command == "pcm_abort":
                     state = active_pcm
