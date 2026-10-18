@@ -28,7 +28,10 @@ pub(super) fn deliver_phrase(
             .synthesize_and_deliver_realtime_avatar_audio_with_timings(
                 tts, provider, handle, phrase,
             )
-            .map_err(|error| terminalize_avatar_output_error(turn, error))?;
+            .map_err(|error| {
+                eprintln!("VPR audio_delivery path=server_tts failed");
+                terminalize_avatar_output_error(turn, error)
+            })?;
         return Ok((delivery, None, Some(timings)));
     }
     let client_text = handle
