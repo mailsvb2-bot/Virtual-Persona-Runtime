@@ -149,6 +149,10 @@ def make_handler(token: str, synthesizer, provider_id: str = "metrotrance-qwen",
     inference_slot = threading.BoundedSemaphore(value=1)
 
     class Handler(BaseHTTPRequestHandler):
+        # Piper streams with Transfer-Encoding: chunked; HTTP/1.0 cannot
+        # negotiate chunked message framing reliably with real HTTP clients.
+        protocol_version = "HTTP/1.1"
+
         def log_message(self, _format, *_args):
             # No phrases or credentials in HTTP logs.
             return
