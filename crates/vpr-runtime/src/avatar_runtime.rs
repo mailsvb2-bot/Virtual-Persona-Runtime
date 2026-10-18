@@ -11,7 +11,7 @@ use vpr_integration::{
     TtsPort, TtsRequest, WebRtcIceCandidate, WebRtcSessionDescription,
 };
 
-use crate::audio_stage_timing::{RealtimeAudioStageTimings, elapsed_stage};
+use crate::audio_stage_timing::{RealtimeAudioStageTimings, elapsed_stage, log_pcm_stage_failure};
 use crate::avatar_output_error::RealtimeAvatarOutputError;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::provider::ProviderOperation;
@@ -363,12 +363,7 @@ impl ActiveTurn {
                             channels,
                             &avatar_permit.cancellation,
                         )
-                        .inspect_err(|error| {
-                            eprintln!(
-                                "VPR audio stage=echo_pcm_begin failed kind={:?}",
-                                error.kind
-                            );
-                        })?,
+                        .inspect_err(|error| log_pcm_stage_failure("echo_pcm_begin", error.kind))?,
                     );
                 }
                 published
@@ -378,12 +373,7 @@ impl ActiveTurn {
                         retryable: false,
                     })?
                     .push_pcm(pcm, &avatar_permit.cancellation)
-                    .inspect_err(|error| {
-                        eprintln!(
-                            "VPR audio stage=echo_pcm_chunk failed kind={:?}",
-                            error.kind
-                        );
-                    })?;
+                    .inspect_err(|error| log_pcm_stage_failure("echo_pcm_chunk", error.kind))?;
                 first_echo_send_millis.get_or_insert_with(|| elapsed_stage(stage_started));
                 Ok(())
             };
@@ -424,7 +414,7 @@ impl ActiveTurn {
             }))
         })?;
         if let Err(error) = stream.finish(&avatar_permit.cancellation) {
-            eprintln!("VPR audio stage=echo_pcm_end failed kind={:?}", error.kind);
+            log_pcm_stage_failure("echo_pcm_end", error.kind);
             let _ = stream.abort();
             return Err(RealtimeAvatarOutputError::Provider(
                 ProviderExecutionError::from(error),
