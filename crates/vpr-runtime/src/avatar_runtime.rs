@@ -356,12 +356,17 @@ impl ActiveTurn {
                 }
                 first_pcm_millis.get_or_insert_with(|| elapsed_stage(stage_started));
                 if published.is_none() {
-                    published = Some(port.open_pcm_stream(
-                        &handle.provider_session,
-                        rate,
-                        channels,
-                        &avatar_permit.cancellation,
-                    )?);
+                    published = Some(
+                        port.open_pcm_stream(
+                            &handle.provider_session,
+                            rate,
+                            channels,
+                            &avatar_permit.cancellation,
+                        )
+                        .inspect_err(|error| {
+                            eprintln!("VPR audio stage=echo_pcm_begin failed kind={:?}", error.kind);
+                        })?,
+                    );
                 }
                 published
                     .as_mut()
@@ -369,7 +374,10 @@ impl ActiveTurn {
                         kind: ProviderErrorKind::Unavailable,
                         retryable: false,
                     })?
-                    .push_pcm(pcm, &avatar_permit.cancellation)?;
+                    .push_pcm(pcm, &avatar_permit.cancellation)
+                    .inspect_err(|error| {
+                        eprintln!("VPR audio stage=echo_pcm_chunk failed kind={:?}", error.kind);
+                    })?;
                 first_echo_send_millis.get_or_insert_with(|| elapsed_stage(stage_started));
                 Ok(())
             };
@@ -386,6 +394,7 @@ impl ActiveTurn {
         };
 
         if let Err(error) = synthesis {
+            eprintln!("VPR audio stage=tts_or_sink failed");
             if let Some(mut stream) = published {
                 let _ = stream.abort(); // Explicit provider STOP + transport fencing.
             }
@@ -409,6 +418,7 @@ impl ActiveTurn {
             }))
         })?;
         if let Err(error) = stream.finish(&avatar_permit.cancellation) {
+            eprintln!("VPR audio stage=echo_pcm_end failed kind={:?}", error.kind);
             let _ = stream.abort();
             return Err(RealtimeAvatarOutputError::Provider(
                 ProviderExecutionError::from(error),
