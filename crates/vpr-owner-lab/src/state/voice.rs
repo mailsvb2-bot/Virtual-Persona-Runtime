@@ -462,9 +462,12 @@ impl OwnerLabEngine {
                             self.tts.as_deref(),
                             handle,
                             &phrase,
-                        ).map_err(|error| {
-                            eprintln!("VPR voice stage=avatar_delivery failed code={}", error.code());
-                            error
+                        )
+                        .inspect_err(|error| {
+                            eprintln!(
+                                "VPR voice stage=avatar_delivery failed code={}",
+                                error.code()
+                            );
                         })?;
                         if first_audio_timings.is_none() {
                             first_audio_timings = audio_timings;
