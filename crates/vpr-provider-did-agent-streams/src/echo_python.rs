@@ -204,9 +204,15 @@ impl SessionWorker {
                 if let Ok(receipt) = serde_json::from_slice::<Receipt>(&line) {
                     if !receipt.ok {
                         match receipt.stage.as_deref() {
-                            Some("pcm_stream_open") => eprintln!("VPR Echo stage=pcm_stream_open failed"),
-                            Some("pcm_stream_write") => eprintln!("VPR Echo stage=pcm_stream_write failed"),
-                            Some("pcm_stream_close") => eprintln!("VPR Echo stage=pcm_stream_close failed"),
+                            Some("pcm_stream_open") => {
+                                eprintln!("VPR Echo stage=pcm_stream_open failed");
+                            }
+                            Some("pcm_stream_write") => {
+                                eprintln!("VPR Echo stage=pcm_stream_write failed");
+                            }
+                            Some("pcm_stream_close") => {
+                                eprintln!("VPR Echo stage=pcm_stream_close failed");
+                            }
                             _ => {}
                         }
                     }
