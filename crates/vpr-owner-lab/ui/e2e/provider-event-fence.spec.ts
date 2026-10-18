@@ -23,3 +23,21 @@ test("new active turn after an earlier cancellation accepts only its own events"
   expect(providerEventStillCurrent(cancelled, active, 10, 10, -1)).toBe(false);
   expect(providerEventStillCurrent(active, active, 10, 10, -1)).toBe(true);
 });
+
+
+test("rejected provider normalization after turn replacement or revoke cannot affect new evidence", async () => {
+  const oldVoice = { providerParseFailurePosted: false };
+  const currentVoice = { providerParseFailurePosted: false };
+  await Promise.reject(new Error("provider unavailable")).catch(() => {
+    if (providerEventStillCurrent(oldVoice, currentVoice, 12, 12, -1)) {
+      currentVoice.providerParseFailurePosted = true;
+    }
+  });
+  expect(currentVoice.providerParseFailurePosted).toBe(false);
+  await Promise.reject(new Error("session revoked")).catch(() => {
+    if (providerEventStillCurrent(oldVoice, oldVoice, 12, 12, 12)) {
+      oldVoice.providerParseFailurePosted = true;
+    }
+  });
+  expect(oldVoice.providerParseFailurePosted).toBe(false);
+});

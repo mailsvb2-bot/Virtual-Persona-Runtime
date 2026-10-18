@@ -1185,7 +1185,9 @@ const handleProviderClientEvent = (raw) => {
         updateControls();
     })
         .catch(async () => {
-        const voice = activeVoiceEvidence;
+        if (!providerEventStillCurrent(receivingVoice, activeVoiceEvidence, receivingSessionSequence, evidenceSessionSequence, locallyFencedSessionSequence))
+            return;
+        const voice = receivingVoice;
         if (voice && !voice.providerParseFailurePosted) {
             voice.providerParseFailurePosted = true;
             await postMediaEvidence("provider_event_parse_failed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);

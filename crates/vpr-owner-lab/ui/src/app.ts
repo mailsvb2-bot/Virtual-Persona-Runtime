@@ -1541,7 +1541,12 @@ const handleProviderClientEvent = (raw: string): void => {
       updateControls();
     })
     .catch(async () => {
-      const voice = activeVoiceEvidence;
+      // Failed normalization must not be attributed to a later turn/session.
+      if (!providerEventStillCurrent(
+        receivingVoice, activeVoiceEvidence, receivingSessionSequence,
+        evidenceSessionSequence, locallyFencedSessionSequence,
+      )) return;
+      const voice = receivingVoice;
       if (voice && !voice.providerParseFailurePosted) {
         voice.providerParseFailurePosted = true;
         await postMediaEvidence(
