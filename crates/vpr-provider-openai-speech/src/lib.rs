@@ -132,13 +132,19 @@ impl TtsPort for OpenAiSpeechTts {
             .send()
             .map_err(|error| {
                 if self.config.stream_pcm {
-                    eprintln!("VPR Piper stage=http_send failed timeout={}", error.is_timeout());
+                    eprintln!(
+                        "VPR Piper stage=http_send failed timeout={}",
+                        error.is_timeout()
+                    );
                 }
                 map_transport_error(&error)
             })?;
         if !response.status().is_success() {
             if self.config.stream_pcm {
-                eprintln!("VPR Piper stage=http_status failed status={}", response.status().as_u16());
+                eprintln!(
+                    "VPR Piper stage=http_status failed status={}",
+                    response.status().as_u16()
+                );
             }
             return Err(map_status(response.status().as_u16()));
         }
