@@ -130,8 +130,16 @@ impl TtsPort for OpenAiSpeechTts {
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .map_err(|error| {
+                if self.config.stream_pcm {
+                    eprintln!("VPR Piper stage=http_send failed timeout={}", error.is_timeout());
+                }
+                map_transport_error(&error)
+            })?;
         if !response.status().is_success() {
+            if self.config.stream_pcm {
+                eprintln!("VPR Piper stage=http_status failed status={}", response.status().as_u16());
+            }
             return Err(map_status(response.status().as_u16()));
         }
         if self.config.stream_pcm {
@@ -192,13 +200,17 @@ fn stream_pcm_body(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|rate| (8_000..=48_000).contains(rate))
-        .ok_or_else(invalid_response)?;
+        .ok_or_else(|| {
+            eprintln!("VPR Piper stage=pcm_headers failed reason=sample_rate");
+            invalid_response()
+        })?;
     if response
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         != Some("application/octet-stream")
     {
+        eprintln!("VPR Piper stage=pcm_headers failed reason=content_type");
         return Err(invalid_response());
     }
     let mut buffer = [0_u8; 8192];
@@ -208,7 +220,10 @@ fn stream_pcm_body(
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        let size = response.read(&mut buffer).map_err(|_| invalid_response())?;
+        let size = response.read(&mut buffer).map_err(|error| {
+            eprintln!("VPR Piper stage=pcm_read failed kind={:?}", error.kind());
+            invalid_response()
+        })?;
         if size == 0 {
             break;
         }
@@ -225,10 +240,14 @@ fn stream_pcm_body(
             pending_byte = chunk.pop();
         }
         if !chunk.is_empty() {
-            sink.push_generated_audio(&chunk, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+            sink.push_generated_audio(&chunk, sample_rate_hz, 1, PcmSampleFormat::S16Le)
+                .inspect_err(|error| {
+                    eprintln!("VPR Piper stage=pcm_sink failed kind={:?}", error.kind);
+                })?;
         }
     }
     if total == 0 || pending_byte.is_some() {
+        eprintln!("VPR Piper stage=pcm_end failed reason=empty_or_partial");
         return Err(invalid_response());
     }
     if cancellation.is_cancelled() {
