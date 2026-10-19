@@ -666,6 +666,7 @@ const readAvSyncOffsetMillis = async (state) => {
     };
 };
 const collectAvSyncEvidence = async (requestSequence) => {
+    const collectingSessionSequence = evidenceSessionSequence;
     let sampleSequence = 1;
     let attempts = 0;
     const readState = {
@@ -677,6 +678,8 @@ const collectAvSyncEvidence = async (requestSequence) => {
     let lastAudioIssue = "stats_unavailable";
     let lastVideoIssue = "stats_unavailable";
     while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
+        if (evidenceSessionSequence !== collectingSessionSequence)
+            return;
         attempts += 1;
         let reading;
         try {
@@ -687,13 +690,15 @@ const collectAvSyncEvidence = async (requestSequence) => {
             lastVideoIssue = "stats_unavailable";
             break;
         }
+        if (evidenceSessionSequence !== collectingSessionSequence)
+            return;
         if (reading.audioIssue !== null)
             lastAudioIssue = reading.audioIssue;
         if (reading.videoIssue !== null)
             lastVideoIssue = reading.videoIssue;
         if (reading.offsetMillis !== null && reading.reference !== null) {
             await api("/api/evidence/av-sync", {
-                session_sequence: evidenceSessionSequence,
+                session_sequence: collectingSessionSequence,
                 request_sequence: requestSequence,
                 sample_sequence: sampleSequence,
                 reference: reading.reference,
@@ -705,9 +710,11 @@ const collectAvSyncEvidence = async (requestSequence) => {
             await new Promise((resolve) => window.setTimeout(resolve, AV_SYNC_SAMPLE_INTERVAL_MILLIS));
         }
     }
+    if (evidenceSessionSequence !== collectingSessionSequence)
+        return;
     if (sampleSequence <= AV_SYNC_SAMPLE_COUNT) {
         await api("/api/evidence/av-sync-diagnostic", {
-            session_sequence: evidenceSessionSequence,
+            session_sequence: collectingSessionSequence,
             request_sequence: requestSequence,
             attempts,
             audio_issue: lastAudioIssue,
