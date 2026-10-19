@@ -973,6 +973,7 @@ const readAvSyncOffsetMillis = async (
 };
 
 const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => {
+  const collectingSessionSequence = evidenceSessionSequence;
   let sampleSequence = 1;
   let attempts = 0;
   const readState: AvSyncReadState = {
@@ -985,6 +986,7 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   let lastVideoIssue: AvSyncTrackIssue | null = "stats_unavailable";
 
   while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
+    if (evidenceSessionSequence !== collectingSessionSequence) return;
     attempts += 1;
     let reading: Awaited<ReturnType<typeof readAvSyncOffsetMillis>>;
     try {
@@ -994,11 +996,12 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
       lastVideoIssue = "stats_unavailable";
       break;
     }
+    if (evidenceSessionSequence !== collectingSessionSequence) return;
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
     if (reading.offsetMillis !== null && reading.reference !== null) {
       await api<{ ok: true }>("/api/evidence/av-sync", {
-        session_sequence: evidenceSessionSequence,
+        session_sequence: collectingSessionSequence,
         request_sequence: requestSequence,
         sample_sequence: sampleSequence,
         reference: reading.reference,
@@ -1011,9 +1014,10 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
     }
   }
 
+  if (evidenceSessionSequence !== collectingSessionSequence) return;
   if (sampleSequence <= AV_SYNC_SAMPLE_COUNT) {
     await api<{ ok: true }>("/api/evidence/av-sync-diagnostic", {
-      session_sequence: evidenceSessionSequence,
+      session_sequence: collectingSessionSequence,
       request_sequence: requestSequence,
       attempts,
       audio_issue: lastAudioIssue,
