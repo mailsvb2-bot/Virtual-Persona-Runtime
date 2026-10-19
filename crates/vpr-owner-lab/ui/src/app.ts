@@ -1161,13 +1161,15 @@ const monitorRemoteAudio = (): void => {
         performance.now() - voice.startedAt,
         voice.requestSequence,
       ).catch(() => undefined);
+      const recoveringSession = evidenceSessionSequence;
+      const recoveringRequest = voice.requestSequence;
       void interruptAvatar(false).then((recovered) => {
-        if (recovered) {
-          setStatus(
-            "D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
-              + "следующий turn разблокирован, но playback_completed не засчитан.",
-            "error",
-          );
+        if (recovered && evidenceSessionSequence === recoveringSession
+            && activeVoiceEvidence?.requestSequence === recoveringRequest) {
+          // A genuine audible tail and an acknowledged private provider STOP
+          // unblock the next turn. They are never misreported as a D-ID ACK.
+          setStatus("Ответ прозвучал. Следующий вопрос доступен; D-ID playback ACK отсутствует.", "ready");
+          updateControls();
         }
       });
     }
