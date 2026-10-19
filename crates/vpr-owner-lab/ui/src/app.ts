@@ -1117,7 +1117,7 @@ const monitorRemoteAudio = (): void => {
         ).then(async () => {
           await syncStatus().catch(() => undefined);
           const avSyncEvidence = ensureAvSyncEvidence(voice);
-          if (avSyncEvidence) await avSyncEvidence;
+          if (avSyncEvidence) void avSyncEvidence.catch(() => undefined);
         });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence
@@ -2651,8 +2651,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
       }
+      // RTP measurements are independent evidence, not part of the user turn.
+      // Missing browser playout timestamps must not block the next microphone turn.
       const avSyncEvidence = ensureAvSyncEvidence(voice);
-      if (avSyncEvidence) await avSyncEvidence;
+      if (avSyncEvidence) void avSyncEvidence.catch(() => undefined);
     }
     await refreshSessionEvidence();
     terminalStatus = {
