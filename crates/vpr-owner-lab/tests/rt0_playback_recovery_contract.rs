@@ -12,7 +12,7 @@ fn strict_rt0_recovers_from_missing_provider_playback_done_without_promoting_evi
         "voice.playbackRecoveryTriggered = true",
         "\"playback_recovery_triggered\"",
         "interruptAvatar(false)",
-        "playback_completed не засчитан",
+        "postMediaEvidence(\"browser_audio_tail_observed\"",
     ] {
         assert!(
             APP.contains(marker),
