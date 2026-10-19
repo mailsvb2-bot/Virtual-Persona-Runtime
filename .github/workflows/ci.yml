@@ -136,9 +136,26 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+      - name: Parse RT0 owner closure with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts\\rt0-owner-closure.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
       - name: Windows launcher listener ownership regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_launcher.ps1
+      - name: RT0 owner closure script safety under Windows PowerShell 5.1
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/e2e/test_rt0_owner_closure.ps1
       - name: Windows full Owner Lab canary and rollback-safe preflight regression
         shell: pwsh
         run: pwsh -NoProfile -File tests/e2e/test_windows_owner_lab_canary.ps1
@@ -163,12 +180,15 @@ jobs:
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'vpr-piper-windows-ci'
-          py -3.11 scripts/windows_piper_prepare.py --data-dir $root
-          if ($LASTEXITCODE -ne 0) { throw 'Piper first-use preparation failed on Windows' }
           $python = Join-Path $root 'venv\Scripts\python.exe'
-          $model = Join-Path $root 'voices\ru_RU-denis-medium.onnx'
-          & $python tests/e2e/test_windows_piper_real_voice.py --model $model
-          if ($LASTEXITCODE -ne 0) { throw 'Real Windows Piper PCM E2E failed' }
+          foreach ($voice in @('ru_RU-irina-medium', 'ru_RU-denis-medium')) {
+            py -3.11 scripts/windows_piper_prepare.py --data-dir $root --voice $voice
+            if ($LASTEXITCODE -ne 0) { throw "Piper first-use preparation failed on Windows for $voice" }
+            $model = Join-Path $root ("voices\" + $voice + ".onnx")
+            if (-not (Test-Path -LiteralPath $model -PathType Leaf)) { throw "Pinned Piper model missing: $voice" }
+            & $python tests/e2e/test_windows_piper_real_voice.py --model $model
+            if ($LASTEXITCODE -ne 0) { throw "Real Windows Piper PCM E2E failed for $voice" }
+          }
 
   owner-lab-ui:
     runs-on: ubuntu-24.04

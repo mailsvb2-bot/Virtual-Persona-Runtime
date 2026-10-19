@@ -76,6 +76,35 @@ fn preserves_system_instruction_and_user_input_as_distinct_fields() {
         .unwrap();
     assert!(request.contains("\"input\":\"visitor-input\""));
     assert!(request.contains("\"system_instruction\":\"canonical-policy\""));
+    assert!(!request.contains("generation_config"));
+}
+
+#[test]
+fn realtime_generation_cap_is_sent_on_wire() {
+    let body = concat!(
+        "data: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":\"completed\",\"usage\":{\"total_input_tokens\":1,\"total_output_tokens\":0}}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let (endpoint, captured) = serve_once_capture("200 OK", body);
+    let provider = GeminiLlm::new(
+        GeminiConfig::new(endpoint, "secret", "gemini-test").with_max_output_tokens(96),
+    )
+    .unwrap();
+    provider
+        .stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "x".into(),
+            },
+            &Probe(AtomicBool::new(false)),
+            &mut GeneratedTextBuffer::default(),
+        )
+        .unwrap();
+    let request = captured
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .unwrap();
+    assert!(request.contains("\"generation_config\":{\"max_output_tokens\":96}"));
 }
 
 #[test]

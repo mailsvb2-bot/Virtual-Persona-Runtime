@@ -225,6 +225,9 @@ fn prepared(stats: Arc<Mutex<AvatarStats>>) -> PreparedLiveProof {
             avatar_descriptor,
             stt_descriptor: Some(stt_descriptor),
             llm_descriptor: Some(llm_descriptor),
+            tts_descriptor: None,
+            tts_fallback_descriptor: None,
+            voice_profile: None,
         },
     }
 }
@@ -235,6 +238,9 @@ fn state_binding(role: ProviderRole, descriptor: &ProviderDescriptor) -> Provide
         provider: descriptor.provider.clone(),
         model_or_representation: descriptor.model_or_representation.clone(),
         configuration_fingerprint_sha256: descriptor.configuration_fingerprint_sha256.clone(),
+        voice_profile_status: None,
+        profile_id: None,
+        version: None,
     }
 }
 

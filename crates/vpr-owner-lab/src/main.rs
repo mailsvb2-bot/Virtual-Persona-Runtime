@@ -31,17 +31,16 @@ use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
     LabError, LabSessionEvidenceRecorder, LabVoicePlaybackRegistry, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle,
+    OwnerLabStartRequest, OwnerLabTurnInput, ParticipantRole, ProviderBundle, VoiceProfile,
     restore_reviewed_persona,
 };
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 const MAX_BODY_BYTES: u64 = 128 * 1024;
 const MAX_VOICE_BODY_BYTES: u64 = 960_000;
-// The Owner Lab UI loads a graph of ES modules and polls canonical APIs
-// concurrently. Reserve enough request handlers that slow response writers
-// cannot starve browser bootstrap and terminal evidence export.
+// Browser bootstrap, playback and evidence export must not starve one another.
 const HTTP_WORKERS: usize = 16;
 const DEFAULT_PORT: u16 = 8787;
+const JS_MIME: &str = "text/javascript; charset=utf-8";
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
@@ -50,6 +49,7 @@ const TTS_SELECTOR_JS: &str = include_str!("../ui/dist/tts-selector.js");
 const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
 const VOICE_COMMAND_SCHEDULER_JS: &str = include_str!("../ui/dist/voice-command-scheduler.js");
+const PROVIDER_EVENT_FENCE_JS: &str = include_str!("../ui/dist/provider-event-fence.js");
 const BOOTSTRAP_CONTEXT_JS: &str = include_str!("../ui/dist/bootstrap-context.js");
 const MEDIA_RUNTIME_JS: &str = include_str!("../ui/dist/media-runtime.js");
 const SESSION_RUNTIME_STATE_JS: &str = include_str!("../ui/dist/session-runtime-state.js");
@@ -63,6 +63,7 @@ type HttpResponse = Response<Cursor<Vec<u8>>>;
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
     rt0_evidence_mode: bool,
+    voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
     reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
@@ -87,39 +88,35 @@ struct BootstrapResponse<'a> {
     csrf_token: &'a str,
     egress_enabled: bool,
     rt0_evidence_mode: bool,
+    voice_profile: Option<serde_json::Value>,
 }
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
     ok: bool,
     code: &'a str,
 }
-
 #[derive(Deserialize)]
 struct StartBody {
     consent: bool,
     audience: Option<String>,
 }
-
 #[derive(Deserialize)]
 struct AnswerBody {
     kind: String,
     sdp: String,
 }
-
 #[derive(Deserialize)]
 struct IceBody {
     candidate: Option<String>,
     sdp_mid: Option<String>,
     sdp_mline_index: Option<u16>,
 }
-
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
         std::process::exit(1);
     }
 }
-
 fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let launch_options = launch::parse_launch_options(env::args().skip(1))
         .map_err(|error| format!("invalid owner-lab launch options: {error}"))?;
@@ -145,6 +142,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .unwrap_or(DEFAULT_PORT);
     let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
+    let voice_profile = providers.voice_profile.clone();
     let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
@@ -164,6 +162,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
         rt0_evidence_mode,
+        voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
@@ -225,36 +224,23 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
 fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
-        "/app.js" => static_response(APP_JS, "text/javascript; charset=utf-8"),
-        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, "text/javascript; charset=utf-8"),
-        "/interrupted-answer.js" => {
-            static_response(INTERRUPTED_ANSWER_JS, "text/javascript; charset=utf-8")
-        }
-        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, "text/javascript; charset=utf-8"),
-        "/voice-command-scheduler.js" => {
-            static_response(VOICE_COMMAND_SCHEDULER_JS, "text/javascript; charset=utf-8")
-        }
-        "/bootstrap-context.js" => {
-            static_response(BOOTSTRAP_CONTEXT_JS, "text/javascript; charset=utf-8")
-        }
-        "/media-runtime.js" => static_response(MEDIA_RUNTIME_JS, "text/javascript; charset=utf-8"),
-        "/session-runtime-state.js" => {
-            static_response(SESSION_RUNTIME_STATE_JS, "text/javascript; charset=utf-8")
-        }
-        "/evidence-export.js" => {
-            static_response(EVIDENCE_EXPORT_JS, "text/javascript; charset=utf-8")
-        }
-        "/vendor/livekit-client.umd.js" => {
-            static_response(LIVEKIT_CLIENT_JS, "text/javascript; charset=utf-8")
-        }
+        "/app.js" => static_response(APP_JS, JS_MIME),
+        "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
+        "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
+        "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, JS_MIME),
+        "/voice-command-scheduler.js" => static_response(VOICE_COMMAND_SCHEDULER_JS, JS_MIME),
+        "/provider-event-fence.js" => static_response(PROVIDER_EVENT_FENCE_JS, JS_MIME),
+        "/bootstrap-context.js" => static_response(BOOTSTRAP_CONTEXT_JS, JS_MIME),
+        "/media-runtime.js" => static_response(MEDIA_RUNTIME_JS, JS_MIME),
+        "/session-runtime-state.js" => static_response(SESSION_RUNTIME_STATE_JS, JS_MIME),
+        "/evidence-export.js" => static_response(EVIDENCE_EXPORT_JS, JS_MIME),
+        "/vendor/livekit-client.umd.js" => static_response(LIVEKIT_CLIENT_JS, JS_MIME),
         "/vendor/livekit-client.umd.js.sha256" => {
             static_response(LIVEKIT_CLIENT_SHA256, "text/plain; charset=utf-8")
         }
-        "/reference-capture.js" => {
-            static_response(REFERENCE_CAPTURE_JS, "text/javascript; charset=utf-8")
-        }
+        "/reference-capture.js" => static_response(REFERENCE_CAPTURE_JS, JS_MIME),
         "/styles.css" => static_response(STYLES_CSS, "text/css; charset=utf-8"),
-        "/mic-worklet.js" => static_response(MIC_WORKLET_JS, "text/javascript; charset=utf-8"),
+        "/mic-worklet.js" => static_response(MIC_WORKLET_JS, JS_MIME),
         _ => return None,
     };
     Some(response)
@@ -269,9 +255,13 @@ fn route_request(
     match (method, path) {
         (&Method::Get, "/api/bootstrap") => bootstrap_response(state),
         (&Method::Get, "/api/tts/providers") => http_tts::snapshot(state),
-        (&Method::Get, "/api/status") => {
-            with_engine(state, |engine| json_response(200, &engine.status()))
-        }
+        (&Method::Get, "/api/status") => with_engine(state, |engine| {
+            let mut status = serde_json::to_value(engine.status()).unwrap_or_default();
+            if let Some(profile) = state.voice_profile.as_ref() {
+                status["voice_profile"] = http_tts::voice_profile_public(profile);
+            }
+            json_response(200, &status)
+        }),
         (&Method::Get, "/api/persona/capture") => http_owner_capture::snapshot(state),
         (&Method::Get, "/api/references") => {
             http_references::snapshot_response(&state.reference_intake)
@@ -443,6 +433,10 @@ fn bootstrap_response(state: &AppState) -> HttpResponse {
                 csrf_token: &state.csrf_token,
                 egress_enabled: engine.status().egress_enabled,
                 rt0_evidence_mode: state.rt0_evidence_mode,
+                voice_profile: state
+                    .voice_profile
+                    .as_ref()
+                    .map(http_tts::voice_profile_public),
             },
         )
     })

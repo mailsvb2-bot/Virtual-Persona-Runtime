@@ -160,7 +160,6 @@ pub struct OwnerLabEngine {
 
 impl OwnerLabEngine {
     /// Creates the local owner-lab orchestration boundary around one realtime-avatar provider.
-    ///
     /// # Errors
     /// Returns an internal error if the fixed RT0 persona identity cannot be constructed.
     pub fn new(
@@ -192,7 +191,6 @@ impl OwnerLabEngine {
 
     /// Binds an explicitly reviewed `DIGITAL_TWIN` profile as the canonical owner context for
     /// subsequent turns. The profile's Persona identity/version becomes the turn snapshot source.
-    ///
     /// # Errors
     /// Fails closed if capture/review is incomplete or the profile is not a `DIGITAL_TWIN`.
     pub fn with_reviewed_profile(mut self, profile: PersonaProfile) -> Result<Self, LabError> {
@@ -201,7 +199,6 @@ impl OwnerLabEngine {
     }
 
     /// Replaces the canonical reviewed owner context between realtime sessions.
-    ///
     /// # Errors
     /// Fails closed while a realtime session is active, or when the supplied profile has not
     /// completed explicit `DIGITAL_TWIN` review.
@@ -265,7 +262,6 @@ impl OwnerLabEngine {
     }
 
     /// Starts one owner-lab runtime session and opens the provider realtime-avatar session.
-    ///
     /// # Errors
     /// Fails closed without both process-level egress enablement and explicit user consent.
     pub fn start(&mut self, request: OwnerLabStartRequest) -> Result<LabSignalBundle, LabError> {
@@ -578,7 +574,9 @@ mod session_revocation;
 mod status;
 mod text;
 mod voice;
+mod voice_delivery;
 mod voice_input;
+mod voice_metrics;
 mod voice_phrase;
 mod voice_playback;
 mod voice_stt;

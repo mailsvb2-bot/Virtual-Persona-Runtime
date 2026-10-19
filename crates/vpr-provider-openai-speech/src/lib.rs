@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::time::Duration;
 
 use reqwest::blocking::{Client, Response};
@@ -18,6 +19,7 @@ pub struct OpenAiSpeechConfig {
     model: String,
     voice: String,
     timeout: Duration,
+    stream_pcm: bool,
 }
 
 impl OpenAiSpeechConfig {
@@ -35,6 +37,7 @@ impl OpenAiSpeechConfig {
             model: model.into(),
             voice: voice.into(),
             timeout: DEFAULT_TIMEOUT,
+            stream_pcm: false,
         }
     }
 
@@ -48,6 +51,13 @@ impl OpenAiSpeechConfig {
     #[must_use]
     pub const fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Enable raw PCM streaming only for the trusted loopback Piper bridge.
+    #[must_use]
+    pub const fn with_stream_pcm(mut self, enabled: bool) -> Self {
+        self.stream_pcm = enabled;
         self
     }
 
@@ -73,6 +83,11 @@ impl OpenAiSpeechTts {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: OpenAiSpeechConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
+        if config.stream_pcm
+            && (config.provider_name != "piper" || !is_loopback_endpoint(&config.endpoint))
+        {
+            return Err(invalid_response());
+        }
         if config.provider_name.trim().is_empty()
             || config.model.trim().is_empty()
             || config.voice.trim().is_empty()
@@ -106,7 +121,7 @@ impl TtsPort for OpenAiSpeechTts {
             model: &self.config.model,
             input: &request.text,
             voice: &self.config.voice,
-            response_format: "wav",
+            response_format: if self.config.stream_pcm { "pcm" } else { "wav" },
         };
         let response = self
             .client
@@ -115,9 +130,26 @@ impl TtsPort for OpenAiSpeechTts {
             .header(CONTENT_TYPE, "application/json")
             .json(&body)
             .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .map_err(|error| {
+                if self.config.stream_pcm {
+                    eprintln!(
+                        "VPR Piper stage=http_send failed timeout={}",
+                        error.is_timeout()
+                    );
+                }
+                map_transport_error(&error)
+            })?;
         if !response.status().is_success() {
+            if self.config.stream_pcm {
+                eprintln!(
+                    "VPR Piper stage=http_status failed status={}",
+                    response.status().as_u16()
+                );
+            }
             return Err(map_status(response.status().as_u16()));
+        }
+        if self.config.stream_pcm {
+            return stream_pcm_body(response, cancellation, sink, request.text.chars().count());
         }
         let wav = read_body(response, cancellation)?;
         let audio = decode_pcm_wav(&wav)?;
@@ -160,6 +192,96 @@ fn read_body(
         return Err(invalid_response());
     }
     Ok(output)
+}
+
+fn stream_pcm_body(
+    mut response: Response,
+    cancellation: &dyn CancellationProbe,
+    sink: &mut dyn GeneratedAudioSink,
+    text_chars: usize,
+) -> Result<UsageEvidence, ProviderError> {
+    let sample_rate_hz = response
+        .headers()
+        .get("x-vpr-sample-rate")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|rate| (8_000..=48_000).contains(rate))
+        .ok_or_else(|| {
+            eprintln!("VPR Piper stage=pcm_headers failed reason=sample_rate");
+            invalid_response()
+        })?;
+    if response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        != Some("application/octet-stream")
+    {
+        eprintln!("VPR Piper stage=pcm_headers failed reason=content_type");
+        return Err(invalid_response());
+    }
+    let mut buffer = [0_u8; 8192];
+    let mut total = 0_usize;
+    let mut pending_byte = None;
+    loop {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        let size = response.read(&mut buffer).map_err(|error| {
+            eprintln!("VPR Piper stage=pcm_read failed kind={:?}", error.kind());
+            invalid_response()
+        })?;
+        if size == 0 {
+            break;
+        }
+        total = total
+            .checked_add(size)
+            .filter(|count| *count <= MAX_PROVIDER_BINARY_BODY_BYTES)
+            .ok_or_else(invalid_response)?;
+        let mut chunk = Vec::with_capacity(size + 1);
+        if let Some(byte) = pending_byte.take() {
+            chunk.push(byte);
+        }
+        chunk.extend_from_slice(&buffer[..size]);
+        if chunk.len() % 2 != 0 {
+            pending_byte = chunk.pop();
+        }
+        if !chunk.is_empty() {
+            sink.push_generated_audio(&chunk, sample_rate_hz, 1, PcmSampleFormat::S16Le)
+                .inspect_err(|error| {
+                    eprintln!("VPR Piper stage=pcm_sink failed kind={:?}", error.kind);
+                })?;
+        }
+    }
+    if total == 0 || pending_byte.is_some() {
+        eprintln!("VPR Piper stage=pcm_end failed reason=empty_or_partial");
+        return Err(invalid_response());
+    }
+    if cancellation.is_cancelled() {
+        return Err(cancelled());
+    }
+    let duration = u64::try_from(total)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(1000)
+        / (u64::from(sample_rate_hz) * 2);
+    Ok(UsageEvidence {
+        input_units: Some(u64::try_from(text_chars).unwrap_or(u64::MAX)),
+        input_unit: Some(UsageUnit::TextCharacter),
+        output_units: Some(duration),
+        output_unit: Some(UsageUnit::AudioMillisecond),
+        ..UsageEvidence::default()
+    })
+}
+
+fn is_loopback_endpoint(endpoint: &str) -> bool {
+    reqwest::Url::parse(endpoint).ok().is_some_and(|url| {
+        url.scheme() == "http"
+            && url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            })
+    })
 }
 
 fn decode_pcm_wav(bytes: &[u8]) -> Result<AudioInput, ProviderError> {

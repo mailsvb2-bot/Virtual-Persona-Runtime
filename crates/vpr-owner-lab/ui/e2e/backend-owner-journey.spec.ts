@@ -43,19 +43,27 @@ const csrfHeaders = (csrf: string) => ({
 });
 
 test("built UI drives the real Owner Lab backend and provider adapter", async ({ page, request }) => {
-  // Bootstrap probes alone miss starvation in the real browser's concurrent
-  // ES-module graph. Fetch the embedded modules in parallel, as Chromium does.
+  // Exercise the browser's real concurrent asset fetch path rather than the
+  // Playwright APIRequestContext connection pool. Both browser loading and
+  // response integrity remain mandatory (no mocks and no timeout suppression).
+  await installTransportFakes(page);
+  await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
   const appAssets = [
     "/", "/styles.css", "/app.js", "/tts-selector.js",
     "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
     "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
     "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
   ];
-  await Promise.all(appAssets.map(async (path) => {
-    const response = await request.get(`${ownerLabUrl}${path}`, { timeout: 15_000 });
-    expect(response.status(), `Owner Lab static asset unavailable: ${path}`).toBe(200);
-    expect((await response.body()).byteLength, `Owner Lab returned an empty asset: ${path}`).toBeGreaterThan(0);
-  }));
+  const assetResults = await page.evaluate(async (paths) =>
+    Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, { cache: "no-store" });
+      const bytes = await response.arrayBuffer();
+      return { path, status: response.status, bytes: bytes.byteLength };
+    })), appAssets);
+  for (const asset of assetResults) {
+    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
+    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
+  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
@@ -68,13 +76,11 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     pending.delete(outgoing.url());
     failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
   });
-  await installTransportFakes(page);
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
     // milestone even while its bootstrap and canonical API path are healthy.
     // Check that the real app executes and finishes bootstrap instead.
-    await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
     await expect(
       page.locator("#status"),
       "Owner Lab must run its JavaScript and finish backend bootstrap",

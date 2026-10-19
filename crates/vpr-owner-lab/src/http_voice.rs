@@ -426,6 +426,13 @@ fn spawn_voice_worker(
             }),
             Err(_) => Err(LabError::Internal),
         };
+        if let Err(ref error) = result {
+            eprintln!(
+                "VPR voice request={} failed code={} (inspect STT stage diagnostics)",
+                request_sequence,
+                error.code()
+            );
+        }
         *worker_state.active_voice_interrupt.lock() = None;
         let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
         worker_state.voice_streams.finish_with_unlock(

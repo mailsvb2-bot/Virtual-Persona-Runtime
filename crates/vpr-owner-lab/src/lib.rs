@@ -5,6 +5,7 @@ mod persona_persistence;
 mod provider_credentials;
 mod providers;
 mod state;
+mod voice_profile;
 #[cfg(windows)]
 mod windows_secure_store;
 
@@ -26,7 +27,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
 
-pub use provider_credentials::ProviderCredentialProfile;
+pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
 pub use provider_credentials::{
     delete_provider_profile, load_provider_profile, save_provider_profile,
@@ -41,6 +42,7 @@ pub use state::{
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};
+pub use voice_profile::{VoiceProfile, VoiceProfileStatus};
 
 #[cfg(all(test, windows))]
 mod windows_restart_script_tests {

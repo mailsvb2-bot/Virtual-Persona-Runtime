@@ -112,6 +112,20 @@ pub struct EchoPythonBackend {
 struct Receipt {
     id: u64,
     ok: bool,
+    #[serde(default)]
+    stage: Option<String>,
+}
+
+fn log_echo_receipt_failure(receipt: &Receipt) {
+    if receipt.ok {
+        return;
+    }
+    match receipt.stage.as_deref() {
+        Some("pcm_stream_open") => eprintln!("VPR Echo stage=pcm_stream_open failed"),
+        Some("pcm_stream_write") => eprintln!("VPR Echo stage=pcm_stream_write failed"),
+        Some("pcm_stream_close") => eprintln!("VPR Echo stage=pcm_stream_close failed"),
+        _ => {}
+    }
 }
 
 struct SessionWorker {
@@ -200,6 +214,7 @@ impl SessionWorker {
                     line.push(byte[0]);
                 }
                 if let Ok(receipt) = serde_json::from_slice::<Receipt>(&line) {
+                    log_echo_receipt_failure(&receipt);
                     if let Ok(mut requests) = pending.lock() {
                         if let Some(reply) = requests.remove(&receipt.id) {
                             let _ = reply.send(receipt.ok);

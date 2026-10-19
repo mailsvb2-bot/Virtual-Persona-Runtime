@@ -138,14 +138,17 @@ fn authorized_character_suffix(reply: &str, offset: usize) -> Option<String> {
     if offset >= chars.len() || offset > 16_000 {
         return None;
     }
-    if offset > 0
-        && !chars[offset - 1].is_whitespace()
-        && !matches!(
-            chars[offset - 1],
+    // A resume cursor may begin a word after whitespace or after standalone
+    // punctuation, but never inside a date, decimal, or attached word.
+    if offset > 0 && !chars[offset - 1].is_whitespace() {
+        let previous = chars[offset - 1];
+        let punctuation_boundary = matches!(
+            previous,
             '.' | '!' | '?' | '…' | ',' | ':' | ';' | '—' | '–' | '(' | ')' | '«' | '»'
-        )
-    {
-        return None;
+        ) && !chars[offset].is_alphanumeric();
+        if !punctuation_boundary {
+            return None;
+        }
     }
     let suffix = chars[offset..].iter().collect::<String>();
     let suffix = suffix.trim();
@@ -372,6 +375,26 @@ mod resume_tests {
         assert!(
             source.lock().is_none(),
             "late completion must not revive revoked replay"
+        );
+    }
+
+    #[test]
+    fn replay_cursor_never_splits_dates_decimals_or_attached_words() {
+        let reply = "Встреча 12.10.2026 и оценка 3.14. Следующий пункт.";
+        for prefix in [
+            "Встреча 12.",
+            "Встреча 12.10.",
+            "Встреча 12.10.2026 и оценка 3.",
+        ] {
+            assert!(
+                authorized_character_suffix(reply, prefix.chars().count()).is_none(),
+                "cursor must not split a numeric token"
+            );
+        }
+        let safe_offset = "Встреча 12.10.2026 и оценка 3.14. ".chars().count();
+        assert_eq!(
+            authorized_character_suffix(reply, safe_offset).as_deref(),
+            Some("Следующий пункт.")
         );
     }
 

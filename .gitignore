@@ -17,3 +17,9 @@ coverage/
 
 !crates/vpr-owner-lab/ui/dist/
 !crates/vpr-owner-lab/ui/dist/app.js
+
+# Real voice profiles, rights evidence and audition records are strictly private
+voice-profile*.json
+!docs/examples/voice-profile*.example.json
+voice-rights.json
+voice-review-private/

@@ -5,6 +5,9 @@ Never downloads weights at request time. The provider identifier is currently
 the existing OpenAI-compatible local TTS wire contract.
 """
 import os
+import io
+import time
+import wave
 from pathlib import Path
 
 from metrotrance_tts_bridge import make_handler, validate_echo_wav
@@ -75,16 +78,49 @@ def make_piper_synthesizer(model_path):
     return synthesize
 
 
+
+def warmup_piper(synthesize):
+    """Warm the actual synthesis path before accepting voice traffic.
+
+    RTF is processing seconds divided by generated audio seconds.
+    No user phrase or audio is persisted.
+    """
+    start = time.perf_counter()
+    audio = synthesize("Здравствуйте. Я готова говорить.")
+    elapsed = time.perf_counter() - start
+    with wave.open(io.BytesIO(audio), "rb") as source:
+        duration = source.getnframes() / source.getframerate()
+    if duration <= 0:
+        raise RuntimeError("Piper warmup produced no audio")
+    return round(elapsed / duration, 4)
+
+
+PINNED_PIPER_VOICES = ("ru_RU-irina-medium", "ru_RU-denis-medium")
+
+
+def check_selected_voice(model, selected):
+    """Fail closed when the declared speech voice differs from the verified model."""
+    if selected is None:
+        return
+    stem = os.path.basename(model)
+    if stem.endswith(".onnx"):
+        stem = stem[:-5]
+    if selected not in PINNED_PIPER_VOICES or stem != selected:
+        raise SystemExit("VPR_PIPER_VOICE does not match the pinned Piper model")
+
+
 def main():
     model = os.environ.get("VPR_PIPER_MODEL")
     token = os.environ.get("VPR_METROTRANCE_TTS_TOKEN", "")
     port = int(os.environ.get("VPR_METROTRANCE_TTS_PORT", "8897"))
     if not model:
         raise SystemExit("VPR_PIPER_MODEL is required")
+    check_selected_voice(model, os.environ.get("VPR_PIPER_VOICE"))
     synth = make_piper_synthesizer(model)
+    rtf = warmup_piper(synth)
     server = ThreadingHTTPServer(
         ("127.0.0.1", port),
-        make_handler(token, synth, provider_id="piper"),
+        make_handler(token, synth, provider_id="piper", health_status={"ready": True, "rtf": rtf}),
     )
     try:
         print("Piper TTS loopback ready", flush=True)

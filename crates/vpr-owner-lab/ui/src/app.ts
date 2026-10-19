@@ -2,6 +2,7 @@ import { publishBootstrap } from "./bootstrap-context.js";
 import { downloadSessionEvidence } from "./evidence-export.js";
 import { authorizedSpeakText, replayTextFrom, resumeSentences, resumeWordOffset, suggestedResumeSentence } from "./interrupted-answer.js";
 import { mountOwnerCapture } from "./owner-capture.js";
+import { providerEventStillCurrent } from "./provider-event-fence.js";
 import { PlaybackAwareCommandScheduler } from "./voice-command-scheduler.js";
 import {
   createRuntimeAudioContext,
@@ -972,6 +973,7 @@ const readAvSyncOffsetMillis = async (
 };
 
 const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => {
+  const collectingSessionSequence = evidenceSessionSequence;
   let sampleSequence = 1;
   let attempts = 0;
   const readState: AvSyncReadState = {
@@ -984,6 +986,7 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   let lastVideoIssue: AvSyncTrackIssue | null = "stats_unavailable";
 
   while (sampleSequence <= AV_SYNC_SAMPLE_COUNT && attempts < AV_SYNC_MAX_ATTEMPTS) {
+    if (evidenceSessionSequence !== collectingSessionSequence) return;
     attempts += 1;
     let reading: Awaited<ReturnType<typeof readAvSyncOffsetMillis>>;
     try {
@@ -993,11 +996,12 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
       lastVideoIssue = "stats_unavailable";
       break;
     }
+    if (evidenceSessionSequence !== collectingSessionSequence) return;
     if (reading.audioIssue !== null) lastAudioIssue = reading.audioIssue;
     if (reading.videoIssue !== null) lastVideoIssue = reading.videoIssue;
     if (reading.offsetMillis !== null && reading.reference !== null) {
       await api<{ ok: true }>("/api/evidence/av-sync", {
-        session_sequence: evidenceSessionSequence,
+        session_sequence: collectingSessionSequence,
         request_sequence: requestSequence,
         sample_sequence: sampleSequence,
         reference: reading.reference,
@@ -1010,9 +1014,10 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
     }
   }
 
+  if (evidenceSessionSequence !== collectingSessionSequence) return;
   if (sampleSequence <= AV_SYNC_SAMPLE_COUNT) {
     await api<{ ok: true }>("/api/evidence/av-sync-diagnostic", {
-      session_sequence: evidenceSessionSequence,
+      session_sequence: collectingSessionSequence,
       request_sequence: requestSequence,
       attempts,
       audio_issue: lastAudioIssue,
@@ -1116,7 +1121,7 @@ const monitorRemoteAudio = (): void => {
         ).then(async () => {
           await syncStatus().catch(() => undefined);
           const avSyncEvidence = ensureAvSyncEvidence(voice);
-          if (avSyncEvidence) await avSyncEvidence;
+          if (avSyncEvidence) void avSyncEvidence.catch(() => undefined);
         });
         voice.audioStartedEvidence = audioStartedEvidence;
         void audioStartedEvidence
@@ -1160,13 +1165,15 @@ const monitorRemoteAudio = (): void => {
         performance.now() - voice.startedAt,
         voice.requestSequence,
       ).catch(() => undefined);
+      const recoveringSession = evidenceSessionSequence;
+      const recoveringRequest = voice.requestSequence;
       void interruptAvatar(false).then((recovered) => {
-        if (recovered) {
-          setStatus(
-            "D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
-              + "следующий turn разблокирован, но playback_completed не засчитан.",
-            "error",
-          );
+        if (recovered && evidenceSessionSequence === recoveringSession
+            && activeVoiceEvidence?.requestSequence === recoveringRequest) {
+          // A genuine audible tail and an acknowledged private provider STOP
+          // unblock the next turn. They are never misreported as a D-ID ACK.
+          setStatus("Ответ прозвучал. Следующий вопрос доступен; D-ID playback ACK отсутствует.", "ready");
+          updateControls();
         }
       });
     }
@@ -1477,8 +1484,16 @@ const ownerCapture = mountOwnerCapture({
 
 const handleProviderClientEvent = (raw: string): void => {
   if (!raw) return;
+  // Normalization is asynchronous. A reply belonging to an earlier turn/session
+  // must never advance the current turn's playback barrier or evidence.
+  const receivingVoice = activeVoiceEvidence;
+  const receivingSessionSequence = evidenceSessionSequence;
   void api<ClientEvent | null>("/api/avatar/client-event", { message: raw })
     .then(async (normalized) => {
+      if (!providerEventStillCurrent(
+        receivingVoice, activeVoiceEvidence, receivingSessionSequence,
+        evidenceSessionSequence, locallyFencedSessionSequence,
+      )) return;
       if (normalized?.kind === "playback_started") {
         sessionState.setPlaybackId(normalized.playback_id);
         providerPlaybackInFlight = true;
@@ -1532,7 +1547,12 @@ const handleProviderClientEvent = (raw: string): void => {
       updateControls();
     })
     .catch(async () => {
-      const voice = activeVoiceEvidence;
+      // Failed normalization must not be attributed to a later turn/session.
+      if (!providerEventStillCurrent(
+        receivingVoice, activeVoiceEvidence, receivingSessionSequence,
+        evidenceSessionSequence, locallyFencedSessionSequence,
+      )) return;
+      const voice = receivingVoice;
       if (voice && !voice.providerParseFailurePosted) {
         voice.providerParseFailurePosted = true;
         await postMediaEvidence(
@@ -2635,8 +2655,10 @@ const finishMicrophoneTurn = async (): Promise<void> => {
       if (voice.audioStartedEvidence) {
         await voice.audioStartedEvidence;
       }
+      // RTP measurements are independent evidence, not part of the user turn.
+      // Missing browser playout timestamps must not block the next microphone turn.
       const avSyncEvidence = ensureAvSyncEvidence(voice);
-      if (avSyncEvidence) await avSyncEvidence;
+      if (avSyncEvidence) void avSyncEvidence.catch(() => undefined);
     }
     await refreshSessionEvidence();
     terminalStatus = {

@@ -217,7 +217,57 @@ class SpeechBridgeContract(unittest.TestCase):
         self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.worker.start()
         self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen"})[0], 400)
-        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0], 200)
+        # Exact preset identity is required by the bridge: an unspecified voice
+        # must never silently use a different speaker than the bound profile.
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset"})[0], 400)
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Ryan"})[0], 400)
+        self.assertEqual(self.post(payload={"input": "Привет", "model": "metrotrance-qwen-preset", "voice": "Vivian"})[0], 200)
+
+    def test_piper_chunked_pcm_uses_http11_and_decodes_exact_pcm(self):
+        from unittest.mock import patch
+
+        self.server.shutdown()
+        self.server.server_close()
+        self.worker.join(timeout=2)
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            module.make_handler(TOKEN, self._voice, "piper"),
+        )
+        self.worker = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.worker.start()
+        pcm = bytes([1, 0]) * 160
+        with patch.object(module, "piper_pcm_parts", return_value=iter([(16000, pcm)])):
+            connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+            body = json.dumps({"input": "Привет", "model": "piper", "voice": "local",
+                               "response_format": "pcm"}).encode()
+            try:
+                connection.request("POST", "/v1/audio/speech", body, {
+                    "Content-Type": "application/json", "Authorization": "Bearer " + TOKEN,
+                })
+                response = connection.getresponse()
+                self.assertEqual(response.version, 11)
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.getheader("Transfer-Encoding"), "chunked")
+                self.assertEqual(response.read(), pcm)
+            finally:
+                connection.close()
+
+    def test_piper_aborted_client_does_not_attempt_secondary_502(self):
+        from unittest.mock import Mock
+
+        handler_type = module.make_handler(TOKEN, lambda _: WAV, "piper")
+        handler = handler_type.__new__(handler_type)
+        handler.send_response = Mock()
+        handler.send_header = Mock()
+        handler.end_headers = Mock()
+        handler.wfile = Mock()
+        handler.wfile.write.side_effect = ConnectionAbortedError(10053, "client aborted")
+        handler.close_connection = False
+
+        handler.send_piper_pcm("Привет", lambda _: WAV)
+
+        handler.send_response.assert_called_once_with(200)
+        self.assertTrue(handler.close_connection)
 
     def test_short_token_cannot_start_listener(self):
         with self.assertRaises(ValueError):

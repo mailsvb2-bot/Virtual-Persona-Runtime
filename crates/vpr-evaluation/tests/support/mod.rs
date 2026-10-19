@@ -187,5 +187,8 @@ fn provider(role: ProviderRole, name: &str, config: &[u8]) -> ProviderStateBindi
         provider: name.into(),
         model_or_representation: "contract-v1".into(),
         configuration_fingerprint_sha256: sha256_hex(config),
+        voice_profile_status: None,
+        profile_id: None,
+        version: None,
     }
 }

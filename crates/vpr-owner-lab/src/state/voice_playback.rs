@@ -29,16 +29,26 @@ impl LabVoicePlaybackRegistry {
     ) -> Result<u64, LabError> {
         let sequence = delivery.sequence();
         let mut pending = self.inner.lock();
-        let entry = pending
-            .entry(evidence_turn_sequence)
-            .or_insert_with(|| PendingVoicePlayback {
-                turn: Arc::clone(turn),
-                deliveries: BTreeMap::new(),
-            });
-        if entry.turn.snapshot().turn_id() != turn.snapshot().turn_id()
-            || entry.deliveries.insert(sequence, delivery).is_some()
-        {
-            return Err(LabError::InvalidState);
+        // Validate before mutating. BTreeMap::insert replaces the old handle
+        // even when reporting a duplicate; that would silently corrupt the
+        // canonical sent/played lifecycle after rejecting the registration.
+        if let Some(entry) = pending.get_mut(&evidence_turn_sequence) {
+            if entry.turn.snapshot().turn_id() != turn.snapshot().turn_id()
+                || entry.deliveries.contains_key(&sequence)
+            {
+                return Err(LabError::InvalidState);
+            }
+            entry.deliveries.insert(sequence, delivery);
+        } else {
+            let mut deliveries = BTreeMap::new();
+            deliveries.insert(sequence, delivery);
+            pending.insert(
+                evidence_turn_sequence,
+                PendingVoicePlayback {
+                    turn: Arc::clone(turn),
+                    deliveries,
+                },
+            );
         }
         Ok(sequence)
     }

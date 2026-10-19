@@ -18,12 +18,18 @@ WAV_STREAM_CHUNK_BYTES = 4 * 1024
 MAX_TEXT_BYTES = 4096
 MAX_PENDING_UTTERANCES = 16
 MAX_STREAMED_PCM_QUEUE = 8
+PCM_QUEUE_BACKPRESSURE_SECONDS = 0.15
 MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
 
 
-def emit(identifier, ok):
-    print(json.dumps({"id": identifier, "ok": bool(ok)}, separators=(",", ":")), flush=True)
+def emit(identifier, ok, stage=None):
+    # Machine-readable diagnostics are a strict allowlist: never echo exception
+    # details, credentials, provider endpoints, or conversation content.
+    record = {"id": identifier, "ok": bool(ok)}
+    if not ok and stage in {"pcm_stream_open", "pcm_stream_write", "pcm_stream_close"}:
+        record["stage"] = stage
+    print(json.dumps(record, separators=(",", ":")), flush=True)
 
 
 class NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
@@ -166,6 +172,7 @@ async def run():
         nonlocal generation, active_pcm
         writer = None
         published = False
+        failure_stage = "pcm_stream_open"
         try:
             async with utterance_lock:
                 if state["generation"] != generation:
@@ -186,8 +193,10 @@ async def run():
                         raise asyncio.CancelledError()
                     if chunk is None:
                         break
+                    failure_stage = "pcm_stream_write"
                     await writer.write(chunk)
                     published = True
+                failure_stage = "pcm_stream_close"
                 await writer.aclose()
                 writer = None
                 if state["generation"] != generation:
@@ -200,6 +209,7 @@ async def run():
                 emit(state["end_id"], False)
                 state["end_id"] = None
         except Exception:
+            emit(state["stream_id"], False, failure_stage)
             if state["generation"] == generation:
                 generation += 1
                 if published:
@@ -381,7 +391,6 @@ async def run():
                         or state["generation"] != generation or state["end_id"] is not None
                         or not isinstance(raw_pcm, str) or not raw_pcm
                         or len(raw_pcm) > MAX_PCM_COMMAND_HEX
-                        or state["queue"].full()
                     ):
                         emit(identifier, False)
                         continue
@@ -394,22 +403,29 @@ async def run():
                             or size // (state["channels"] * 2) > state["rate"] * 60
                         ):
                             raise ValueError("invalid bounded PCM chunk")
-                        state["queue"].put_nowait(pcm)
+                        await asyncio.wait_for(state["queue"].put(pcm), timeout=PCM_QUEUE_BACKPRESSURE_SECONDS)
                         state["bytes"] = size
                         emit(identifier, True)  # queued only, not played
-                    except (ValueError, OverflowError, asyncio.QueueFull):
+                    except (ValueError, OverflowError, asyncio.TimeoutError):
                         emit(identifier, False)
                 elif command == "pcm_end":
                     state = active_pcm
                     if (
                         state is None or state["stream_id"] != request.get("stream_id")
                         or state["generation"] != generation or state["end_id"] is not None
-                        or state["bytes"] == 0 or state["queue"].full()
+                        or state["bytes"] == 0
                     ):
                         emit(identifier, False)
                         continue
+                    try:
+                        await asyncio.wait_for(
+                            state["queue"].put(None),
+                            timeout=PCM_QUEUE_BACKPRESSURE_SECONDS,
+                        )
+                    except asyncio.TimeoutError:
+                        emit(identifier, False)
+                        continue
                     state["end_id"] = identifier
-                    state["queue"].put_nowait(None)
                     # The pump acknowledges end ONLY after LiveKit stream close.
                 elif command == "pcm_abort":
                     state = active_pcm

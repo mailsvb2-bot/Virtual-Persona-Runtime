@@ -1,5 +1,6 @@
 use super::{LabError, LabSessionAudience, OwnerLabEngine};
 use std::sync::Arc;
+use vpr_domain::RealtimeSessionState;
 use vpr_runtime::RealtimeAvatarStopHandle;
 
 impl OwnerLabEngine {
@@ -18,6 +19,13 @@ impl OwnerLabEngine {
     /// # Errors
     /// Refuses unknown engines and visitor-initiated configuration changes.
     pub fn select_tts_provider(&mut self, name: &str) -> Result<(), LabError> {
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.state() != RealtimeSessionState::Closed)
+        {
+            return Err(LabError::InvalidState);
+        }
         if self.session_audience == Some(LabSessionAudience::Visitor) {
             return Err(LabError::InvalidState);
         }

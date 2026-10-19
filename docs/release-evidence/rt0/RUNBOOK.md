@@ -7,6 +7,8 @@ promotion.
 The governing rule is simple: one clean Git candidate, one exact sanitized provider state, one
 external evidence workspace, and no hand-edited canonical generated artifacts.
 
+On Windows, `scripts/rt0-owner-closure.ps1` (see `OWNER_CLOSURE.md`) guides the same order and pauses for real owner, visitor and reviewer input.
+
 ## 0. Freeze the exact candidate
 
 Run from a clean checkout of the commit that is actually being evaluated.
@@ -353,3 +355,7 @@ fail. Exit `2` means malformed, stale, tampered or cross-bound evidence.
 Only after the exact archived evidence genuinely represents the real observations it claims, the
 inventory is complete, and the final report is `ready=true` may Issue #216 be closed or RT0
 maturity promotion be considered.
+
+### Voice profile gate — Amendment A1
+
+Before starting a strict RT0 candidate, bind the configured standalone TTS to a versioned `INTERIM` or `ACCEPTED` VoiceProfile outside Git. Record the `tts` provider-state role, status and profile/version in evidence. For `INTERIM`, add `RT0-Voice-Status: INTERIM` to `known-limitations.md` and use `DEFERRED_INTERIM_VOICE` only for subjective voice naturalness/similarity; all other quality and safety checks remain mandatory. Any change to voice/profile invalidates provider-state digests for the candidate, requiring a new complete run.

@@ -40,7 +40,10 @@ impl VoiceSttInput {
                     mode: VoiceSttMode::Buffered(Vec::new()),
                 })
             }
-            Err(error) => Err(terminalize_provider_error(turn, error)),
+            Err(error) => {
+                eprintln!("VPR voice STT stage=open stage_detail=redacted");
+                Err(terminalize_provider_error(turn, error))
+            }
         }
     }
 
@@ -54,9 +57,10 @@ impl VoiceSttInput {
         match &mut self.mode {
             VoiceSttMode::Streaming(stream) => {
                 for chunk in pcm.chunks(STT_STREAM_CHUNK_BYTES) {
-                    stream
-                        .push_audio(chunk)
-                        .map_err(|error| terminalize_provider_error(turn, error))?;
+                    stream.push_audio(chunk).map_err(|error| {
+                        eprintln!("VPR voice STT stage=stream operation failed");
+                        terminalize_provider_error(turn, error)
+                    })?;
                 }
             }
             VoiceSttMode::Buffered(buffer) => buffer.extend_from_slice(pcm),
@@ -109,7 +113,10 @@ impl VoiceSttInput {
                         locale_hint: self.request.locale_hint,
                     },
                 )
-                .map_err(|error| terminalize_provider_error(turn, error))
+                .map_err(|error| {
+                    eprintln!("VPR voice STT stage=buffered_execute failed");
+                    terminalize_provider_error(turn, error)
+                })
             }
         }
     }

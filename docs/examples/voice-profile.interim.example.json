@@ -1,0 +1,10 @@
+{
+  "schema_version": "vpr-voice-profile-0.1",
+  "profile_id": "interim-piper-irina",
+  "version": 1,
+  "status": "INTERIM",
+  "provider": "piper",
+  "model": "piper",
+  "voice": "ru_RU-irina-medium",
+  "rights_ref_sha256": null
+}

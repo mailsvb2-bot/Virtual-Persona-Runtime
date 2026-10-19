@@ -25,6 +25,8 @@ class FakeWriter:
         self.trace = trace
 
     async def write(self, data):
+        if self.trace["write_latency"]:
+            await asyncio.sleep(self.trace["write_latency"])
         self.trace["audio"].append(bytes(data))
         self.trace["write_timestamps"].append(time.monotonic())
 
@@ -40,6 +42,8 @@ class FakeLocalParticipant:
 
     async def stream_bytes(self, **options):
         self.trace["stream_options"].append(options)
+        if self.trace["stream_open_fails"]:
+            raise RuntimeError("synthetic LiveKit refusal")
         return FakeWriter(self.trace)
 
     async def send_text(self, text, *, topic):
@@ -49,12 +53,16 @@ class FakeLocalParticipant:
 class FakeRoom:
     instances = []
     close_latency = 0
+    write_latency = 0
+    stream_open_fails = False
 
     def __init__(self):
         self.trace = {
             "audio": [], "write_timestamps": [], "closed": 0, "stream_options": [], "stops": [],
             "connected": [], "disconnected": 0,
             "close_latency": self.__class__.close_latency,
+            "write_latency": self.__class__.write_latency,
+            "stream_open_fails": self.__class__.stream_open_fails,
         }
         self.local_participant = FakeLocalParticipant(self.trace)
         self.remote_participants = {
@@ -92,7 +100,8 @@ class DelayedInput:
 
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
-               close_latency=0, tts_chunks=None):
+               close_latency=0, tts_chunks=None, write_latency=0,
+               stream_open_fails=False):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -126,6 +135,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     ]
     FakeRoom.instances.clear()
     FakeRoom.close_latency = close_latency
+    FakeRoom.write_latency = write_latency
+    FakeRoom.stream_open_fails = stream_open_fails
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
@@ -199,6 +210,52 @@ class EchoWorkerTests(unittest.TestCase):
         })
         self.assertTrue(all(any(r["id"] == i and r["ok"] for r in receipts)
                             for i in (11, 12, 13, 14)))
+
+    def test_stream_pcm_backpressure_allows_burst_faster_than_livekit(self):
+        pcm = bytes([7, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+        ]
+        records.extend(
+            {"id": 12 + i, "command": "pcm_chunk", "stream_id": 11,
+             "pcm_hex": pcm.hex()} for i in range(14)
+        )
+        records.extend([
+            {"id": 26, "command": "pcm_end", "stream_id": 11},
+            {"id": 27, "command": "close"},
+        ])
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.5, write_latency=0.015
+        )
+        accepted = {item["id"] for item in receipts if item["ok"]}
+        self.assertTrue(set(range(11, 27)).issubset(accepted))
+        self.assertEqual(len(trace["audio"]), 14)
+
+    def test_private_pcm_stream_open_failure_emits_sanitized_stage(self):
+        pcm = bytes([3, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 21, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 22, "command": "pcm_chunk", "stream_id": 21,
+             "pcm_hex": pcm.hex()},
+            {"id": 23, "command": "pcm_end", "stream_id": 21},
+            {"id": 24, "command": "close"},
+        ]
+        _, receipts = run_worker(
+            True, records=records, delay_before_close=0.15,
+            stream_open_fails=True
+        )
+        failures = [item for item in receipts
+                    if item.get("stage") == "pcm_stream_open"]
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["id"], 21)
+        self.assertFalse(failures[0]["ok"])
+        self.assertEqual(set(failures[0]), {"id", "ok", "stage"})
 
     def test_streamed_pcm_abort_cancels_late_chunks_and_sends_vendor_interrupt(self):
         first = bytes([1, 0] * 160)

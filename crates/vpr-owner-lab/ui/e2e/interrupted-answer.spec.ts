@@ -62,3 +62,24 @@ test("Russian word cursor counts Unicode codepoints, not UTF-16 units", () => {
   expect(resumeWordOffset(reply, pos)).toBe(Array.from(reply.slice(0, pos)).length);
   expect(resumeWordOffset(reply, pos)).toBeLessThan(pos);
 });
+
+test("browser resumes only at server-compatible word boundaries for dates and decimals", () => {
+  const reply = "Дата 12.10.2026 и число 3.14. Следующий ответ.";
+  for (const fragment of ["10.2026", "2026", "14."]) {
+    const cursor = reply.indexOf(fragment);
+    const offset = resumeWordOffset(reply, cursor);
+    expect(offset).not.toBeNull();
+    const suffix = Array.from(reply).slice(offset!).join("");
+    expect(suffix).not.toMatch(/^(?:10\.2026|2026|14\.)/u);
+  }
+  const next = reply.indexOf("Следующий");
+  expect(resumeWordOffset(reply, next)).toBe(Array.from(reply.slice(0, next)).length);
+});
+
+test("resume boundary remains stable for normalized multiline Russian speech", () => {
+  const sentences = resumeSentences(["Первая  строка.\n", "Вторая\tстрока и 10.05.2026."]);
+  const normalized = sentences.join(" ");
+  expect(normalized).toBe("Первая строка. Вторая строка и 10.05.2026.");
+  const target = normalized.indexOf("Вторая");
+  expect(resumeWordOffset(normalized, target)).toBe(Array.from(normalized.slice(0, target)).length);
+});

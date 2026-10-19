@@ -26,11 +26,11 @@ On first use, it:
    `%LOCALAPPDATA%\Virtual-Persona-Runtime\Piper\venv`.
 2. Installs the fixed engine version `piper-tts==1.3.0`, separate from the
    existing Echo Python interpreter.
-3. Downloads the `ru_RU-denis-medium` Russian voice (approximately 63 MB)
-   from the official pinned `rhasspy/piper-voices` `v1.0.0` revision.
-   It verifies the SHA-256 of the model
-   `15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a`
-   and the accompanying Russian 22,050 Hz model configuration.
+3. Downloads the selected Russian voice (approximately 63 MB) from the pinned
+   `rhasspy/piper-voices` v1.0.0 revision, verifying SHA-256 and Russian 22,050 Hz configuration:
+   - Default female `ru_RU-irina-medium`: `8ff38212d23da300bbe3705c645e6e5b9475f0bfde01558eb17813e22acaaaaa`
+   - Alternative male `ru_RU-denis-medium`: `15fab56e11a097858ee115545d0f697fc2a316c41a291a5362349fb870411b0a`
+   Select via `-PiperVoice` or an explicit interim VoiceProfile.
    A failed or interrupted download cannot replace a validated voice.
 4. Starts only the local `127.0.0.1:8897` speech bridge with a fresh
    cryptographically random, per-launch bearer token. It rejects port
@@ -44,6 +44,26 @@ On first use, it:
 The model and environment are cached outside Git. The second launch should
 not download them again. The Windows PowerShell console remains open while
 the lab is running because it supervises the local TTS worker.
+
+## Startup latency and readiness (RT0)
+
+The Piper bridge loads the installed model and synthesizes a fixed Russian warmup
+sentence **before** binding its loopback listener. An invalid WAV or warmup
+failure prevents the service from starting; readiness is never fabricated.
+
+After successful warmup, `GET http://127.0.0.1:8897/health` returns only
+`{"ready": true, "rtf": <measured value>}`. RTF is elapsed synthesis time
+divided by generated audio duration, not an end-to-end latency estimate.
+The endpoint contains no bearer token, input transcript, voice audio or
+model path. It is loopback-only. The existing Windows launcher independently
+verifies listener ownership and the authenticated speech endpoint.
+
+This warmup reduces cold-start exposure but does **not** demonstrate the
+QualityContract first-audio p95: collect real browser evidence before asserting
+a pass. The original dev-only Denis download remains separate from any final
+rights-cleared female voice choice. The requested Irina dataset's licensing is
+unverified and it must **not** be promoted into a commercial/release preset
+without an independent rights review.
 
 ## Boundaries and license
 
@@ -80,3 +100,5 @@ and visible moving video, measured first audio latency and A/V drift,
 interrupt/STOP and fail-closed revocation, verified cost/usage and human
 review on the frozen candidate. Never describe HTTP WAV generation as
 confirmed playback by the vendor or visitor.
+
+**Licensing warning:** Irina's RHVoice-derived dataset license is not verified. Irina is for development/interim use only and must be replaced before any commercial release. Denis model card states CC0; the Piper engine has GPL-3.0-or-later obligations that require independent review.
