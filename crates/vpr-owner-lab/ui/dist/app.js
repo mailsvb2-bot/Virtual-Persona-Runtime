@@ -841,10 +841,13 @@ const monitorRemoteAudio = () => {
             voice.playbackRecoveryTriggered = true;
             void postMediaEvidence("browser_audio_tail_observed", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
             void postMediaEvidence("playback_recovery_triggered", performance.now() - voice.startedAt, voice.requestSequence).catch(() => undefined);
+            const recoveringSession = evidenceSessionSequence;
+            const recoveringRequest = voice.requestSequence;
             void interruptAvatar(false).then((recovered) => {
-                if (recovered) {
-                    setStatus("D-ID не подтвердил окончание playback. Зависший playback безопасно остановлен; "
-                        + "следующий turn разблокирован, но playback_completed не засчитан.", "error");
+                if (recovered && evidenceSessionSequence === recoveringSession
+                    && activeVoiceEvidence?.requestSequence === recoveringRequest) {
+                    setStatus("Ответ прозвучал. Следующий вопрос доступен; D-ID playback ACK отсутствует.", "ready");
+                    updateControls();
                 }
             });
         }
