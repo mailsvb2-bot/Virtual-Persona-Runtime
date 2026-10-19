@@ -804,7 +804,7 @@ const monitorRemoteAudio = () => {
                     await syncStatus().catch(() => undefined);
                     const avSyncEvidence = ensureAvSyncEvidence(voice);
                     if (avSyncEvidence)
-                        await avSyncEvidence;
+                        void avSyncEvidence.catch(() => undefined);
                 });
                 voice.audioStartedEvidence = audioStartedEvidence;
                 void audioStartedEvidence
@@ -2182,7 +2182,7 @@ const finishMicrophoneTurn = async () => {
             }
             const avSyncEvidence = ensureAvSyncEvidence(voice);
             if (avSyncEvidence)
-                await avSyncEvidence;
+                void avSyncEvidence.catch(() => undefined);
         }
         await refreshSessionEvidence();
         terminalStatus = {
