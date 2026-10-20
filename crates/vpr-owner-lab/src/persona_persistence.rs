@@ -262,8 +262,7 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
         file.sync_all()
             .map_err(|_| "reviewed Persona file store sync failed")?;
         drop(file);
-        fs::rename(&temp, path)
-            .map_err(|_| "reviewed Persona file store commit failed")?;
+        fs::rename(&temp, path).map_err(|_| "reviewed Persona file store commit failed")?;
         #[cfg(unix)]
         fs::File::open(parent)
             .and_then(|directory| directory.sync_all())
@@ -519,12 +518,17 @@ mod tests {
     fn private_reviewed_file_permissions_are_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH).unwrap().as_nanos();
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let base = std::env::temp_dir().join(format!("vpr-persona-private-{unique}"));
         fs::create_dir_all(&base).unwrap();
         let path = base.join("reviewed.json");
         save_file(&path, &sample()).unwrap();
-        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         fs::remove_file(&path).unwrap();
         fs::remove_dir(&base).unwrap();
     }
