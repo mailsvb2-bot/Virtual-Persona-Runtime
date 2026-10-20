@@ -213,10 +213,12 @@ fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>,
 }
 
 fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|_| "reviewed Persona file store directory creation failed")?;
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|_| "reviewed Persona file store directory creation failed")?;
     let raw = serde_json::to_vec_pretty(&PersistedPersonaV2::new(snapshot.clone()))
         .map_err(|_| "reviewed Persona serialization failed")?;
 
@@ -225,8 +227,6 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
     // The rename keeps the prior committed file intact until its replacement
     // has been written and flushed. This is not a cross-process CAS store:
     // RT1 must still introduce authoritative revision checks before concurrent use.
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
     let mut staged = None;
     for _ in 0..16 {
         let mut suffix = [0u8; 16];
