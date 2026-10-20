@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -218,10 +219,60 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
     }
     let raw = serde_json::to_vec_pretty(&PersistedPersonaV2::new(snapshot.clone()))
         .map_err(|_| "reviewed Persona serialization failed")?;
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, raw).map_err(|_| "reviewed Persona file store write failed")?;
-    fs::rename(&temporary, path)
-        .map_err(|_| "reviewed Persona file store commit failed".to_string())
+
+    // Exclusive, randomized sibling files avoid predictable .tmp collisions and
+    // accidental truncation of a different in-flight writer's temporary file.
+    // The rename keeps the prior committed file intact until its replacement
+    // has been written and flushed. This is not a cross-process CAS store:
+    // RT1 must still introduce authoritative revision checks before concurrent use.
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut staged = None;
+    for _ in 0..16 {
+        let mut suffix = [0u8; 16];
+        getrandom::fill(&mut suffix)
+            .map_err(|_| "reviewed Persona file store temporary name failed")?;
+        let random = suffix
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let temp = parent.join(format!(".vpr-persona-{random}.tmp"));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temp) {
+            Ok(file) => {
+                staged = Some((temp, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err("reviewed Persona file store staging failed".into()),
+        }
+    }
+    let Some((temp, mut file)) = staged else {
+        return Err("reviewed Persona file store staging exhausted".into());
+    };
+    let commit = (|| {
+        file.write_all(&raw)
+            .map_err(|_| "reviewed Persona file store write failed")?;
+        file.sync_all()
+            .map_err(|_| "reviewed Persona file store sync failed")?;
+        drop(file);
+        fs::rename(&temp, path)
+            .map_err(|_| "reviewed Persona file store commit failed")?;
+        #[cfg(unix)]
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| "reviewed Persona directory sync failed")?;
+        Ok::<(), String>(())
+    })();
+    if commit.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    commit
 }
 
 #[cfg(windows)]
