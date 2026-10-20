@@ -129,7 +129,7 @@ pub(crate) fn save_reviewed_persona(
 
     #[cfg(not(windows))]
     {
-        Ok(())
+        Err("reviewed Persona durable store path must be configured".into())
     }
 }
 
