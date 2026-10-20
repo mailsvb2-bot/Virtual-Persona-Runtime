@@ -74,7 +74,9 @@ def inspect(path: Path) -> dict:
             source_schema=schema,
             classification="OWNER_REVIEW_ONLY",
             reason=("V1_HISTORY_PARTIAL_REQUIRES_OWNER_REVIEW" if schema.endswith("-1")
-                    else "V2_EXACT_HISTORY_REQUIRES_OWNER_REVIEW"),
+                    else ("V2_EXACT_HISTORY_REQUIRES_OWNER_REVIEW"
+                          if all(claim["history_complete"] for claim in claims)
+                          else "V2_PARTIAL_HISTORY_REQUIRES_OWNER_REVIEW")),
         )
         return result
     except (OSError, UnicodeError, ValueError, TypeError):
