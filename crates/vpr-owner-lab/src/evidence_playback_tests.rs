@@ -227,7 +227,7 @@ fn intentional_interruption_is_accounted_without_faking_full_playback() {
 }
 
 #[test]
-fn av_sync_requires_completed_request_and_real_audio_start() {
+fn av_sync_accepts_pending_audio_observation_without_promoting_proof() {
     let mut recorder = LabSessionEvidenceRecorder::default();
     recorder.begin_session(12, ParticipantRole::Owner).unwrap();
     recorder.begin_voice_request(1).unwrap();
@@ -238,11 +238,6 @@ fn av_sync_requires_completed_request_and_real_audio_start() {
         reference: LabAvSyncReference::WebRtcEstimatedPlayoutTimestamp,
         absolute_offset_millis: 40,
     };
-    assert_eq!(
-        recorder.record_av_sync(&sample),
-        Err(LabEvidenceError::InvalidState)
-    );
-    recorder.complete_voice_request(1, &voice_result()).unwrap();
     assert_eq!(
         recorder.record_av_sync(&sample),
         Err(LabEvidenceError::InvalidState)
@@ -264,6 +259,8 @@ fn av_sync_requires_completed_request_and_real_audio_start() {
             })
             .unwrap();
     }
+    assert!(!recorder.snapshot().unwrap().av_sync_proven);
+    recorder.complete_voice_request(1, &voice_result()).unwrap();
     assert!(!recorder.snapshot().unwrap().av_sync_proven);
     recorder
         .record_canonical_playback(
@@ -527,4 +524,32 @@ fn missing_rtp_diagnostic_survives_unconfirmed_playback_without_creating_false_p
     assert!(!aggregate.canonical_playback_proven);
     assert!(!aggregate.av_sync_proven);
     assert_eq!(aggregate.av_sync_absolute_offset, None);
+}
+
+#[test]
+fn pending_av_sync_diagnostic_keeps_release_proof_false() {
+    let mut recorder = LabSessionEvidenceRecorder::default();
+    recorder.begin_session(47, ParticipantRole::Owner).unwrap();
+    recorder.begin_voice_request(1).unwrap();
+    let diagnostic = LabAvSyncDiagnosticInput {
+        session_sequence: 47,
+        request_sequence: 1,
+        attempts: 50,
+        audio_issue: Some(LabAvSyncTrackIssue::TimestampUnavailable),
+        video_issue: None,
+    };
+    assert_eq!(
+        recorder.record_av_sync_diagnostic(&diagnostic),
+        Err(LabEvidenceError::InvalidState)
+    );
+    recorder.record_media(&LabMediaEvidenceInput {
+        session_sequence: 47,
+        request_sequence: Some(1),
+        kind: LabMediaEvidenceKind::AudioStarted,
+        elapsed_millis: 250,
+    }).unwrap();
+    recorder.record_av_sync_diagnostic(&diagnostic).unwrap();
+    assert!(!recorder.snapshot().unwrap().av_sync_proven);
+    recorder.fail_voice_request(1, "PROVIDER_UNAVAILABLE").unwrap();
+    assert!(!recorder.snapshot().unwrap().av_sync_proven);
 }
