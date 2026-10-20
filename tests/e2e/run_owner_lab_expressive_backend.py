@@ -1,4 +1,5 @@
 import os
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -30,6 +31,11 @@ ENV = {
 def main() -> None:
     env = os.environ.copy()
     env.update(ENV)
+    # Hermetic per-launch persistence: the real backend must commit owner review.
+    # mkdtemp creates a private directory; no fallback to fake success.
+    env["VPR_OWNER_LAB_PERSONA_STORE_PATH"] = str(
+        Path(tempfile.mkdtemp(prefix="vpr-owner-lab-e2e-")) / "reviewed-persona.json"
+    )
     # Only this hermetic fixture loads the local LiveKit stand-in; production
     # private Echo uses the installed LiveKit SDK and real provider transport.
     env["PYTHONPATH"] = str(ROOT / "tests/e2e/echo_fixture_site")
