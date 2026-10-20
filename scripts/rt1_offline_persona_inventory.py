@@ -39,20 +39,36 @@ def inspect(path: Path) -> dict:
         claims = snapshot.get("claims")
         if not isinstance(claims, list) or not claims:
             return result
-        # Shape checks only. Canonical Rust owner-context validation remains authoritative.
+        # Bounded structural preflight only; Rust remains the canonical validator.
+        if any(not isinstance(claim, dict) or not isinstance(claim.get("claim_id"), str)
+               or not claim["claim_id"].strip() for claim in claims):
+            return result
         if schema == "vpr-reviewed-owner-persona-2":
+            def valid_revision(entry):
+                return (
+                    isinstance(entry, dict)
+                    and type(entry.get("revision")) is int
+                    and entry["revision"] >= 1
+                    and all(isinstance(entry.get(field), str) and entry[field].strip()
+                            for field in ("statement", "kind", "source", "verification", "derivation"))
+                )
+
             if not all(
-                isinstance(c, dict)
-                and isinstance(c.get("claim_id"), str)
-                and type(c.get("history_complete")) is bool
-                and isinstance(c.get("revisions"), list)
-                and bool(c["revisions"])
-                for c in claims
+                type(claim.get("history_complete")) is bool
+                and isinstance(claim.get("revisions"), list)
+                and bool(claim["revisions"])
+                and all(valid_revision(entry) for entry in claim["revisions"])
+                for claim in claims
             ):
                 return result
         else:
-            if not all(isinstance(c, dict) and isinstance(c.get("claim_id"), str)
-                       and type(c.get("revision")) is int for c in claims):
+            if not all(
+                type(claim.get("revision")) is int
+                and 2 <= claim["revision"] <= 10_000
+                and all(isinstance(claim.get(field), str) and claim[field].strip()
+                        for field in ("statement", "kind"))
+                for claim in claims
+            ):
                 return result
         result.update(
             source_schema=schema,
