@@ -26,7 +26,7 @@ class InventoryTests(unittest.TestCase):
                 "claims": [{
                     "claim_id": "sample-claim",
                     "history_complete": True,
-                    "revisions": [{"revision": 3, "statement": "example-content"}],
+                    "revisions": [{"revision": 3, "statement": "example-content", "kind": "preference", "source": "owner", "verification": "owner_verified", "derivation": "direct"}],
                 }],
             },
         })
@@ -41,11 +41,30 @@ class InventoryTests(unittest.TestCase):
             "snapshot": {
                 "persona_id": "legacy",
                 "persona_version": 4,
-                "claims": [{"claim_id": "x", "revision": 4}],
+                "claims": [{"claim_id": "x", "revision": 4, "statement": "known", "kind": "factual"}],
             },
         })
         self.assertEqual(result["classification"], "OWNER_REVIEW_ONLY")
         self.assertIn("HISTORY_PARTIAL", result["reason"])
+
+    def test_corrupt_revisions_are_rejected(self):
+        base = {
+            "schema_version": "vpr-reviewed-owner-persona-2",
+            "snapshot": {"persona_id": "owner", "persona_version": 3,
+                         "claims": [{"claim_id": "c", "history_complete": True,
+                                     "revisions": [None]}]},
+        }
+        self.assertEqual(self.classify(base)["classification"], "REJECT")
+        base["snapshot"]["claims"][0]["revisions"] = [{"revision": 2, "statement": "x"}]
+        self.assertEqual(self.classify(base)["classification"], "REJECT")
+        for bad_revision in (-1, 0, True, 10001):
+            legacy = {"schema_version": "vpr-reviewed-owner-persona-1",
+                      "snapshot": {"persona_id": "owner", "persona_version": 3,
+                                   "claims": [{"claim_id": "c", "revision": bad_revision,
+                                               "statement": "x", "kind": "factual"}]}}
+            self.assertEqual(self.classify(legacy)["classification"], "REJECT")
+        legacy["snapshot"]["claims"][0] = {"claim_id": "c", "revision": 2}
+        self.assertEqual(self.classify(legacy)["classification"], "REJECT")
 
     def test_invalid_states_fail_closed(self):
         for document in ({}, {"schema_version": "unknown", "snapshot": {}}, {
