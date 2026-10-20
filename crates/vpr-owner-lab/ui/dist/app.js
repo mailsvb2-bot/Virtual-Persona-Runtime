@@ -724,7 +724,7 @@ const collectAvSyncEvidence = async (requestSequence) => {
     await refreshSessionEvidence();
 };
 const ensureAvSyncEvidence = (voice) => {
-    if (!voice.responseComplete || voice.audioStartedElapsed === null)
+    if (!voice.audioStarted || voice.audioStartedElapsed === null || voice.interrupted)
         return null;
     if (!voice.avSyncEvidence) {
         avSyncCollectionPending = true;

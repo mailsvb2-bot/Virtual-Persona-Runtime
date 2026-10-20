@@ -1027,7 +1027,9 @@ const collectAvSyncEvidence = async (requestSequence: number): Promise<void> => 
   await refreshSessionEvidence();
 };
 const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null => {
-  if (!voice.responseComplete || voice.audioStartedElapsed === null) return null;
+  // Sample while decoded audio is actually playing; a completed backend response
+  // is not a reliable media-clock start and can arrive after a short utterance.
+  if (!voice.audioStarted || voice.audioStartedElapsed === null || voice.interrupted) return null;
   if (!voice.avSyncEvidence) {
     avSyncCollectionPending = true;
     updateControls();

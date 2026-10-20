@@ -433,7 +433,10 @@ impl LabSessionEvidenceRecorder {
             event.request_sequence == Some(input.request_sequence)
                 && event.kind == LabMediaEvidenceKind::AudioStarted
         });
-        if attempt.status != LabVoiceAttemptStatus::Completed || !audio_started {
+        // RTP observation may precede backend completion during streamed speech.
+        // Failed attempts and sessions without observed audio remain ineligible;
+        // only completed, canonically acknowledged turns can promote RT0 proof.
+        if attempt.status == LabVoiceAttemptStatus::Failed || !audio_started {
             return Err(LabEvidenceError::InvalidState);
         }
         if self
