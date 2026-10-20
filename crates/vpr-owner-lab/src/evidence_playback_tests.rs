@@ -542,14 +542,18 @@ fn pending_av_sync_diagnostic_keeps_release_proof_false() {
         recorder.record_av_sync_diagnostic(&diagnostic),
         Err(LabEvidenceError::InvalidState)
     );
-    recorder.record_media(&LabMediaEvidenceInput {
-        session_sequence: 47,
-        request_sequence: Some(1),
-        kind: LabMediaEvidenceKind::AudioStarted,
-        elapsed_millis: 250,
-    }).unwrap();
+    recorder
+        .record_media(&LabMediaEvidenceInput {
+            session_sequence: 47,
+            request_sequence: Some(1),
+            kind: LabMediaEvidenceKind::AudioStarted,
+            elapsed_millis: 250,
+        })
+        .unwrap();
     recorder.record_av_sync_diagnostic(&diagnostic).unwrap();
     assert!(!recorder.snapshot().unwrap().av_sync_proven);
-    recorder.fail_voice_request(1, "PROVIDER_UNAVAILABLE").unwrap();
+    recorder
+        .fail_voice_request(1, "PROVIDER_UNAVAILABLE")
+        .unwrap();
     assert!(!recorder.snapshot().unwrap().av_sync_proven);
 }
