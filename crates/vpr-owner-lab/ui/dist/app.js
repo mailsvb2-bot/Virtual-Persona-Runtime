@@ -667,7 +667,6 @@ const readAvSyncOffsetMillis = async (state) => {
 };
 const collectAvSyncEvidence = async (requestSequence) => {
     const collectingSessionSequence = evidenceSessionSequence;
-    // A new turn or STOP must not inherit samples from a previous spoken answer.
     const isActiveRequest = () => evidenceSessionSequence === collectingSessionSequence
         && activeVoiceEvidence?.requestSequence === requestSequence
         && !activeVoiceEvidence.interrupted;
