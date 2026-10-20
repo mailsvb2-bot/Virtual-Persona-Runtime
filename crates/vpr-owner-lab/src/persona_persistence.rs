@@ -232,10 +232,11 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
         let mut suffix = [0u8; 16];
         getrandom::fill(&mut suffix)
             .map_err(|_| "reviewed Persona file store temporary name failed")?;
-        let random = suffix
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let mut random = String::with_capacity(32);
+        for byte in suffix {
+            use std::fmt::Write as _;
+            write!(&mut random, "{byte:02x}").expect("writing to String cannot fail");
+        }
         let temp = parent.join(format!(".vpr-persona-{random}.tmp"));
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
