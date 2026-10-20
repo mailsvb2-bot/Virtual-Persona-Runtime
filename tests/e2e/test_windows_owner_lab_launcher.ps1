@@ -145,8 +145,10 @@ foreach ($required in @(
 }
 $click = Join-Path $PSScriptRoot '..\..\START_VPR_WITH_VOICE.cmd'
 $cmd = Get-Content -LiteralPath $click -Raw
-if (-not $cmd.Contains('scripts\start-rt0-sapi.cmd')) {
-    throw 'One-click entrypoint must use local female system voice by default'
+if (-not $cmd.Contains('-Piper -Rt0Evidence') -or
+    -not $cmd.Contains('"%~1"=="--system-voice"') -or
+    -not $cmd.Contains('-SystemVoice -Rt0Evidence')) {
+    throw 'One-click entrypoint must default to strict Piper and make SAPI explicit only'
 }
 $sapiLauncher = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\scripts\start-rt0-sapi.cmd') -Raw
 if (-not $sapiLauncher.Contains('-SystemVoice -Rt0Evidence')) {
