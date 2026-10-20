@@ -10,16 +10,16 @@ if not exist "%VPR_LAUNCHER%" (
 )
 if /I "%~1"=="--system-voice" (
   if not "%~2"=="" goto usage
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -SystemVoice
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -SystemVoice -Rt0Evidence
   goto result
 )
 if /I "%~1"=="--piper-denis" (
   if not "%~2"=="" goto usage
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -Piper -PiperVoice ru_RU-denis-medium
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -Piper -PiperVoice ru_RU-denis-medium -Rt0Evidence
   goto result
 )
 if not "%~1"=="" goto usage
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -Piper
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%VPR_LAUNCHER%" -Piper -Rt0Evidence
 :result
 set "VPR_EXIT=%ERRORLEVEL%"
 if not "%VPR_EXIT%"=="0" (
