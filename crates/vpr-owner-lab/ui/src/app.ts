@@ -1039,9 +1039,11 @@ const ensureAvSyncEvidence = (voice: ActiveVoiceEvidence): Promise<void> | null 
     avSyncCollectionPending = true;
     updateControls();
     const collection = collectAvSyncEvidence(voice.requestSequence).finally(() => {
-      if (pendingAvSyncEvidence === collection) pendingAvSyncEvidence = null;
-      avSyncCollectionPending = false;
-      updateControls();
+      if (pendingAvSyncEvidence === collection) {
+        pendingAvSyncEvidence = null;
+        avSyncCollectionPending = false;
+        updateControls();
+      }
     });
     pendingAvSyncEvidence = collection;
     voice.avSyncEvidence = collection;
