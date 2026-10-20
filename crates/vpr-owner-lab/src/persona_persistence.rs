@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -128,7 +129,7 @@ pub(crate) fn save_reviewed_persona(
 
     #[cfg(not(windows))]
     {
-        Ok(())
+        Err("reviewed Persona durable store path must be configured".into())
     }
 }
 
@@ -212,16 +213,67 @@ fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>,
 }
 
 fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|_| "reviewed Persona file store directory creation failed")?;
-    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .map_err(|_| "reviewed Persona file store directory creation failed")?;
     let raw = serde_json::to_vec_pretty(&PersistedPersonaV2::new(snapshot.clone()))
         .map_err(|_| "reviewed Persona serialization failed")?;
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, raw).map_err(|_| "reviewed Persona file store write failed")?;
-    fs::rename(&temporary, path)
-        .map_err(|_| "reviewed Persona file store commit failed".to_string())
+
+    // Exclusive, randomized sibling files avoid predictable .tmp collisions and
+    // accidental truncation of a different in-flight writer's temporary file.
+    // The rename keeps the prior committed file intact until its replacement
+    // has been written and flushed. This is not a cross-process CAS store:
+    // RT1 must still introduce authoritative revision checks before concurrent use.
+    let mut staged = None;
+    for _ in 0..16 {
+        let mut suffix = [0u8; 16];
+        getrandom::fill(&mut suffix)
+            .map_err(|_| "reviewed Persona file store temporary name failed")?;
+        let mut random = String::with_capacity(32);
+        for byte in suffix {
+            use std::fmt::Write as _;
+            write!(&mut random, "{byte:02x}").expect("writing to String cannot fail");
+        }
+        let temp = parent.join(format!(".vpr-persona-{random}.tmp"));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temp) {
+            Ok(file) => {
+                staged = Some((temp, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(_) => return Err("reviewed Persona file store staging failed".into()),
+        }
+    }
+    let Some((temp, mut file)) = staged else {
+        return Err("reviewed Persona file store staging exhausted".into());
+    };
+    let commit = (|| {
+        file.write_all(&raw)
+            .map_err(|_| "reviewed Persona file store write failed")?;
+        file.sync_all()
+            .map_err(|_| "reviewed Persona file store sync failed")?;
+        drop(file);
+        fs::rename(&temp, path).map_err(|_| "reviewed Persona file store commit failed")?;
+        #[cfg(unix)]
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| "reviewed Persona directory sync failed")?;
+        Ok::<(), String>(())
+    })();
+    if commit.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    commit
 }
 
 #[cfg(windows)]
@@ -430,6 +482,56 @@ mod tests {
             serde_json::from_str(&restored_raw).expect("stored Persona must decode");
         assert_eq!(restored.validate().unwrap(), large);
         store.delete().unwrap();
+    }
+
+    #[test]
+    fn failed_staging_never_truncates_committed_persona() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("vpr-persona-atomic-{unique}"));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("reviewed.json");
+        let original = sample();
+        save_file(&path, &original).unwrap();
+        let raw = fs::read(&path).unwrap();
+
+        // A directory cannot be atomically replaced by a file. The committed
+        // Persona must remain unchanged after this unrelated commit failure.
+        let directory_target = base.join("directory-target");
+        fs::create_dir(&directory_target).unwrap();
+        assert!(save_file(&directory_target, &original).is_err());
+        assert_eq!(fs::read(&path).unwrap(), raw);
+        assert_eq!(load_file(&path).unwrap(), Some(original));
+        let remaining: Vec<_> = fs::read_dir(&base)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(remaining.len(), 2, "staged files must be cleaned up");
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&directory_target).unwrap();
+        fs::remove_dir(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_reviewed_file_permissions_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("vpr-persona-private-{unique}"));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("reviewed.json");
+        save_file(&path, &sample()).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&base).unwrap();
     }
 
     #[test]
