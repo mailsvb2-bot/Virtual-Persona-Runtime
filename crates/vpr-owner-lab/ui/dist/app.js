@@ -734,10 +734,11 @@ const ensureAvSyncEvidence = (voice) => {
         avSyncCollectionPending = true;
         updateControls();
         const collection = collectAvSyncEvidence(voice.requestSequence).finally(() => {
-            if (pendingAvSyncEvidence === collection)
+            if (pendingAvSyncEvidence === collection) {
                 pendingAvSyncEvidence = null;
-            avSyncCollectionPending = false;
-            updateControls();
+                avSyncCollectionPending = false;
+                updateControls();
+            }
         });
         pendingAvSyncEvidence = collection;
         voice.avSyncEvidence = collection;
