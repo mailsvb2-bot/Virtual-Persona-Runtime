@@ -5,14 +5,14 @@ use super::{
 
 impl LabSessionEvidenceRecorder {
     /// Records a sanitized final reason when bounded browser A/V-sync sampling could not
-    /// collect all required samples after a completed voice request with observed audio start.
+    /// collect all required samples after observed audio start, including an active streamed voice request.
     ///
     /// This is diagnostic evidence, not confirmation that the response finished playing.
     /// Requiring canonical playback here would discard the precise failure diagnostics from
     /// D-ID sessions where audio starts but no authoritative playback receipt is received.
     ///
     /// # Errors
-    /// Fails for stale sessions, malformed/duplicate diagnostics, unknown/incomplete requests,
+    /// Fails for stale sessions, malformed/duplicate diagnostics, unknown/failed requests,
     /// requests without observed audio start, or requests with complete A/V-sync samples.
     pub fn record_av_sync_diagnostic(
         &mut self,
@@ -35,7 +35,10 @@ impl LabSessionEvidenceRecorder {
             event.request_sequence == Some(input.request_sequence)
                 && event.kind == super::LabMediaEvidenceKind::AudioStarted
         });
-        if attempt.status != LabVoiceAttemptStatus::Completed || !audio_started {
+        // RTP observation may precede backend completion during streamed speech.
+        // Failed attempts and sessions without observed audio remain ineligible;
+        // only completed, canonically acknowledged turns can promote RT0 proof.
+        if attempt.status == LabVoiceAttemptStatus::Failed || !audio_started {
             return Err(LabEvidenceError::InvalidState);
         }
         let complete_samples = (1..=RT0_AV_SYNC_SAMPLES_PER_REQUEST).all(|sample_sequence| {
