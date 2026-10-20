@@ -14,11 +14,9 @@ jobs:
           set -euo pipefail
           cargo update -p tungstenite --precise 0.26.2
           python3 - <<'PY'
-          import base64, gzip, pathlib
-          content=pathlib.Path("Cargo.lock").read_bytes()
-          encoded=base64.b64encode(gzip.compress(content)).decode()
-          print("CARGO_LOCK_GZIP_START")
-          for i in range(0,len(encoded),180):
-              print(encoded[i:i+180])
-          print("CARGO_LOCK_GZIP_END")
+          import pathlib
+          content=pathlib.Path("Cargo.lock").read_text()
+          print("CARGO_LOCK_TEXT_START")
+          print(content)
+          print("CARGO_LOCK_TEXT_END")
           PY
