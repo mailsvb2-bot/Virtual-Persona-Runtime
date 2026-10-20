@@ -225,7 +225,8 @@ fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Res
     // The rename keeps the prior committed file intact until its replacement
     // has been written and flushed. This is not a cross-process CAS store:
     // RT1 must still introduce authoritative revision checks before concurrent use.
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let mut staged = None;
     for _ in 0..16 {
         let mut suffix = [0u8; 16];
@@ -481,6 +482,51 @@ mod tests {
             serde_json::from_str(&restored_raw).expect("stored Persona must decode");
         assert_eq!(restored.validate().unwrap(), large);
         store.delete().unwrap();
+    }
+
+    #[test]
+    fn failed_staging_never_truncates_committed_persona() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("vpr-persona-atomic-{unique}"));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("reviewed.json");
+        let original = sample();
+        save_file(&path, &original).unwrap();
+        let raw = fs::read(&path).unwrap();
+
+        // A directory cannot be atomically replaced by a file. The committed
+        // Persona must remain unchanged after this unrelated commit failure.
+        let directory_target = base.join("directory-target");
+        fs::create_dir(&directory_target).unwrap();
+        assert!(save_file(&directory_target, &original).is_err());
+        assert_eq!(fs::read(&path).unwrap(), raw);
+        assert_eq!(load_file(&path).unwrap(), Some(original));
+        let remaining: Vec<_> = fs::read_dir(&base)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(remaining.len(), 2, "staged files must be cleaned up");
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&directory_target).unwrap();
+        fs::remove_dir(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_reviewed_file_permissions_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let base = std::env::temp_dir().join(format!("vpr-persona-private-{unique}"));
+        fs::create_dir_all(&base).unwrap();
+        let path = base.join("reviewed.json");
+        save_file(&path, &sample()).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(&base).unwrap();
     }
 
     #[test]
