@@ -17,6 +17,27 @@
       <div id="status" class="status" data-state="idle">Загрузка…</div>
     </section>
 
+    <section class="panel" id="owner-workflow" aria-labelledby="workflow-heading">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">Путь владельца · один локальный workspace</p>
+          <h2 id="workflow-heading">Создание → подготовка → проверка → разговор</h2>
+          <p class="hint">Здесь отражается состояние канонического Rust backend. Доступна только локальная проверка владельца и visitor-preview: публичная публикация и отдельные учётные записи пока недоступны.</p>
+        </div>
+        <p id="workflow-state" role="status" aria-live="polite">Получение состояния…</p>
+      </div>
+      <ol class="workflow-steps">
+        <li id="workflow-create">Создайте Persona и подтвердите сведения</li>
+        <li id="workflow-prepare">Добавьте references и проверьте готовность голоса/видео</li>
+        <li id="workflow-preview">Проверьте Persona в режиме владельца или посетителя</li>
+        <li id="workflow-revoke">Остановите сессию или отзовите доступ</li>
+      </ol>
+      <div class="row">
+        <button id="workflow-next" type="button">К следующему шагу</button>
+      </div>
+      <p id="workflow-next-hint" class="hint">Подтвердите Persona, чтобы начать локальную проверку.</p>
+    </section>
+
     <section id="persona-panel" class="panel persona-panel" aria-labelledby="persona-heading">
       <div class="panel-heading">
         <div>
