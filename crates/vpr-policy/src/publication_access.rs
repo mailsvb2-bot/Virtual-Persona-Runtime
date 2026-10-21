@@ -54,7 +54,7 @@ pub enum PublicationAccessDenial {
 /// # Errors
 /// Denies missing/mismatched owners, non-publication, stale Persona revisions,
 /// stale sessions, revocation, and expiry.
-pub const fn authorize_public_visitor(
+pub fn authorize_public_visitor(
     access: PublicationAccess<'_>,
     authority: &AuthorizationState,
 ) -> Result<(), PublicationAccessDenial> {
