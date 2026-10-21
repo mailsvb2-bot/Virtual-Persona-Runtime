@@ -116,6 +116,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "complete");
   await expect(page.locator("#workflow-prepare")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-next")).toHaveAttribute("data-target", "readiness-heading");
+  await page.locator("#workflow-next").click();
+  await expect(page.locator("#workflow-next")).toHaveAttribute("data-target", "session-audience");
+  await expect(page.locator("#workflow-prepare")).toHaveAttribute("data-state", "pending");
   await expect(page.locator("#workflow-preview")).toHaveAttribute("data-state", "pending");
   await expect(page.locator("#workflow-next-hint")).not.toContainText("Публичная ссылка");
 
