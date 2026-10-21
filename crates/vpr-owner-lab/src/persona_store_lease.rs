@@ -28,8 +28,7 @@ pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
         .parent()
         .filter(|directory| !directory.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|_| "reviewed Persona lease directory creation failed")?;
+    fs::create_dir_all(parent).map_err(|_| "reviewed Persona lease directory creation failed")?;
     let canonical_parent = fs::canonicalize(parent)
         .map_err(|_| "reviewed Persona lease directory resolution failed")?;
     let name = store_path
