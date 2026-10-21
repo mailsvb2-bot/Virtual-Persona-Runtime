@@ -7,8 +7,10 @@ use crate::publication_access::{
     PublicationAccess, PublicationAccessDenial, authorize_public_visitor,
 };
 use crate::{AuthorizationSnapshot, AuthorizationState};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PublicationStatus {
     Private,
     Published,
@@ -25,6 +27,20 @@ pub enum PublicationError {
     InvalidTransition,
     AuthEpochExhausted,
     VisitorDenied(PublicationAccessDenial),
+}
+
+/// Stable representation stored atomically with the canonical Persona.
+/// It never contains a visitor credential or grants public access on its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalPublicationSnapshot {
+    pub publication_id: String,
+    pub owner_id: String,
+    pub persona_id: String,
+    pub persona_version: u64,
+    pub status: PublicationStatus,
+    pub authorization_epoch: u64,
+    pub authorization_revoked: bool,
 }
 
 /// A permit belongs to exactly one canonical publication and Persona revision.
@@ -86,6 +102,74 @@ impl CanonicalPublication {
     #[must_use]
     pub const fn persona_version(&self) -> u64 {
         self.persona_version
+    }
+
+    /// Return a versioned owner-publication record for the one canonical commit.
+    #[must_use]
+    pub fn durable_snapshot(&self) -> CanonicalPublicationSnapshot {
+        CanonicalPublicationSnapshot {
+            publication_id: self.publication_id.clone(),
+            owner_id: self.owner_id.clone(),
+            persona_id: self.persona_id.clone(),
+            persona_version: self.persona_version,
+            status: self.status,
+            authorization_epoch: self.authority.epoch().get(),
+            authorization_revoked: self.authority.is_revoked(),
+        }
+    }
+
+    /// Restore canonical state from the same durable Persona transaction.
+    /// Does not authorize traffic: the caller must first perform
+    /// `invalidate_restart_leases`, durably commit its result and only
+    /// then bind a network listener.
+    ///
+    /// # Errors
+    /// Rejects malformed, contradictory or regressed publication data.
+    pub fn from_durable_snapshot(
+        state: CanonicalPublicationSnapshot,
+    ) -> Result<Self, PublicationError> {
+        if state.owner_id.trim().is_empty()
+            || state.persona_id.trim().is_empty()
+            || state.publication_id.trim().is_empty()
+            || state.persona_version == 0
+            || (state.status == PublicationStatus::Published && state.authorization_revoked)
+            || (matches!(state.status, PublicationStatus::Paused | PublicationStatus::Unpublished)
+                && !state.authorization_revoked)
+        {
+            return Err(PublicationError::InvalidVersion);
+        }
+        let authority = AuthorizationState::from_persisted(
+            state.authorization_epoch,
+            state.authorization_revoked,
+            None,
+        )
+        .ok_or(PublicationError::InvalidVersion)?;
+        Ok(Self {
+            publication_id: state.publication_id,
+            owner_id: state.owner_id,
+            persona_id: state.persona_id,
+            persona_version: state.persona_version,
+            status: state.status,
+            authority,
+        })
+    }
+
+    /// Invalidate every session permit issued by an earlier process lifetime.
+    /// Caller must commit this epoch to durable storage before serving traffic.
+    ///
+    /// # Errors
+    /// Fails closed on an exhausted authorization epoch.
+    pub fn invalidate_restart_leases(&mut self) -> Result<(), PublicationError> {
+        if self.status == PublicationStatus::Published {
+            self.authority
+                .replace(None)
+                .map_err(|_| PublicationError::AuthEpochExhausted)?;
+        } else {
+            self.authority
+                .revoke()
+                .map_err(|_| PublicationError::AuthEpochExhausted)?;
+        }
+        Ok(())
     }
 
     /// Set published only after reviewed readiness/consent/cost checks supplied
@@ -317,6 +401,52 @@ mod tests {
             p.authorize_visitor(true, "owner-a", "persona-a", 5, &prior, 20)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn restart_recovery_invalidates_precrash_visitor_permits() {
+        let mut p = CanonicalPublication::new("owner", "persona", "publication", 8).unwrap();
+        p.publish("owner", 8, true).unwrap();
+        let old = p.visitor_lease(true).unwrap();
+        let durable = p.durable_snapshot();
+        let mut reopened = CanonicalPublication::from_durable_snapshot(durable.clone()).unwrap();
+        assert_eq!(reopened.durable_snapshot(), durable);
+        reopened.invalidate_restart_leases().unwrap();
+        assert_ne!(reopened.durable_snapshot().authorization_epoch, durable.authorization_epoch);
+        assert_eq!(
+            reopened.authorize_visitor(true, "owner", "persona", 8, &old, 9),
+            Err(PublicationError::VisitorDenied(
+                PublicationAccessDenial::StaleAuthorization
+            ))
+        );
+        let fresh = reopened.visitor_lease(true).unwrap();
+        assert_eq!(
+            reopened.authorize_visitor(true, "owner", "persona", 8, &fresh, 9),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn malformed_durable_owner_publication_state_denied() {
+        let p = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        let snapshot = p.durable_snapshot();
+        for malformed in [
+            CanonicalPublicationSnapshot {
+                authorization_epoch: 0,
+                ..snapshot.clone()
+            },
+            CanonicalPublicationSnapshot {
+                owner_id: String::new(),
+                ..snapshot.clone()
+            },
+            CanonicalPublicationSnapshot {
+                status: PublicationStatus::Published,
+                authorization_revoked: true,
+                ..snapshot.clone()
+            },
+        ] {
+            assert!(CanonicalPublication::from_durable_snapshot(malformed).is_err());
+        }
     }
 
     #[test]
