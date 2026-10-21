@@ -1,4 +1,6 @@
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 import subprocess
 import tempfile
@@ -11,6 +13,54 @@ ROOT = Path(__file__).resolve().parents[2]
 PORT = 18887
 BASE = f"http://127.0.0.1:{PORT}"
 ORIGIN = BASE
+PROVIDER_PORT = 18888
+
+
+class ProviderFixture(BaseHTTPRequestHandler):
+    requests = []
+    streams = 0
+
+    def log_message(self, *_args):
+        pass
+
+    def send(self, status, body):
+        encoded = json.dumps(body).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_GET(self):
+        if self.path == "/agents/restart-e2e-agent":
+            self.send(200, {"presenter": {"type": "clip"}})
+        elif self.path == "/__state":
+            self.send(200, {"requests": self.requests})
+        else:
+            self.send(404, {"code": "NOT_FOUND"})
+
+    def do_POST(self):
+        data = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.requests.append({"method": "POST", "path": self.path, "body": data.decode("utf-8")})
+        if self.path == "/agents/restart-e2e-agent/streams":
+            self.__class__.streams += 1
+            seq = self.streams
+            self.send(201, {
+                "id": f"stream-{seq}",
+                "session_id": f"session-{seq}",
+                "offer": {"type": "offer", "sdp": "v=0 restart-visitor-e2e"},
+                "ice_servers": [],
+            })
+        elif self.path.endswith(("/sdp", "/ice")) or "/streams/stream-" in self.path:
+            self.send(200, {})
+        else:
+            self.send(404, {"code": "NOT_FOUND"})
+
+    def do_DELETE(self):
+        self.requests.append({"method": "DELETE", "path": self.path, "body": ""})
+        self.send(200, {})
+
+
 
 
 def request_json(method: str, path: str, body=None, csrf: str | None = None):
@@ -62,7 +112,8 @@ def start_owner_lab(store_path: Path) -> subprocess.Popen:
     env = os.environ.copy()
     env.update(
         {
-            "VPR_DID_ENDPOINT": "http://127.0.0.1:9",
+            "VPR_DID_ENDPOINT": f"http://127.0.0.1:{PROVIDER_PORT}",
+            "VPR_OWNER_LAB_ALLOW_EGRESS": "true",
             "VPR_DID_API_KEY": "restart-e2e-did-secret",
             "VPR_DID_AGENT_ID": "restart-e2e-agent",
             "VPR_OWNER_LAB_PORT": str(PORT),
