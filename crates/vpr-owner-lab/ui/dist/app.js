@@ -85,6 +85,71 @@ let rt0PlaybackPending = false;
 let providerPlaybackInFlight = false;
 const sessionState = new SessionRuntimeState();
 let ownerCaptureReviewed = false;
+const workflowState = byId("workflow-state");
+const workflowNext = byId("workflow-next");
+const workflowNextHint = byId("workflow-next-hint");
+const workflowSteps = ["workflow-create", "workflow-prepare", "workflow-preview", "workflow-revoke"]
+    .map((id) => byId(id));
+let workflowBackendKnown = false;
+let workflowPreviewVersion = null;
+let workflowPreparationVisited = false;
+let workflowObservedPersonaVersion = null;
+const renderOwnerWorkflow = () => {
+    const backend = sessionState.backend;
+    const reviewed = ownerCaptureReviewed;
+    const session = backend.session_state;
+    const active = session === "active";
+    if (workflowObservedPersonaVersion !== backend.persona_version) {
+        workflowObservedPersonaVersion = backend.persona_version;
+        workflowPreparationVisited = false;
+    }
+    if (workflowPreviewVersion !== backend.persona_version) {
+        workflowPreviewVersion = null;
+    }
+    if (reviewed && active) {
+        workflowPreviewVersion = backend.persona_version;
+    }
+    const closed = session === "closed" || session === "revoked";
+    const currentPreview = reviewed && workflowPreviewVersion === backend.persona_version;
+    const mediaReady = reviewed && backend.modality_readiness.voice === "ready"
+        && backend.modality_readiness.video === "ready";
+    const steps = [
+        reviewed,
+        mediaReady,
+        currentPreview && (active || closed),
+        currentPreview && closed,
+    ];
+    workflowSteps.forEach((node, index) => {
+        node.dataset.state = steps[index] ? "complete" : "pending";
+        node.setAttribute("aria-current", !steps[index] && steps.slice(0, index).every(Boolean) ? "step" : "false");
+    });
+    const target = !reviewed ? "persona-panel"
+        : !steps[1] && !steps[2] && !workflowPreparationVisited ? "readiness-heading"
+            : !steps[2] ? "session-audience"
+                : active ? "revoke"
+                    : "session-audience";
+    workflowNext.dataset.target = target;
+    workflowNext.disabled = !workflowBackendKnown;
+    workflowState.textContent = !workflowBackendKnown ? "Получение состояния…"
+        : !reviewed ? "Ожидает проверки владельцем"
+            : active ? "Локальная сессия активна"
+                : closed && currentPreview ? "Сессия завершена или отозвана"
+                    : "Persona подтверждена · доступен локальный preview";
+    workflowNextHint.textContent = !reviewed
+        ? "Создайте Persona и подтвердите каждое утверждение."
+        : !steps[1] ? "Проверьте готовность модальностей ниже. Ни одна reference-загрузка сама по себе не публикует Persona."
+            : active ? "После проверки отзовите доступ либо закройте сессию."
+                : "Выберите владельца или посетителя, подтвердите согласие и подключите аватар. Публичной ссылки нет.";
+};
+workflowNext.addEventListener("click", () => {
+    const target = document.getElementById(workflowNext.dataset.target ?? "persona-panel");
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    target?.focus({ preventScroll: true });
+    if (target?.id === "readiness-heading") {
+        workflowPreparationVisited = true;
+        renderOwnerWorkflow();
+    }
+});
 let bootstrapComplete = false;
 let microphoneDeviceListenerInstalled = false;
 let microphoneSwitchGeneration = 0;
@@ -988,6 +1053,8 @@ const syncStatus = () => {
         .then(async () => {
         const status = await api("/api/status");
         sessionState.applyBackend(status);
+        workflowBackendKnown = true;
+        renderOwnerWorkflow();
         if (status.session_state === "active" && evidenceSessionSequence === 0) {
             const snapshot = await runtimeFetch("/api/evidence/session", {
                 method: "GET", credentials: "same-origin", cache: "no-store",
@@ -1064,6 +1131,7 @@ const updateControls = () => {
     closeButton.disabled = !backendSessionPresent()
         || (rt0EvidenceMode && avSyncCollectionPending);
     connectButton.disabled = !egressEnabled || backendSessionPresent() || !ownerCaptureReviewed;
+    renderOwnerWorkflow();
     audioUnlockButton.hidden = !transportReady || !audioUnlockRequired;
     audioUnlockButton.disabled = audioUnlockInFlight;
     audienceSelect.disabled = backendSessionPresent();
@@ -1132,6 +1200,7 @@ const ownerCapture = mountOwnerCapture({
     api,
     onStateChange: (state) => {
         ownerCaptureReviewed = state.reviewed;
+        renderOwnerWorkflow();
         updateControls();
         if (bootstrapComplete) {
             void syncStatus().catch(() => undefined);

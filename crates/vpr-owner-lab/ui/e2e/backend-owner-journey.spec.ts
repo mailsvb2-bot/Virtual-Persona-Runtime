@@ -92,6 +92,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     );
   }
 
+  await expect(page.locator("#owner-workflow")).toBeVisible();
+  await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
+  await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-next")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
   await page.getByLabel("Идентификатор Persona").fill("owner-backend-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
@@ -110,6 +114,15 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "complete");
+  await expect(page.locator("#workflow-prepare")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-next")).toHaveAttribute("data-target", "readiness-heading");
+  await page.locator("#workflow-next").click();
+  await expect(page.locator("#workflow-next")).toHaveAttribute("data-target", "session-audience");
+  await expect(page.locator("#workflow-prepare")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-preview")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-next-hint")).not.toContainText("Публичная ссылка");
+
   await expect(page.locator("#evidence")).toContainText('"owner_context_state": "reviewed"');
   await expect(page.locator("#evidence")).toContainText('"reviewed_owner_claims": 3');
 
@@ -154,6 +167,8 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await ownerClaim.fill(correctedStatement);
   await ownerClaimCard.getByRole("button", { name: "Сохранить новую редакцию" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 3");
+  await expect(page.locator("#workflow-preview")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-revoke")).toHaveAttribute("data-state", "pending");
   const correctedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
     headers: csrfHeaders(csrf),
     data: {},
