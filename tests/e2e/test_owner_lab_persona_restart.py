@@ -140,7 +140,9 @@ def stop_owner_lab(process: subprocess.Popen) -> None:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="vpr-persona-restart-") as temp:
+    with ThreadingHTTPServer(("127.0.0.1", PROVIDER_PORT), ProviderFixture) as provider, \
+            tempfile.TemporaryDirectory(prefix="vpr-persona-restart-") as temp:
+        threading.Thread(target=provider.serve_forever, daemon=True).start()
         store_path = Path(temp) / "reviewed-persona.json"
 
         first = start_owner_lab(store_path)
@@ -263,6 +265,42 @@ def main() -> None:
             status_corrected = request_json("GET", "/api/status")
             if status_corrected["persona_version"] != status_before["persona_version"] + 1:
                 raise AssertionError((status_before, status_corrected))
+            # End-to-end post-restart visitor preview: a separate audience
+            # traverses the real backend and local avatar HTTP adapter.
+            started = request_json(
+                "POST", "/api/avatar/start",
+                {"consent": True, "audience": "visitor"}, csrf,
+            )
+            if "offer" not in started:
+                raise AssertionError("visitor did not receive avatar offer")
+            request_json(
+                "POST", "/api/avatar/answer",
+                {"kind": "answer", "sdp": "v=0 visitor-after-restart"}, csrf,
+            )
+            try:
+                request_json("POST", "/api/persona/reviewed", {}, csrf)
+            except urllib.error.HTTPError as error:
+                if error.code != 403:
+                    raise AssertionError(f"owner-private claims returned {error.code}") from error
+            else:
+                raise AssertionError("visitor obtained owner-private Persona data")
+
+            request_json("POST", "/api/session/revoke", {}, csrf)
+            calls_after_revoke = len(ProviderFixture.requests)
+            try:
+                request_json(
+                    "POST", "/api/avatar/speak",
+                    {"text": "must not go to provider after revoke"}, csrf,
+                )
+            except urllib.error.HTTPError as error:
+                if error.code not in (403, 409):
+                    raise AssertionError(f"revoked turn returned {error.code}") from error
+            else:
+                raise AssertionError("revoked visitor turn incorrectly succeeded")
+            if len(ProviderFixture.requests) != calls_after_revoke:
+                raise AssertionError("revoked visitor caused external provider egress")
+            if request_json("GET", "/api/status")["persona_version"] != status_corrected["persona_version"]:
+                raise AssertionError("visitor/revocation mutated canonical PersonaVersion")
         finally:
             stop_owner_lab(second)
 
