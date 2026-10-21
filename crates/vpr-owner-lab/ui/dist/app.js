@@ -91,24 +91,34 @@ const workflowNextHint = byId("workflow-next-hint");
 const workflowSteps = ["workflow-create", "workflow-prepare", "workflow-preview", "workflow-revoke"]
     .map((id) => byId(id));
 let workflowBackendKnown = false;
+let workflowPreviewVersion = null;
 const renderOwnerWorkflow = () => {
     const backend = sessionState.backend;
     const reviewed = ownerCaptureReviewed;
     const session = backend.session_state;
     const active = session === "active";
+    if (workflowPreviewVersion !== backend.persona_version) {
+        workflowPreviewVersion = null;
+    }
+    if (reviewed && active) {
+        workflowPreviewVersion = backend.persona_version;
+    }
     const closed = session === "closed" || session === "revoked";
+    const currentPreview = reviewed && workflowPreviewVersion === backend.persona_version;
+    const mediaReady = reviewed && backend.modality_readiness.voice === "ready"
+        && backend.modality_readiness.video === "ready";
     const steps = [
         reviewed,
-        reviewed && backend.modality_readiness.text === "ready",
-        reviewed && (active || closed),
-        reviewed && closed,
+        mediaReady,
+        currentPreview && (active || closed),
+        currentPreview && closed,
     ];
     workflowSteps.forEach((node, index) => {
         node.dataset.state = steps[index] ? "complete" : "pending";
         node.setAttribute("aria-current", !steps[index] && steps.slice(0, index).every(Boolean) ? "step" : "false");
     });
     const target = !reviewed ? "persona-panel"
-        : !steps[1] ? "readiness-heading"
+        : !steps[1] && !steps[2] ? "readiness-heading"
             : !steps[2] ? "session-audience"
                 : active ? "revoke"
                     : "session-audience";
@@ -117,7 +127,7 @@ const renderOwnerWorkflow = () => {
     workflowState.textContent = !workflowBackendKnown ? "Получение состояния…"
         : !reviewed ? "Ожидает проверки владельцем"
             : active ? "Локальная сессия активна"
-                : closed ? "Сессия завершена или отозвана"
+                : closed && currentPreview ? "Сессия завершена или отозвана"
                     : "Persona подтверждена · доступен локальный preview";
     workflowNextHint.textContent = !reviewed
         ? "Создайте Persona и подтвердите каждое утверждение."
@@ -2745,4 +2755,3 @@ void api("/api/bootstrap")
     bootstrapComplete = true;
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
-
