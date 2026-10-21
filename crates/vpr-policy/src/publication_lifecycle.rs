@@ -220,18 +220,36 @@ mod tests {
         let mut p = CanonicalPublication::new("owner-a", "persona-a", 3).unwrap();
         assert_eq!(p.status(), PublicationStatus::Private);
         assert!(p.visitor_lease(true).is_err());
-        assert_eq!(p.publish("owner-b", 3, true), Err(PublicationError::OwnerDenied));
-        assert_eq!(p.publish("owner-a", 3, false), Err(PublicationError::OwnerDenied));
+        assert_eq!(
+            p.publish("owner-b", 3, true),
+            Err(PublicationError::OwnerDenied)
+        );
+        assert_eq!(
+            p.publish("owner-a", 3, false),
+            Err(PublicationError::OwnerDenied)
+        );
         p.publish("owner-a", 3, true).unwrap();
         let first = p.visitor_lease(true).unwrap();
-        assert_eq!(p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 10), Ok(()));
+        assert_eq!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 10),
+            Ok(())
+        );
         p.pause("owner-a").unwrap();
-        assert!(p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 11).is_err());
+        assert!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 11)
+                .is_err()
+        );
         assert!(p.visitor_lease(true).is_err());
         p.publish("owner-a", 3, true).unwrap();
-        assert!(p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 12).is_err());
+        assert!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 12)
+                .is_err()
+        );
         let current = p.visitor_lease(true).unwrap();
-        assert_eq!(p.authorize_visitor(true, "owner-a", "persona-a", 3, current, 13), Ok(()));
+        assert_eq!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, current, 13),
+            Ok(())
+        );
     }
 
     #[test]
@@ -239,15 +257,30 @@ mod tests {
         let mut p = CanonicalPublication::new("owner-a", "persona-a", 4).unwrap();
         p.publish("owner-a", 4, true).unwrap();
         let prior = p.visitor_lease(true).unwrap();
-        assert_eq!(p.correct_persona("owner-b", 5), Err(PublicationError::OwnerDenied));
-        assert_eq!(p.correct_persona("owner-a", 4), Err(PublicationError::InvalidVersion));
+        assert_eq!(
+            p.correct_persona("owner-b", 5),
+            Err(PublicationError::OwnerDenied)
+        );
+        assert_eq!(
+            p.correct_persona("owner-a", 4),
+            Err(PublicationError::InvalidVersion)
+        );
         p.correct_persona("owner-a", 5).unwrap();
         assert_eq!(p.persona_version(), 5);
         assert_eq!(p.status(), PublicationStatus::Unpublished);
-        assert!(p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20).is_err());
-        assert_eq!(p.publish("owner-a", 4, true), Err(PublicationError::InvalidVersion));
+        assert!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20)
+                .is_err()
+        );
+        assert_eq!(
+            p.publish("owner-a", 4, true),
+            Err(PublicationError::InvalidVersion)
+        );
         p.publish("owner-a", 5, true).unwrap();
-        assert!(p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20).is_err());
+        assert!(
+            p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20)
+                .is_err()
+        );
     }
 
     #[test]
@@ -255,11 +288,26 @@ mod tests {
         let mut p = CanonicalPublication::new("owner", "persona", 2).unwrap();
         p.publish("owner", 2, true).unwrap();
         let lease = p.visitor_lease(true).unwrap();
-        assert!(p.authorize_visitor(false, "owner", "persona", 2, lease, 1).is_err());
-        assert!(p.authorize_visitor(true, "other", "persona", 2, lease, 1).is_err());
-        assert!(p.authorize_visitor(true, "owner", "other", 2, lease, 1).is_err());
-        assert!(p.authorize_visitor(true, "owner", "persona", 3, lease, 1).is_err());
+        assert!(
+            p.authorize_visitor(false, "owner", "persona", 2, lease, 1)
+                .is_err()
+        );
+        assert!(
+            p.authorize_visitor(true, "other", "persona", 2, lease, 1)
+                .is_err()
+        );
+        assert!(
+            p.authorize_visitor(true, "owner", "other", 2, lease, 1)
+                .is_err()
+        );
+        assert!(
+            p.authorize_visitor(true, "owner", "persona", 3, lease, 1)
+                .is_err()
+        );
         p.unpublish("owner").unwrap();
-        assert!(p.authorize_visitor(true, "owner", "persona", 2, lease, 1).is_err());
+        assert!(
+            p.authorize_visitor(true, "owner", "persona", 2, lease, 1)
+                .is_err()
+        );
     }
 }
