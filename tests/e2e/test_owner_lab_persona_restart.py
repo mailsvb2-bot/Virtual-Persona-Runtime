@@ -150,6 +150,27 @@ def main() -> None:
             bootstrap = wait_ready(first)
             csrf = str(bootstrap["csrf_token"])
 
+            # A second backend instance may not restore and mutate the same
+            # canonical Persona store while the first process owns the lease.
+            second_writer = start_owner_lab(store_path)
+            try:
+                try:
+                    exit_code = second_writer.wait(timeout=5)
+                except subprocess.TimeoutExpired as error:
+                    raise AssertionError(
+                        "concurrent Owner Lab unexpectedly acquired the same Persona store"
+                    ) from error
+                if exit_code == 0:
+                    raise AssertionError("concurrent Owner Lab was allowed to start")
+                output = (second_writer.stdout.read() if second_writer.stdout else "")
+                if "already in use by another process" not in output:
+                    raise AssertionError(
+                        "second Owner Lab failed for a reason other than Persona store lease"
+                    )
+            finally:
+                if second_writer.poll() is None:
+                    stop_owner_lab(second_writer)
+
             request_json(
                 "POST",
                 "/api/persona/create",
