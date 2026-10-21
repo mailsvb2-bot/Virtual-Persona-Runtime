@@ -4,6 +4,7 @@ mod owner_context;
 mod persona_file_io;
 mod persona_persistence;
 mod rt1_workspace;
+mod rt1_workspace_service;
 mod persona_store_lease;
 mod provider_credentials;
 mod providers;
@@ -30,6 +31,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
 pub use persona_store_lease::acquire_persona_store_lease;
+pub use rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
