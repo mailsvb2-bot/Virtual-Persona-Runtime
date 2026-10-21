@@ -1451,6 +1451,7 @@ dependencies = [
 name = "vpr-policy"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "vpr-domain",
 ]
 
