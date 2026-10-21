@@ -7,6 +7,7 @@ mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
 mod http_references;
+mod http_rt1;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
@@ -66,6 +67,8 @@ struct AppState {
     voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
     reference_intake: http_references::ReferenceIntakeState,
+    rt1_workspace: Option<vpr_owner_lab::Rt1WorkspaceService>,
+    rt1_visitor: ParkingMutex<Option<http_rt1::Rt1VisitorSession>>,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
     voice_cancel_requested: AtomicBool,
@@ -148,6 +151,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
+    let rt1_workspace = http_rt1::prepare(rt0_evidence_mode)?;
     let voice_playback = engine.voice_playback_registry();
     let mut evidence_recorder = LabSessionEvidenceRecorder::default();
     if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {
@@ -166,6 +170,8 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
         reference_intake: http_references::ReferenceIntakeState::default(),
+        rt1_workspace,
+        rt1_visitor: ParkingMutex::new(None),
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
         voice_cancel_requested: AtomicBool::new(false),
@@ -326,6 +332,9 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    if let Some(result) = http_rt1::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
