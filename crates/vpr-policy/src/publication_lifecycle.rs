@@ -404,6 +404,29 @@ mod tests {
     }
 
     #[test]
+    fn durable_json_roundtrip_and_unknown_fields_fail_closed() {
+        let mut p = CanonicalPublication::new("owner-a", "persona-a", "publication-a", 7).unwrap();
+        p.publish("owner-a", 7, true).unwrap();
+        let json = serde_json::to_string(&p.durable_snapshot()).unwrap();
+        let restored: CanonicalPublicationSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, p.durable_snapshot());
+        let mut altered: serde_json::Value = serde_json::from_str(&json).unwrap();
+        altered["unexpected_access"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<CanonicalPublicationSnapshot>(altered).is_err());
+        let invalid = serde_json::json!({
+            "publication_id":"publication-a",
+            "owner_id":"owner-a",
+            "persona_id":"persona-a",
+            "persona_version":7,
+            "status":"published",
+            "authorization_epoch":0,
+            "authorization_revoked":false
+        });
+        let parsed: CanonicalPublicationSnapshot = serde_json::from_value(invalid).unwrap();
+        assert!(CanonicalPublication::from_durable_snapshot(parsed).is_err());
+    }
+
+    #[test]
     fn restart_recovery_invalidates_precrash_visitor_permits() {
         let mut p = CanonicalPublication::new("owner", "persona", "publication", 8).unwrap();
         p.publish("owner", 8, true).unwrap();
