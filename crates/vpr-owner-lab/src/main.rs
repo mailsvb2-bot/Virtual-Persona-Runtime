@@ -143,6 +143,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
     let voice_profile = providers.voice_profile.clone();
+    let _persona_store_lease = vpr_owner_lab::acquire_persona_store_lease()?;
     let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
