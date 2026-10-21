@@ -155,6 +155,26 @@ impl AuthorizationState {
         }
     }
 
+    /// Restore only a validated durable epoch without reissuing an old permit.
+    /// The publication repository must durably commit an incremented epoch
+    /// before enabling visitor traffic following a process restart.
+    #[must_use]
+    pub const fn from_persisted(
+        epoch: u64,
+        revoked: bool,
+        expires_at_millis: Option<u64>,
+    ) -> Option<Self> {
+        match AuthorizationEpoch::from_persisted(epoch) {
+            Some(epoch) => Some(Self { epoch, revoked, expires_at_millis }),
+            None => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_revoked(&self) -> bool {
+        self.revoked
+    }
+
     #[must_use]
     pub const fn snapshot(&self) -> AuthorizationSnapshot {
         AuthorizationSnapshot { epoch: self.epoch }
