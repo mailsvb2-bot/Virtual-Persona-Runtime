@@ -4,7 +4,7 @@
 //! and publication repository. It creates NO durable publication authority,
 //! public route, link, or visitor token. RT1 stays blocked by its ReleaseSpec.
 //! Before any external provider operation a future public entrypoint must
-//! re-evaluate the current Persona version, publication state and auth epoch.
+//! re-evaluate the current `Persona` version, publication state and auth epoch.
 
 use crate::{AuthorizationSnapshot, AuthorizationState, AuthorizationValidityError};
 
