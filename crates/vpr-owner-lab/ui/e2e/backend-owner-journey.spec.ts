@@ -115,6 +115,8 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "complete");
+  await expect(page.locator("#workflow-prepare")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-preview")).toHaveAttribute("data-state", "pending");
   await expect(page.locator("#workflow-next-hint")).not.toContainText("Публичная ссылка");
 
   await expect(page.locator("#evidence")).toContainText('"owner_context_state": "reviewed"');
@@ -161,6 +163,8 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await ownerClaim.fill(correctedStatement);
   await ownerClaimCard.getByRole("button", { name: "Сохранить новую редакцию" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 3");
+  await expect(page.locator("#workflow-preview")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-revoke")).toHaveAttribute("data-state", "pending");
   const correctedProfile = await request.post(`${ownerLabUrl}/api/persona/reviewed`, {
     headers: csrfHeaders(csrf),
     data: {},
