@@ -302,7 +302,7 @@ const renderOwnerWorkflow = (): void => {
   const closed = session === "closed" || session === "revoked";
   const steps = [
     reviewed,
-    reviewed && backend.modality_readiness.text.status === "ready",
+    reviewed && backend.modality_readiness.text === "ready",
     reviewed && (active || closed),
     reviewed && closed,
   ];
