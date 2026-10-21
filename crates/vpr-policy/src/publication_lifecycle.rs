@@ -41,7 +41,7 @@ impl CanonicalPublication {
     /// Create a private, unpublished policy projection of the canonical Persona.
     ///
     /// # Errors
-    /// Rejects missing identity or zero PersonaVersion.
+    /// Rejects missing identity or zero `PersonaVersion`.
     pub fn new(owner_id: &str, persona_id: &str, version: u64) -> Result<Self, PublicationError> {
         if owner_id.trim().is_empty() || persona_id.trim().is_empty() || version == 0 {
             return Err(PublicationError::InvalidVersion);
