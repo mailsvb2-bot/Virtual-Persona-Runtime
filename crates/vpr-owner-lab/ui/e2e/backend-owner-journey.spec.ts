@@ -92,6 +92,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     );
   }
 
+  await expect(page.locator("#owner-workflow")).toBeVisible();
+  await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
+  await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("#workflow-next")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
   await page.getByLabel("Идентификатор Persona").fill("owner-backend-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
@@ -110,6 +114,9 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   }
   await page.getByRole("button", { name: "Подтвердить Persona" }).click();
   await expect(page.locator("#persona-progress")).toContainText("версия 2");
+  await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "complete");
+  await expect(page.locator("#workflow-next-hint")).not.toContainText("Публичная ссылка");
+
   await expect(page.locator("#evidence")).toContainText('"owner_context_state": "reviewed"');
   await expect(page.locator("#evidence")).toContainText('"reviewed_owner_claims": 3');
 
