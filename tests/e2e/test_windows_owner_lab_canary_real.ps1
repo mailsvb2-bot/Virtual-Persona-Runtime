@@ -31,6 +31,7 @@ foreach ($name in @(
 # text_and_voice readiness status. This is a hermetic CI fixture only, not a
 # human attestation or persisted user data.
 $fixturePath = Join-Path $env:RUNNER_TEMP 'vpr-canary-synthetic-persona.json'
+$stagedFixturePath = Join-Path $env:RUNNER_TEMP 'vpr-canary-staged-persona.json'
 $syntheticPersona = @{
     schema_version = 'vpr-reviewed-owner-persona-2'
     snapshot = @{
@@ -93,6 +94,7 @@ foreach ($name in ($envOverrides.Keys + @('VPR_OWNER_LAB_PORT'))) {
 foreach ($key in $envOverrides.Keys) {
     [Environment]::SetEnvironmentVariable($key, $envOverrides[$key], 'Process')
 }
+Copy-Item -LiteralPath $fixturePath -Destination $stagedFixturePath -Force
 $old = $null
 $staged = $null
 $bad = $null
@@ -106,6 +108,7 @@ try {
     Wait-CanaryLabReady -Process $old -ListenPort $script:Port -ExpectedExe $exe -StrictEvidence $false -TimeoutSeconds 25
 
     $env:VPR_OWNER_LAB_PORT = [string]$privatePort
+    $env:VPR_OWNER_LAB_PERSONA_STORE_PATH = $stagedFixturePath
     $staged = Start-Process -FilePath $exe -ArgumentList '--allow-egress' -WorkingDirectory $repoRoot -PassThru
     Wait-CanaryLabReady -Process $staged -ListenPort $privatePort -ExpectedExe $exe -StrictEvidence $false -TimeoutSeconds 25
     $oldStatus = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$script:Port/api/status" -TimeoutSec 2
@@ -127,6 +130,7 @@ try {
     Stop-CanaryLab -Process $bad -ListenPort $privatePort
     $bad = $null
     $env:VPR_OWNER_LAB_LLM_PROVIDER = 'deepseek'
+    $env:VPR_OWNER_LAB_PERSONA_STORE_PATH = $fixturePath
     $oldStatus = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$script:Port/api/status" -TimeoutSec 2
     if (-not $oldStatus.egress_enabled -or $old.HasExited) {
         throw 'Failed canary terminated the previous Owner Lab'
@@ -155,4 +159,5 @@ try {
         [Environment]::SetEnvironmentVariable($key, $original[$key], 'Process')
     }
     Remove-Item -LiteralPath $fixturePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stagedFixturePath -Force -ErrorAction SilentlyContinue
 }
