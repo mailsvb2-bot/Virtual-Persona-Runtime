@@ -76,3 +76,31 @@ select { width:100%; }
 .reference-card input[type="file"] { width:100%; min-width:0; color:#c8d2ea; }
 .reference-card .inline-status { max-width:none; width:100%; }
 @media (max-width:700px) { .reference-grid { grid-template-columns:1fr; } }
+
+/* Guided local owner-to-visitor workflow. State is projected by the backend-driven app. */
+.workflow-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+  counter-reset: owner-workflow;
+}
+.workflow-steps li {
+  counter-increment: owner-workflow;
+  padding: 0.8rem;
+  border: 1px solid var(--border, #64748b);
+  border-radius: 0.75rem;
+}
+.workflow-steps li::before {
+  content: counter(owner-workflow) ". ";
+  font-weight: 700;
+}
+.workflow-steps li[data-state="complete"] {
+  border-style: solid;
+  opacity: 0.85;
+}
+.workflow-steps li[aria-current="step"] {
+  border-width: 2px;
+  font-weight: 600;
+}
