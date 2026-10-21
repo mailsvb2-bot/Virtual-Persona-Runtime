@@ -633,7 +633,20 @@ try {
     # the canonical HTTP APIs BEFORE taking down the old listener.
     $canaryPort = Get-AvailableCanaryPort -PrimaryPort $Port
     $canaryProcess = $null
+    $primaryPersonaStore = [Environment]::GetEnvironmentVariable('VPR_OWNER_LAB_PERSONA_STORE_PATH', 'Process')
+    $canaryPersonaStore = $null
     try {
+        # The live process owns the exclusive canonical Persona lease. Stage a
+        # read-only-in-purpose snapshot in the SAME protected directory, never
+        # bypassing the lease on the live file or creating another authority.
+        if (-not [string]::IsNullOrWhiteSpace($primaryPersonaStore)) {
+            if (-not (Test-Path -LiteralPath $primaryPersonaStore -PathType Leaf)) {
+                throw 'Configured Persona store is missing; refusing unsafe canary handoff'
+            }
+            $canaryPersonaStore = $primaryPersonaStore + '.canary-' + [Guid]::NewGuid().ToString('N')
+            Copy-Item -LiteralPath $primaryPersonaStore -Destination $canaryPersonaStore -ErrorAction Stop
+            $env:VPR_OWNER_LAB_PERSONA_STORE_PATH = $canaryPersonaStore
+        }
         $env:VPR_OWNER_LAB_PORT = [string]$canaryPort
         $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
         $env:VPR_OWNER_LAB_RT0_EVIDENCE = $rt0EvidenceValue
@@ -646,6 +659,15 @@ try {
                 Stop-CanaryLab -Process $canaryProcess -ListenPort $canaryPort
             }
         } finally {
+            if ($null -eq $primaryPersonaStore) {
+                Remove-Item Env:VPR_OWNER_LAB_PERSONA_STORE_PATH -ErrorAction SilentlyContinue
+            } else {
+                $env:VPR_OWNER_LAB_PERSONA_STORE_PATH = $primaryPersonaStore
+            }
+            if ($canaryPersonaStore) {
+                Remove-Item -LiteralPath $canaryPersonaStore -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath ($canaryPersonaStore + '.owner.lock') -Force -ErrorAction SilentlyContinue
+            }
             $env:VPR_OWNER_LAB_PORT = [string]$Port
         }
     }

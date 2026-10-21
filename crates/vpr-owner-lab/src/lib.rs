@@ -2,6 +2,7 @@ mod evidence;
 mod owner_capture;
 mod owner_context;
 mod persona_persistence;
+mod persona_store_lease;
 mod provider_credentials;
 mod providers;
 mod state;
@@ -26,6 +27,7 @@ pub use owner_capture::{
 pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot};
 
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
+pub use persona_store_lease::acquire_persona_store_lease;
 
 pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
