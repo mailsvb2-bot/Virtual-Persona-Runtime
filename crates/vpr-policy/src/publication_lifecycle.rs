@@ -20,16 +20,29 @@ pub enum PublicationStatus {
 pub enum PublicationError {
     OwnerDenied,
     WrongPersona,
+    WrongPublication,
     InvalidVersion,
     InvalidTransition,
     AuthEpochExhausted,
     VisitorDenied(PublicationAccessDenial),
 }
 
+/// A permit belongs to exactly one canonical publication and Persona revision.
+/// The caller must keep it server-side, not trust client-supplied fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisitorPermit {
+    publication_id: String,
+    owner_id: String,
+    persona_id: String,
+    persona_version: u64,
+    snapshot: AuthorizationSnapshot,
+}
+
 /// The owner and Persona identifiers MUST originate in a verified canonical
 /// workspace transaction, never a URL, form field or unauthenticated token.
 #[derive(Debug)]
 pub struct CanonicalPublication {
+    publication_id: String,
     owner_id: String,
     persona_id: String,
     persona_version: u64,
@@ -42,11 +55,21 @@ impl CanonicalPublication {
     ///
     /// # Errors
     /// Rejects missing identity or zero `PersonaVersion`.
-    pub fn new(owner_id: &str, persona_id: &str, version: u64) -> Result<Self, PublicationError> {
-        if owner_id.trim().is_empty() || persona_id.trim().is_empty() || version == 0 {
+    pub fn new(
+        owner_id: &str,
+        persona_id: &str,
+        publication_id: &str,
+        version: u64,
+    ) -> Result<Self, PublicationError> {
+        if owner_id.trim().is_empty()
+            || persona_id.trim().is_empty()
+            || publication_id.trim().is_empty()
+            || version == 0
+        {
             return Err(PublicationError::InvalidVersion);
         }
         Ok(Self {
+            publication_id: publication_id.to_owned(),
             owner_id: owner_id.to_owned(),
             persona_id: persona_id.to_owned(),
             persona_version: version,
@@ -155,13 +178,19 @@ impl CanonicalPublication {
     pub fn visitor_lease(
         &self,
         visitor_authenticated: bool,
-    ) -> Result<AuthorizationSnapshot, PublicationError> {
+    ) -> Result<VisitorPermit, PublicationError> {
         if !visitor_authenticated || self.status != PublicationStatus::Published {
             return Err(PublicationError::VisitorDenied(
                 PublicationAccessDenial::Unauthenticated,
             ));
         }
-        Ok(self.authority.snapshot())
+        Ok(VisitorPermit {
+            publication_id: self.publication_id.clone(),
+            owner_id: self.owner_id.clone(),
+            persona_id: self.persona_id.clone(),
+            persona_version: self.persona_version,
+            snapshot: self.authority.snapshot(),
+        })
     }
 
     /// Validate a visitor permit against live policy state immediately before
@@ -176,9 +205,16 @@ impl CanonicalPublication {
         current_owner: &str,
         current_persona: &str,
         current_version: u64,
-        permit: AuthorizationSnapshot,
+        permit: &VisitorPermit,
         now_millis: u64,
     ) -> Result<(), PublicationError> {
+        if permit.publication_id != self.publication_id
+            || permit.owner_id != self.owner_id
+            || permit.persona_id != self.persona_id
+            || permit.persona_version != self.persona_version
+        {
+            return Err(PublicationError::WrongPublication);
+        }
         authorize_public_visitor(
             PublicationAccess {
                 publication_owner: &self.owner_id,
@@ -189,7 +225,7 @@ impl CanonicalPublication {
                 current_persona_version: current_version,
                 published: self.status == PublicationStatus::Published,
                 visitor_authorized: visitor_authenticated,
-                lease: permit,
+                lease: permit.snapshot,
                 now_millis,
             },
             &self.authority,
@@ -217,7 +253,7 @@ mod tests {
 
     #[test]
     fn owner_to_visitor_to_pause_to_republish_rejects_stale_lease() {
-        let mut p = CanonicalPublication::new("owner-a", "persona-a", 3).unwrap();
+        let mut p = CanonicalPublication::new("owner-a", "persona-a", "publication-a", 3).unwrap();
         assert_eq!(p.status(), PublicationStatus::Private);
         assert!(p.visitor_lease(true).is_err());
         assert_eq!(
@@ -231,30 +267,30 @@ mod tests {
         p.publish("owner-a", 3, true).unwrap();
         let first = p.visitor_lease(true).unwrap();
         assert_eq!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 10),
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, &first, 10),
             Ok(())
         );
         p.pause("owner-a").unwrap();
         assert!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 11)
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, &first, 11)
                 .is_err()
         );
         assert!(p.visitor_lease(true).is_err());
         p.publish("owner-a", 3, true).unwrap();
         assert!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 3, first, 12)
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, &first, 12)
                 .is_err()
         );
         let current = p.visitor_lease(true).unwrap();
         assert_eq!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 3, current, 13),
+            p.authorize_visitor(true, "owner-a", "persona-a", 3, &current, 13),
             Ok(())
         );
     }
 
     #[test]
     fn correction_invalidates_visitors_and_requires_explicit_republish() {
-        let mut p = CanonicalPublication::new("owner-a", "persona-a", 4).unwrap();
+        let mut p = CanonicalPublication::new("owner-a", "persona-a", "publication-a", 4).unwrap();
         p.publish("owner-a", 4, true).unwrap();
         let prior = p.visitor_lease(true).unwrap();
         assert_eq!(
@@ -269,7 +305,7 @@ mod tests {
         assert_eq!(p.persona_version(), 5);
         assert_eq!(p.status(), PublicationStatus::Unpublished);
         assert!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20)
+            p.authorize_visitor(true, "owner-a", "persona-a", 5, &prior, 20)
                 .is_err()
         );
         assert_eq!(
@@ -278,35 +314,58 @@ mod tests {
         );
         p.publish("owner-a", 5, true).unwrap();
         assert!(
-            p.authorize_visitor(true, "owner-a", "persona-a", 5, prior, 20)
+            p.authorize_visitor(true, "owner-a", "persona-a", 5, &prior, 20)
                 .is_err()
         );
     }
 
     #[test]
+    fn cross_publication_permit_cannot_authorize_at_same_epoch() {
+        let mut a = CanonicalPublication::new("owner-a", "persona-a", "publication-a", 3).unwrap();
+        let mut b = CanonicalPublication::new("owner-b", "persona-b", "publication-b", 3).unwrap();
+        a.publish("owner-a", 3, true).unwrap();
+        b.publish("owner-b", 3, true).unwrap();
+        let from_a = a.visitor_lease(true).unwrap();
+        assert_eq!(
+            b.authorize_visitor(true, "owner-b", "persona-b", 3, &from_a, 10),
+            Err(PublicationError::WrongPublication)
+        );
+        a.pause("owner-a").unwrap();
+        assert_eq!(
+            b.authorize_visitor(true, "owner-b", "persona-b", 3, &from_a, 11),
+            Err(PublicationError::WrongPublication)
+        );
+        let from_b = b.visitor_lease(true).unwrap();
+        assert_eq!(
+            b.authorize_visitor(true, "owner-b", "persona-b", 3, &from_b, 12),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn visitor_must_have_correct_canonical_owner_persona_and_identity() {
-        let mut p = CanonicalPublication::new("owner", "persona", 2).unwrap();
+        let mut p = CanonicalPublication::new("owner", "persona", "publication-main", 2).unwrap();
         p.publish("owner", 2, true).unwrap();
         let lease = p.visitor_lease(true).unwrap();
         assert!(
-            p.authorize_visitor(false, "owner", "persona", 2, lease, 1)
+            p.authorize_visitor(false, "owner", "persona", 2, &lease, 1)
                 .is_err()
         );
         assert!(
-            p.authorize_visitor(true, "other", "persona", 2, lease, 1)
+            p.authorize_visitor(true, "other", "persona", 2, &lease, 1)
                 .is_err()
         );
         assert!(
-            p.authorize_visitor(true, "owner", "other", 2, lease, 1)
+            p.authorize_visitor(true, "owner", "other", 2, &lease, 1)
                 .is_err()
         );
         assert!(
-            p.authorize_visitor(true, "owner", "persona", 3, lease, 1)
+            p.authorize_visitor(true, "owner", "persona", 3, &lease, 1)
                 .is_err()
         );
         p.unpublish("owner").unwrap();
         assert!(
-            p.authorize_visitor(true, "owner", "persona", 2, lease, 1)
+            p.authorize_visitor(true, "owner", "persona", 2, &lease, 1)
                 .is_err()
         );
     }
