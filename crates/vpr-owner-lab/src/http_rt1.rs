@@ -210,7 +210,10 @@ fn now_millis() -> Result<u64, HttpResponse> {
 }
 
 fn fence_active_visitor(state: &AppState) {
-    if state.rt1_visitor.lock().take().is_none() {
+    let Some(visitor) = state.rt1_visitor.lock().take() else {
+        return;
+    };
+    if state.active_session_sequence.load(Ordering::Acquire) != visitor.sequence {
         return;
     }
     state.session_end_requested.store(true, Ordering::Release);
