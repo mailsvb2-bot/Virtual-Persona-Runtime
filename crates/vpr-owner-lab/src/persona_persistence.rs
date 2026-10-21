@@ -193,53 +193,6 @@ fn migrate_v1_snapshot(
         .map_err(|_| "legacy reviewed Persona snapshot is invalid".to_owned())?;
     Ok(validated.durable_snapshot())
 }
-/// Keeps the explicit reviewed-Persona store single-writer for this process lifetime.
-/// The advisory OS lock is released automatically on process termination, including crashes.
-/// This does not grant any RT1 multi-tenant or public publication authority.
-pub struct PersonaStoreLease {
-    _file: Option<fs::File>,
-}
-
-/// Acquire the same exclusive lock used by other Owner Lab processes before restoring Persona.
-/// Fail closed if another process already owns the selected explicit store.
-///
-/// # Errors
-/// Returns an error when a store cannot be locked. No owner context is restored in that case.
-pub fn acquire_persona_store_lease() -> Result<PersonaStoreLease, String> {
-    let Some(store_path) = explicit_store_path() else {
-        // Windows Credential Manager remains the existing single-user OS authority.
-        // Non-Windows cannot persist without an explicit path (save fails closed).
-        return Ok(PersonaStoreLease { _file: None });
-    };
-    let parent = store_path
-        .parent()
-        .filter(|directory| !directory.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|_| "reviewed Persona lease directory creation failed")?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|_| "reviewed Persona lease directory resolution failed")?;
-    let name = store_path
-        .file_name()
-        .ok_or_else(|| "reviewed Persona store path must name a file".to_owned())?;
-    let mut lock_name = name.to_os_string();
-    lock_name.push(".owner.lock");
-    let lock_path = canonical_parent.join(lock_name);
-    let mut options = fs::OpenOptions::new();
-    options.read(true).write(true).create(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let file = options
-        .open(&lock_path)
-        .map_err(|_| "reviewed Persona lease file cannot be opened")?;
-    fs2::FileExt::try_lock_exclusive(&file)
-        .map_err(|_| "reviewed Persona store is already in use by another process")?;
-    Ok(PersonaStoreLease { _file: Some(file) })
-}
-
 fn explicit_store_path() -> Option<PathBuf> {
     env::var_os(STORE_PATH_ENV)
         .filter(|value| !value.is_empty())
