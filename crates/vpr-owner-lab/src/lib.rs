@@ -1,7 +1,9 @@
 mod evidence;
 mod owner_capture;
 mod owner_context;
+mod persona_file_io;
 mod persona_persistence;
+mod rt1_workspace;
 mod persona_store_lease;
 mod provider_credentials;
 mod providers;
