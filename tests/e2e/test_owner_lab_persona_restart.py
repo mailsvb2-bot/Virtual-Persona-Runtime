@@ -271,7 +271,7 @@ def main() -> None:
                 "POST", "/api/avatar/start",
                 {"consent": True, "audience": "visitor"}, csrf,
             )
-            if "offer" not in started:
+            if started.get("transport", {}).get("offer", {}).get("sdp") != "v=0 restart-visitor-e2e":
                 raise AssertionError("visitor did not receive avatar offer")
             request_json(
                 "POST", "/api/avatar/answer",
