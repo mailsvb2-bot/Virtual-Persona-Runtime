@@ -115,7 +115,13 @@ mod tests {
         let access = fixture(auth.snapshot());
         assert_eq!(authorize_public_visitor(access, &auth), Ok(()));
         assert_eq!(
-            authorize_public_visitor(PublicationAccess { visitor_authorized: false, ..access }, &auth),
+            authorize_public_visitor(
+                PublicationAccess {
+                    visitor_authorized: false,
+                    ..access
+                },
+                &auth
+            ),
             Err(PublicationAccessDenial::Unauthenticated)
         );
     }
@@ -125,14 +131,28 @@ mod tests {
         let auth = AuthorizationState::new(None);
         let access = fixture(auth.snapshot());
         for owner in ["", "tenant-b"] {
-            assert_eq!(authorize_public_visitor(
-                PublicationAccess { persona_owner: owner, ..access }, &auth
-            ), Err(PublicationAccessDenial::OwnerMismatch));
+            assert_eq!(
+                authorize_public_visitor(
+                    PublicationAccess {
+                        persona_owner: owner,
+                        ..access
+                    },
+                    &auth
+                ),
+                Err(PublicationAccessDenial::OwnerMismatch)
+            );
         }
         for persona in ["", "persona-2"] {
-            assert_eq!(authorize_public_visitor(
-                PublicationAccess { current_persona: persona, ..access }, &auth
-            ), Err(PublicationAccessDenial::PersonaMismatch));
+            assert_eq!(
+                authorize_public_visitor(
+                    PublicationAccess {
+                        current_persona: persona,
+                        ..access
+                    },
+                    &auth
+                ),
+                Err(PublicationAccessDenial::PersonaMismatch)
+            );
         }
     }
 
@@ -140,13 +160,27 @@ mod tests {
     fn deny_paused_unpublished_or_corrected_persona_before_provider_call() {
         let auth = AuthorizationState::new(None);
         let access = fixture(auth.snapshot());
-        assert_eq!(authorize_public_visitor(
-            PublicationAccess { published: false, ..access }, &auth
-        ), Err(PublicationAccessDenial::NotPublished));
+        assert_eq!(
+            authorize_public_visitor(
+                PublicationAccess {
+                    published: false,
+                    ..access
+                },
+                &auth
+            ),
+            Err(PublicationAccessDenial::NotPublished)
+        );
         for version in [0, 6, 8] {
-            assert_eq!(authorize_public_visitor(
-                PublicationAccess { current_persona_version: version, ..access }, &auth
-            ), Err(PublicationAccessDenial::StalePersonaVersion));
+            assert_eq!(
+                authorize_public_visitor(
+                    PublicationAccess {
+                        current_persona_version: version,
+                        ..access
+                    },
+                    &auth
+                ),
+                Err(PublicationAccessDenial::StalePersonaVersion)
+            );
         }
     }
 
@@ -155,23 +189,44 @@ mod tests {
         let mut auth = AuthorizationState::new(None);
         let old = fixture(auth.snapshot());
         auth.revoke().unwrap();
-        assert_eq!(authorize_public_visitor(old, &auth),
-            Err(PublicationAccessDenial::StaleAuthorization));
+        assert_eq!(
+            authorize_public_visitor(old, &auth),
+            Err(PublicationAccessDenial::StaleAuthorization)
+        );
         auth.replace(None).unwrap();
-        assert_eq!(authorize_public_visitor(old, &auth),
-            Err(PublicationAccessDenial::StaleAuthorization));
-        assert_eq!(authorize_public_visitor(fixture(auth.snapshot()), &auth), Ok(()));
+        assert_eq!(
+            authorize_public_visitor(old, &auth),
+            Err(PublicationAccessDenial::StaleAuthorization)
+        );
+        assert_eq!(
+            authorize_public_visitor(fixture(auth.snapshot()), &auth),
+            Ok(())
+        );
     }
 
     #[test]
     fn visitor_lease_expires_at_exact_boundary() {
         let auth = AuthorizationState::new(Some(100));
         let access = fixture(auth.snapshot());
-        assert_eq!(authorize_public_visitor(
-            PublicationAccess { now_millis: 99, ..access }, &auth
-        ), Ok(()));
-        assert_eq!(authorize_public_visitor(
-            PublicationAccess { now_millis: 100, ..access }, &auth
-        ), Err(PublicationAccessDenial::Expired));
+        assert_eq!(
+            authorize_public_visitor(
+                PublicationAccess {
+                    now_millis: 99,
+                    ..access
+                },
+                &auth
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            authorize_public_visitor(
+                PublicationAccess {
+                    now_millis: 100,
+                    ..access
+                },
+                &auth
+            ),
+            Err(PublicationAccessDenial::Expired)
+        );
     }
 }
