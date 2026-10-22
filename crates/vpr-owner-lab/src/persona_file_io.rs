@@ -55,7 +55,7 @@ pub(crate) fn commit_raw(path: &Path, raw: &[u8]) -> Result<(), String> {
         return Err("reviewed Persona file store staging exhausted".into());
     };
     let commit = (|| {
-        file.write_all(&raw)
+        file.write_all(raw)
             .map_err(|_| "reviewed Persona file store write failed")?;
         file.sync_all()
             .map_err(|_| "reviewed Persona file store sync failed")?;
