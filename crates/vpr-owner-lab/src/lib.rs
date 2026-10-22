@@ -1,10 +1,13 @@
 mod evidence;
 mod owner_capture;
 mod owner_context;
+mod persona_file_io;
 mod persona_persistence;
 mod persona_store_lease;
 mod provider_credentials;
 mod providers;
+mod rt1_workspace;
+mod rt1_workspace_service;
 mod state;
 mod voice_profile;
 #[cfg(windows)]
@@ -28,6 +31,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
 pub use persona_store_lease::acquire_persona_store_lease;
+pub use rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
 #[cfg(windows)]
@@ -37,10 +41,10 @@ pub use provider_credentials::{
 
 pub use state::{
     ConversationReadiness, LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute,
-    LabError, LabProviderUsage, LabRealtimeTransport, LabSessionAudience, LabSignalBundle,
-    LabStatus, LabTextResult, LabVoiceInput, LabVoicePlaybackRegistry, LabVoiceResult,
-    LabVoiceSegment, LabVoiceUsage, OwnerContextState, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
+    LabError, LabModalityState, LabProviderUsage, LabRealtimeTransport, LabSessionAudience,
+    LabSignalBundle, LabStatus, LabTextResult, LabVoiceInput, LabVoicePlaybackRegistry,
+    LabVoiceResult, LabVoiceSegment, LabVoiceUsage, OwnerContextState, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};

@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -12,6 +11,8 @@ use crate::owner_context::{
     DurableReviewedOwnerContextSnapshot, ReviewedOwnerContext,
     durable_snapshot_from_reviewed_profile,
 };
+use crate::persona_file_io;
+use crate::rt1_workspace::OwnerWorkspaceRecord;
 use crate::state::OwnerLabEngine;
 
 const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
@@ -36,11 +37,13 @@ struct PersistedPersonaV1 {
     snapshot: ReviewedOwnerContextSnapshot,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PersistedPersonaV2 {
+pub(crate) struct PersistedPersonaV2 {
     schema_version: String,
-    snapshot: DurableReviewedOwnerContextSnapshot,
+    pub(crate) snapshot: DurableReviewedOwnerContextSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) workspace: Option<OwnerWorkspaceRecord>,
 }
 
 impl PersistedPersonaV2 {
@@ -48,12 +51,47 @@ impl PersistedPersonaV2 {
         Self {
             schema_version: STORE_SCHEMA_V2.into(),
             snapshot,
+            workspace: None,
         }
+    }
+
+    fn reconciled(
+        snapshot: DurableReviewedOwnerContextSnapshot,
+        previous: Option<&str>,
+    ) -> Result<Self, String> {
+        let mut next = Self::new(snapshot);
+        if let Some(previous) = previous {
+            let probe: SchemaProbe =
+                serde_json::from_str(previous).map_err(|_| "existing Persona record is invalid")?;
+            if probe.schema_version == STORE_SCHEMA_V2 {
+                let old: Self = serde_json::from_str(previous)
+                    .map_err(|_| "existing Persona v2 record is invalid")?;
+                old.clone().validate()?;
+                if old.snapshot.persona_id != next.snapshot.persona_id
+                    || old.snapshot.persona_version > next.snapshot.persona_version
+                {
+                    return Err("canonical Persona identity or version mismatch".into());
+                }
+                next.workspace = old.workspace;
+                if old.snapshot.persona_version < next.snapshot.persona_version {
+                    if let Some(workspace) = next.workspace.as_mut() {
+                        workspace.on_persona_correction(next.snapshot.persona_version)?;
+                    }
+                }
+            } else if probe.schema_version != STORE_SCHEMA_V1 {
+                return Err("existing Persona schema is unsupported".into());
+            }
+        }
+        next.clone().validate()?;
+        Ok(next)
     }
 
     fn validate(self) -> Result<DurableReviewedOwnerContextSnapshot, String> {
         if self.schema_version != STORE_SCHEMA_V2 {
             return Err("reviewed Persona store schema is unsupported".into());
+        }
+        if let Some(workspace) = &self.workspace {
+            workspace.validate(&self.snapshot.persona_id, self.snapshot.persona_version)?;
         }
         Ok(self.snapshot)
     }
@@ -65,7 +103,6 @@ struct DecodedPersona {
 }
 
 /// Restores a durable reviewed Persona directly into the canonical engine.
-///
 /// The persistence DTO never crosses the public API boundary.
 ///
 /// # Errors
@@ -82,7 +119,6 @@ pub fn restore_reviewed_persona(engine: &mut OwnerLabEngine) -> Result<bool, Str
 }
 
 /// Persists a completed reviewed capture using the exact retained domain history.
-///
 /// # Errors
 /// Returns a redacted validation or durable-store error.
 pub fn persist_reviewed_capture(capture: &Rt0OwnerCapture) -> Result<(), String> {
@@ -213,67 +249,52 @@ fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>,
 }
 
 fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)
-        .map_err(|_| "reviewed Persona file store directory creation failed")?;
-    let raw = serde_json::to_vec_pretty(&PersistedPersonaV2::new(snapshot.clone()))
-        .map_err(|_| "reviewed Persona serialization failed")?;
+    let previous = persona_file_io::read_raw(path)?;
+    let record = PersistedPersonaV2::reconciled(snapshot.clone(), previous.as_deref())?;
+    let raw =
+        serde_json::to_vec_pretty(&record).map_err(|_| "reviewed Persona serialization failed")?;
+    persona_file_io::commit_raw(path, &raw)
+}
 
-    // Exclusive, randomized sibling files avoid predictable .tmp collisions and
-    // accidental truncation of a different in-flight writer's temporary file.
-    // The rename keeps the prior committed file intact until its replacement
-    // has been written and flushed. This is not a cross-process CAS store:
-    // RT1 must still introduce authoritative revision checks before concurrent use.
-    let mut staged = None;
-    for _ in 0..16 {
-        let mut suffix = [0u8; 16];
-        getrandom::fill(&mut suffix)
-            .map_err(|_| "reviewed Persona file store temporary name failed")?;
-        let mut random = String::with_capacity(32);
-        for byte in suffix {
-            use std::fmt::Write as _;
-            write!(&mut random, "{byte:02x}").expect("writing to String cannot fail");
-        }
-        let temp = parent.join(format!(".vpr-persona-{random}.tmp"));
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
+pub(crate) fn load_current_record() -> Result<Option<PersistedPersonaV2>, String> {
+    let raw = if let Some(path) = explicit_store_path() {
+        persona_file_io::read_raw(&path)?
+    } else {
+        #[cfg(windows)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
+            platform::load_raw()?
         }
-        match options.open(&temp) {
-            Ok(file) => {
-                staged = Some((temp, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(_) => return Err("reviewed Persona file store staging failed".into()),
+        #[cfg(not(windows))]
+        {
+            return Err("reviewed Persona durable store path must be configured".into());
         }
-    }
-    let Some((temp, mut file)) = staged else {
-        return Err("reviewed Persona file store staging exhausted".into());
     };
-    let commit = (|| {
-        file.write_all(&raw)
-            .map_err(|_| "reviewed Persona file store write failed")?;
-        file.sync_all()
-            .map_err(|_| "reviewed Persona file store sync failed")?;
-        drop(file);
-        fs::rename(&temp, path).map_err(|_| "reviewed Persona file store commit failed")?;
-        #[cfg(unix)]
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| "reviewed Persona directory sync failed")?;
-        Ok::<(), String>(())
-    })();
-    if commit.is_err() {
-        let _ = fs::remove_file(&temp);
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let record: PersistedPersonaV2 =
+        serde_json::from_str(&raw).map_err(|_| "canonical Persona v2 record required")?;
+    record.clone().validate()?;
+    Ok(Some(record))
+}
+
+pub(crate) fn commit_current_record(record: &PersistedPersonaV2) -> Result<(), String> {
+    record.clone().validate()?;
+    let raw =
+        serde_json::to_vec_pretty(record).map_err(|_| "reviewed Persona serialization failed")?;
+    if let Some(path) = explicit_store_path() {
+        persona_file_io::commit_raw(&path, &raw)
+    } else {
+        #[cfg(windows)]
+        {
+            let utf8 = std::str::from_utf8(&raw).map_err(|_| "reviewed Persona encoding failed")?;
+            platform::save_raw(utf8)
+        }
+        #[cfg(not(windows))]
+        {
+            Err("reviewed Persona durable store path must be configured".into())
+        }
     }
-    commit
 }
 
 #[cfg(windows)]
@@ -292,6 +313,16 @@ mod platform {
         )
     }
 
+    pub(super) fn load_raw() -> Result<Option<String>, String> {
+        store().load()
+    }
+
+    pub(super) fn save_raw(raw: &str) -> Result<(), String> {
+        store()
+            .save(raw)
+            .map_err(|_| "Windows reviewed Persona store write failed".to_owned())
+    }
+
     pub(super) fn load() -> Result<Option<DurableReviewedOwnerContextSnapshot>, String> {
         let Some(raw) = store().load()? else {
             return Ok(None);
@@ -305,11 +336,11 @@ mod platform {
     }
 
     pub(super) fn save(snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
-        let raw = serde_json::to_string(&PersistedPersonaV2::new(snapshot.clone()))
-            .map_err(|_| "reviewed Persona serialization failed")?;
-        store()
-            .save(&raw)
-            .map_err(|_| "Windows reviewed Persona store write failed".to_owned())
+        let previous = store().load()?;
+        let record = PersistedPersonaV2::reconciled(snapshot.clone(), previous.as_deref())?;
+        let raw =
+            serde_json::to_string(&record).map_err(|_| "reviewed Persona serialization failed")?;
+        save_raw(&raw)
     }
 }
 

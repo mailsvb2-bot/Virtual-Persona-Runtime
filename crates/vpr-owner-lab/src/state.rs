@@ -581,7 +581,7 @@ mod voice_phrase;
 mod voice_playback;
 mod voice_stt;
 pub use client_control::{LabClientCommand, LabClientControl, LabClientEvent, LabClientRoute};
-pub use readiness::LabModalityReadiness;
+pub use readiness::{LabModalityReadiness, LabModalityState};
 use status::state_name;
 pub use text::LabTextResult;
 pub use voice::{LabProviderUsage, LabVoiceResult, LabVoiceSegment, LabVoiceUsage};

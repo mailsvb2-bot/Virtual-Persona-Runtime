@@ -56,6 +56,12 @@ impl AuthorizationEpoch {
         Self(1)
     }
 
+    /// Validate a previously committed epoch when recovering canonical authority.
+    #[must_use]
+    pub const fn from_persisted(value: u64) -> Option<Self> {
+        if value == 0 { None } else { Some(Self(value)) }
+    }
+
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
