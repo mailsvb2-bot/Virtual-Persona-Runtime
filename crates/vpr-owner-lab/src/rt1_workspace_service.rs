@@ -138,7 +138,7 @@ impl Rt1WorkspaceService {
     /// after a correction, pause, or unpublication.
     ///
     /// # Errors
-    /// Denies stale tenant, PersonaVersion, visitor secret and epoch.
+    /// Denies stale tenant, `PersonaVersion`, visitor secret and epoch.
     pub fn authorize_visitor(
         &self,
         bearer_token: &str,
