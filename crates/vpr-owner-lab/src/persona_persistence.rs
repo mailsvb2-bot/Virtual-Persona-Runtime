@@ -3,7 +3,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-
 use crate::ReviewedOwnerContextSnapshot;
 use crate::owner_capture::Rt0OwnerCapture;
 use crate::owner_context::{
