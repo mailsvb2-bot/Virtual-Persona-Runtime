@@ -133,8 +133,10 @@ impl CanonicalPublication {
             || state.publication_id.trim().is_empty()
             || state.persona_version == 0
             || (state.status == PublicationStatus::Published && state.authorization_revoked)
-            || (matches!(state.status, PublicationStatus::Paused | PublicationStatus::Unpublished)
-                && !state.authorization_revoked)
+            || (matches!(
+                state.status,
+                PublicationStatus::Paused | PublicationStatus::Unpublished
+            ) && !state.authorization_revoked)
         {
             return Err(PublicationError::InvalidVersion);
         }
@@ -435,7 +437,10 @@ mod tests {
         let mut reopened = CanonicalPublication::from_durable_snapshot(durable.clone()).unwrap();
         assert_eq!(reopened.durable_snapshot(), durable);
         reopened.invalidate_restart_leases().unwrap();
-        assert_ne!(reopened.durable_snapshot().authorization_epoch, durable.authorization_epoch);
+        assert_ne!(
+            reopened.durable_snapshot().authorization_epoch,
+            durable.authorization_epoch
+        );
         assert_eq!(
             reopened.authorize_visitor(true, "owner", "persona", 8, &old, 9),
             Err(PublicationError::VisitorDenied(

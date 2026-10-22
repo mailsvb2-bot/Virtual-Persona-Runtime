@@ -11,9 +11,9 @@ use crate::owner_context::{
     DurableReviewedOwnerContextSnapshot, ReviewedOwnerContext,
     durable_snapshot_from_reviewed_profile,
 };
-use crate::state::OwnerLabEngine;
-use crate::rt1_workspace::OwnerWorkspaceRecord;
 use crate::persona_file_io;
+use crate::rt1_workspace::OwnerWorkspaceRecord;
+use crate::state::OwnerLabEngine;
 
 const STORE_SCHEMA_V1: &str = "vpr-reviewed-owner-persona-1";
 const STORE_SCHEMA_V2: &str = "vpr-reviewed-owner-persona-2";
@@ -61,8 +61,8 @@ impl PersistedPersonaV2 {
     ) -> Result<Self, String> {
         let mut next = Self::new(snapshot);
         if let Some(previous) = previous {
-            let probe: SchemaProbe = serde_json::from_str(previous)
-                .map_err(|_| "existing Persona record is invalid")?;
+            let probe: SchemaProbe =
+                serde_json::from_str(previous).map_err(|_| "existing Persona record is invalid")?;
             if probe.schema_version == STORE_SCHEMA_V2 {
                 let old: Self = serde_json::from_str(previous)
                     .map_err(|_| "existing Persona v2 record is invalid")?;
@@ -253,8 +253,8 @@ fn load_file(path: &Path) -> Result<Option<DurableReviewedOwnerContextSnapshot>,
 fn save_file(path: &Path, snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
     let previous = persona_file_io::read_raw(path)?;
     let record = PersistedPersonaV2::reconciled(snapshot.clone(), previous.as_deref())?;
-    let raw = serde_json::to_vec_pretty(&record)
-        .map_err(|_| "reviewed Persona serialization failed")?;
+    let raw =
+        serde_json::to_vec_pretty(&record).map_err(|_| "reviewed Persona serialization failed")?;
     persona_file_io::commit_raw(path, &raw)
 }
 
@@ -263,32 +263,39 @@ pub(crate) fn load_current_record() -> Result<Option<PersistedPersonaV2>, String
         persona_file_io::read_raw(&path)?
     } else {
         #[cfg(windows)]
-        { platform::load_raw()? }
+        {
+            platform::load_raw()?
+        }
         #[cfg(not(windows))]
-        { return Err("reviewed Persona durable store path must be configured".into()); }
+        {
+            return Err("reviewed Persona durable store path must be configured".into());
+        }
     };
-    let Some(raw) = raw else { return Ok(None); };
-    let record: PersistedPersonaV2 = serde_json::from_str(&raw)
-        .map_err(|_| "canonical Persona v2 record required")?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let record: PersistedPersonaV2 =
+        serde_json::from_str(&raw).map_err(|_| "canonical Persona v2 record required")?;
     record.clone().validate()?;
     Ok(Some(record))
 }
 
 pub(crate) fn commit_current_record(record: &PersistedPersonaV2) -> Result<(), String> {
     record.clone().validate()?;
-    let raw = serde_json::to_vec_pretty(record)
-        .map_err(|_| "reviewed Persona serialization failed")?;
+    let raw =
+        serde_json::to_vec_pretty(record).map_err(|_| "reviewed Persona serialization failed")?;
     if let Some(path) = explicit_store_path() {
         persona_file_io::commit_raw(&path, &raw)
     } else {
         #[cfg(windows)]
         {
-            let utf8 = std::str::from_utf8(&raw)
-                .map_err(|_| "reviewed Persona encoding failed")?;
+            let utf8 = std::str::from_utf8(&raw).map_err(|_| "reviewed Persona encoding failed")?;
             platform::save_raw(utf8)
         }
         #[cfg(not(windows))]
-        { Err("reviewed Persona durable store path must be configured".into()) }
+        {
+            Err("reviewed Persona durable store path must be configured".into())
+        }
     }
 }
 
@@ -333,8 +340,8 @@ mod platform {
     pub(super) fn save(snapshot: &DurableReviewedOwnerContextSnapshot) -> Result<(), String> {
         let previous = store().load()?;
         let record = PersistedPersonaV2::reconciled(snapshot.clone(), previous.as_deref())?;
-        let raw = serde_json::to_string(&record)
-            .map_err(|_| "reviewed Persona serialization failed")?;
+        let raw =
+            serde_json::to_string(&record).map_err(|_| "reviewed Persona serialization failed")?;
         save_raw(&raw)
     }
 }

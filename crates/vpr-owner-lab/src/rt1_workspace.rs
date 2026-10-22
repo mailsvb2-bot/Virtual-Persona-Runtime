@@ -3,8 +3,8 @@
 //! Public access remains disabled until the RT0 exact exit evidence is accepted.
 
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use vpr_policy::publication_lifecycle::{
     CanonicalPublication, CanonicalPublicationSnapshot, PublicationError, PublicationStatus,
     VisitorPermit,
@@ -92,10 +92,7 @@ impl OwnerWorkspaceRecord {
 
     /// Invalidates stale derived/public state in the SAME durable commit that
     /// advances the canonical reviewed Persona revision.
-    pub fn on_persona_correction(
-        &mut self,
-        new_persona_version: u64,
-    ) -> Result<(), String> {
+    pub fn on_persona_correction(&mut self, new_persona_version: u64) -> Result<(), String> {
         if let Some(snapshot) = self.publication.as_ref() {
             let mut publication = CanonicalPublication::from_durable_snapshot(snapshot.clone())
                 .map_err(|_| "invalid canonical publication")?;
@@ -199,7 +196,10 @@ impl OwnerWorkspaceRecord {
         }
         if let Some(hash) = &self.visitor_token_sha256 {
             if !valid_sha256(hash)
-                || self.publication.as_ref().is_none_or(|p| p.status != PublicationStatus::Published)
+                || self
+                    .publication
+                    .as_ref()
+                    .is_none_or(|p| p.status != PublicationStatus::Published)
             {
                 return Err("invalid visitor authority state".into());
             }
@@ -264,33 +264,59 @@ mod tests {
         let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
         assert!(workspace.authenticate_owner(&owner_token));
         assert!(!workspace.authenticate_owner(&"0".repeat(64)));
-        let visitor = workspace.publish(&owner_token, "persona-a", 3, true).unwrap();
+        let visitor = workspace
+            .publish(&owner_token, "persona-a", 3, true)
+            .unwrap();
         assert_ne!(owner_token, visitor);
         let permit = workspace.visitor_permit(&visitor).unwrap();
-        workspace.authorize_visitor(&visitor, &permit, "persona-a", 3, 10).unwrap();
-        assert!(workspace.authorize_visitor(&visitor, &permit, "persona-a", 4, 10).is_err());
+        workspace
+            .authorize_visitor(&visitor, &permit, "persona-a", 3, 10)
+            .unwrap();
+        assert!(
+            workspace
+                .authorize_visitor(&visitor, &permit, "persona-a", 4, 10)
+                .is_err()
+        );
         workspace.pause(&owner_token).unwrap();
         assert!(workspace.visitor_permit(&visitor).is_err());
-        assert!(workspace.authorize_visitor(&visitor, &permit, "persona-a", 3, 11).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&visitor, &permit, "persona-a", 3, 11)
+                .is_err()
+        );
         assert_eq!(workspace.status(), Some(PublicationStatus::Paused));
     }
 
     #[test]
     fn correction_and_restart_never_restore_prior_session_authority() {
         let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
-        let visitor = workspace.publish(&owner_token, "persona-a", 7, true).unwrap();
+        let visitor = workspace
+            .publish(&owner_token, "persona-a", 7, true)
+            .unwrap();
         let old_permit = workspace.visitor_permit(&visitor).unwrap();
         let raw = serde_json::to_string(&workspace).unwrap();
         let mut restored: OwnerWorkspaceRecord = serde_json::from_str(&raw).unwrap();
         restored.invalidate_restart_leases().unwrap();
-        assert!(restored.authorize_visitor(&visitor, &old_permit, "persona-a", 7, 20).is_err());
+        assert!(
+            restored
+                .authorize_visitor(&visitor, &old_permit, "persona-a", 7, 20)
+                .is_err()
+        );
         let current_permit = restored.visitor_permit(&visitor).unwrap();
-        restored.authorize_visitor(&visitor, &current_permit, "persona-a", 7, 21).unwrap();
+        restored
+            .authorize_visitor(&visitor, &current_permit, "persona-a", 7, 21)
+            .unwrap();
         restored.on_persona_correction(8).unwrap();
         assert_eq!(restored.status(), Some(PublicationStatus::Unpublished));
         assert!(restored.visitor_permit(&visitor).is_err());
-        assert!(restored.publish(&owner_token, "persona-a", 7, true).is_err());
-        let renewed = restored.publish(&owner_token, "persona-a", 8, true).unwrap();
+        assert!(
+            restored
+                .publish(&owner_token, "persona-a", 7, true)
+                .is_err()
+        );
+        let renewed = restored
+            .publish(&owner_token, "persona-a", 8, true)
+            .unwrap();
         assert_ne!(renewed, visitor);
         assert!(restored.visitor_permit(&visitor).is_err());
         assert!(restored.visitor_permit(&renewed).is_ok());

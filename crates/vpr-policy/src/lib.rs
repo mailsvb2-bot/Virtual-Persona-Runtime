@@ -165,7 +165,11 @@ impl AuthorizationState {
         expires_at_millis: Option<u64>,
     ) -> Option<Self> {
         match AuthorizationEpoch::from_persisted(epoch) {
-            Some(epoch) => Some(Self { epoch, revoked, expires_at_millis }),
+            Some(epoch) => Some(Self {
+                epoch,
+                revoked,
+                expires_at_millis,
+            }),
             None => None,
         }
     }

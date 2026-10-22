@@ -7,9 +7,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use vpr_policy::publication_lifecycle::{PublicationStatus, VisitorPermit};
 
-use crate::persona_persistence::{
-    PersistedPersonaV2, commit_current_record, load_current_record,
-};
+use crate::persona_persistence::{PersistedPersonaV2, commit_current_record, load_current_record};
 use crate::rt1_workspace::OwnerWorkspaceRecord;
 
 #[derive(Serialize)]

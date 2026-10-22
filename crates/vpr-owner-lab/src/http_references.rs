@@ -38,13 +38,6 @@ impl ReferenceIntakeState {
         self.snapshot.lock().clone()
     }
 
-    /// Both explicit local rights confirmations are required for a private
-    /// feasibility preview; metadata is not evidence of commercial rights.
-    pub(crate) fn has_both_references(&self) -> bool {
-        let state = self.snapshot.lock();
-        state.voice.is_some() && state.appearance.is_some()
-    }
-
     fn replace(&self, metadata: ReferenceMetadata) {
         let mut snapshot = self.snapshot.lock();
         match metadata.kind.as_str() {
