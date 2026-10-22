@@ -236,7 +236,12 @@ fn generate_token(bytes: usize) -> Result<String, String> {
 }
 
 fn hash_secret(token: &str) -> String {
-    format!("{:x}", Sha256::digest(token.as_bytes()))
+    let digest = Sha256::digest(token.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hex
 }
 
 fn valid_sha256(value: &str) -> bool {
