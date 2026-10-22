@@ -105,7 +105,12 @@ impl From<GoldenSuiteError> for EvidenceBindingError {
 #[must_use]
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("{digest:x}")
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    hex
 }
 
 /// Validates one exact Git candidate identifier using the same fail-closed syntax as release evidence.

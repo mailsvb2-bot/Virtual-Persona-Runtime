@@ -10,6 +10,7 @@ use avatar_factory::build_avatar;
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use tts_factory::{build_tts, build_tts_fallback, ensure_avatar_pcm_compatible};
 
 use crate::provider_credentials::ProviderCredentialProfile;
@@ -262,7 +263,7 @@ fn bind_tts_descriptor(
     let mut hasher = Sha256::new();
     hasher.update(descriptor.configuration_fingerprint_sha256.as_bytes());
     hasher.update(&bytes);
-    descriptor.configuration_fingerprint_sha256 = format!("{:x}", hasher.finalize());
+    descriptor.configuration_fingerprint_sha256 = sha256_digest_hex(hasher.finalize());
     Ok(descriptor)
 }
 
@@ -482,7 +483,7 @@ fn descriptor(
     ProviderDescriptor {
         provider: provider.into(),
         model_or_representation: model_or_representation.into(),
-        configuration_fingerprint_sha256: format!("{:x}", hasher.finalize()),
+        configuration_fingerprint_sha256: sha256_digest_hex(hasher.finalize()),
     }
 }
 
@@ -543,3 +544,11 @@ fn resolved_bool(name: &'static str, stored: Option<bool>, default: bool) -> Res
 
 #[cfg(test)]
 mod tests;
+
+fn sha256_digest_hex(digest: impl AsRef<[u8]>) -> String {
+    let mut encoded = String::with_capacity(64);
+    for byte in digest.as_ref() {
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    encoded
+}
