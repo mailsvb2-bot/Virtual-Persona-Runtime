@@ -3,6 +3,7 @@
 //! Public access remains disabled until the RT0 exact exit evidence is accepted.
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use sha2::{Digest, Sha256};
 use vpr_policy::publication_lifecycle::{
     CanonicalPublication, CanonicalPublicationSnapshot, PublicationError, PublicationStatus,
@@ -228,7 +229,6 @@ fn generate_token(bytes: usize) -> Result<String, String> {
     let mut random = vec![0_u8; bytes];
     getrandom::fill(&mut random).map_err(|_| "secure random generator unavailable")?;
     let mut hex = String::with_capacity(bytes * 2);
-    use std::fmt::Write as _;
     for byte in random {
         write!(&mut hex, "{byte:02x}").map_err(|_| "token encoding failed")?;
     }
