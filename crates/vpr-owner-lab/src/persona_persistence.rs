@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
 use crate::ReviewedOwnerContextSnapshot;
 use crate::owner_capture::Rt0OwnerCapture;
 use crate::owner_context::{
@@ -102,7 +103,6 @@ struct DecodedPersona {
 }
 
 /// Restores a durable reviewed Persona directly into the canonical engine.
-///
 /// The persistence DTO never crosses the public API boundary.
 ///
 /// # Errors
@@ -119,7 +119,6 @@ pub fn restore_reviewed_persona(engine: &mut OwnerLabEngine) -> Result<bool, Str
 }
 
 /// Persists a completed reviewed capture using the exact retained domain history.
-///
 /// # Errors
 /// Returns a redacted validation or durable-store error.
 pub fn persist_reviewed_capture(capture: &Rt0OwnerCapture) -> Result<(), String> {
