@@ -17,7 +17,7 @@ pub(super) fn recover_before_listener() -> Result<(), String> {
     Ok(())
 }
 
-/// Match persona_persistence::explicit_store_path: empty means unconfigured.
+/// Match `persona_persistence::explicit_store_path`: empty means unconfigured.
 fn recovery_required(on_windows: bool, store_path: Option<&OsStr>) -> bool {
     on_windows || store_path.is_some_and(|path| !path.is_empty())
 }
