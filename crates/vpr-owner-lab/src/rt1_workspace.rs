@@ -329,22 +329,41 @@ mod tests {
     #[test]
     fn independent_visitor_cannot_mutate_owner_publication_and_republish_rotates_authority() {
         let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
-        let visitor_token = workspace.publish(&owner_token, "persona-rt1", 1, true).unwrap();
+        let visitor_token = workspace
+            .publish(&owner_token, "persona-rt1", 1, true)
+            .unwrap();
         let first_permit = workspace.visitor_permit(&visitor_token).unwrap();
         assert!(workspace.pause(&visitor_token).is_err());
         assert!(workspace.unpublish(&visitor_token).is_err());
-        workspace.authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 10).unwrap();
+        workspace
+            .authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 10)
+            .unwrap();
         workspace.pause(&owner_token).unwrap();
         assert!(workspace.visitor_permit(&visitor_token).is_err());
-        assert!(workspace.authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 11).is_err());
-        let new_visitor_token = workspace.publish(&owner_token, "persona-rt1", 1, true).unwrap();
+        assert!(
+            workspace
+                .authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 11)
+                .is_err()
+        );
+        let new_visitor_token = workspace
+            .publish(&owner_token, "persona-rt1", 1, true)
+            .unwrap();
         assert_ne!(visitor_token, new_visitor_token);
         assert!(workspace.visitor_permit(&visitor_token).is_err());
         let second_permit = workspace.visitor_permit(&new_visitor_token).unwrap();
-        assert!(workspace.authorize_visitor(&new_visitor_token, &first_permit, "persona-rt1", 1, 12).is_err());
-        workspace.authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 12).unwrap();
+        assert!(
+            workspace
+                .authorize_visitor(&new_visitor_token, &first_permit, "persona-rt1", 1, 12)
+                .is_err()
+        );
+        workspace
+            .authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 12)
+            .unwrap();
         workspace.unpublish(&owner_token).unwrap();
-        assert!(workspace.authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 13).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 13)
+                .is_err()
+        );
     }
-
 }
