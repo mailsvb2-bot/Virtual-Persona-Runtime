@@ -137,6 +137,8 @@ foreach ($required in @(
     'Get-NetTCPConnection -LocalPort $candidate',
     'Get-NetTCPConnection -LocalPort $privateVoicePort',
     '$labProcess.WaitForExit()',
+    'Owner Lab terminated unexpectedly with exit code',
+    'Owner Lab exited: pid=',
     '$piperProcess.Kill()'
 )) {
     if (-not $source.Contains($required)) {
