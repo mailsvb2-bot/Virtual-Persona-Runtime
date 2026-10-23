@@ -237,6 +237,16 @@ function Collect-Sessions {
     foreach ($file in (Get-ChildItem -LiteralPath $downloads -Filter '*.json' -File | Where-Object { $_.LastWriteTime -ge $Since })) {
         try { $snap = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
         if ($snap.schema_version -notlike 'rt0-owner-lab-session-evidence-*' -or $snap.candidate_sha -ne $candidate) { continue }
+        # Role and provider binding come from the recorded evidence, never from the
+        # operator's current prompt. A copied owner file cannot count as a visitor.
+        if ($snap.participant_role -cne $Role) { continue }
+        if ([string]::IsNullOrWhiteSpace($snap.provider_state_sha256) -or
+            $snap.provider_state_sha256 -notmatch '^[a-f0-9]{64}$') { continue }
+        if ($found | Where-Object { $_.snapshot.session_sequence -eq $snap.session_sequence }) { continue }
+        if ($found.Count -gt 0 -and
+            $found[0].snapshot.provider_state_sha256 -cne $snap.provider_state_sha256) {
+            throw 'Mixed provider-state evidence in a single acceptance run'
+        }
         $dest = Join-Path $Dir ("session-{0}-{1}.json" -f $Role,$snap.session_sequence)
         Copy-Item -LiteralPath $file.FullName -Destination $dest -Force
         $found += [pscustomobject]@{path=$dest; snapshot=$snap}

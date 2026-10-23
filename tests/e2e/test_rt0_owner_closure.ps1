@@ -38,6 +38,8 @@ foreach ($required in @(
     "Start-Process -FilePath 'powershell.exe'",
     'Verified running Owner Lab and exact provider-state',
     'Get-FileHash',
+    '$snap.participant_role -cne $Role',
+    'Mixed provider-state evidence in a single acceptance run',
     'voice turns',
     'STOP'
 )) {

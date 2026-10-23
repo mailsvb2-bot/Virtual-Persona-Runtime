@@ -715,6 +715,13 @@ try {
     if ($Piper -or $SystemVoice) {
         Write-Host 'Private voice-managed Owner Lab is running. Keep this window open until you finish.'
         $labProcess.WaitForExit()
+        $exitCode = $labProcess.ExitCode
+        # A supervised server must not disappear silently after readiness.
+        # No credentials, request content, or owner context are logged.
+        Write-Host "Owner Lab exited: pid=$($labProcess.Id) exit_code=$exitCode"
+        if ($exitCode -ne 0) {
+            throw "Owner Lab terminated unexpectedly with exit code $exitCode"
+        }
     }
 } finally {
     # Stop only the child started by this exact process handle; never a PID
