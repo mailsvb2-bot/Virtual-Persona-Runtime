@@ -194,6 +194,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recovery_and_access_use_one_canonical_workspace_service() {
+        // This is the service that startup now calls before binding a listener.
+        // No parallel in-memory publication authority is created.
+        let service = Rt1WorkspaceService::new();
+        assert!(service.recover_before_listener().is_ok());
+        assert!(service.visitor_permit(&"0".repeat(64)).is_err());
+        assert!(service.owner_status(&"0".repeat(64)).is_err());
+    }
+
+    #[test]
     fn service_signature_does_not_accept_client_claimed_readiness() {
         // Browser JS cannot invoke `publish` without the server-provided
         // readiness gate; all calls go through the service transaction.
