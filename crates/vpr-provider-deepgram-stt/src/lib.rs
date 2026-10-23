@@ -239,7 +239,7 @@ fn map_transport_error(error: &reqwest::Error) -> ProviderError {
 fn map_status(status: u16) -> ProviderError {
     match status {
         401 | 403 => ProviderError {
-            kind: ProviderErrorKind::PolicyDenied,
+            kind: ProviderErrorKind::AuthenticationDenied,
             retryable: false,
         },
         408 => ProviderError {
