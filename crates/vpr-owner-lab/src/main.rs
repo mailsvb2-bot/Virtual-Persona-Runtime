@@ -151,9 +151,15 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     // RT1 visitor permits are process-bound. Invalidate persisted leases and
     // commit the new authorization epoch before any HTTP listener is exposed.
     // The existing Persona store lease serializes this with all other writers.
-    vpr_owner_lab::Rt1WorkspaceService::new()
-        .recover_before_listener()
-        .map_err(|_| "RT1 publication recovery failed before listener startup")?;
+    // The Linux test/ephemeral Owner Lab can run without a durable store:
+    // in that mode no workspace/publication can exist to recover. Windows
+    // always has its canonical credential store; an explicitly configured
+    // file store must always be recovered (and fail closed on corruption).
+    if cfg!(windows) || env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").is_some() {
+        vpr_owner_lab::Rt1WorkspaceService::new()
+            .recover_before_listener()
+            .map_err(|_| "RT1 publication recovery failed before listener startup")?;
+    }
     let voice_playback = engine.voice_playback_registry();
     let mut evidence_recorder = LabSessionEvidenceRecorder::default();
     if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {
