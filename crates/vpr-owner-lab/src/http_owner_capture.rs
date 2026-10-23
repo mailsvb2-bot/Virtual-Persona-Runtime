@@ -73,6 +73,7 @@ pub(crate) fn route_post(
     state: &AppState,
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     let result = match path {
+        "/api/rt1/readiness" => Err(error_response(409, "RT1_PREPARATION_REQUIRED")),
         "/api/persona/create" => create_persona(request, state),
         "/api/persona/capture/answer" => submit_answer(request, state),
         "/api/persona/capture/finish" => finish_capture(request, state),
