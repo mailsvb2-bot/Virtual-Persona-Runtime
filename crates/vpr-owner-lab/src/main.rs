@@ -181,7 +181,10 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     // in that mode no workspace/publication can exist to recover. Windows
     // always has its canonical credential store; an explicitly configured
     // file store must always be recovered (and fail closed on corruption).
-    if rt1_recovery_required(cfg!(windows), env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").as_deref()) {
+    if rt1_recovery_required(
+        cfg!(windows),
+        env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").as_deref(),
+    ) {
         vpr_owner_lab::Rt1WorkspaceService::new()
             .recover_before_listener()
             .map_err(|_| "RT1 publication recovery failed before listener startup")?;
