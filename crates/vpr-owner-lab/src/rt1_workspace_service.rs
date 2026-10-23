@@ -194,11 +194,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recovery_and_access_use_one_canonical_workspace_service() {
-        // This is the service that startup now calls before binding a listener.
-        // No parallel in-memory publication authority is created.
+    fn unconfigured_workspace_fails_closed_before_listener() {
+        // CI has no persistent Persona store on Linux. Recovery must reject
+        // that configuration rather than silently permit a visitor listener.
+        // This test does not mutate process-global environment variables.
         let service = Rt1WorkspaceService::new();
-        assert!(service.recover_before_listener().is_ok());
+        assert!(service.recover_before_listener().is_err());
         assert!(service.visitor_permit(&"0".repeat(64)).is_err());
         assert!(service.owner_status(&"0".repeat(64)).is_err());
     }
