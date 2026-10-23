@@ -111,6 +111,32 @@ struct IceBody {
     sdp_mid: Option<String>,
     sdp_mline_index: Option<u16>,
 }
+/// Match the canonical persistence store-path interpretation: an empty path
+/// is unset, not a configured durable store. Windows always checks its
+/// credential store before opening a listener.
+fn rt1_recovery_required(on_windows: bool, store_path: Option<&std::ffi::OsStr>) -> bool {
+    on_windows || store_path.is_some_and(|path| !path.is_empty())
+}
+
+#[cfg(test)]
+mod rt1_recovery_gate_tests {
+    use super::rt1_recovery_required;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn ephemeral_non_windows_lab_does_not_require_durable_recovery() {
+        assert!(!rt1_recovery_required(false, None));
+        assert!(!rt1_recovery_required(false, Some(OsStr::new(""))));
+    }
+
+    #[test]
+    fn configured_or_windows_store_must_recover_before_listener() {
+        assert!(rt1_recovery_required(false, Some(OsStr::new("persona.json"))));
+        assert!(rt1_recovery_required(true, None));
+        assert!(rt1_recovery_required(true, Some(OsStr::new(""))));
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("owner-lab failed: {error}");
@@ -155,7 +181,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     // in that mode no workspace/publication can exist to recover. Windows
     // always has its canonical credential store; an explicitly configured
     // file store must always be recovered (and fail closed on corruption).
-    if cfg!(windows) || env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").is_some() {
+    if rt1_recovery_required(cfg!(windows), env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").as_deref()) {
         vpr_owner_lab::Rt1WorkspaceService::new()
             .recover_before_listener()
             .map_err(|_| "RT1 publication recovery failed before listener startup")?;
