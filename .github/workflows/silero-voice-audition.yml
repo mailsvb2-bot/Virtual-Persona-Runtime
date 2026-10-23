@@ -40,7 +40,7 @@ jobs:
           & $python scripts/silero_cis_voice_preview.py --model $model --output-dir 'silero-voice-samples'
           if ($LASTEXITCODE -ne 0) { throw 'Real Silero female audio synthesis failed' }
       - name: Upload fixed sample text only - no session audio or secrets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: silero-female-cis-ru-sha-${{ github.sha }}
           path: silero-voice-samples/*.wav

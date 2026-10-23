@@ -36,7 +36,7 @@ jobs:
           & ./scripts/windows_neural_voice_audition.ps1 -Engine qwen-design
           if ($LASTEXITCODE -ne 0) { throw 'Native Russian Qwen VoiceDesign failed' }
       - name: Upload fixed public Russian audition WAV only
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rt0-qwen-russian-voice-design
           path: audio-candidates/qwen-design.*
