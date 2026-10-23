@@ -6,6 +6,7 @@ mod http_evidence;
 mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
+mod http_rt1_owner;
 mod http_references;
 #[cfg(test)]
 mod http_security_tests;
@@ -66,6 +67,7 @@ struct AppState {
     rt0_evidence_mode: bool,
     voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
+    rt1_workspace: vpr_owner_lab::Rt1WorkspaceService,
     reference_intake: http_references::ReferenceIntakeState,
     active_voice_interrupt: ParkingMutex<Option<TurnInterruptHandle>>,
     voice_busy: AtomicBool,
@@ -167,6 +169,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         rt0_evidence_mode,
         voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
+        rt1_workspace: vpr_owner_lab::Rt1WorkspaceService::new(),
         reference_intake: http_references::ReferenceIntakeState::default(),
         active_voice_interrupt: ParkingMutex::new(None),
         voice_busy: AtomicBool::new(false),
@@ -328,6 +331,9 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    if let Some(result) = http_rt1_owner::route_post(path, request, state) {
+        return result.unwrap_or_else(|response| response);
+    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
