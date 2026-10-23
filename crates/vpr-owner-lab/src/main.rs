@@ -330,9 +330,6 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
-    if let Some(result) = http_rt1_owner::route_post(path, request, state) {
-        return result.unwrap_or_else(|response| response);
-    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
@@ -588,57 +585,4 @@ fn generate_csrf_token() -> Result<String, Box<dyn Error + Send + Sync>> {
         token.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     Ok(token)
-}
-
-mod http_rt1_owner {
-    use super::*;
-    use vpr_owner_lab::{LabModalityState, OwnerContextState};
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Auth { owner_token: String }
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Publish { owner_token: String, expected_persona_version: u64 }
-
-    pub(super) fn route_post(path: &str, request: &mut Request, state: &AppState)
-        -> Option<Result<HttpResponse, HttpResponse>> {
-        Some(match path {
-            "/api/rt1/owner/provision" => parse_empty_json(request).and_then(|()| {
-                let (owner_id, owner_token) = state.rt1_workspace.provision_owner()
-                    .map_err(|_| error_response(409, "RT1_PROVISION_DENIED"))?;
-                Ok(json_response(201, &serde_json::json!({"owner_id": owner_id, "owner_token": owner_token})))
-            }),
-            "/api/rt1/owner/status" => parse_json::<Auth>(request).and_then(|body| {
-                let status = state.rt1_workspace.owner_status(&body.owner_token)
-                    .map_err(|_| error_response(403, "RT1_OWNER_DENIED"))?;
-                Ok(json_response(200, &status))
-            }),
-            "/api/rt1/owner/publish" => parse_json::<Publish>(request).and_then(|body| {
-                let status = state.engine.lock()
-                    .map_err(|_| error_response(500, "INTERNAL_ERROR"))?.status();
-                let verified = status.owner_context_state == OwnerContextState::Reviewed
-                    && status.modality_readiness.text == LabModalityState::Ready
-                    && status.modality_readiness.voice == LabModalityState::Ready
-                    && status.modality_readiness.video == LabModalityState::Ready
-                    && status.egress_enabled;
-                if !verified { return Err(error_response(409, "RT1_NOT_READY")); }
-                let visitor_token = state.rt1_workspace.publish(
-                    &body.owner_token, body.expected_persona_version, verified
-                ).map_err(|_| error_response(403, "RT1_PUBLISH_DENIED"))?;
-                Ok(json_response(200, &serde_json::json!({"visitor_token": visitor_token})))
-            }),
-            "/api/rt1/owner/pause" => parse_json::<Auth>(request).and_then(|body| {
-                state.rt1_workspace.pause(&body.owner_token)
-                    .map_err(|_| error_response(403, "RT1_OWNER_DENIED"))?;
-                Ok(json_response(200, &serde_json::json!({"status": "paused"})))
-            }),
-            "/api/rt1/owner/unpublish" => parse_json::<Auth>(request).and_then(|body| {
-                state.rt1_workspace.unpublish(&body.owner_token)
-                    .map_err(|_| error_response(403, "RT1_OWNER_DENIED"))?;
-                Ok(json_response(200, &serde_json::json!({"status": "unpublished"})))
-            }),
-            _ => return None,
-        })
-    }
 }
