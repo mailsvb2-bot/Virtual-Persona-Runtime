@@ -404,7 +404,9 @@ fn probe_profile_did(
         Err(DidRuntimeAccessFailure::Provider(error)) => {
             let message = match error.kind {
                 ProviderErrorKind::PolicyDenied => "D-ID account authentication: POLICY_DENIED",
-                ProviderErrorKind::AuthenticationDenied => "D-ID account authentication: AUTHENTICATION_DENIED",
+                ProviderErrorKind::AuthenticationDenied => {
+                    "D-ID account authentication: AUTHENTICATION_DENIED"
+                }
                 ProviderErrorKind::RateLimited => "D-ID account authentication: RATE_LIMITED",
                 ProviderErrorKind::Timeout => "D-ID account authentication: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID account authentication: UNAVAILABLE",
