@@ -193,6 +193,9 @@ fn required_persona() -> Result<PersistedPersonaV2, String> {
 mod tests {
     use super::*;
 
+    // Windows has an implicit credential store: a missing file path is not
+    // an unconfigured store there, and this test must not mutate real credentials.
+    #[cfg(not(windows))]
     #[test]
     fn unconfigured_workspace_fails_closed_before_listener() {
         // CI has no persistent Persona store on Linux. Recovery must reject
