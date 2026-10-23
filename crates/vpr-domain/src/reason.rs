@@ -7,6 +7,7 @@ pub enum Rt0ReasonCode {
     EgressLocalOnly,
     ConsentRequired,
     ProviderUnavailable,
+    ProviderAuthenticationDenied,
     ProviderRateLimited,
     ProviderTimeout,
     PreparationFailed,
@@ -28,6 +29,7 @@ impl Rt0ReasonCode {
             Self::EgressLocalOnly => "EGRESS_LOCAL_ONLY",
             Self::ConsentRequired => "CONSENT_REQUIRED",
             Self::ProviderUnavailable => "PROVIDER_UNAVAILABLE",
+            Self::ProviderAuthenticationDenied => "PROVIDER_AUTH_DENIED",
             Self::ProviderRateLimited => "PROVIDER_RATE_LIMITED",
             Self::ProviderTimeout => "PROVIDER_TIMEOUT",
             Self::PreparationFailed => "PREPARATION_FAILED",
@@ -48,6 +50,10 @@ mod tests {
     fn reason_codes_match_rt0_release_contract() {
         assert_eq!(Rt0ReasonCode::AuthRevoked.as_str(), "AUTH_REVOKED");
         assert_eq!(Rt0ReasonCode::TurnCancelled.as_str(), "TURN_CANCELLED");
+        assert_eq!(
+            Rt0ReasonCode::ProviderAuthenticationDenied.as_str(),
+            "PROVIDER_AUTH_DENIED"
+        );
         assert_eq!(
             Rt0ReasonCode::OwnerAttributionUnverified.as_str(),
             "OWNER_ATTRIBUTION_UNVERIFIED"
