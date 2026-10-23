@@ -51,6 +51,10 @@ mod tests {
         assert_eq!(Rt0ReasonCode::AuthRevoked.as_str(), "AUTH_REVOKED");
         assert_eq!(Rt0ReasonCode::TurnCancelled.as_str(), "TURN_CANCELLED");
         assert_eq!(
+            Rt0ReasonCode::ProviderAuthenticationDenied.as_str(),
+            "PROVIDER_AUTH_DENIED"
+        );
+        assert_eq!(
             Rt0ReasonCode::OwnerAttributionUnverified.as_str(),
             "OWNER_ATTRIBUTION_UNVERIFIED"
         );
