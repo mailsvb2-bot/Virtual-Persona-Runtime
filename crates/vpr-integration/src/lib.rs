@@ -34,6 +34,7 @@ pub enum ProviderErrorKind {
     Cancelled,
     InvalidResponse,
     PolicyDenied,
+    AuthenticationDenied,
     InsufficientCredits,
 }
 
