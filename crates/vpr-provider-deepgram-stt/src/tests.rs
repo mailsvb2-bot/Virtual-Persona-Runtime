@@ -208,7 +208,9 @@ fn provider_http_authentication_denial_is_not_runtime_egress_denial() {
     for status in ["401 Unauthorized", "403 Forbidden"] {
         let (endpoint, _) = serve_once(status, "rejected");
         let provider = adapter(endpoint);
-        let error = provider.transcribe(&request(), &Probe(AtomicBool::new(false))).unwrap_err();
+        let error = provider
+            .transcribe(&request(), &Probe(AtomicBool::new(false)))
+            .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::AuthenticationDenied);
         assert!(!error.retryable);
     }
