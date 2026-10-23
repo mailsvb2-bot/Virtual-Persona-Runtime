@@ -193,6 +193,20 @@ fn required_persona() -> Result<PersistedPersonaV2, String> {
 mod tests {
     use super::*;
 
+    // Windows has an implicit credential store: a missing file path is not
+    // an unconfigured store there, and this test must not mutate real credentials.
+    #[cfg(not(windows))]
+    #[test]
+    fn unconfigured_workspace_fails_closed_before_listener() {
+        // CI has no persistent Persona store on Linux. Recovery must reject
+        // that configuration rather than silently permit a visitor listener.
+        // This test does not mutate process-global environment variables.
+        let service = Rt1WorkspaceService::new();
+        assert!(service.recover_before_listener().is_err());
+        assert!(service.visitor_permit(&"0".repeat(64)).is_err());
+        assert!(service.owner_status(&"0".repeat(64)).is_err());
+    }
+
     #[test]
     fn service_signature_does_not_accept_client_claimed_readiness() {
         // Browser JS cannot invoke `publish` without the server-provided
