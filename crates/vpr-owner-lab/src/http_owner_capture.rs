@@ -74,6 +74,7 @@ pub(crate) fn route_post(
 ) -> Option<Result<HttpResponse, HttpResponse>> {
     let result = match path {
         "/api/rt1/owner/status" => rt1_status(request, state),
+        "/api/rt1/owner/pause" => rt1_pause(request, state),
         "/api/persona/create" => create_persona(request, state),
         "/api/persona/capture/answer" => submit_answer(request, state),
         "/api/persona/capture/finish" => finish_capture(request, state),
@@ -283,4 +284,11 @@ fn rt1_status(request: &mut Request, state: &AppState) -> Result<HttpResponse, H
     let status = state.rt1_workspace.owner_status(&body.owner_token)
         .map_err(|_| error_response(403, "RT1_OWNER_DENIED"))?;
     Ok(json_response(200, &status))
+}
+
+fn rt1_pause(request: &mut Request, state: &AppState) -> Result<HttpResponse, HttpResponse> {
+    let body = parse_json::<Rt1AuthRequest>(request)?;
+    state.rt1_workspace.pause(&body.owner_token)
+        .map_err(|_| error_response(403, "RT1_OWNER_DENIED"))?;
+    Ok(json_response(200, &serde_json::json!({"status": "paused"})))
 }
