@@ -377,14 +377,22 @@ mod tests {
         let initial = workspace.publish(&owner, "persona-a", 3, true).unwrap();
         let lease = workspace.visitor_permit(&initial).unwrap();
         assert!(workspace.publish(&owner, "persona-a", 3, true).is_err());
-        workspace.authorize_visitor(&initial, &lease, "persona-a", 3, 1).unwrap();
+        workspace
+            .authorize_visitor(&initial, &lease, "persona-a", 3, 1)
+            .unwrap();
         workspace.on_persona_correction(4).unwrap();
         assert!(workspace.publish(&owner, "persona-a", 3, true).is_err());
         assert!(workspace.visitor_permit(&initial).is_err());
-        assert!(workspace.authorize_visitor(&initial, &lease, "persona-a", 4, 2).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&initial, &lease, "persona-a", 4, 2)
+                .is_err()
+        );
         let renewed = workspace.publish(&owner, "persona-a", 4, true).unwrap();
         assert_ne!(renewed, initial);
         let new_lease = workspace.visitor_permit(&renewed).unwrap();
-        workspace.authorize_visitor(&renewed, &new_lease, "persona-a", 4, 3).unwrap();
+        workspace
+            .authorize_visitor(&renewed, &new_lease, "persona-a", 4, 3)
+            .unwrap();
     }
 }
