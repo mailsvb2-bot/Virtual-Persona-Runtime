@@ -352,6 +352,7 @@ fn probe_profile_local_avatar(
     provider.probe_health().map_err(|error| {
         let message = match error.kind {
             ProviderErrorKind::PolicyDenied => "local avatar probe: POLICY_DENIED",
+            ProviderErrorKind::AuthenticationDenied => "local avatar probe: AUTHENTICATION_DENIED",
             ProviderErrorKind::RateLimited => "local avatar probe: RATE_LIMITED",
             ProviderErrorKind::Timeout => "local avatar probe: TIMEOUT",
             ProviderErrorKind::Unavailable => "local avatar probe: UNAVAILABLE",
@@ -403,6 +404,9 @@ fn probe_profile_did(
         Err(DidRuntimeAccessFailure::Provider(error)) => {
             let message = match error.kind {
                 ProviderErrorKind::PolicyDenied => "D-ID account authentication: POLICY_DENIED",
+                ProviderErrorKind::AuthenticationDenied => {
+                    "D-ID account authentication: AUTHENTICATION_DENIED"
+                }
                 ProviderErrorKind::RateLimited => "D-ID account authentication: RATE_LIMITED",
                 ProviderErrorKind::Timeout => "D-ID account authentication: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID account authentication: UNAVAILABLE",
@@ -465,6 +469,7 @@ fn probe_profile_did(
         Err(DidRuntimeAccessFailure::Provider(error)) => {
             let message = match error.kind {
                 ProviderErrorKind::PolicyDenied => "D-ID credential probe: POLICY_DENIED",
+                ProviderErrorKind::AuthenticationDenied => "D-ID credential probe: AUTHENTICATION_DENIED",
                 ProviderErrorKind::RateLimited => "D-ID credential probe: RATE_LIMITED",
                 ProviderErrorKind::Timeout => "D-ID credential probe: TIMEOUT",
                 ProviderErrorKind::Unavailable => "D-ID credential probe: UNAVAILABLE",

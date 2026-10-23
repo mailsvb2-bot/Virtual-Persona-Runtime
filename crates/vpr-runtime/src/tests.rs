@@ -755,6 +755,14 @@ fn lease_expiry_blocks_late_output_evidence_and_completion() {
 #[test]
 fn provider_failures_map_to_stable_rt0_reason_codes() {
     assert_eq!(
+        provider_reason_code(ProviderErrorKind::AuthenticationDenied),
+        Rt0ReasonCode::ProviderAuthenticationDenied
+    );
+    assert_eq!(
+        provider_reason_code(ProviderErrorKind::PolicyDenied),
+        Rt0ReasonCode::EgressDenied
+    );
+    assert_eq!(
         provider_reason_code(ProviderErrorKind::RateLimited),
         Rt0ReasonCode::ProviderRateLimited
     );
