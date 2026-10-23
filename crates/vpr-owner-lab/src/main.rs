@@ -148,6 +148,12 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
+    // RT1 visitor permits are process-bound. Invalidate persisted leases and
+    // commit the new authorization epoch before any HTTP listener is exposed.
+    // The existing Persona store lease serializes this with all other writers.
+    vpr_owner_lab::Rt1WorkspaceService::new()
+        .recover_before_listener()
+        .map_err(|_| "RT1 publication recovery failed before listener startup")?;
     let voice_playback = engine.voice_playback_registry();
     let mut evidence_recorder = LabSessionEvidenceRecorder::default();
     if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {
