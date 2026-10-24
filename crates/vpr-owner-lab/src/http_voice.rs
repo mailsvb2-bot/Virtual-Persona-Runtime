@@ -529,36 +529,13 @@ pub(super) fn events_response(
     // canonical fence used by Close, after waiting but before serializing.
     // Do not hold this lock during the long poll.
     let _revocation = state.session_revocation.lock();
-    let response = voice_events_for_session(
+    let response = voice_stream::voice_events_for_session(
         response,
         body.session_sequence,
         state.active_session_sequence.load(Ordering::Acquire),
         state.session_end_requested.load(Ordering::Acquire),
     );
     Ok(json_response(200, &response))
-}
-
-fn voice_events_for_session(
-    response: voice_stream::VoiceEventsResponse,
-    observed: u64,
-    active: u64,
-    ending: bool,
-) -> voice_stream::VoiceEventsResponse {
-    if observed == 0 || observed != active || ending {
-        revoked_voice_events()
-    } else {
-        response
-    }
-}
-
-fn revoked_voice_events() -> voice_stream::VoiceEventsResponse {
-    voice_stream::VoiceEventsResponse {
-        events: vec![VoiceStreamEvent::Failed {
-            code: "TURN_CANCELLED".to_owned(),
-            diagnostic: None,
-        }],
-        terminal: true,
-    }
 }
 
 fn prepare_voice_terminal_event(
