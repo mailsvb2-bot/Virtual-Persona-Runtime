@@ -180,24 +180,25 @@ impl Rt1WorkspaceService {
         )
     }
 
-    /// Validate authority before and after computing a buffered visitor reply.
-    /// Do not send, play, stream or expose the reply until this returns Ok.
-    /// The callback must NOT perform external egress or irreversible side effects.
-    /// Streaming/provider paths instead require continuous revocation fencing.
+    /// Recheck canonical visitor authority around a pure buffered computation.
+    /// A successful return is NOT permission for provider egress, streaming,
+    /// playback or delivery: owner revocation can occur immediately afterwards.
+    /// The eventual delivery boundary must independently fence that operation.
+    /// The callback MUST NOT perform external egress or irreversible side effects.
     ///
     /// # Errors
-    /// Rejects revoked authority before work or after a concurrent owner change.
+    /// Denies revoked or expired authority, missing storage and clock failures.
     pub fn guarded_buffered_visitor_output<T>(
         &self,
         bearer_token: &str,
         permit: &VisitorPermit,
-        now_millis: u64,
         compute: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        self.authorize_visitor(bearer_token, permit, now_millis)?;
-        let result = compute()?;
-        self.authorize_visitor(bearer_token, permit, now_millis)?;
-        Ok(result)
+        guard_buffered_output(
+            |now| self.authorize_visitor(bearer_token, permit, now),
+            server_now_millis,
+            compute,
+        )
     }
 
     /// Invalidate all pre-crash visitor session permits on process restart.
@@ -228,6 +229,29 @@ impl Rt1WorkspaceService {
         operation(workspace, owner_token)?;
         commit_current_record(&record)
     }
+}
+
+/// Read a fresh trusted server clock at each authorization boundary.
+/// Clock failures are denials, never implicit infinite leases.
+fn server_now_millis() -> Result<u64, String> {
+    let duration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "server clock precedes Unix epoch".to_owned())?;
+    u64::try_from(duration.as_millis()).map_err(|_| "server clock out of range".to_owned())
+}
+
+/// Pure buffered computation only. This does not authorize subsequent egress.
+/// Clamping the second timestamp prevents clock rollback from extending a lease.
+fn guard_buffered_output<T>(
+    mut authorize: impl FnMut(u64) -> Result<(), String>,
+    mut clock: impl FnMut() -> Result<u64, String>,
+    compute: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let started_at = clock()?;
+    authorize(started_at)?;
+    let result = compute()?;
+    authorize(clock()?.max(started_at))?;
+    Ok(result)
 }
 
 fn required_persona() -> Result<PersistedPersonaV2, String> {
@@ -320,10 +344,77 @@ mod tests {
         let permit = publication.visitor_lease(true).unwrap();
         let computed = Cell::new(false);
         let service = Rt1WorkspaceService::new();
-        let result = service.guarded_buffered_visitor_output("visitor", &permit, 0, || {
+        let result = service.guarded_buffered_visitor_output("visitor", &permit, || {
             computed.set(true);
             Ok("unreleased")
         });
+        assert!(result.is_err());
+        assert!(!computed.get());
+    }
+
+    #[test]
+    fn buffered_output_rechecks_canonical_authority_after_owner_pause() {
+        use std::cell::{Cell, RefCell};
+
+        let (mut workspace, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        let permit = workspace.visitor_permit(&visitor).unwrap();
+        let workspace = RefCell::new(workspace);
+        let computed = Cell::new(false);
+
+        let result = guard_buffered_output(
+            |now| {
+                workspace
+                    .borrow()
+                    .authorize_visitor(&visitor, &permit, "persona-a", 3, now)
+            },
+            || Ok(10),
+            || {
+                computed.set(true);
+                workspace.borrow_mut().pause(&owner)?;
+                Ok("must-not-release")
+            },
+        );
+        assert!(computed.get());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn buffered_output_rechecks_expiry_at_completion() {
+        use std::cell::Cell;
+        use vpr_policy::AuthorizationState;
+
+        let authority = AuthorizationState::new(Some(100));
+        let lease = authority.snapshot();
+        let clock = Cell::new(99_u64);
+        let result = guard_buffered_output(
+            |now| {
+                authority
+                    .validate(lease, now)
+                    .map_err(|_| "visitor permit expired".to_owned())
+            },
+            || Ok(clock.get()),
+            || {
+                clock.set(100);
+                Ok("must-not-release")
+            },
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn buffered_output_never_computes_after_initial_denial() {
+        use std::cell::Cell;
+
+        let computed = Cell::new(false);
+        let result = guard_buffered_output(
+            |_| Err("visitor denied".to_owned()),
+            || Ok(10),
+            || {
+                computed.set(true);
+                Ok("must-not-compute")
+            },
+        );
         assert!(result.is_err());
         assert!(!computed.get());
     }
