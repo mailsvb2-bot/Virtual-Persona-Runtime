@@ -399,7 +399,9 @@ mod tests {
     #[test]
     fn durable_workspace_rejects_orphaned_and_stale_visitor_authority() {
         let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
-        let visitor = workspace.publish(&owner_token, "persona-a", 5, true).unwrap();
+        let visitor = workspace
+            .publish(&owner_token, "persona-a", 5, true)
+            .unwrap();
         assert!(workspace.visitor_permit(&visitor).is_ok());
         assert!(workspace.validate("persona-a", 5).is_ok());
         assert!(workspace.validate("persona-b", 5).is_err());
