@@ -88,6 +88,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn owner_controller_exposes_same_visitor_registry_handle() {
+        let controller = Rt1OwnerController::new();
+        let first = controller.visitor_sessions();
+        let second = controller.visitor_sessions();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.active_count(), 0);
+    }
+
+    #[test]
     fn unauthorized_owner_cannot_trigger_readiness_or_publish() {
         let controller = Rt1OwnerController::new();
         let token = "0".repeat(64);
