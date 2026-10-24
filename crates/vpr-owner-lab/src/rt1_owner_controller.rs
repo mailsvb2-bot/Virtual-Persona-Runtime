@@ -1,8 +1,12 @@
 //! Internal owner command boundary. Not exposed as HTTP until RT1 release entry.
+use std::sync::Arc;
+
+use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 pub struct Rt1OwnerController {
-    workspace: Rt1WorkspaceService,
+    workspace: Arc<Rt1WorkspaceService>,
+    visitors: Arc<VisitorSessionManager>,
 }
 
 impl Default for Rt1OwnerController {
@@ -14,9 +18,18 @@ impl Default for Rt1OwnerController {
 impl Rt1OwnerController {
     #[must_use]
     pub fn new() -> Self {
+        let workspace = Arc::new(Rt1WorkspaceService::new());
         Self {
-            workspace: Rt1WorkspaceService::new(),
+            visitors: Arc::new(VisitorSessionManager::new(Arc::clone(&workspace))),
+            workspace,
         }
+    }
+
+    /// Share the exact in-process visitor registry with the eventual runtime.
+    /// All owner revoke and visitor admission calls must use this same instance.
+    #[must_use]
+    pub fn visitor_sessions(&self) -> Arc<VisitorSessionManager> {
+        Arc::clone(&self.visitors)
     }
 
     /// # Errors
@@ -53,14 +66,20 @@ impl Rt1OwnerController {
 
     /// # Errors
     /// Refuses invalid owner or failed durable commit.
+    /// After the durable mutation, registered visitor transports are stopped.
     pub fn pause(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.pause(owner_token)
+        self.workspace.pause(owner_token)?;
+        self.visitors.revoke_all();
+        Ok(())
     }
 
     /// # Errors
     /// Refuses invalid owner or failed durable commit.
+    /// After the durable mutation, registered visitor transports are stopped.
     pub fn unpublish(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.unpublish(owner_token)
+        self.workspace.unpublish(owner_token)?;
+        self.visitors.revoke_all();
+        Ok(())
     }
 }
 
