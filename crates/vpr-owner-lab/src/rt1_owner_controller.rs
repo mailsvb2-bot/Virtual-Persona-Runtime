@@ -63,3 +63,24 @@ impl Rt1OwnerController {
         self.workspace.unpublish(owner_token)
     }
 }
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unauthorized_owner_cannot_trigger_readiness_or_publish() {
+        let controller = Rt1OwnerController::new();
+        let token = "0".repeat(64);
+        let mut readiness_called = false;
+        let result = controller.publish(&token, 1, || {
+            readiness_called = true;
+            Ok(())
+        });
+        assert!(result.is_err());
+        assert!(!readiness_called);
+        assert!(controller.status(&token).is_err());
+        assert!(controller.pause(&token).is_err());
+        assert!(controller.unpublish(&token).is_err());
+    }
+}
