@@ -488,60 +488,70 @@ mod tests {
         let permit = workspace.visitor_permit(&visitor).unwrap();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
 
-        assert!(enqueue_from_workspace(
-            &workspace,
-            (&visitor, &permit),
-            ("persona-a", 3),
-            10,
-            &sender,
-            "first",
-        )
-        .is_ok());
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                10,
+                &sender,
+                "first",
+            )
+            .is_ok()
+        );
         // A full bounded queue must fail immediately, never wait under the
         // owner publication transaction or drop the first authorized item.
-        assert!(enqueue_from_workspace(
-            &workspace,
-            (&visitor, &permit),
-            ("persona-a", 3),
-            10,
-            &sender,
-            "second",
-        )
-        .is_err());
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                10,
+                &sender,
+                "second",
+            )
+            .is_err()
+        );
         assert_eq!(receiver.try_recv().unwrap(), "first");
 
         workspace.pause(&owner).unwrap();
-        assert!(enqueue_from_workspace(
-            &workspace,
-            (&visitor, &permit),
-            ("persona-a", 3),
-            11,
-            &sender,
-            "revoked",
-        )
-        .is_err());
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                11,
+                &sender,
+                "revoked",
+            )
+            .is_err()
+        );
         assert!(receiver.try_recv().is_err());
 
         let new_visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
         let new_permit = workspace.visitor_permit(&new_visitor).unwrap();
-        assert!(enqueue_from_workspace(
-            &workspace,
-            (&visitor, &permit),
-            ("persona-a", 3),
-            12,
-            &sender,
-            "stale",
-        )
-        .is_err());
-        assert!(enqueue_from_workspace(
-            &workspace,
-            (&new_visitor, &new_permit),
-            ("persona-a", 3),
-            12,
-            &sender,
-            "fresh",
-        )
-        .is_ok());
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                12,
+                &sender,
+                "stale",
+            )
+            .is_err()
+        );
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&new_visitor, &new_permit),
+                ("persona-a", 3),
+                12,
+                &sender,
+                "fresh",
+            )
+            .is_ok()
+        );
         assert_eq!(receiver.try_recv().unwrap(), "fresh");
     }
 
