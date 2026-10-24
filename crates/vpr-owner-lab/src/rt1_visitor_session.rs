@@ -62,25 +62,14 @@ impl Rt1VisitorSession {
     }
 }
 
-/// Provider transport contract for an independently authorized visitor.
-/// An implementation MUST fence every send using current canonical authority;
-/// implementing this trait alone does not enable public RT1 media.
-pub trait Rt1VisitorMediaTransport {
-    type Error;
 
-    /// # Errors
-    /// Returns provider startup failure.
-    fn open(&mut self) -> Result<(), Self::Error>;
-    /// # Errors
-    /// Returns provider send failure or denied authority.
-    fn send_audio(&mut self, pcm: &[u8]) -> Result<(), Self::Error>;
-    /// # Errors
-    /// Returns provider send failure or denied authority.
-    fn send_video(&mut self, frame: &[u8]) -> Result<(), Self::Error>;
-    /// # Errors
-    /// Returns provider stop failure.
-    fn stop(&mut self) -> Result<(), Self::Error>;
-    /// # Errors
-    /// Returns provider teardown failure.
-    fn close(&mut self) -> Result<(), Self::Error>;
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn visitor_admission_fails_closed_without_canonical_persona_store() {
+        let workspace = Arc::new(Rt1WorkspaceService::new());
+        assert!(Rt1VisitorSession::admit(workspace, "0".repeat(64), 1).is_err());
+    }
 }
