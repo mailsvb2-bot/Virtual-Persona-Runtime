@@ -525,15 +525,30 @@ pub(super) fn events_response(
         .voice_streams
         .wait_events(body.session_sequence, body.request_sequence)
         .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
-    // Old polls may finish while Close revokes authority. Keep the
-    // cancellation terminal pollable, but never release queued speech,
-    // transcript or completed reply from a revoked session generation.
-    if state.session_end_requested.load(Ordering::Acquire)
-        || state.active_session_sequence.load(Ordering::Acquire) != body.session_sequence
-    {
-        return Ok(json_response(200, &revoked_voice_events()));
-    }
+    // Old polls may finish while Close revokes authority. Check the same
+    // canonical fence used by Close, after waiting but before serializing.
+    // Do not hold this lock during the long poll.
+    let _revocation = state.session_revocation.lock();
+    let response = voice_events_for_session(
+        response,
+        body.session_sequence,
+        state.active_session_sequence.load(Ordering::Acquire),
+        state.session_end_requested.load(Ordering::Acquire),
+    );
     Ok(json_response(200, &response))
+}
+
+fn voice_events_for_session(
+    response: voice_stream::VoiceEventsResponse,
+    observed: u64,
+    active: u64,
+    ending: bool,
+) -> voice_stream::VoiceEventsResponse {
+    if observed == 0 || observed != active || ending {
+        revoked_voice_events()
+    } else {
+        response
+    }
 }
 
 fn revoked_voice_events() -> voice_stream::VoiceEventsResponse {
