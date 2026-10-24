@@ -8,6 +8,7 @@ mod provider_credentials;
 mod providers;
 mod rt1_owner_controller;
 mod rt1_visitor_session;
+mod rt1_visitor_session_manager;
 mod rt1_workspace;
 mod rt1_workspace_service;
 mod state;
@@ -35,6 +36,7 @@ pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona
 pub use persona_store_lease::acquire_persona_store_lease;
 pub use rt1_owner_controller::Rt1OwnerController;
 pub use rt1_visitor_session::Rt1VisitorSession;
+pub use rt1_visitor_session_manager::VisitorSessionManager;
 pub use rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 pub use provider_credentials::{ProviderCredentialProfile, StoredTtsCredential};
