@@ -268,7 +268,10 @@ mod tests {
         let old_permit = admit_from_workspace(&workspace, &visitor, "persona-a", 3, 2).unwrap();
         workspace.pause(&owner).unwrap();
         assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 3).is_err());
-        assert!(workspace.authorize_visitor(&visitor, &old_permit, "persona-a", 3, 3).is_err());
+        assert!(
+            workspace.authorize_visitor(&visitor, &old_permit, "persona-a", 3, 3)
+                .is_err()
+        );
 
         let next_visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
         assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 4).is_err());
@@ -276,7 +279,10 @@ mod tests {
             admit_from_workspace(&workspace, &next_visitor, "persona-a", 3, 4).unwrap();
         workspace.on_persona_correction(4).unwrap();
         assert!(admit_from_workspace(&workspace, &next_visitor, "persona-a", 4, 5).is_err());
-        assert!(workspace.authorize_visitor(&next_visitor, &next_permit, "persona-a", 4, 5).is_err());
+        assert!(
+            workspace.authorize_visitor(&next_visitor, &next_permit, "persona-a", 4, 5)
+                .is_err()
+        );
     }
 
     #[test]
