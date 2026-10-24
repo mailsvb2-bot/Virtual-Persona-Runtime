@@ -148,12 +148,19 @@ impl VisitorSessionManager {
     /// Cancel all active visitor transports after owner pause/unpublish.
     /// Call only AFTER the canonical durable owner mutation succeeds.
     pub fn revoke_all(&self) {
+        self.take_for_revocation().revoke();
+    }
+
+    /// Drain local registrations while the caller holds the canonical
+    /// workspace transaction. Never invoke transport callbacks under that
+    /// transaction: a callback may need to re-enter the workspace.
+    pub(crate) fn take_for_revocation(&self) -> PendingVisitorRevocations {
         let sessions = {
             let mut active = self.sessions.lock();
             std::mem::take(&mut *active)
         };
-        for session in sessions.values() {
-            session.revoke();
+        PendingVisitorRevocations {
+            sessions: sessions.into_values().collect(),
         }
     }
 
@@ -168,6 +175,20 @@ impl VisitorSessionManager {
             .get(session_id)
             .cloned()
             .ok_or_else(|| "visitor session not found".to_owned())
+    }
+}
+
+/// In-process transport stops collected during a durable owner mutation.
+/// The caller must release the workspace transaction before calling revoke.
+pub(crate) struct PendingVisitorRevocations {
+    sessions: Vec<Arc<ManagedVisitor>>,
+}
+
+impl PendingVisitorRevocations {
+    pub(crate) fn revoke(self) {
+        for session in self.sessions {
+            session.revoke();
+        }
     }
 }
 
