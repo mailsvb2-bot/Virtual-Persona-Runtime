@@ -430,9 +430,7 @@ mod tests {
     #[test]
     fn published_without_visitor_bearer_is_rejected_during_restore() {
         let (mut record, owner) = OwnerWorkspaceRecord::provision().unwrap();
-        let visitor = record
-            .publish(&owner, "persona-a", 3, true)
-            .unwrap();
+        let visitor = record.publish(&owner, "persona-a", 3, true).unwrap();
         let mut json = serde_json::to_value(&record).unwrap();
         json["visitor_token_sha256"] = serde_json::Value::Null;
         let orphan: OwnerWorkspaceRecord = serde_json::from_value(json).unwrap();
