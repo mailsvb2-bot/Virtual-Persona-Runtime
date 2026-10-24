@@ -447,6 +447,27 @@ mod tests {
         assert!(!computed.get());
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn local_delivery_does_not_enqueue_without_authorized_store() {
+        use std::cell::Cell;
+        use vpr_policy::publication_lifecycle::CanonicalPublication;
+
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        let permit = publication.visitor_lease(true).unwrap();
+        let enqueued = Cell::new(false);
+        let service = Rt1WorkspaceService::new();
+        let result =
+            service.enqueue_authorized_visitor_fragment("visitor", &permit, "hello", |_| {
+                enqueued.set(true);
+                Ok(())
+            });
+        assert!(result.is_err());
+        assert!(!enqueued.get());
+    }
+
     #[test]
     fn service_signature_does_not_accept_client_claimed_readiness() {
         // Browser JS cannot invoke `publish` without the server-provided
