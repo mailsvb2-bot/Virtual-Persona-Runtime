@@ -61,7 +61,6 @@ impl Rt1VisitorSession {
     }
 }
 
-
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
