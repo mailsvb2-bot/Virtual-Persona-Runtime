@@ -308,6 +308,26 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn buffered_visitor_output_does_not_compute_without_canonical_store() {
+        use std::cell::Cell;
+        use vpr_policy::publication_lifecycle::CanonicalPublication;
+
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        let permit = publication.visitor_lease(true).unwrap();
+        let computed = Cell::new(false);
+        let service = Rt1WorkspaceService::new();
+        let result = service.guarded_buffered_visitor_output("visitor", &permit, 0, || {
+            computed.set(true);
+            Ok("unreleased")
+        });
+        assert!(result.is_err());
+        assert!(!computed.get());
+    }
+
     #[test]
     fn service_signature_does_not_accept_client_claimed_readiness() {
         // Browser JS cannot invoke `publish` without the server-provided
