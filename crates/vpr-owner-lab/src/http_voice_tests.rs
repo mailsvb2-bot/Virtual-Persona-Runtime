@@ -219,11 +219,28 @@ fn identical_request_numbers_from_different_session_epochs_never_cross_streams()
 
 #[test]
 fn revoked_voice_poll_never_exposes_queued_speech_or_reply() {
-    let response = revoked_voice_events();
-    assert!(response.terminal);
-    assert_eq!(response.events.len(), 1);
-    assert!(matches!(
-        &response.events[0],
-        VoiceStreamEvent::Failed { code, diagnostic: None } if code == "TURN_CANCELLED"
-    ));
+    let queued_reply = || voice_stream::VoiceEventsResponse {
+        events: vec![segment(12), VoiceStreamEvent::Failed {
+            code: "OLD_TERMINAL".into(),
+            diagnostic: None,
+        }],
+        terminal: true,
+    };
+
+    // Normal active generation may consume the buffered events.
+    let allowed = voice_events_for_session(queued_reply(), 7, 7, false);
+    assert_eq!(allowed.events.len(), 2);
+    assert!(matches!(allowed.events[0], VoiceStreamEvent::Segment { .. }));
+
+    // Both the transient Close fence and a fully closed/replaced session
+    // suppress previously queued content, not merely a synthetic response.
+    for (active, ending) in [(7, true), (0, false), (8, false)] {
+        let response = voice_events_for_session(queued_reply(), 7, active, ending);
+        assert!(response.terminal);
+        assert_eq!(response.events.len(), 1);
+        assert!(matches!(
+            &response.events[0],
+            VoiceStreamEvent::Failed { code, diagnostic: None } if code == "TURN_CANCELLED"
+        ));
+    }
 }
