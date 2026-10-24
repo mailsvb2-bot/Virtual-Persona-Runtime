@@ -1,8 +1,13 @@
 //! Internal owner command boundary. Not exposed as HTTP until RT1 release entry.
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
+
+// In-process owner commands must never maintain separate visitor registries:
+/// otherwise an owner pause through one controller would miss other sessions.
+static OWNER_VISITOR_RUNTIME: OnceLock<(Arc<Rt1WorkspaceService>, Arc<VisitorSessionManager>)> =
+    OnceLock::new();
 
 pub struct Rt1OwnerController {
     workspace: Arc<Rt1WorkspaceService>,
@@ -18,10 +23,14 @@ impl Default for Rt1OwnerController {
 impl Rt1OwnerController {
     #[must_use]
     pub fn new() -> Self {
-        let workspace = Arc::new(Rt1WorkspaceService::new());
+        let (workspace, visitors) = OWNER_VISITOR_RUNTIME.get_or_init(|| {
+            let workspace = Arc::new(Rt1WorkspaceService::new());
+            let visitors = Arc::new(VisitorSessionManager::new(Arc::clone(&workspace)));
+            (workspace, visitors)
+        });
         Self {
-            visitors: Arc::new(VisitorSessionManager::new(Arc::clone(&workspace))),
-            workspace,
+            workspace: Arc::clone(workspace),
+            visitors: Arc::clone(visitors),
         }
     }
 
@@ -93,6 +102,8 @@ mod tests {
         let first = controller.visitor_sessions();
         let second = controller.visitor_sessions();
         assert!(Arc::ptr_eq(&first, &second));
+        let independent_controller = Rt1OwnerController::new();
+        assert!(Arc::ptr_eq(&first, &independent_controller.visitor_sessions()));
         assert_eq!(first.active_count(), 0);
     }
 
