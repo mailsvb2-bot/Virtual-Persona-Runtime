@@ -41,11 +41,8 @@ impl Rt1VisitorSession {
         &self,
         compute: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        self.workspace.guarded_buffered_visitor_output(
-            &self.bearer_token,
-            &self.permit,
-            compute,
-        )
+        self.workspace
+            .guarded_buffered_visitor_output(&self.bearer_token, &self.permit, compute)
     }
 
     /// Bounded local queue only. Consumer must re-authorize final egress.
@@ -71,9 +68,19 @@ impl Rt1VisitorSession {
 pub trait Rt1VisitorMediaTransport {
     type Error;
 
+    /// # Errors
+    /// Returns provider startup failure.
     fn open(&mut self) -> Result<(), Self::Error>;
+    /// # Errors
+    /// Returns provider send failure or denied authority.
     fn send_audio(&mut self, pcm: &[u8]) -> Result<(), Self::Error>;
+    /// # Errors
+    /// Returns provider send failure or denied authority.
     fn send_video(&mut self, frame: &[u8]) -> Result<(), Self::Error>;
+    /// # Errors
+    /// Returns provider stop failure.
     fn stop(&mut self) -> Result<(), Self::Error>;
+    /// # Errors
+    /// Returns provider teardown failure.
     fn close(&mut self) -> Result<(), Self::Error>;
 }
