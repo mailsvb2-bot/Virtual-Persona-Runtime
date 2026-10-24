@@ -531,18 +531,19 @@ pub(super) fn events_response(
     if state.session_end_requested.load(Ordering::Acquire)
         || state.active_session_sequence.load(Ordering::Acquire) != body.session_sequence
     {
-        return Ok(json_response(
-            200,
-            &voice_stream::VoiceEventsResponse {
-                events: vec![VoiceStreamEvent::Failed {
-                    code: "TURN_CANCELLED".to_owned(),
-                    diagnostic: None,
-                }],
-                terminal: true,
-            },
-        ));
+        return Ok(json_response(200, &revoked_voice_events()));
     }
     Ok(json_response(200, &response))
+}
+
+fn revoked_voice_events() -> voice_stream::VoiceEventsResponse {
+    voice_stream::VoiceEventsResponse {
+        events: vec![VoiceStreamEvent::Failed {
+            code: "TURN_CANCELLED".to_owned(),
+            diagnostic: None,
+        }],
+        terminal: true,
+    }
 }
 
 fn prepare_voice_terminal_event(
