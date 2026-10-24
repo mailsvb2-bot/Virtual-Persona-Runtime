@@ -23,7 +23,7 @@ pub(super) fn text_turn_response(
     {
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
-    let _busy =
+    let mut busy =
         http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
     http_evidence::require_voice_session_sequence(state, session_sequence)?;
     *state.replay_source.lock() = None;
@@ -65,9 +65,12 @@ pub(super) fn text_turn_response(
             .lock()
             .fail_text_request(request_sequence, "TURN_CANCELLED")
             .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+        // Release before dropping engine.lock(): an old guard must never
+        // clear a newer turn's busy bit after Close/restart.
+        busy.release();
         return Err(response);
     }
-    match result {
+    let outcome = match result {
         Ok(value) => state
             .evidence
             .lock()
@@ -88,5 +91,10 @@ pub(super) fn text_turn_response(
                 Err(lab_error_response(&error))
             }
         }
-    }
+    };
+    // A new turn may acquire the gate only after this attempt is terminal.
+    // Keep the engine and revocation guards held until the old busy owner
+    // has explicitly released its flag.
+    busy.release();
+    outcome
 }
