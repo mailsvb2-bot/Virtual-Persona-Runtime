@@ -224,9 +224,15 @@ const startEcho = async (request: APIRequestContext) => {
   expect(session.client_control?.text_input ?? false).toBe(false);
   return { csrf, sequence: session.evidence_session_sequence };
 };
-const submitOwnerTurn = async (request: APIRequestContext, csrf: string, sequence: number, text: string) => {
+const submitOwnerTurn = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number, text: string,
+) => {
   const turn = await request.post(`${ownerLabUrl}/api/text/turn`, {
-    headers: { ...csrfHeaders(csrf), "X-VPR-Evidence-Request": String(sequence) },
+    headers: {
+      ...csrfHeaders(csrf),
+      "X-VPR-Evidence-Request": String(requestSequence),
+      "X-VPR-Session-Sequence": String(sessionSequence),
+    },
     data: { text },
   });
   if (!turn.ok()) return turn;
@@ -336,9 +342,12 @@ test("Expressive browser STOP failure revokes provider authority and closes view
 
 test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
   test.setTimeout(90000);
-  const { csrf } = await startEcho(request);
+  const { csrf, sequence } = await startEcho(request);
   const before = (await echoEvents(request)).length;
-  const reply = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  // A stale tab cannot spend a request number against another session epoch.
+  const stale = await submitOwnerTurn(request, csrf, 1, sequence + 1, "Чужая сессия");
+  expect(stale.status()).toBe(409);
+  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
   expect(reply.status()).toBe(200);
   await expect.poll(async () => (await echoEvents(request)).slice(before), {
     timeout: 30000,
@@ -352,7 +361,7 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
   test.setTimeout(90000);
   const { csrf, sequence } = await startEcho(request);
   const before = (await echoEvents(request)).length;
-  const reply = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
   expect(reply.status()).toBe(200);
   const stopped = await postJson(request, csrf, "/api/avatar/interrupt", { expected_session_sequence: sequence });
   expect(stopped.ok()).toBeTruthy();
@@ -366,9 +375,9 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
 
 test("Expressive server Echo closes privately on session revoke", async ({ request }) => {
   test.setTimeout(90000);
-  const { csrf } = await startEcho(request);
+  const { csrf, sequence } = await startEcho(request);
   const before = (await echoEvents(request)).length;
-  const turn = await submitOwnerTurn(request, csrf, 1, "Привет из браузера");
+  const turn = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
   expect(turn.ok()).toBeTruthy();
   const revoke = await postJson(request, csrf, "/api/session/revoke", {});
   expect(revoke.ok()).toBeTruthy();
@@ -379,19 +388,19 @@ test("Expressive server Echo closes privately on session revoke", async ({ reque
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
   const fenced = await echoEvents(request);
-  const blocked = await submitOwnerTurn(request, csrf, 2, "Запрещённая речь после отзыва");
+  const blocked = await submitOwnerTurn(request, csrf, 2, sequence, "Запрещённая речь после отзыва");
   expect(blocked.ok()).toBeFalsy();
   expect(await echoEvents(request)).toEqual(fenced);
 });
 
 test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
-  const { csrf } = await startEcho(request);
+  const { csrf, sequence } = await startEcho(request);
   const revoked = await postJson(request, csrf, "/api/session/revoke", {});
   expect(revoked.ok()).toBeTruthy();
   const before = await echoEvents(request);
   const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
   expect(rejected.status()).toBe(409);
-  const rejectedTurn = await submitOwnerTurn(request, csrf, 1, "Несанкционированный ответ");
+  const rejectedTurn = await submitOwnerTurn(request, csrf, 1, sequence, "Несанкционированный ответ");
   expect(rejectedTurn.ok()).toBeFalsy();
   // A malicious or stale browser may bypass the LLM entirely and call the
   // avatar endpoint directly. Revocation must fence that route too.
