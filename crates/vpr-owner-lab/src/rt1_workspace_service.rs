@@ -229,6 +229,7 @@ mod tests {
         let service = Rt1WorkspaceService::new();
         assert!(service.recover_before_listener().is_err());
         assert!(service.visitor_permit(&"0".repeat(64)).is_err());
+        assert!(service.admit_visitor_turn(&"0".repeat(64), 0).is_err());
         assert!(service.owner_status(&"0".repeat(64)).is_err());
     }
 
