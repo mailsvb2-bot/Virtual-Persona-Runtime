@@ -18,19 +18,29 @@ pub struct WorkspaceStatus {
     pub publication_status: Option<&'static str>,
 }
 
-/// Serializes canonical commits and visitor permission checks through this
-/// service instance only. The file store uses atomic replacement, not
-/// cross-process compare-and-swap; do not expose concurrent RT1 listeners
-/// until a single authoritative writer or durable revision CAS is enforced.
-#[derive(Default)]
+/// Serializes all RT1 workspace operations within this process, including
+/// operations issued from independent service instances. File replacement is
+/// not a cross-process compare-and-swap: multiple RT1 writer processes remain
+/// unsupported until durable cross-process serialization is provided.
+static WORKSPACE_TRANSACTION: Mutex<()> = Mutex::new(());
+
+/// Service handle referencing the one in-process canonical workspace lock.
 pub struct Rt1WorkspaceService {
-    transaction: Mutex<()>,
+    transaction: &'static Mutex<()>,
+}
+
+impl Default for Rt1WorkspaceService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Rt1WorkspaceService {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            transaction: &WORKSPACE_TRANSACTION,
+        }
     }
 
     /// Create one owner credential for an existing reviewed Persona. The
@@ -553,6 +563,17 @@ mod tests {
             .is_ok()
         );
         assert_eq!(receiver.try_recv().unwrap(), "fresh");
+    }
+
+    #[test]
+    fn independent_service_handles_share_one_transaction_lock() {
+        let first = Rt1WorkspaceService::new();
+        let second = Rt1WorkspaceService::new();
+        assert!(std::ptr::eq(first.transaction, second.transaction));
+        let held = first.transaction.lock();
+        assert!(second.transaction.try_lock().is_none());
+        drop(held);
+        assert!(second.transaction.try_lock().is_some());
     }
 
     #[test]
