@@ -220,9 +220,7 @@ mod tests {
 
     #[test]
     fn successful_computation_cannot_bypass_final_revocation() {
-        let result = finish_buffered(Ok("unreleased"), || {
-            Err("visitor session revoked".into())
-        });
+        let result = finish_buffered(Ok("unreleased"), || Err("visitor session revoked".into()));
         assert_eq!(result.unwrap_err(), "visitor session revoked");
     }
 }
