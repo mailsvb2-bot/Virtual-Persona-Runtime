@@ -51,6 +51,9 @@ pub(super) fn text_turn_response(
         *state.active_voice_interrupt.lock() = None;
         result
     };
+    // A concurrent Close can revoke the session while text_turn holds
+    // engine.lock(). Never deliver a late reply from a revoked generation.
+    reject_if_session_ending(state)?;
     match result {
         Ok(value) => state
             .evidence
