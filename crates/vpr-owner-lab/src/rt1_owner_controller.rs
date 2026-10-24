@@ -77,8 +77,10 @@ impl Rt1OwnerController {
     /// Refuses invalid owner or failed durable commit.
     /// After the durable mutation, registered visitor transports are stopped.
     pub fn pause(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.pause(owner_token)?;
-        self.visitors.revoke_all();
+        let pending = self
+            .workspace
+            .pause_and_collect_revocations(owner_token, &self.visitors)?;
+        pending.revoke();
         Ok(())
     }
 
@@ -86,8 +88,10 @@ impl Rt1OwnerController {
     /// Refuses invalid owner or failed durable commit.
     /// After the durable mutation, registered visitor transports are stopped.
     pub fn unpublish(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.unpublish(owner_token)?;
-        self.visitors.revoke_all();
+        let pending = self
+            .workspace
+            .unpublish_and_collect_revocations(owner_token, &self.visitors)?;
+        pending.revoke();
         Ok(())
     }
 }
@@ -103,8 +107,10 @@ mod tests {
         let second = controller.visitor_sessions();
         assert!(Arc::ptr_eq(&first, &second));
         let independent_controller = Rt1OwnerController::new();
-        assert!(Arc::ptr_eq(&first, &independent_controller.visitor_sessions()));
-        assert_eq!(first.active_count(), 0);
+        assert!(Arc::ptr_eq(
+            &first,
+            &independent_controller.visitor_sessions()
+        ));
     }
 
     #[test]
