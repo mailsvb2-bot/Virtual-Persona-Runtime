@@ -268,15 +268,9 @@ mod tests {
                 new_counter.fetch_add(1, Ordering::SeqCst);
             }),
         });
-        manager
-            .sessions
-            .lock()
-            .insert("old".into(), old_session);
+        manager.sessions.lock().insert("old".into(), old_session);
         let pending = manager.take_for_revocation();
-        manager
-            .sessions
-            .lock()
-            .insert("new".into(), new_session);
+        manager.sessions.lock().insert("new".into(), new_session);
         pending.revoke();
         assert_eq!(old_stops.load(Ordering::SeqCst), 1);
         assert_eq!(new_stops.load(Ordering::SeqCst), 0);
