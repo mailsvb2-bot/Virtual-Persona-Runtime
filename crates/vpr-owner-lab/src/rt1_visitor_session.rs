@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use vpr_policy::publication_lifecycle::VisitorPermit;
 
-use crate::rt1_workspace_service::Rt1WorkspaceService;
+use crate::rt1_workspace_service::{Rt1WorkspaceService, server_now_millis};
 
 pub struct Rt1VisitorSession {
     workspace: Arc<Rt1WorkspaceService>,
@@ -17,9 +17,8 @@ impl Rt1VisitorSession {
     pub fn admit(
         workspace: Arc<Rt1WorkspaceService>,
         bearer_token: String,
-        now_millis: u64,
     ) -> Result<Self, String> {
-        let permit = workspace.admit_visitor_turn(&bearer_token, now_millis)?;
+        let permit = workspace.admit_visitor_turn(&bearer_token, server_now_millis()?)?;
         Ok(Self {
             workspace,
             bearer_token,
@@ -29,9 +28,9 @@ impl Rt1VisitorSession {
 
     /// # Errors
     /// Rejects revoked, expired, or version-stale authority.
-    pub fn authorize(&self, now_millis: u64) -> Result<(), String> {
+    pub fn authorize(&self) -> Result<(), String> {
         self.workspace
-            .authorize_visitor(&self.bearer_token, &self.permit, now_millis)
+            .authorize_visitor(&self.bearer_token, &self.permit, server_now_millis()?)
     }
 
     /// Pure computation, not permission for external output or media.
@@ -70,6 +69,6 @@ mod tests {
     #[test]
     fn visitor_admission_fails_closed_without_canonical_persona_store() {
         let workspace = Arc::new(Rt1WorkspaceService::new());
-        assert!(Rt1VisitorSession::admit(workspace, "0".repeat(64), 1).is_err());
+        assert!(Rt1VisitorSession::admit(workspace, "0".repeat(64)).is_err());
     }
 }
