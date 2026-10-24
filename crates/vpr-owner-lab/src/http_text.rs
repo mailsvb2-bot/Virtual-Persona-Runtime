@@ -60,14 +60,16 @@ pub(super) fn text_turn_response(
     let _revocation = state.session_revocation.lock();
     let current = http_evidence::require_voice_session_sequence(state, session_sequence);
     if let Err(response) = current {
-        state
+        let terminalized = state
             .evidence
             .lock()
-            .fail_text_request(request_sequence, "TURN_CANCELLED")
-            .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+            .fail_text_request(request_sequence, "TURN_CANCELLED");
         // Release before dropping engine.lock(): an old guard must never
-        // clear a newer turn's busy bit after Close/restart.
+        // clear a newer turn's busy bit after Close/restart, even if evidence
+        // terminalization unexpectedly fails.
         busy.release();
+        terminalized
+            .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
         return Err(response);
     }
     let outcome = match result {
