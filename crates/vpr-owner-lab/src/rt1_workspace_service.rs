@@ -269,7 +269,8 @@ mod tests {
         workspace.pause(&owner).unwrap();
         assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 3).is_err());
         assert!(
-            workspace.authorize_visitor(&visitor, &old_permit, "persona-a", 3, 3)
+            workspace
+                .authorize_visitor(&visitor, &old_permit, "persona-a", 3, 3)
                 .is_err()
         );
 
@@ -280,7 +281,8 @@ mod tests {
         workspace.on_persona_correction(4).unwrap();
         assert!(admit_from_workspace(&workspace, &next_visitor, "persona-a", 4, 5).is_err());
         assert!(
-            workspace.authorize_visitor(&next_visitor, &next_permit, "persona-a", 4, 5)
+            workspace
+                .authorize_visitor(&next_visitor, &next_permit, "persona-a", 4, 5)
                 .is_err()
         );
     }
