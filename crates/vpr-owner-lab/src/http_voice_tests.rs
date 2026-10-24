@@ -216,3 +216,14 @@ fn identical_request_numbers_from_different_session_epochs_never_cross_streams()
         "old stream was consumed"
     );
 }
+
+#[test]
+fn revoked_voice_poll_never_exposes_queued_speech_or_reply() {
+    let response = revoked_voice_events();
+    assert!(response.terminal);
+    assert_eq!(response.events.len(), 1);
+    assert!(matches!(
+        &response.events[0],
+        VoiceStreamEvent::Failed { code, diagnostic: None } if code == "TURN_CANCELLED"
+    ));
+}
