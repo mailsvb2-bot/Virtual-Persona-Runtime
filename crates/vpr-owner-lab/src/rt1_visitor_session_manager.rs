@@ -126,7 +126,10 @@ impl VisitorSessionManager {
     /// # Errors
     /// Returns denial for unknown session handles.
     pub fn close(&self, session_id: &str) -> Result<(), String> {
-        let session = self.sessions.lock().remove(session_id)
+        let session = self
+            .sessions
+            .lock()
+            .remove(session_id)
             .ok_or_else(|| "visitor session not found".to_owned())?;
         session.revoke();
         Ok(())
@@ -150,7 +153,10 @@ impl VisitorSessionManager {
     }
 
     fn lookup(&self, session_id: &str) -> Result<Arc<ManagedVisitor>, String> {
-        self.sessions.lock().get(session_id).cloned()
+        self.sessions
+            .lock()
+            .get(session_id)
+            .cloned()
             .ok_or_else(|| "visitor session not found".to_owned())
     }
 }
