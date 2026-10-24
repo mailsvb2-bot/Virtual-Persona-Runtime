@@ -53,7 +53,14 @@ pub(super) fn text_turn_response(
     };
     // A concurrent Close can revoke the session while text_turn holds
     // engine.lock(). Never deliver a late reply from a revoked generation.
-    reject_if_session_ending(state)?;
+    if let Err(response) = reject_if_session_ending(state) {
+        state
+            .evidence
+            .lock()
+            .fail_text_request(request_sequence, "TURN_CANCELLED")
+            .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+        return Err(response);
+    }
     match result {
         Ok(value) => state
             .evidence
