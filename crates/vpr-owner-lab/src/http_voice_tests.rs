@@ -233,7 +233,10 @@ fn revoked_voice_poll_never_exposes_queued_speech_or_reply() {
     // Normal active generation may consume the buffered events.
     let allowed = voice_stream::voice_events_for_session(queued_reply(), 7, 7, false);
     assert_eq!(allowed.events.len(), 2);
-    assert!(matches!(allowed.events[0], VoiceStreamEvent::Segment { .. }));
+    assert!(matches!(
+        allowed.events[0],
+        VoiceStreamEvent::Segment { .. }
+    ));
 
     // Both the transient Close fence and a fully closed/replaced session
     // suppress previously queued content, not merely a synthetic response.
