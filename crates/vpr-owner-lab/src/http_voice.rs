@@ -525,6 +525,23 @@ pub(super) fn events_response(
         .voice_streams
         .wait_events(body.session_sequence, body.request_sequence)
         .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
+    // Old polls may finish while Close revokes authority. Keep the
+    // cancellation terminal pollable, but never release queued speech,
+    // transcript or completed reply from a revoked session generation.
+    if state.session_end_requested.load(Ordering::Acquire)
+        || state.active_session_sequence.load(Ordering::Acquire) != body.session_sequence
+    {
+        return Ok(json_response(
+            200,
+            &voice_stream::VoiceEventsResponse {
+                events: vec![VoiceStreamEvent::Failed {
+                    code: "TURN_CANCELLED".to_owned(),
+                    diagnostic: None,
+                }],
+                terminal: true,
+            },
+        ));
+    }
     Ok(json_response(200, &response))
 }
 
