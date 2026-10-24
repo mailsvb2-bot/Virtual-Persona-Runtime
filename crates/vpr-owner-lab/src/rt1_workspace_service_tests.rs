@@ -41,8 +41,7 @@ fn admission_fails_closed_across_owner_pause_republish_and_correction() {
 
     let next_visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
     assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 4).is_err());
-    let next_permit =
-        admit_from_workspace(&workspace, &next_visitor, "persona-a", 3, 4).unwrap();
+    let next_permit = admit_from_workspace(&workspace, &next_visitor, "persona-a", 3, 4).unwrap();
     workspace.on_persona_correction(4).unwrap();
     assert!(admit_from_workspace(&workspace, &next_visitor, "persona-a", 4, 5).is_err());
     assert!(
@@ -58,8 +57,7 @@ fn buffered_visitor_output_does_not_compute_without_canonical_store() {
     use std::cell::Cell;
     use vpr_policy::publication_lifecycle::CanonicalPublication;
 
-    let mut publication =
-        CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+    let mut publication = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
     publication.publish("owner", 1, true).unwrap();
     let permit = publication.visitor_lease(true).unwrap();
     let computed = Cell::new(false);
@@ -144,14 +142,12 @@ fn buffered_output_never_computes_after_initial_denial() {
 fn local_delivery_does_not_enqueue_without_authorized_store() {
     use vpr_policy::publication_lifecycle::CanonicalPublication;
 
-    let mut publication =
-        CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+    let mut publication = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
     publication.publish("owner", 1, true).unwrap();
     let permit = publication.visitor_lease(true).unwrap();
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let service = Rt1WorkspaceService::new();
-    let result =
-        service.enqueue_authorized_visitor_fragment("visitor", &permit, &sender, "hello");
+    let result = service.enqueue_authorized_visitor_fragment("visitor", &permit, &sender, "hello");
     assert!(result.is_err());
     assert!(receiver.try_recv().is_err());
 }
