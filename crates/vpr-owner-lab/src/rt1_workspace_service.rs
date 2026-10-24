@@ -180,6 +180,26 @@ impl Rt1WorkspaceService {
         )
     }
 
+    /// Validate authority before and after computing a buffered visitor reply.
+    /// Do not send, play, stream or expose the reply until this returns Ok.
+    /// The callback must NOT perform external egress or irreversible side effects.
+    /// Streaming/provider paths instead require continuous revocation fencing.
+    ///
+    /// # Errors
+    /// Rejects revoked authority before work or after a concurrent owner change.
+    pub fn guarded_buffered_visitor_output<T>(
+        &self,
+        bearer_token: &str,
+        permit: &VisitorPermit,
+        now_millis: u64,
+        compute: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.authorize_visitor(bearer_token, permit, now_millis)?;
+        let result = compute()?;
+        self.authorize_visitor(bearer_token, permit, now_millis)?;
+        Ok(result)
+    }
+
     /// Invalidate all pre-crash visitor session permits on process restart.
     /// This must durably commit BEFORE exposing an RT1 visitor listener.
     ///
@@ -251,6 +271,7 @@ mod tests {
         assert!(service.recover_before_listener().is_err());
         assert!(service.visitor_permit(&"0".repeat(64)).is_err());
         assert!(service.admit_visitor_turn(&"0".repeat(64), 0).is_err());
+
         assert!(service.owner_status(&"0".repeat(64)).is_err());
     }
 
