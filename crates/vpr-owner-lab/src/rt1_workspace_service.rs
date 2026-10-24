@@ -131,6 +131,31 @@ impl Rt1WorkspaceService {
         workspace.visitor_permit(bearer_token)
     }
 
+    /// Atomically mint and validate a permit against one canonical Persona
+    /// revision. This removes the gap between separate bootstrap reads; the
+    /// caller MUST still re-authorize before every subsequent output/egress.
+    ///
+    /// # Errors
+    /// Rejects absent publications, revoked visitors or stale Persona state.
+    pub fn admit_visitor_turn(
+        &self,
+        bearer_token: &str,
+        now_millis: u64,
+    ) -> Result<VisitorPermit, String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        let permit = workspace.visitor_permit(bearer_token)?;
+        workspace.authorize_visitor(
+            bearer_token,
+            &permit,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
+        )?;
+        Ok(permit)
+    }
+
     /// Re-read authoritative durable state on EVERY visitor operation, not
     /// just when bootstrap started. A stale provider permit cannot be used
     /// after a correction, pause, or unpublication.
