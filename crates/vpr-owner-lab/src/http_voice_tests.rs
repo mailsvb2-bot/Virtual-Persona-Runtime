@@ -220,10 +220,13 @@ fn identical_request_numbers_from_different_session_epochs_never_cross_streams()
 #[test]
 fn revoked_voice_poll_never_exposes_queued_speech_or_reply() {
     let queued_reply = || voice_stream::VoiceEventsResponse {
-        events: vec![segment(12), VoiceStreamEvent::Failed {
-            code: "OLD_TERMINAL".into(),
-            diagnostic: None,
-        }],
+        events: vec![
+            segment(12),
+            VoiceStreamEvent::Failed {
+                code: "OLD_TERMINAL".into(),
+                diagnostic: None,
+            },
+        ],
         terminal: true,
     };
 
