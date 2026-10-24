@@ -18,8 +18,10 @@ pub struct WorkspaceStatus {
     pub publication_status: Option<&'static str>,
 }
 
-/// Serializes canonical commits and visitor permission checks within one
-/// process. Explicit file stores additionally hold a process-wide OS lock.
+/// Serializes canonical commits and visitor permission checks through this
+/// service instance only. The file store uses atomic replacement, not
+/// cross-process compare-and-swap; do not expose concurrent RT1 listeners
+/// until a single authoritative writer or durable revision CAS is enforced.
 #[derive(Default)]
 pub struct Rt1WorkspaceService {
     transaction: Mutex<()>,
@@ -131,6 +133,29 @@ impl Rt1WorkspaceService {
         workspace.visitor_permit(bearer_token)
     }
 
+    /// Atomically mint and validate a permit against one canonical Persona
+    /// revision. This removes the gap between separate bootstrap reads; the
+    /// caller MUST still re-authorize before every subsequent output/egress.
+    ///
+    /// # Errors
+    /// Rejects absent publications, revoked visitors or stale Persona state.
+    pub fn admit_visitor_turn(
+        &self,
+        bearer_token: &str,
+        now_millis: u64,
+    ) -> Result<VisitorPermit, String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        admit_from_workspace(
+            workspace,
+            bearer_token,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            now_millis,
+        )
+    }
+
     /// Re-read authoritative durable state on EVERY visitor operation, not
     /// just when bootstrap started. A stale provider permit cannot be used
     /// after a correction, pause, or unpublication.
@@ -189,6 +214,27 @@ fn required_persona() -> Result<PersistedPersonaV2, String> {
     load_current_record()?.ok_or("reviewed Persona required".into())
 }
 
+/// The admission decision uses one immutable canonical record while the
+/// service transaction is held. This helper is deliberately not an egress
+/// grant: every later operation must recheck durable authority.
+fn admit_from_workspace(
+    workspace: &OwnerWorkspaceRecord,
+    bearer_token: &str,
+    persona_id: &str,
+    persona_version: u64,
+    now_millis: u64,
+) -> Result<VisitorPermit, String> {
+    let permit = workspace.visitor_permit(bearer_token)?;
+    workspace.authorize_visitor(
+        bearer_token,
+        &permit,
+        persona_id,
+        persona_version,
+        now_millis,
+    )?;
+    Ok(permit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,7 +250,41 @@ mod tests {
         let service = Rt1WorkspaceService::new();
         assert!(service.recover_before_listener().is_err());
         assert!(service.visitor_permit(&"0".repeat(64)).is_err());
+        assert!(service.admit_visitor_turn(&"0".repeat(64), 0).is_err());
         assert!(service.owner_status(&"0".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn admission_fails_closed_across_owner_pause_republish_and_correction() {
+        let (mut workspace, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let invalid = "0".repeat(64);
+        assert!(admit_from_workspace(&workspace, &invalid, "persona-a", 3, 1).is_err());
+        assert!(workspace.publish(&owner, "persona-a", 3, false).is_err());
+        let visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        assert!(admit_from_workspace(&workspace, &invalid, "persona-a", 3, 2).is_err());
+        assert!(admit_from_workspace(&workspace, &visitor, "persona-b", 3, 2).is_err());
+        assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 4, 2).is_err());
+
+        let old_permit = admit_from_workspace(&workspace, &visitor, "persona-a", 3, 2).unwrap();
+        workspace.pause(&owner).unwrap();
+        assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 3).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&visitor, &old_permit, "persona-a", 3, 3)
+                .is_err()
+        );
+
+        let next_visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        assert!(admit_from_workspace(&workspace, &visitor, "persona-a", 3, 4).is_err());
+        let next_permit =
+            admit_from_workspace(&workspace, &next_visitor, "persona-a", 3, 4).unwrap();
+        workspace.on_persona_correction(4).unwrap();
+        assert!(admit_from_workspace(&workspace, &next_visitor, "persona-a", 4, 5).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&next_visitor, &next_permit, "persona-a", 4, 5)
+                .is_err()
+        );
     }
 
     #[test]
