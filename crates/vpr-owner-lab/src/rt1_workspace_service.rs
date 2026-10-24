@@ -202,7 +202,7 @@ impl Rt1WorkspaceService {
     }
 
     /// Serialize one short, bounded local enqueue with owner pause/unpublish.
-    /// A SyncSender guarantees a nonblocking local try_send; callers cannot
+    /// A `SyncSender` guarantees a nonblocking local `try_send`; callers cannot
     /// substitute arbitrary provider/network side effects while holding the
     /// authorization transaction. The consumer MUST separately re-authorize
     /// every playback/egress and discard queued media after revocation.
