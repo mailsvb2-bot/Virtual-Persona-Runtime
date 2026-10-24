@@ -193,6 +193,11 @@ impl OwnerWorkspaceRecord {
             {
                 return Err("stale publication must be revoked".into());
             }
+            if publication.status == PublicationStatus::Published
+                && self.visitor_token_sha256.is_none()
+            {
+                return Err("published visitor authority missing".into());
+            }
         }
         if let Some(hash) = &self.visitor_token_sha256 {
             if !valid_sha256(hash)
@@ -421,4 +426,20 @@ mod tests {
         assert!(workspace.validate("persona-a", 5).is_ok());
         assert!(workspace.visitor_permit(&visitor).is_err());
     }
+
+    #[test]
+    fn published_without_visitor_bearer_is_rejected_during_restore() {
+        let (mut record, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = record
+            .publish(&owner, "persona-a", 3, true)
+            .unwrap();
+        let mut json = serde_json::to_value(&record).unwrap();
+        json["visitor_token_sha256"] = serde_json::Value::Null;
+        let orphan: OwnerWorkspaceRecord = serde_json::from_value(json).unwrap();
+        assert!(orphan.validate("persona-a", 3).is_err());
+        assert!(record.visitor_permit(&visitor).is_ok());
+        record.pause(&owner).unwrap();
+        assert!(record.validate("persona-a", 3).is_ok());
+    }
+
 }
