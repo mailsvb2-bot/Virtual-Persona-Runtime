@@ -342,7 +342,10 @@
     const afterRevoke = await canonicalPost(
       "/api/text/turn",
       { text: "Запретить запрос после отзыва доступа" },
-      { "x-vpr-evidence-request": "99" },
+      {
+        "x-vpr-evidence-request": "99",
+        "x-vpr-session-sequence": String(visitorEvidence.session_sequence),
+      },
     );
     const revokedBody = await afterRevoke.json();
     if (afterRevoke.status !== 409

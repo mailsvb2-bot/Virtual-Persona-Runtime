@@ -44,12 +44,19 @@ pub fn require_active_voice_session(
     Ok(sequence)
 }
 
+// Both voice and text completion must reject the original generation even
+// after Close has cleared its transient session_end_requested flag.
+fn session_generation_is_current(observed: u64, active: u64, ending: bool) -> bool {
+    observed != 0 && observed == active && !ending
+}
+
 /// Verifies the epoch a second time after potentially blocking I/O.
 pub fn require_voice_session_sequence(state: &AppState, sequence: u64) -> Result<(), HttpResponse> {
-    if sequence == 0
-        || state.active_session_sequence.load(Ordering::Acquire) != sequence
-        || state.session_end_requested.load(Ordering::Acquire)
-    {
+    if !session_generation_is_current(
+        sequence,
+        state.active_session_sequence.load(Ordering::Acquire),
+        state.session_end_requested.load(Ordering::Acquire),
+    ) {
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
     Ok(())
@@ -337,6 +344,17 @@ impl Drop for VoiceBusyGuard<'_> {
 mod tests {
     use super::*;
     use vpr_owner_lab::ParticipantRole;
+
+    #[test]
+    fn text_reply_epoch_is_invalid_after_fence_close_or_new_session() {
+        assert!(session_generation_is_current(17, 17, false));
+        assert!(!session_generation_is_current(17, 17, true));
+        // Close resets the transient fence flag; the old generation still
+        // must never release a late response.
+        assert!(!session_generation_is_current(17, 0, false));
+        assert!(!session_generation_is_current(17, 18, false));
+        assert!(!session_generation_is_current(0, 0, false));
+    }
 
     #[test]
     fn terminal_snapshot_export_gate_tracks_each_session_sequence() {
