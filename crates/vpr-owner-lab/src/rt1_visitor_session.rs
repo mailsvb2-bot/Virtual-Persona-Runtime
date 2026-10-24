@@ -28,7 +28,7 @@ impl Rt1VisitorSession {
 
     /// Test-only inert authority. It cannot authenticate against the durable
     /// store and must never be used as a real visitor admission.
-    #[cfg(test)]
+    #[cfg(all(test, not(windows)))]
     pub(crate) fn inert_for_revocation_test() -> Self {
         use vpr_policy::publication_lifecycle::CanonicalPublication;
         let mut publication =
