@@ -26,6 +26,21 @@ impl Rt1VisitorSession {
         })
     }
 
+    /// Test-only inert authority. It cannot authenticate against the durable
+    /// store and must never be used as a real visitor admission.
+    #[cfg(test)]
+    pub(crate) fn inert_for_revocation_test() -> Self {
+        use vpr_policy::publication_lifecycle::CanonicalPublication;
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        Self {
+            workspace: Arc::new(Rt1WorkspaceService::new()),
+            bearer_token: "not-an-admitted-visitor".into(),
+            permit: publication.visitor_lease(true).unwrap(),
+        }
+    }
+
     /// # Errors
     /// Rejects revoked, expired, or version-stale authority.
     pub fn authorize(&self) -> Result<(), String> {
