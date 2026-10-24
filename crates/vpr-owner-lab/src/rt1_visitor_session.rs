@@ -64,3 +64,16 @@ impl Rt1VisitorSession {
         )
     }
 }
+
+/// Provider transport contract for an independently authorized visitor.
+/// An implementation MUST fence every send using current canonical authority;
+/// implementing this trait alone does not enable public RT1 media.
+pub trait Rt1VisitorMediaTransport {
+    type Error;
+
+    fn open(&mut self) -> Result<(), Self::Error>;
+    fn send_audio(&mut self, pcm: &[u8]) -> Result<(), Self::Error>;
+    fn send_video(&mut self, frame: &[u8]) -> Result<(), Self::Error>;
+    fn stop(&mut self) -> Result<(), Self::Error>;
+    fn close(&mut self) -> Result<(), Self::Error>;
+}
