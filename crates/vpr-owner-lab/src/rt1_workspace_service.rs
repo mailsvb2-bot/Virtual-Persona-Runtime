@@ -201,6 +201,35 @@ impl Rt1WorkspaceService {
         )
     }
 
+    /// Serialize one short, bounded local enqueue with owner pause/unpublish.
+    /// A `SyncSender` guarantees a nonblocking local `try_send`; callers cannot
+    /// substitute arbitrary provider/network side effects while holding the
+    /// authorization transaction. The consumer MUST separately re-authorize
+    /// every playback/egress and discard queued media after revocation.
+    /// This is not an RT1 endpoint or a provider-egress permission.
+    ///
+    /// # Errors
+    /// Refuses stale permits, unconfigured storage, full or closed queues.
+    pub fn enqueue_authorized_visitor_fragment<T>(
+        &self,
+        bearer_token: &str,
+        permit: &VisitorPermit,
+        sender: &std::sync::mpsc::SyncSender<T>,
+        fragment: T,
+    ) -> Result<(), String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        enqueue_from_workspace(
+            workspace,
+            (bearer_token, permit),
+            (&record.snapshot.persona_id, record.snapshot.persona_version),
+            server_now_millis()?,
+            sender,
+            fragment,
+        )
+    }
+
     /// Invalidate all pre-crash visitor session permits on process restart.
     /// This must durably commit BEFORE exposing an RT1 visitor listener.
     ///
@@ -229,6 +258,22 @@ impl Rt1WorkspaceService {
         operation(workspace, owner_token)?;
         commit_current_record(&record)
     }
+}
+
+/// Validate the current publication before inserting into a bounded local
+/// queue. This is not an egress fence; the consumer must check again.
+fn enqueue_from_workspace<T>(
+    workspace: &OwnerWorkspaceRecord,
+    visitor: (&str, &VisitorPermit),
+    persona: (&str, u64),
+    now_millis: u64,
+    sender: &std::sync::mpsc::SyncSender<T>,
+    fragment: T,
+) -> Result<(), String> {
+    workspace.authorize_visitor(visitor.0, visitor.1, persona.0, persona.1, now_millis)?;
+    sender
+        .try_send(fragment)
+        .map_err(|_| "visitor local queue unavailable".to_owned())
 }
 
 /// Read a fresh trusted server clock at each authorization boundary.
@@ -417,6 +462,97 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(!computed.get());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn local_delivery_does_not_enqueue_without_authorized_store() {
+        use vpr_policy::publication_lifecycle::CanonicalPublication;
+
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        let permit = publication.visitor_lease(true).unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let service = Rt1WorkspaceService::new();
+        let result =
+            service.enqueue_authorized_visitor_fragment("visitor", &permit, &sender, "hello");
+        assert!(result.is_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn local_delivery_rejects_revoked_authority_and_full_queue() {
+        let (mut workspace, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        let permit = workspace.visitor_permit(&visitor).unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                10,
+                &sender,
+                "first",
+            )
+            .is_ok()
+        );
+        // A full bounded queue must fail immediately, never wait under the
+        // owner publication transaction or drop the first authorized item.
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                10,
+                &sender,
+                "second",
+            )
+            .is_err()
+        );
+        assert_eq!(receiver.try_recv().unwrap(), "first");
+
+        workspace.pause(&owner).unwrap();
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                11,
+                &sender,
+                "revoked",
+            )
+            .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+
+        let new_visitor = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        let new_permit = workspace.visitor_permit(&new_visitor).unwrap();
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&visitor, &permit),
+                ("persona-a", 3),
+                12,
+                &sender,
+                "stale",
+            )
+            .is_err()
+        );
+        assert!(
+            enqueue_from_workspace(
+                &workspace,
+                (&new_visitor, &new_permit),
+                ("persona-a", 3),
+                12,
+                &sender,
+                "fresh",
+            )
+            .is_ok()
+        );
+        assert_eq!(receiver.try_recv().unwrap(), "fresh");
     }
 
     #[test]
