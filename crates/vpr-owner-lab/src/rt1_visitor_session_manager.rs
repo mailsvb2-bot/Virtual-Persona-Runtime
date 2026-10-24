@@ -213,6 +213,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn drained_transports_stop_once_outside_registry_lock() {
+        use std::sync::atomic::AtomicUsize;
+
+        let manager = Arc::new(VisitorSessionManager::new(Arc::new(
+            Rt1WorkspaceService::new(),
+        )));
+        let stops = Arc::new(AtomicUsize::new(0));
+        let callback_manager = Arc::clone(&manager);
+        let callback_stops = Arc::clone(&stops);
+        let session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(false),
+            stop: Arc::new(move || {
+                // A stop callback may re-enter the registry; no mutex is held.
+                assert_eq!(callback_manager.active_count(), 0);
+                callback_stops.fetch_add(1, Ordering::SeqCst);
+            }),
+        });
+        manager
+            .sessions
+            .lock()
+            .insert("old-publication".into(), Arc::clone(&session));
+
+        let pending = manager.take_for_revocation();
+        assert_eq!(manager.active_count(), 0);
+        assert!(!session.revoked.load(Ordering::Acquire));
+        pending.revoke();
+        assert!(session.revoked.load(Ordering::Acquire));
+        session.revoke();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn registry_drain_does_not_stop_sessions_added_after_drain() {
+        use std::sync::atomic::AtomicUsize;
+
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let old_stops = Arc::new(AtomicUsize::new(0));
+        let new_stops = Arc::new(AtomicUsize::new(0));
+        let old_counter = Arc::clone(&old_stops);
+        let new_counter = Arc::clone(&new_stops);
+        let old_session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(false),
+            stop: Arc::new(move || {
+                old_counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        });
+        let new_session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(false),
+            stop: Arc::new(move || {
+                new_counter.fetch_add(1, Ordering::SeqCst);
+            }),
+        });
+        manager
+            .sessions
+            .lock()
+            .insert("old".into(), old_session);
+        let pending = manager.take_for_revocation();
+        manager
+            .sessions
+            .lock()
+            .insert("new".into(), new_session);
+        pending.revoke();
+        assert_eq!(old_stops.load(Ordering::SeqCst), 1);
+        assert_eq!(new_stops.load(Ordering::SeqCst), 0);
+        assert_eq!(manager.active_count(), 1);
+        manager.revoke_all();
+        assert_eq!(new_stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn no_visitor_session_without_canonical_publication() {
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         assert!(manager.open("0".repeat(64), || {}).is_err());
