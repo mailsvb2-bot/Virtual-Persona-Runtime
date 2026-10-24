@@ -9,6 +9,7 @@ use vpr_policy::publication_lifecycle::{PublicationStatus, VisitorPermit};
 
 use crate::persona_persistence::{PersistedPersonaV2, commit_current_record, load_current_record};
 use crate::rt1_workspace::OwnerWorkspaceRecord;
+use crate::rt1_visitor_session_manager::{PendingVisitorRevocations, VisitorSessionManager};
 
 #[derive(Serialize)]
 pub struct WorkspaceStatus {
@@ -129,6 +130,41 @@ impl Rt1WorkspaceService {
     /// Rejects wrong owner, invalid state or write failure.
     pub fn unpublish(&self, owner_token: &str) -> Result<(), String> {
         self.change_publication(owner_token, OwnerWorkspaceRecord::unpublish)
+    }
+
+    /// Durably pause the publication and atomically remove all previously
+    /// registered local visitor transports before any concurrent republish
+    /// can admit a new visitor. The caller must run the returned stops AFTER
+    /// this transaction releases its lock.
+    ///
+    /// # Errors
+    /// Refuses invalid owner, missing storage, or failed durable commit.
+    pub(crate) fn pause_and_collect_revocations(
+        &self,
+        owner_token: &str,
+        visitors: &VisitorSessionManager,
+    ) -> Result<PendingVisitorRevocations, String> {
+        self.change_publication_and_collect(
+            owner_token,
+            OwnerWorkspaceRecord::pause,
+            visitors,
+        )
+    }
+
+    /// Same atomic commit-and-drain boundary for unpublication.
+    ///
+    /// # Errors
+    /// Refuses invalid owner, missing storage, or failed durable commit.
+    pub(crate) fn unpublish_and_collect_revocations(
+        &self,
+        owner_token: &str,
+        visitors: &VisitorSessionManager,
+    ) -> Result<PendingVisitorRevocations, String> {
+        self.change_publication_and_collect(
+            owner_token,
+            OwnerWorkspaceRecord::unpublish,
+            visitors,
+        )
     }
 
     /// Authenticate a visitor independently from owner CSRF and issue a
@@ -255,6 +291,23 @@ impl Rt1WorkspaceService {
             commit_current_record(&record)?;
         }
         Ok(())
+    }
+
+    fn change_publication_and_collect(
+        &self,
+        owner_token: &str,
+        operation: fn(&mut OwnerWorkspaceRecord, &str) -> Result<(), String>,
+        visitors: &VisitorSessionManager,
+    ) -> Result<PendingVisitorRevocations, String> {
+        let _transaction = self.transaction.lock();
+        let mut record = required_persona()?;
+        let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
+        operation(workspace, owner_token)?;
+        // Never stop a transport for a mutation that failed to commit.
+        commit_current_record(&record)?;
+        // Hold the same transaction while draining: a concurrent republish
+        // cannot register its new-epoch visitors before this drain.
+        Ok(visitors.take_for_revocation())
     }
 
     fn change_publication(
