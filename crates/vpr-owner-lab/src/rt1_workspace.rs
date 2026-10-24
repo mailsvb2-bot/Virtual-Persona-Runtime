@@ -395,4 +395,30 @@ mod tests {
             .authorize_visitor(&renewed, &new_lease, "persona-a", 4, 3)
             .unwrap();
     }
+
+    #[test]
+    fn durable_workspace_rejects_orphaned_and_stale_visitor_authority() {
+        let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = workspace
+            .publish(&owner_token, "persona-a", 5, true)
+            .unwrap();
+        assert!(workspace.visitor_permit(&visitor).is_ok());
+        assert!(workspace.validate("persona-a", 5).is_ok());
+        assert!(workspace.validate("persona-b", 5).is_err());
+        assert!(workspace.validate("persona-a", 6).is_err());
+
+        let mut raw = serde_json::to_value(&workspace).unwrap();
+        raw["publication"] = serde_json::Value::Null;
+        let orphan: OwnerWorkspaceRecord = serde_json::from_value(raw).unwrap();
+        assert!(orphan.validate("persona-a", 5).is_err());
+
+        let mut raw = serde_json::to_value(&workspace).unwrap();
+        raw["visitor_token_sha256"] = serde_json::Value::String("bad".into());
+        let corrupt: OwnerWorkspaceRecord = serde_json::from_value(raw).unwrap();
+        assert!(corrupt.validate("persona-a", 5).is_err());
+
+        workspace.pause(&owner_token).unwrap();
+        assert!(workspace.validate("persona-a", 5).is_ok());
+        assert!(workspace.visitor_permit(&visitor).is_err());
+    }
 }
