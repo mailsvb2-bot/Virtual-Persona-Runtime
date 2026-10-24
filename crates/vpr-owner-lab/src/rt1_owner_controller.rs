@@ -1,8 +1,17 @@
 //! Internal owner command boundary. Not exposed as HTTP until RT1 release entry.
+use std::sync::{Arc, OnceLock};
+
+use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
+// In-process owner commands must never maintain separate visitor registries:
+/// otherwise an owner pause through one controller would miss other sessions.
+static OWNER_VISITOR_RUNTIME: OnceLock<(Arc<Rt1WorkspaceService>, Arc<VisitorSessionManager>)> =
+    OnceLock::new();
+
 pub struct Rt1OwnerController {
-    workspace: Rt1WorkspaceService,
+    workspace: Arc<Rt1WorkspaceService>,
+    visitors: Arc<VisitorSessionManager>,
 }
 
 impl Default for Rt1OwnerController {
@@ -14,9 +23,22 @@ impl Default for Rt1OwnerController {
 impl Rt1OwnerController {
     #[must_use]
     pub fn new() -> Self {
+        let (workspace, visitors) = OWNER_VISITOR_RUNTIME.get_or_init(|| {
+            let workspace = Arc::new(Rt1WorkspaceService::new());
+            let visitors = Arc::new(VisitorSessionManager::new(Arc::clone(&workspace)));
+            (workspace, visitors)
+        });
         Self {
-            workspace: Rt1WorkspaceService::new(),
+            workspace: Arc::clone(workspace),
+            visitors: Arc::clone(visitors),
         }
+    }
+
+    /// Share the exact in-process visitor registry with the eventual runtime.
+    /// All owner revoke and visitor admission calls must use this same instance.
+    #[must_use]
+    pub fn visitor_sessions(&self) -> Arc<VisitorSessionManager> {
+        Arc::clone(&self.visitors)
     }
 
     /// # Errors
@@ -53,20 +75,43 @@ impl Rt1OwnerController {
 
     /// # Errors
     /// Refuses invalid owner or failed durable commit.
+    /// After the durable mutation, registered visitor transports are stopped.
     pub fn pause(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.pause(owner_token)
+        let pending = self
+            .workspace
+            .pause_and_collect_revocations(owner_token, &self.visitors)?;
+        pending.revoke();
+        Ok(())
     }
 
     /// # Errors
     /// Refuses invalid owner or failed durable commit.
+    /// After the durable mutation, registered visitor transports are stopped.
     pub fn unpublish(&self, owner_token: &str) -> Result<(), String> {
-        self.workspace.unpublish(owner_token)
+        let pending = self
+            .workspace
+            .unpublish_and_collect_revocations(owner_token, &self.visitors)?;
+        pending.revoke();
+        Ok(())
     }
 }
 
 #[cfg(all(test, not(windows)))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_controller_exposes_same_visitor_registry_handle() {
+        let controller = Rt1OwnerController::new();
+        let first = controller.visitor_sessions();
+        let second = controller.visitor_sessions();
+        assert!(Arc::ptr_eq(&first, &second));
+        let independent_controller = Rt1OwnerController::new();
+        assert!(Arc::ptr_eq(
+            &first,
+            &independent_controller.visitor_sessions()
+        ));
+    }
 
     #[test]
     fn unauthorized_owner_cannot_trigger_readiness_or_publish() {
