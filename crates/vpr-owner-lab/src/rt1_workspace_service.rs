@@ -288,7 +288,7 @@ fn enqueue_from_workspace<T>(
 
 /// Read a fresh trusted server clock at each authorization boundary.
 /// Clock failures are denials, never implicit infinite leases.
-fn server_now_millis() -> Result<u64, String> {
+pub(crate) fn server_now_millis() -> Result<u64, String> {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "server clock precedes Unix epoch".to_owned())?;
