@@ -24,14 +24,23 @@ pub struct WorkspaceStatus {
 /// unsupported until durable cross-process serialization is provided.
 static WORKSPACE_TRANSACTION: Mutex<()> = Mutex::new(());
 
-/// Stateless handle sharing the single in-process canonical workspace lock.
-#[derive(Default)]
-pub struct Rt1WorkspaceService;
+/// Service handle referencing the one in-process canonical workspace lock.
+pub struct Rt1WorkspaceService {
+    transaction: &'static Mutex<()>,
+}
+
+impl Default for Rt1WorkspaceService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Rt1WorkspaceService {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            transaction: &WORKSPACE_TRANSACTION,
+        }
     }
 
     /// Create one owner credential for an existing reviewed Persona. The
@@ -40,7 +49,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Refuses repeat provisioning, missing Persona and storage failures.
     pub fn provision_owner(&self) -> Result<(String, String), String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let mut record = required_persona()?;
         if record.workspace.is_some() {
             return Err("owner workspace already provisioned".into());
@@ -58,7 +67,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Denies wrong credentials or missing reviewed Persona.
     pub fn owner_status(&self, owner_token: &str) -> Result<WorkspaceStatus, String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         if !workspace.authenticate_owner(owner_token) {
@@ -90,7 +99,7 @@ impl Rt1WorkspaceService {
         expected_persona_version: u64,
         server_readiness_verified: bool,
     ) -> Result<String, String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let mut record = required_persona()?;
         if record.snapshot.persona_version != expected_persona_version {
             return Err("stale Persona version".into());
@@ -128,7 +137,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Refuses bad token and any non-published Persona.
     pub fn visitor_permit(&self, bearer_token: &str) -> Result<VisitorPermit, String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         workspace.visitor_permit(bearer_token)
@@ -145,7 +154,7 @@ impl Rt1WorkspaceService {
         bearer_token: &str,
         now_millis: u64,
     ) -> Result<VisitorPermit, String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         admit_from_workspace(
@@ -169,7 +178,7 @@ impl Rt1WorkspaceService {
         permit: &VisitorPermit,
         now_millis: u64,
     ) -> Result<(), String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         workspace.authorize_visitor(
@@ -218,7 +227,7 @@ impl Rt1WorkspaceService {
         sender: &std::sync::mpsc::SyncSender<T>,
         fragment: T,
     ) -> Result<(), String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let record = required_persona()?;
         let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
         enqueue_from_workspace(
@@ -237,7 +246,7 @@ impl Rt1WorkspaceService {
     /// # Errors
     /// Fails startup on an unreadable or unwritable publication record.
     pub fn recover_before_listener(&self) -> Result<(), String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let Some(mut record) = load_current_record()? else {
             return Ok(());
         };
@@ -253,7 +262,7 @@ impl Rt1WorkspaceService {
         owner_token: &str,
         operation: fn(&mut OwnerWorkspaceRecord, &str) -> Result<(), String>,
     ) -> Result<(), String> {
-        let _transaction = WORKSPACE_TRANSACTION.lock();
+        let _transaction = self.transaction.lock();
         let mut record = required_persona()?;
         let workspace = record.workspace.as_mut().ok_or("owner workspace missing")?;
         operation(workspace, owner_token)?;
@@ -560,12 +569,11 @@ mod tests {
     fn independent_service_handles_share_one_transaction_lock() {
         let first = Rt1WorkspaceService::new();
         let second = Rt1WorkspaceService::new();
-        let _first = &first;
-        let _second = &second;
-        let held = WORKSPACE_TRANSACTION.lock();
-        assert!(WORKSPACE_TRANSACTION.try_lock().is_none());
+        assert!(std::ptr::eq(first.transaction, second.transaction));
+        let held = first.transaction.lock();
+        assert!(second.transaction.try_lock().is_none());
         drop(held);
-        assert!(WORKSPACE_TRANSACTION.try_lock().is_some());
+        assert!(second.transaction.try_lock().is_some());
     }
 
     #[test]
