@@ -201,6 +201,34 @@ impl Rt1WorkspaceService {
         )
     }
 
+    /// Serialize one short local delivery/enqueue operation with owner pause.
+    /// The callback must only enqueue to a bounded, nonblocking local channel;
+    /// never call a provider, wait for media, or perform network I/O here.
+    /// A separate consumer MUST independently fence playback/egress and cancel
+    /// any already queued media after revocation. This is not an RT1 endpoint.
+    ///
+    /// # Errors
+    /// Refuses stale permits or unconfigured Persona storage.
+    pub fn enqueue_authorized_visitor_fragment<T>(
+        &self,
+        bearer_token: &str,
+        permit: &VisitorPermit,
+        fragment: T,
+        enqueue_local: impl FnOnce(T) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        workspace.authorize_visitor(
+            bearer_token,
+            permit,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            server_now_millis()?,
+        )?;
+        enqueue_local(fragment)
+    }
+
     /// Invalidate all pre-crash visitor session permits on process restart.
     /// This must durably commit BEFORE exposing an RT1 visitor listener.
     ///
