@@ -1,5 +1,5 @@
 //! Internal owner command boundary. Not exposed as HTTP until RT1 release entry.
-use vpr_owner_lab::{Rt1WorkspaceService, WorkspaceStatus};
+use crate::rt1_workspace_service::{Rt1WorkspaceService, WorkspaceStatus};
 
 pub struct Rt1OwnerController {
     workspace: Rt1WorkspaceService,
