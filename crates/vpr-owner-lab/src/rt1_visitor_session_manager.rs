@@ -88,10 +88,18 @@ impl VisitorSessionManager {
         if sessions.contains_key(&id) {
             return Err("visitor session collision".into());
         }
-        // Revalidate AFTER waiting for the registry lock: a pause may have
-        // won during local admission. Never grant a stale session.
-        session.authorize()?;
-        sessions.insert(id.clone(), session);
+        // Insert before the final canonical recheck so concurrent revoke_all
+        // can see and stop this admission. Every lookup independently checks
+        // authority; registration itself is never an egress grant.
+        sessions.insert(id.clone(), Arc::clone(&session));
+        drop(sessions);
+        // Authorization can revoke and invoke an arbitrary transport callback.
+        // Never run that callback under the non-reentrant registry mutex.
+        if let Err(error) = session.authorize() {
+            // A concurrent close/revoke_all may already have removed it.
+            let _ = self.close(&id);
+            return Err(error);
+        }
         Ok(id)
     }
 
@@ -107,9 +115,11 @@ impl VisitorSessionManager {
     ) -> Result<T, String> {
         let session = self.lookup(session_id)?;
         session.authorize()?;
-        let value = session.authority.compute_buffered(compute)?;
-        session.authorize()?;
-        Ok(value)
+        // The inner computation can fail because its own post-compute
+        // canonical authorization failed. Recheck even on Err so the managed
+        // session actively stops any existing provider transport.
+        let result = session.authority.compute_buffered(compute);
+        finish_buffered(result, || session.authorize())
     }
 
     /// Explicit final authorization gate before one protected operation.
@@ -161,6 +171,16 @@ impl VisitorSessionManager {
     }
 }
 
+// Always recheck after a buffered attempt, including the error path.
+// An authorization denial takes precedence over a computation error.
+fn finish_buffered<T>(
+    result: Result<T, String>,
+    reauthorize: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    reauthorize()?;
+    result
+}
+
 impl Drop for VisitorSessionManager {
     fn drop(&mut self) {
         self.revoke_all();
@@ -177,5 +197,32 @@ mod tests {
         assert!(manager.open("0".repeat(64), || {}).is_err());
         assert_eq!(manager.active_count(), 0);
         assert!(manager.authorize("not-a-session").is_err());
+    }
+
+    #[test]
+    fn failed_buffered_computation_still_checks_revocation() {
+        let rechecked = AtomicBool::new(false);
+        let result: Result<(), String> =
+            finish_buffered(Err("buffered computation failed".into()), || {
+                rechecked.store(true, Ordering::SeqCst);
+                Err("visitor session revoked".into())
+            });
+        assert!(rechecked.load(Ordering::SeqCst));
+        assert_eq!(result.unwrap_err(), "visitor session revoked");
+    }
+
+    #[test]
+    fn failed_computation_preserves_error_when_authority_is_valid() {
+        let result: Result<(), String> =
+            finish_buffered(Err("computation failed".into()), || Ok(()));
+        assert_eq!(result.unwrap_err(), "computation failed");
+    }
+
+    #[test]
+    fn successful_computation_cannot_bypass_final_revocation() {
+        let result = finish_buffered(Ok("unreleased"), || {
+            Err("visitor session revoked".into())
+        });
+        assert_eq!(result.unwrap_err(), "visitor session revoked");
     }
 }
