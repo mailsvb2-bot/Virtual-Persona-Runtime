@@ -439,5 +439,4 @@ mod tests {
         record.pause(&owner).unwrap();
         assert!(record.validate("persona-a", 3).is_ok());
     }
-
 }
