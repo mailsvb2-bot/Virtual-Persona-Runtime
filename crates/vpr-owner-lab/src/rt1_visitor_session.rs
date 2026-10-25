@@ -68,6 +68,18 @@ impl Rt1VisitorSession {
             .guarded_buffered_visitor_output(&self.bearer_token, &self.permit, compute)
     }
 
+    /// Final bounded provider dispatch, serialized with the canonical owner
+    /// publication mutation. Never call this for streaming or reentrant I/O.
+    /// # Errors
+    /// Denies revoked publication or failed provider dispatch.
+    pub(crate) fn provider_dispatch<T>(
+        &self,
+        dispatch: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.workspace
+            .guarded_provider_dispatch(&self.bearer_token, &self.permit, dispatch)
+    }
+
     /// Bounded local queue only. Consumer must re-authorize final egress.
     /// # Errors
     /// Rejects denied authority or full/disconnected queue.
