@@ -247,7 +247,8 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
 
 #[test]
 fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
     use std::time::Duration;
 
     let transaction = Arc::new(Mutex::new(()));
@@ -285,7 +286,8 @@ fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
 
 #[test]
 fn provider_dispatch_after_committed_revoke_never_sends() {
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let transaction = Arc::new(Mutex::new(()));
     let revoked = Arc::new(AtomicBool::new(false));
@@ -320,8 +322,6 @@ fn provider_dispatch_after_committed_revoke_never_sends() {
 fn failed_provider_dispatch_never_turns_into_success() {
     let transaction = Mutex::new(());
     let result: Result<(), String> =
-        guarded_dispatch_under_transaction(&transaction, || Ok(()), || {
-            Err("provider rejected".into())
-        });
+        guarded_dispatch_under_transaction(&transaction, || Ok(()), || Err("provider rejected".into()));
     assert_eq!(result.unwrap_err(), "provider rejected");
 }
