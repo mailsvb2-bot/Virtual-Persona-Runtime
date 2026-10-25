@@ -248,7 +248,7 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
 #[test]
 fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, mpsc};
+    use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
     let transaction = Arc::new(Mutex::new(()));
@@ -321,7 +321,10 @@ fn provider_dispatch_after_committed_revoke_never_sends() {
 #[test]
 fn failed_provider_dispatch_never_turns_into_success() {
     let transaction = Mutex::new(());
-    let result: Result<(), String> =
-        guarded_dispatch_under_transaction(&transaction, || Ok(()), || Err("provider rejected".into()));
+    let result: Result<(), String> = guarded_dispatch_under_transaction(
+        &transaction,
+        || Ok(()),
+        || Err("provider rejected".into()),
+    );
     assert_eq!(result.unwrap_err(), "provider rejected");
 }
