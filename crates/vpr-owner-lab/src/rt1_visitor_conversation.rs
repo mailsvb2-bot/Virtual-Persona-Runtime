@@ -64,12 +64,19 @@ impl Rt1VisitorConversation {
             let _ = manager.close(&id);
             return Err(error);
         }
-        let started = engine.start_visitor(OwnerLabStartRequest { consent });
+        // The provider's initial remote session creation is external egress.
+        // Serialize its final authorization and dispatch against owner pause.
+        // Never call the provider from an unfenced pre/post authorization gap.
+        let started = manager.provider_dispatch(&id, || {
+            engine
+                .start_visitor(OwnerLabStartRequest { consent })
+                .map_err(|error| error.code().to_owned())
+        });
         let bundle = match started {
             Ok(bundle) => bundle,
             Err(error) => {
                 let _ = manager.close(&id);
-                return Err(error.code().to_owned());
+                return Err(error);
             }
         };
         // WebRTC needs Answer/ICE provider operations. This wrapper does not
