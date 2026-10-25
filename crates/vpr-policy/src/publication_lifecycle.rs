@@ -54,6 +54,14 @@ pub struct VisitorPermit {
     snapshot: AuthorizationSnapshot,
 }
 
+impl VisitorPermit {
+    /// A visitor permit is valid only for the exact reviewed Persona revision.
+    #[must_use]
+    pub fn matches_persona(&self, persona_id: &str, persona_version: u64) -> bool {
+        self.persona_id == persona_id && self.persona_version == persona_version
+    }
+}
+
 /// The owner and Persona identifiers MUST originate in a verified canonical
 /// workspace transaction, never a URL, form field or unauthenticated token.
 #[derive(Debug)]
