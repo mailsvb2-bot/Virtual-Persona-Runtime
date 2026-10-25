@@ -4,12 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
-use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
+    LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
 };
 
 #[derive(Default)]
@@ -73,6 +72,14 @@ impl Rt1VisitorConversation {
                 return Err(error.code().to_owned());
             }
         };
+        // WebRTC needs Answer/ICE provider operations. This wrapper does not
+        // yet expose an epoch-fenced signaling path, so never return an offer
+        // that a caller cannot safely complete.
+        if matches!(&bundle.transport, LabRealtimeTransport::WebRtc { .. }) {
+            let _ = manager.close(&id);
+            let _ = engine.revoke();
+            return Err("RT1 WebRTC signaling not yet supported".into());
+        }
         // A pause can happen during the remote avatar creation. The callback
         // sets cancelled even before the real runtime handle is available.
         let revoker = engine.session_revocation_handle();
@@ -96,39 +103,6 @@ impl Rt1VisitorConversation {
             },
             bundle,
         ))
-    }
-
-    /// Submit one visitor WebRTC SDP answer through the existing provider
-    /// engine, with an authorization fence before and after provider I/O.
-    ///
-    /// # Errors
-    /// Denies missing/revoked visitor authority or rejected provider signaling.
-    pub fn submit_answer(&self, answer: WebRtcSessionDescription) -> Result<(), String> {
-        self.submit_signaling(OwnerLabTurnInput::Answer(answer))
-    }
-
-    /// Submit one visitor WebRTC ICE candidate through the existing provider
-    /// engine, with an authorization fence before and after provider I/O.
-    ///
-    /// # Errors
-    /// Denies missing/revoked visitor authority or rejected provider signaling.
-    pub fn submit_ice(&self, candidate: WebRtcIceCandidate) -> Result<(), String> {
-        self.submit_signaling(OwnerLabTurnInput::Ice(candidate))
-    }
-
-    fn submit_signaling(&self, input: OwnerLabTurnInput) -> Result<(), String> {
-        self.manager.compute_buffered(&self.id, || {
-            if self.interrupt.cancelled.load(Ordering::Acquire) {
-                return Err("visitor session cancelled".into());
-            }
-            let mut engine = self.engine.lock();
-            self.manager.authorize(&self.id)?;
-            let result = engine.apply(input).map_err(|error| error.code().to_owned());
-            // Withhold success and interrupt the session if owner authority was
-            // withdrawn while the external provider accepted signaling.
-            self.manager.authorize(&self.id)?;
-            result
-        })
     }
 
     /// # Errors
