@@ -118,6 +118,23 @@ impl Rt1VisitorConversation {
         Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
     }
 
+    /// Stage one media fragment in a bounded local queue while the canonical
+    /// workspace transaction is held. This is not permission to send to a
+    /// browser or provider: a separate final egress fence remains mandatory.
+    ///
+    /// # Errors
+    /// Denies stale visitor authority, cancelled sessions or full queues.
+    pub fn queue_media_fragment<T>(
+        &self,
+        sender: &std::sync::mpsc::SyncSender<T>,
+        fragment: T,
+    ) -> Result<(), String> {
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("visitor session cancelled".into());
+        }
+        self.manager.enqueue_media_fragment(&self.id, sender, fragment)
+    }
+
     /// RT1 voice provider egress is deliberately denied until the canonical
     /// workspace owns a revocation-serialized final media delivery/STOP gate.
     /// A pre/post authorization check around external provider I/O is unsafe:
