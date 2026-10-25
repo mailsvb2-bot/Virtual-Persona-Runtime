@@ -53,11 +53,10 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         )
 
     def test_denial_helper_is_error_only(self):
-        self.assertEqual(
-            method_body(self.source, "unsupported_visitor_voice_egress")
-            if "pub fn unsupported_visitor_voice_egress" in self.source
-            else self.source.split("fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {", 1)[1].split("\n}", 1)[0].strip(),
-            'Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())',
+        self.assertRegex(
+            self.source,
+            r'fn unsupported_visitor_voice_egress<T>\(\) -> Result<T, String> \{\s*'
+            r'Err\("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"\.into\(\)\)\s*\}',
         )
 
 
