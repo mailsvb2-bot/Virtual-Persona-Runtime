@@ -56,6 +56,8 @@ jobs:
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_entry_readiness.py -v
       - name: RT1 visitor text provider egress fail-closed regression
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_text_egress_fence.py -v
+      - name: RT1 visitor voice provider egress fail-closed regression
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_voice_egress_fence.py -v
       - name: RT1 visitor provider startup revoke fence regression
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_startup_dispatch_fence.py -v
       - name: RT1 offline reviewed Persona migration preflight
