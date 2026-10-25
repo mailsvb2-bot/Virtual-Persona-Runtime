@@ -8,8 +8,8 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult,
-    LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment,
+    OwnerLabEngine, OwnerLabStartRequest,
 };
 
 #[derive(Default)]
@@ -174,6 +174,10 @@ impl Drop for Rt1VisitorConversation {
     }
 }
 
+fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
+    Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
+}
+
 #[cfg(test)]
 mod rt1_voice_egress_tests {
     use super::*;
@@ -195,8 +199,4 @@ mod rt1_voice_egress_tests {
             "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
         );
     }
-}
-
-fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
-    Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
 }
