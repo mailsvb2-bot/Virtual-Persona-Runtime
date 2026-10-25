@@ -347,7 +347,8 @@ mod tests {
 
     #[test]
     fn visitor_permit_binds_exact_reviewed_persona_revision() {
-        let mut publication = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
         publication.publish("owner", 1, true).unwrap();
         let permit = publication.visitor_lease(true).unwrap();
         assert!(permit.matches_persona("persona", 1));
