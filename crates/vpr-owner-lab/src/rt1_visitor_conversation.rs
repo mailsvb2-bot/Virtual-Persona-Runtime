@@ -118,8 +118,6 @@ impl Rt1VisitorConversation {
         Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
     }
 
-    /// # Errors
-    /// Always denies visitor text provider egress until canonical fencing.
     /// RT1 voice provider egress is deliberately denied until the canonical
     /// workspace owns a revocation-serialized final media delivery/STOP gate.
     /// A pre/post authorization check around external provider I/O is unsafe:
