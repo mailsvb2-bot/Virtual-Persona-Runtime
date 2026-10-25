@@ -188,15 +188,12 @@ mod rt1_voice_egress_tests {
     }
 
     #[test]
-    fn voice_streaming_never_runs_a_delivery_callback() {
-        let delivered = std::cell::Cell::new(false);
-        let _callback = |_segment: LabVoiceSegment| {
-            delivered.set(true);
-            Ok::<(), String>(())
-        };
+    fn voice_streaming_rejects_before_any_delivery() {
         let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
-        assert!(result.is_err());
-        assert!(!delivered.get());
+        assert_eq!(
+            result.unwrap_err(),
+            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
+        );
     }
 }
 
