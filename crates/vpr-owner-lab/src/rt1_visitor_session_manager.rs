@@ -122,6 +122,27 @@ impl VisitorSessionManager {
         finish_buffered(result, || session.authorize())
     }
 
+    /// Atomically authorize and enqueue one bounded local media fragment under
+    /// the canonical workspace transaction. This is NOT an external sender:
+    /// consumers must apply their own final provider-egress fence and STOP.
+    ///
+    /// # Errors
+    /// Denies unknown/revoked visitors, stale canonical permits, and full queues.
+    pub fn enqueue_media_fragment<T>(
+        &self,
+        session_id: &str,
+        sender: &std::sync::mpsc::SyncSender<T>,
+        fragment: T,
+    ) -> Result<(), String> {
+        let session = self.lookup(session_id)?;
+        if session.revoked.load(Ordering::Acquire) {
+            return Err("visitor session revoked".into());
+        }
+        // authorize + try_send share the workspace lock with pause/unpublish.
+        // No arbitrary callbacks/provider operations run under that lock.
+        session.authority.enqueue_fragment(sender, fragment)
+    }
+
     /// Explicit final authorization gate before one protected operation.
     /// The caller must bind provider cancellation to the stop callback.
     ///
