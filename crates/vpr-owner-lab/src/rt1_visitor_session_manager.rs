@@ -318,7 +318,11 @@ mod tests {
     fn media_queue_never_receives_fragment_without_canonical_publication() {
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        assert!(manager.enqueue_media_fragment("unknown", &sender, vec![1_u8]).is_err());
+        assert!(
+            manager
+                .enqueue_media_fragment("unknown", &sender, vec![1_u8])
+                .is_err()
+        );
         assert!(receiver.try_recv().is_err());
     }
 
@@ -332,7 +336,11 @@ mod tests {
         });
         manager.sessions.lock().insert("revoked".into(), session);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        assert!(manager.enqueue_media_fragment("revoked", &sender, vec![1_u8]).is_err());
+        assert!(
+            manager
+                .enqueue_media_fragment("revoked", &sender, vec![1_u8])
+                .is_err()
+        );
         assert!(receiver.try_recv().is_err());
     }
 
