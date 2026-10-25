@@ -4,13 +4,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
-use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
+use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
+    LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 #[derive(Default)]
