@@ -107,24 +107,14 @@ impl Rt1VisitorConversation {
 
     /// # Errors
     /// Denies revoked visitor authority or returns the canonical turn error.
-    pub fn text_turn(&self, text: &str) -> Result<LabTextResult, String> {
-        self.manager.compute_buffered(&self.id, || {
-            if self.interrupt.cancelled.load(Ordering::Acquire) {
-                return Err("visitor session cancelled".into());
-            }
-            let mut engine = self.engine.lock();
-            // Revocation does not take the engine lock; it interrupts the
-            // in-flight provider operation through its narrow handle.
-            self.manager.authorize(&self.id)?;
-            let result = engine.text_turn(text, |turn| {
-                *self.interrupt.turn.lock() = Some(turn.clone());
-                if self.interrupt.cancelled.load(Ordering::Acquire) {
-                    let _ = turn.interrupt();
-                }
-            });
-            *self.interrupt.turn.lock() = None;
-            result.map_err(|error| error.code().to_owned())
-        })
+    pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
+        // Issue #319: compute_buffered authorizes only side-effect-free
+        // computation, never provider egress. A pre/post check cannot retract
+        // an LLM request sent concurrently with owner revocation.
+        // Keep this internal RT1 text path fail-closed until a canonical,
+        // revocation-serialized provider egress fence is implemented.
+        self.manager.authorize(&self.id)?;
+        Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
     }
 
     /// # Errors
