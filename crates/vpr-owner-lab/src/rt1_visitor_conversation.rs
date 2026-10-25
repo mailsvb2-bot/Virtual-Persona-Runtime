@@ -7,7 +7,7 @@ use parking_lot::Mutex;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest};
+use crate::state::{LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest};
 
 #[derive(Default)]
 struct LiveVisitorInterrupt {
@@ -49,9 +49,19 @@ impl Rt1VisitorConversation {
         mut engine: OwnerLabEngine,
         consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
+        // The reviewed engine must match the durable Persona admitted by the
+        // server, not a previously cached owner profile or corrected revision.
+        let (persona_id, persona_version) = engine
+            .reviewed_persona_binding()
+            .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
+        let persona_id = persona_id.to_owned();
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
         let callback = Arc::clone(&interrupt);
         let id = manager.open(visitor_token, move || callback.stop())?;
+        if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
         let started = engine.start_visitor(OwnerLabStartRequest { consent });
         let bundle = match started {
             Ok(bundle) => bundle,
@@ -60,11 +70,23 @@ impl Rt1VisitorConversation {
                 return Err(error.code().to_owned());
             }
         };
+        // WebRTC needs Answer/ICE provider operations. This wrapper does not
+        // yet expose an epoch-fenced signaling path, so never return an offer
+        // that a caller cannot safely complete.
+        if matches!(&bundle.transport, LabRealtimeTransport::WebRtc { .. }) {
+            let _ = manager.close(&id);
+            let _ = engine.revoke();
+            return Err("RT1 WebRTC signaling not yet supported".into());
+        }
         // A pause can happen during the remote avatar creation. The callback
         // sets cancelled even before the real runtime handle is available.
         let revoker = engine.session_revocation_handle();
         *interrupt.session.lock() = revoker;
-        if interrupt.cancelled.load(Ordering::Acquire) || manager.authorize(&id).is_err() {
+        if interrupt.cancelled.load(Ordering::Acquire)
+            || manager
+                .authorize_persona(&id, &persona_id, persona_version)
+                .is_err()
+        {
             interrupt.stop();
             let _ = engine.revoke();
             let _ = manager.close(&id);
@@ -104,11 +126,15 @@ impl Rt1VisitorConversation {
     }
 
     /// # Errors
-    /// Rejects a missing or already-closed visitor registration.
+    /// Always attempts provider cleanup, even if owner pause already removed
+    /// the registration. A failed remote close remains retryable on a later call.
     pub fn close(&self) -> Result<(), String> {
-        self.manager.close(&self.id)?;
-        let _ = self.engine.lock().revoke();
-        Ok(())
+        let _ = self.manager.close(&self.id);
+        self.interrupt.stop();
+        self.engine
+            .lock()
+            .revoke()
+            .map_err(|error| error.code().to_owned())
     }
 }
 
