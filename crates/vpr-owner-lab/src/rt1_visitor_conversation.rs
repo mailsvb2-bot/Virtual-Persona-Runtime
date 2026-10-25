@@ -8,7 +8,7 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
+    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
 };
 
 #[derive(Default)]
@@ -124,6 +124,31 @@ impl Rt1VisitorConversation {
         Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
     }
 
+    /// RT1 voice provider egress is deliberately denied until the canonical
+    /// workspace owns a revocation-serialized final media delivery/STOP gate.
+    /// A pre/post authorization check around external provider I/O is unsafe:
+    /// owner pause may commit between the check and provider transmission.
+    ///
+    /// # Errors
+    /// Always denies unsupported visitor microphone provider egress.
+    pub fn voice_turn(&self, _pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
+        unsupported_visitor_voice_egress()
+    }
+
+    /// Visitor streaming is fail-closed: never call an arbitrary egress
+    /// callback between separate authorization checks. Buffered voice and
+    /// streaming voice share the same unsupported provider-egress boundary.
+    ///
+    /// # Errors
+    /// Always denies unsupported visitor media delivery.
+    pub fn voice_turn_streaming(
+        &self,
+        _pcm_s16le_mono_16khz: Vec<u8>,
+        _emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
+    ) -> Result<LabVoiceResult, String> {
+        Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
+    }
+
     /// # Errors
     /// Always attempts provider cleanup, even if owner pause already removed
     /// the registration. A failed remote close remains retryable on a later call.
@@ -142,5 +167,32 @@ impl Drop for Rt1VisitorConversation {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
         let _ = self.engine.lock().revoke();
+    }
+}
+
+fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
+    Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
+}
+
+#[cfg(test)]
+mod rt1_voice_egress_tests {
+    use super::*;
+
+    #[test]
+    fn voice_provider_egress_is_denied_without_media_fence() {
+        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
+        assert_eq!(
+            result.unwrap_err(),
+            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
+        );
+    }
+
+    #[test]
+    fn voice_streaming_rejects_before_any_delivery() {
+        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
+        assert_eq!(
+            result.unwrap_err(),
+            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
+        );
     }
 }
