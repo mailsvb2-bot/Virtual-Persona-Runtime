@@ -8,7 +8,8 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
+    LabError, LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult,
+    LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
 };
 
 #[derive(Default)]
@@ -123,6 +124,76 @@ impl Rt1VisitorConversation {
                 }
             });
             *self.interrupt.turn.lock() = None;
+            result.map_err(|error| error.code().to_owned())
+        })
+    }
+
+    /// Run a real microphone turn through STT, LLM, and the existing avatar
+    /// provider using this visitor's private engine and interrupt authority.
+    ///
+    /// # Errors
+    /// Fails closed on stale publication, malformed audio, or provider failure.
+    pub fn voice_turn(&self, pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
+        self.manager.compute_buffered(&self.id, || {
+            if self.interrupt.cancelled.load(Ordering::Acquire) {
+                return Err("visitor session cancelled".into());
+            }
+            let mut engine = self.engine.lock();
+            self.manager.authorize(&self.id)?;
+            let result = engine.voice_turn(pcm_s16le_mono_16khz, |turn| {
+                *self.interrupt.turn.lock() = Some(turn.clone());
+                if self.interrupt.cancelled.load(Ordering::Acquire) {
+                    let _ = turn.interrupt();
+                }
+            });
+            *self.interrupt.turn.lock() = None;
+            self.manager.authorize(&self.id)?;
+            result.map_err(|error| error.code().to_owned())
+        })
+    }
+
+    /// Run the existing streaming voice pipeline while fencing every
+    /// client-visible phrase event against the active visitor publication.
+    /// This method does not by itself implement a public audio/video transport.
+    ///
+    /// # Errors
+    /// Denies revoked authority, invalid microphone audio or failed provider output.
+    pub fn voice_turn_streaming(
+        &self,
+        pcm_s16le_mono_16khz: Vec<u8>,
+        mut emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
+    ) -> Result<LabVoiceResult, String> {
+        self.manager.compute_buffered(&self.id, || {
+            if self.interrupt.cancelled.load(Ordering::Acquire) {
+                return Err("visitor session cancelled".into());
+            }
+            let mut engine = self.engine.lock();
+            self.manager.authorize(&self.id)?;
+            let result = engine.voice_turn_streaming(
+                pcm_s16le_mono_16khz,
+                |turn| {
+                    *self.interrupt.turn.lock() = Some(turn.clone());
+                    if self.interrupt.cancelled.load(Ordering::Acquire) {
+                        let _ = turn.interrupt();
+                    }
+                },
+                |segment| {
+                    if self.interrupt.cancelled.load(Ordering::Acquire)
+                        || self.manager.authorize(&self.id).is_err()
+                    {
+                        return Err(LabError::InvalidState);
+                    }
+                    emit_segment(segment).map_err(|_| LabError::InvalidState)?;
+                    if self.interrupt.cancelled.load(Ordering::Acquire)
+                        || self.manager.authorize(&self.id).is_err()
+                    {
+                        return Err(LabError::InvalidState);
+                    }
+                    Ok(())
+                },
+            );
+            *self.interrupt.turn.lock() = None;
+            self.manager.authorize(&self.id)?;
             result.map_err(|error| error.code().to_owned())
         })
     }
