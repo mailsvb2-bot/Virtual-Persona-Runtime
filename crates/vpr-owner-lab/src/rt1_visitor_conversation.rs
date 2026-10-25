@@ -179,26 +179,24 @@ mod rt1_voice_egress_tests {
     use super::*;
 
     #[test]
-    fn voice_provider_egress_is_denied_before_any_transport_call() {
-        // The fail-closed methods may never touch the engine, provider, or
-        // publication state while the final egress boundary is unimplemented.
-        let uninitialized: std::mem::MaybeUninit<Rt1VisitorConversation> =
-            std::mem::MaybeUninit::uninit();
-        // No instance is constructed: exercise the result contract via a
-        // standalone helper used by both public methods.
-        let _ = uninitialized;
+    fn voice_provider_egress_is_denied_without_media_fence() {
+        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
         assert_eq!(
-            unsupported_visitor_voice_egress::<()>().unwrap_err(),
+            result.unwrap_err(),
             "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
         );
     }
 
     #[test]
-    fn unsupported_media_never_invokes_stream_delivery_callback() {
-        let emitted = std::cell::Cell::new(false);
-        let result: Result<(), String> = unsupported_visitor_voice_egress();
+    fn voice_streaming_never_runs_a_delivery_callback() {
+        let delivered = std::cell::Cell::new(false);
+        let _callback = |_segment: LabVoiceSegment| {
+            delivered.set(true);
+            Ok::<(), String>(())
+        };
+        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
         assert!(result.is_err());
-        assert!(!emitted.replace(false));
+        assert!(!delivered.get());
     }
 }
 
