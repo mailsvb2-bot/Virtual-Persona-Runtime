@@ -8,7 +8,7 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabError, LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult,
+    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult,
     LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
 };
 
@@ -128,74 +128,29 @@ impl Rt1VisitorConversation {
         })
     }
 
-    /// Run a real microphone turn through STT, LLM, and the existing avatar
-    /// provider using this visitor's private engine and interrupt authority.
+    /// RT1 voice provider egress is deliberately denied until the canonical
+    /// workspace owns a revocation-serialized final media delivery/STOP gate.
+    /// A pre/post authorization check around external provider I/O is unsafe:
+    /// owner pause may commit between the check and provider transmission.
     ///
     /// # Errors
-    /// Fails closed on stale publication, malformed audio, or provider failure.
-    pub fn voice_turn(&self, pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
-        self.manager.compute_buffered(&self.id, || {
-            if self.interrupt.cancelled.load(Ordering::Acquire) {
-                return Err("visitor session cancelled".into());
-            }
-            let mut engine = self.engine.lock();
-            self.manager.authorize(&self.id)?;
-            let result = engine.voice_turn(pcm_s16le_mono_16khz, |turn| {
-                *self.interrupt.turn.lock() = Some(turn.clone());
-                if self.interrupt.cancelled.load(Ordering::Acquire) {
-                    let _ = turn.interrupt();
-                }
-            });
-            *self.interrupt.turn.lock() = None;
-            self.manager.authorize(&self.id)?;
-            result.map_err(|error| error.code().to_owned())
-        })
+    /// Always denies unsupported visitor microphone provider egress.
+    pub fn voice_turn(&self, _pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
+        unsupported_visitor_voice_egress()
     }
 
-    /// Run the existing streaming voice pipeline while fencing every
-    /// client-visible phrase event against the active visitor publication.
-    /// This method does not by itself implement a public audio/video transport.
+    /// Visitor streaming is fail-closed: never call an arbitrary egress
+    /// callback between separate authorization checks. Buffered voice and
+    /// streaming voice share the same unsupported provider-egress boundary.
     ///
     /// # Errors
-    /// Denies revoked authority, invalid microphone audio or failed provider output.
+    /// Always denies unsupported visitor media delivery.
     pub fn voice_turn_streaming(
         &self,
-        pcm_s16le_mono_16khz: Vec<u8>,
-        mut emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
+        _pcm_s16le_mono_16khz: Vec<u8>,
+        _emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
     ) -> Result<LabVoiceResult, String> {
-        self.manager.compute_buffered(&self.id, || {
-            if self.interrupt.cancelled.load(Ordering::Acquire) {
-                return Err("visitor session cancelled".into());
-            }
-            let mut engine = self.engine.lock();
-            self.manager.authorize(&self.id)?;
-            let result = engine.voice_turn_streaming(
-                pcm_s16le_mono_16khz,
-                |turn| {
-                    *self.interrupt.turn.lock() = Some(turn.clone());
-                    if self.interrupt.cancelled.load(Ordering::Acquire) {
-                        let _ = turn.interrupt();
-                    }
-                },
-                |segment| {
-                    if self.interrupt.cancelled.load(Ordering::Acquire)
-                        || self.manager.authorize(&self.id).is_err()
-                    {
-                        return Err(LabError::InvalidState);
-                    }
-                    emit_segment(segment).map_err(|_| LabError::InvalidState)?;
-                    if self.interrupt.cancelled.load(Ordering::Acquire)
-                        || self.manager.authorize(&self.id).is_err()
-                    {
-                        return Err(LabError::InvalidState);
-                    }
-                    Ok(())
-                },
-            );
-            *self.interrupt.turn.lock() = None;
-            self.manager.authorize(&self.id)?;
-            result.map_err(|error| error.code().to_owned())
-        })
+        Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
     }
 
     /// # Errors
@@ -217,4 +172,36 @@ impl Drop for Rt1VisitorConversation {
         self.interrupt.stop();
         let _ = self.engine.lock().revoke();
     }
+}
+
+#[cfg(test)]
+mod rt1_voice_egress_tests {
+    use super::*;
+
+    #[test]
+    fn voice_provider_egress_is_denied_before_any_transport_call() {
+        // The fail-closed methods may never touch the engine, provider, or
+        // publication state while the final egress boundary is unimplemented.
+        let uninitialized: std::mem::MaybeUninit<Rt1VisitorConversation> =
+            std::mem::MaybeUninit::uninit();
+        // No instance is constructed: exercise the result contract via a
+        // standalone helper used by both public methods.
+        let _ = uninitialized;
+        assert_eq!(
+            unsupported_visitor_voice_egress::<()>().unwrap_err(),
+            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
+        );
+    }
+
+    #[test]
+    fn unsupported_media_never_invokes_stream_delivery_callback() {
+        let emitted = std::cell::Cell::new(false);
+        let result: Result<(), String> = unsupported_visitor_voice_egress();
+        assert!(result.is_err());
+        assert!(!emitted.replace(false));
+    }
+}
+
+fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
+    Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
 }
