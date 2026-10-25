@@ -244,3 +244,84 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
     let _ = Rt1WorkspaceService::new();
     assert!(required_persona().is_err());
 }
+
+#[test]
+fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
+    use std::time::Duration;
+
+    let transaction = Arc::new(Mutex::new(()));
+    let revoked = Arc::new(AtomicBool::new(false));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let dispatch_lock = Arc::clone(&transaction);
+    let dispatch_revoked = Arc::clone(&revoked);
+    let sending = std::thread::spawn(move || {
+        guarded_dispatch_under_transaction(
+            &dispatch_lock,
+            || {
+                if dispatch_revoked.load(Ordering::SeqCst) {
+                    Err("revoked".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok("sent")
+            },
+        )
+    });
+    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    // A concurrent owner pause cannot commit until the current provider
+    // dispatch leaves the same canonical transaction.
+    assert!(transaction.try_lock().is_none());
+    release_tx.send(()).unwrap();
+    assert_eq!(sending.join().unwrap().unwrap(), "sent");
+    let _owner_transaction = transaction.lock();
+    revoked.store(true, Ordering::SeqCst);
+}
+
+#[test]
+fn provider_dispatch_after_committed_revoke_never_sends() {
+    use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+    let transaction = Arc::new(Mutex::new(()));
+    let revoked = Arc::new(AtomicBool::new(false));
+    let attempted_send = Arc::new(AtomicBool::new(false));
+    let owner_lock = transaction.lock();
+    let worker_lock = Arc::clone(&transaction);
+    let worker_revoked = Arc::clone(&revoked);
+    let worker_attempted = Arc::clone(&attempted_send);
+    let worker = std::thread::spawn(move || {
+        guarded_dispatch_under_transaction(
+            &worker_lock,
+            || {
+                if worker_revoked.load(Ordering::SeqCst) {
+                    Err("revoked".into())
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                worker_attempted.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+    });
+    revoked.store(true, Ordering::SeqCst);
+    drop(owner_lock);
+    assert_eq!(worker.join().unwrap().unwrap_err(), "revoked");
+    assert!(!attempted_send.load(Ordering::SeqCst));
+}
+
+#[test]
+fn failed_provider_dispatch_never_turns_into_success() {
+    let transaction = Mutex::new(());
+    let result: Result<(), String> =
+        guarded_dispatch_under_transaction(&transaction, || Ok(()), || {
+            Err("provider rejected".into())
+        });
+    assert_eq!(result.unwrap_err(), "provider rejected");
+}
