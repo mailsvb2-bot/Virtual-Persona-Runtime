@@ -8,7 +8,8 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment,
+    OwnerLabEngine, OwnerLabStartRequest,
 };
 
 #[derive(Default)]
