@@ -20,9 +20,17 @@ class Rt1StartupFenceTest(unittest.TestCase):
         fenced = workspace.split("fn guarded_provider_dispatch<T>", 1)[1].split(
             "    /// Serialize one short, bounded local enqueue", 1
         )[0]
-        self.assertIn("self.transaction.lock()", fenced)
+        self.assertIn("guarded_dispatch_under_transaction(", fenced)
+        self.assertIn("self.transaction,", fenced)
         self.assertIn("workspace.authorize_visitor(", fenced)
-        self.assertLess(fenced.index("workspace.authorize_visitor("), fenced.index("dispatch()"))
+        helper = workspace.split("fn guarded_dispatch_under_transaction<T>", 1)[1].split(
+            "/// Validate the current publication before inserting", 1
+        )[0]
+        self.assertIn("transaction.lock()", helper)
+        self.assertIn("authorize()?", helper)
+        self.assertIn("dispatch()", helper)
+        self.assertLess(helper.index("transaction.lock()"), helper.index("authorize()?"))
+        self.assertLess(helper.index("authorize()?"), helper.index("dispatch()"))
         self.assertIn("session.authority.provider_dispatch(", manager)
 
 
