@@ -131,6 +131,20 @@ impl VisitorSessionManager {
         self.lookup(session_id)?.authorize()
     }
 
+    /// # Errors
+    /// Denies an engine whose reviewed identity or version differs from the
+    /// server-admitted publication, including after correction or republish.
+    pub(crate) fn authorize_persona(
+        &self,
+        session_id: &str,
+        persona_id: &str,
+        version: u64,
+    ) -> Result<(), String> {
+        let session = self.lookup(session_id)?;
+        session.authorize()?;
+        session.authority.authorize_persona(persona_id, version)
+    }
+
     /// Immediately invalidate a local session and interrupt its transport.
     ///
     /// # Errors
