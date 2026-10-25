@@ -1,4 +1,4 @@
-//! Actual OwnerLabEngine bridge for a single RT1 visitor, without public HTTP.
+//! Actual `OwnerLabEngine` bridge for a single RT1 visitor, without public HTTP.
 //! Caller MUST supply a distinct engine per visitor, never the owner's engine.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,7 +29,7 @@ impl LiveVisitorInterrupt {
 }
 
 /// One dedicated existing conversation engine per authorized visitor.
-/// This does not provide network exposure, audio chunks or LiveKit sender STOP.
+/// This does not provide network exposure, audio chunks or `LiveKit` sender STOP.
 pub struct Rt1VisitorConversation {
     manager: Arc<VisitorSessionManager>,
     id: String,
