@@ -346,6 +346,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn visitor_permit_binds_exact_reviewed_persona_revision() {
+        let mut publication = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        let permit = publication.visitor_lease(true).unwrap();
+        assert!(permit.matches_persona("persona", 1));
+        assert!(!permit.matches_persona("persona", 2));
+        assert!(!permit.matches_persona("different-persona", 1));
+    }
+
+    #[test]
     fn owner_to_visitor_to_pause_to_republish_rejects_stale_lease() {
         let mut p = CanonicalPublication::new("owner-a", "persona-a", "publication-a", 3).unwrap();
         assert_eq!(p.status(), PublicationStatus::Private);
