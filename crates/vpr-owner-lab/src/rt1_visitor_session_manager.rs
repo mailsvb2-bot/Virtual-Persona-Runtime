@@ -315,6 +315,28 @@ mod tests {
     }
 
     #[test]
+    fn media_queue_never_receives_fragment_without_canonical_publication() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(manager.enqueue_media_fragment("unknown", &sender, vec![1_u8]).is_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn revoked_registration_never_enqueues_media() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(true),
+            stop: Arc::new(|| {}),
+        });
+        manager.sessions.lock().insert("revoked".into(), session);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(manager.enqueue_media_fragment("revoked", &sender, vec![1_u8]).is_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn no_visitor_session_without_canonical_publication() {
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         assert!(manager.open("0".repeat(64), || {}).is_err());
