@@ -255,14 +255,13 @@ fn provider_dispatch_never_calls_remote_provider_without_canonical_store() {
     publication.publish("owner", 1, true).unwrap();
     let permit = publication.visitor_lease(true).unwrap();
     let called = Cell::new(false);
-    let result = Rt1WorkspaceService::new().guarded_provider_dispatch(
-        "visitor",
-        &permit,
-        || {
-            called.set(true);
-            Ok(())
-        },
-    );
+    let result = Rt1WorkspaceService::new().guarded_provider_dispatch("visitor", &permit, || {
+        called.set(true);
+        Ok(())
+    });
     assert!(result.is_err());
-    assert!(!called.get(), "provider must not run without canonical authority");
+    assert!(
+        !called.get(),
+        "provider must not run without canonical authority"
+    );
 }
