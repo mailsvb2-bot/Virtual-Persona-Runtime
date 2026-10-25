@@ -1,5 +1,6 @@
 """Guard against reintroducing unfenced visitor provider startup (#319)."""
 from pathlib import Path
+import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -12,7 +13,10 @@ class Rt1StartupFenceTest(unittest.TestCase):
         workspace = (CRATE / "rt1_workspace_service.rs").read_text(encoding="utf8")
         manager = (CRATE / "rt1_visitor_session_manager.rs").read_text(encoding="utf8")
         self.assertIn("manager.provider_dispatch(&id, || {", conversation)
-        self.assertIn(".start_visitor(OwnerLabStartRequest { consent })", conversation)
+        self.assertRegex(
+            conversation,
+            r"\bengine\s*\.\s*start_visitor\s*\(\s*OwnerLabStartRequest\s*\{\s*consent\s*\}\s*\)",
+        )
         self.assertIn("fn guarded_provider_dispatch<T>", workspace)
         fenced = workspace.split("fn guarded_provider_dispatch<T>", 1)[1].split(
             "    /// Serialize one short, bounded local enqueue", 1
