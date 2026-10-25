@@ -48,6 +48,15 @@ impl Rt1VisitorSession {
             .authorize_visitor(&self.bearer_token, &self.permit, server_now_millis()?)
     }
 
+    /// # Errors
+    /// Rejects an engine prepared for a different reviewed Persona revision.
+    pub(crate) fn authorize_persona(&self, persona_id: &str, version: u64) -> Result<(), String> {
+        if !self.permit.matches_persona(persona_id, version) {
+            return Err("visitor engine Persona revision mismatch".into());
+        }
+        self.authorize()
+    }
+
     /// Pure computation, not permission for external output or media.
     /// # Errors
     /// Denies failed computation or authority changed during processing.
