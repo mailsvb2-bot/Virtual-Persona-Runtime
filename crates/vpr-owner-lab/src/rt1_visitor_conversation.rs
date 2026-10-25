@@ -132,7 +132,8 @@ impl Rt1VisitorConversation {
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("visitor session cancelled".into());
         }
-        self.manager.enqueue_media_fragment(&self.id, sender, fragment)
+        self.manager
+            .enqueue_media_fragment(&self.id, sender, fragment)
     }
 
     /// RT1 voice provider egress is deliberately denied until the canonical
