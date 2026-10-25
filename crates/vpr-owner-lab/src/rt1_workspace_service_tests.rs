@@ -248,7 +248,7 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
 #[test]
 fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{mpsc, Arc};
+    use std::sync::{Arc, mpsc};
     use std::time::Duration;
 
     let transaction = Arc::new(Mutex::new(()));
@@ -286,8 +286,8 @@ fn provider_dispatch_finishes_before_owner_revoke_can_commit() {
 
 #[test]
 fn provider_dispatch_after_committed_revoke_never_sends() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let transaction = Arc::new(Mutex::new(()));
     let revoked = Arc::new(AtomicBool::new(false));
