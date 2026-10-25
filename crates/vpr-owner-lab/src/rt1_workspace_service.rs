@@ -252,17 +252,21 @@ impl Rt1WorkspaceService {
         permit: &VisitorPermit,
         dispatch: impl FnOnce() -> Result<T, String>,
     ) -> Result<T, String> {
-        let _transaction = self.transaction.lock();
-        let record = required_persona()?;
-        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-        workspace.authorize_visitor(
-            bearer_token,
-            permit,
-            &record.snapshot.persona_id,
-            record.snapshot.persona_version,
-            server_now_millis()?,
-        )?;
-        dispatch()
+        guarded_dispatch_under_transaction(
+            self.transaction,
+            || {
+                let record = required_persona()?;
+                let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+                workspace.authorize_visitor(
+                    bearer_token,
+                    permit,
+                    &record.snapshot.persona_id,
+                    record.snapshot.persona_version,
+                    server_now_millis()?,
+                )
+            },
+            dispatch,
+        )
     }
 
     /// Serialize one short, bounded local enqueue with owner pause/unpublish.
@@ -339,6 +343,19 @@ impl Rt1WorkspaceService {
         operation(workspace, owner_token)?;
         commit_current_record(&record)
     }
+}
+
+/// One final in-process dispatch boundary. Never run provider I/O after
+/// a committed owner revocation; owner changes serialize on this same lock.
+/// The external call must be bounded, otherwise revocation liveness suffers.
+fn guarded_dispatch_under_transaction<T>(
+    transaction: &Mutex<()>,
+    authorize: impl FnOnce() -> Result<(), String>,
+    dispatch: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = transaction.lock();
+    authorize()?;
+    dispatch()
 }
 
 /// Validate the current publication before inserting into a bounded local
