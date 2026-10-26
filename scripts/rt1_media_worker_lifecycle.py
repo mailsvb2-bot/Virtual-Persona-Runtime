@@ -130,13 +130,17 @@ class MediaLifecycle:
                 if row is None:
                     self._write(operation_id, generation, "stopped", None)
                     self._db.execute("COMMIT")
-                    return StopReceipt(operation_id, "", generation, True, True)
+                    # A tombstone prevents future allocation but is not an
+                    # actual remote audio/video STOP receipt.
+                    return None
                 if row[0] != generation:
                     raise KeyError("unknown or stale operation")
                 _, phase, session_id = row
                 if phase == "stopped":
                     self._db.execute("COMMIT")
-                    return StopReceipt(operation_id, session_id or "", generation, True, True)
+                    if session_id is None:
+                        return None
+                    return StopReceipt(operation_id, session_id, generation, True, True)
                 if phase == "creating":
                     self._write(operation_id, generation, "stopping", None)
                     # CREATE completion owns compensating STOP. An unresolved
