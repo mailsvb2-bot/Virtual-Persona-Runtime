@@ -168,6 +168,7 @@ async def run():
     tasks = {}
     generation = 0
     active_pcm = None
+    close_identifier = None
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -470,7 +471,10 @@ async def run():
                     for task in tuple(tasks.values()):
                         task.cancel()
                     await room.local_participant.send_text("{}", topic="did.interrupt")
-                    emit(identifier, True)
+                    # Do not acknowledge close before cancelled tasks and the
+                    # transport have actually finished closing. A sent STOP
+                    # control packet is not a completed local teardown.
+                    close_identifier = identifier
                     break
                 else:
                     emit(identifier, False)
@@ -488,7 +492,16 @@ async def run():
             task.cancel()
         if tasks:
             await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
-        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
+        try:
+            await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
+        except Exception:
+            if close_identifier is not None:
+                emit(close_identifier, False)
+            raise
+        if close_identifier is not None:
+            # Local connection teardown only. Remote agent playback has NOT
+            # been independently attested, and must not be claimed as such.
+            emit(close_identifier, True)
 
 
 if __name__ == "__main__":
