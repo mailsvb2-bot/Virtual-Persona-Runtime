@@ -485,13 +485,22 @@ async def run():
                 except Exception:
                     pass
     finally:
+        pending = set(tasks.values())
         if active_pcm is not None:
-            active_pcm["task"].cancel()
-            await asyncio.gather(active_pcm["task"], return_exceptions=True)
-        for task in tuple(tasks.values()):
+            pending.add(active_pcm["task"])
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
+        cleanup_confirmed = True
+        if pending:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                # Some third-party coroutines may suppress cancellation.
+                # Never block owner STOP indefinitely or claim full cleanup.
+                cleanup_confirmed = False
         try:
             await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         except Exception:
@@ -499,9 +508,8 @@ async def run():
                 emit(close_identifier, False)
             raise
         if close_identifier is not None:
-            # Local connection teardown only. Remote agent playback has NOT
-            # been independently attested, and must not be claimed as such.
-            emit(close_identifier, True)
+            # Local teardown receipt only; remote playback remains unproven.
+            emit(close_identifier, cleanup_confirmed)
 
 
 if __name__ == "__main__":
