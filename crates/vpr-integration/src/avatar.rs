@@ -379,6 +379,40 @@ pub trait RealtimeAvatarPort: Send + Sync {
         })
     }
 
+    /// RT1 opt-in: deadline-bound, cancellable creation. The adapter MUST
+    /// guarantee no orphaned remote publisher after expiry/revocation.
+    /// Unlike the ordinary RT0 create method, failing safely is mandatory.
+    ///
+    /// # Errors
+    /// Denies providers lacking enforceable cancellation and cleanup.
+    fn create_session_bounded(
+        &self,
+        _cancellation: &dyn CancellationProbe,
+        _deadline: std::time::Instant,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
+    /// RT1 opt-in: confirmed STOP of both remote audio and video senders.
+    /// A queued STOP, successful DELETE request, or local socket close alone
+    /// is NOT evidence that remote media publication has ceased.
+    ///
+    /// # Errors
+    /// Denies adapters without a verified remote STOP acknowledgement.
+    fn stop_session_confirmed(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _deadline: std::time::Instant,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
     /// Closes an existing provider realtime-avatar session. Cleanup is intentionally independent
     /// of turn cancellation so revoked/cancelled runtime work cannot strand a remote session.
     ///
