@@ -8,7 +8,7 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
+    LabSignalBundle, LabTextResult, OwnerLabEngine,
 };
 
 #[derive(Default)]
@@ -74,16 +74,6 @@ impl Rt1VisitorConversation {
         let _ = engine.revoke();
         let _ = manager.close(&id);
         return Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into());
-        #[allow(unreachable_code)]
-        Ok((
-            Self {
-                manager,
-                id,
-                engine: Mutex::new(engine),
-                interrupt,
-            },
-            bundle,
-        ))
     }
 
     /// # Errors
