@@ -210,6 +210,29 @@ fn remote_stop_rejects_plain_success_and_partial_stop() {
 }
 
 #[test]
+fn remote_stop_rejects_false_acknowledgements_for_both_media() {
+    // An acknowledgement must confirm BOTH senders. Null/false/string
+    // values or a receipt for a different session cannot authorize release.
+    for response in [
+        r#"{"session_id":"local-1","audio_stopped":false,"video_stopped":true}"#,
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"local-1","audio_stopped":null,"video_stopped":true}"#,
+        r#"{"session_id":"local-1","audio_stopped":"true","video_stopped":true}"#,
+        r#"{"session_id":"other","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", response.to_owned())]);
+        let error = provider(endpoint)
+            .stop_session_confirmed(
+                &test_session(),
+                std::time::Instant::now() + Duration::from_secs(2),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(captured.recv().unwrap().starts_with("DELETE "));
+    }
+}
+
+#[test]
 fn expired_remote_stop_deadline_never_calls_provider() {
     let avatar = provider("http://127.0.0.1:1".into());
     let err = avatar
