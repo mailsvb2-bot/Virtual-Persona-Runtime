@@ -208,7 +208,7 @@ class EchoWorkerTests(unittest.TestCase):
         # solely because its disconnect completed: cancelled writers must
         # also have exited. The CI architecture check guards this contract.
         source = WORKER.read_text(encoding="utf-8")
-        shutdown = source.split("    finally:\\n        pending = set(tasks.values())", 1)[-1]
+        shutdown = source[source.index("        pending = set(tasks.values())"):]
         self.assertIn("await asyncio.wait(", shutdown)
         self.assertIn("pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS", shutdown)
         self.assertIn("if unfinished:", shutdown)
