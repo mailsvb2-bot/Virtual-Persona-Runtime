@@ -55,6 +55,7 @@ class FakeRoom:
     close_latency = 0
     write_latency = 0
     stream_open_fails = False
+    disconnect_latency = 0
 
     def __init__(self):
         self.trace = {
@@ -79,6 +80,8 @@ class FakeRoom:
         self.callbacks["track_subscribed"](None, None, None)
 
     async def disconnect(self):
+        if self.__class__.disconnect_latency:
+            await asyncio.sleep(self.__class__.disconnect_latency)
         self.trace["disconnected"] += 1
 
 
@@ -101,7 +104,8 @@ class DelayedInput:
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
                close_latency=0, tts_chunks=None, write_latency=0,
-               stream_open_fails=False, media_close_timeout=None):
+               stream_open_fails=False, media_close_timeout=None,
+               disconnect_latency=0, suppress_disconnect_timeout=False):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -139,6 +143,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     FakeRoom.close_latency = close_latency
     FakeRoom.write_latency = write_latency
     FakeRoom.stream_open_fails = stream_open_fails
+    FakeRoom.disconnect_latency = disconnect_latency
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
@@ -146,7 +151,11 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
             delay_after_speak, delay_before_close,
         )
         sys.stdout = response
-        asyncio.run(module.run())
+        try:
+            asyncio.run(module.run())
+        except asyncio.TimeoutError:
+            if not suppress_disconnect_timeout:
+                raise
     finally:
         sys.stdin, sys.stdout = old_input, old_output
         if previous is None:
@@ -193,6 +202,37 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertLess(elapsed, 0.45, "provider close blocked worker shutdown")
         self.assertEqual(trace["disconnected"], 1)
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
+
+    def test_close_receipt_waits_for_livekit_disconnect(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 90, "command": "close"},
+        ]
+        start = time.monotonic()
+        trace, receipts = run_worker(
+            False, records=records, disconnect_latency=0.07,
+            media_close_timeout=0.5,
+        )
+        self.assertGreaterEqual(time.monotonic() - start, 0.06)
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertIn({"id": 90, "ok": True}, receipts)
+
+    def test_stalled_disconnect_cannot_return_successful_stop_receipt(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 91, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            False, records=records, disconnect_latency=0.3,
+            media_close_timeout=0.02, suppress_disconnect_timeout=True,
+        )
+        self.assertEqual(trace["disconnected"], 0)
+        self.assertIn({"id": 91, "ok": False}, receipts)
+        self.assertNotIn({"id": 91, "ok": True}, receipts)
 
     def test_canonical_pcm_is_published_as_private_pcm16_without_worker_tts(self):
         pcm = bytes(320)
