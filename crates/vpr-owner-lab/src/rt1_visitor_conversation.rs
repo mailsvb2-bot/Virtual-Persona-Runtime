@@ -59,7 +59,13 @@ impl Rt1VisitorConversation {
             .reviewed_persona_binding()
             .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
         let persona_id = persona_id.to_owned();
-        let id = manager.open(visitor_token, || {})?;
+        // Bind the revocation callback at admission time, before any
+        // provider work could start. Never register an empty STOP callback:
+        // owner pause/unpublish must reach this visitor's cancellation handle
+        // without waiting on the conversation engine mutex.
+        let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let stop_handle = Arc::clone(&interrupt);
+        let id = manager.open(visitor_token, move || stop_handle.stop())?;
         let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
         let _ = manager.close(&id);
         // Consume both owned arguments after closing the transient admission.
