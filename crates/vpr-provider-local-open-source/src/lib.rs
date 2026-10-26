@@ -281,6 +281,12 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
         let receipt: RemoteMediaStopReceipt = decode_json_response(response, None)?;
+        if std::time::Instant::now() > deadline {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
         if receipt.session_id == id && receipt.audio_stopped && receipt.video_stopped {
             Ok(())
         } else {
