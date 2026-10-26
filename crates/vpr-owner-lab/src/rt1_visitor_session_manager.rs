@@ -122,25 +122,6 @@ impl VisitorSessionManager {
         finish_buffered(result, || session.authorize())
     }
 
-    /// Serialize a single bounded provider dispatch with owner pause/unpublish.
-    /// Does not authorize long-running streaming or asynchronous sender egress.
-    /// # Errors
-    /// Denies revoked or unknown visitor sessions and stale publication.
-    pub(crate) fn provider_dispatch<T>(
-        &self,
-        session_id: &str,
-        dispatch: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        let session = self.lookup(session_id)?;
-        session.authorize()?;
-        session.authority.provider_dispatch(|| {
-            if session.revoked.load(Ordering::Acquire) {
-                return Err("visitor session revoked".into());
-            }
-            dispatch()
-        })
-    }
-
     /// Explicit final authorization gate before one protected operation.
     /// The caller must bind provider cancellation to the stop callback.
     ///
