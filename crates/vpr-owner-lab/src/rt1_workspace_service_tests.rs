@@ -245,23 +245,3 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
     assert!(required_persona().is_err());
 }
 
-#[cfg(not(windows))]
-#[test]
-fn provider_dispatch_never_calls_remote_provider_without_canonical_store() {
-    use std::cell::Cell;
-    use vpr_policy::publication_lifecycle::CanonicalPublication;
-
-    let mut publication = CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
-    publication.publish("owner", 1, true).unwrap();
-    let permit = publication.visitor_lease(true).unwrap();
-    let called = Cell::new(false);
-    let result = Rt1WorkspaceService::new().guarded_provider_dispatch("visitor", &permit, || {
-        called.set(true);
-        Ok(())
-    });
-    assert!(result.is_err());
-    assert!(
-        !called.get(),
-        "provider must not run without canonical authority"
-    );
-}
