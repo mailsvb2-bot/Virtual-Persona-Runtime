@@ -104,19 +104,41 @@ class MediaLifecycle:
                 raise RuntimeError("backend supplied an empty session identifier")
         except BaseException:
             with self._lock:
-                row = self._get(operation_id)
-                # Failed creation may have allocated remotely. Never retry CREATE.
-                if row and row[1] == "creating":
-                    self._write(operation_id, generation, "uncertain", None)
+                # A different worker may CANCEL between a read and a write.
+                # Never overwrite its durable tombstone with an old CREATE result.
+                self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    row = self._get(operation_id)
+                    # A failed CREATE may still have allocated remotely. Do not
+                    # retry it or discard an already committed cancellation.
+                    if row and row[0] == generation and row[1] == "creating":
+                        self._write(operation_id, generation, "uncertain", None)
+                    self._db.execute("COMMIT")
+                except BaseException:
+                    if self._db.in_transaction:
+                        self._db.execute("ROLLBACK")
+                    raise
             raise
         with self._lock:
-            row = self._get(operation_id)
-            if row and row[1] == "creating":
-                self._write(operation_id, generation, "active", session_id)
-                return session_id
-            # Cancellation won while backend was starting; preserve the session
-            # address for compensating STOP, never admit it as active.
-            self._write(operation_id, generation, "stopping", session_id)
+            # CREATE completion and CANCEL must have one SQLite linearization
+            # point across *processes*. The Python RLock alone is insufficient:
+            # without this transaction, a stale 'creating' read can overwrite
+            # a committed CANCEL with 'active' and expose revoked media.
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._get(operation_id)
+                if row and row[0] == generation and row[1] == "creating":
+                    self._write(operation_id, generation, "active", session_id)
+                    self._db.execute("COMMIT")
+                    return session_id
+                # Cancellation won while the backend was starting. Persist the
+                # returned session address for compensating STOP, never admit it.
+                self._write(operation_id, generation, "stopping", session_id)
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
         self._finish_stop(operation_id, session_id, generation)
         raise RuntimeError("operation revoked during allocation")
 
