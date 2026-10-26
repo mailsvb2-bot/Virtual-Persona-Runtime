@@ -184,7 +184,14 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
-        let body: CreateSessionResponse = decode_json_response(response, Some(cancellation))?;
+        // After the remote allocation response arrives, retain its session id even
+        // when authority was revoked while the provider was responding.
+        // Cancelling JSON extraction here would orphan an allocated sender:
+        // without the id we cannot issue the required compensating STOP.
+        // The body reader enforces MAX_PROVIDER_JSON_BODY_BYTES and client
+        // transport timeouts; finalize_created_session denies admission and
+        // attempts confirmed teardown if cancellation occurred.
+        let body: CreateSessionResponse = decode_json_response(response, None)?;
         let session: RealtimeAvatarSession = body.try_into()?;
         // Cancellation can race with a successful remote allocation. Never
         // return a newly created session once the caller has revoked access.
