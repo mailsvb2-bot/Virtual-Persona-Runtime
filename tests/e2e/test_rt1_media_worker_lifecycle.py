@@ -119,6 +119,21 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsInstance(failures[0], RuntimeError)
         self.assertEqual(self.sender.created, 1)
 
+    def test_cancel_before_create_persists_tombstone_across_restart(self):
+        other = mod.MediaLifecycle(self.db, self.sender)
+        receipt = other.cancel("op-a", 1)
+        self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
+        self.assertEqual(other.status("op-a")[1], "stopped")
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            self.worker.create("op-a", 1)
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        with self.assertRaisesRegex(RuntimeError, "cancelled"):
+            restarted.create("op-a", 1)
+        self.assertEqual(self.sender.created, 0)
+        with self.assertRaises(KeyError):
+            restarted.cancel("op-a", 2)
+        self.assertEqual(restarted.status("op-a")[0], 1)
+
     def test_cancel_during_remote_create_forces_compensating_stop(self):
         self.sender.wait_on_create = True
         errors = []
