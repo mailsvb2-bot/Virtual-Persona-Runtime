@@ -47,6 +47,8 @@ class FakeLocalParticipant:
         return FakeWriter(self.trace)
 
     async def send_text(self, text, *, topic):
+        if self.trace["stop_latency"]:
+            await asyncio.sleep(self.trace["stop_latency"])
         self.trace["stops"].append((text, topic))
 
 
@@ -56,6 +58,7 @@ class FakeRoom:
     write_latency = 0
     stream_open_fails = False
     disconnect_latency = 0
+    stop_latency = 0
 
     def __init__(self):
         self.trace = {
@@ -63,6 +66,7 @@ class FakeRoom:
             "connected": [], "disconnected": 0,
             "close_latency": self.__class__.close_latency,
             "write_latency": self.__class__.write_latency,
+            "stop_latency": self.__class__.stop_latency,
             "stream_open_fails": self.__class__.stream_open_fails,
         }
         self.local_participant = FakeLocalParticipant(self.trace)
@@ -105,7 +109,8 @@ class DelayedInput:
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
                close_latency=0, tts_chunks=None, write_latency=0,
                stream_open_fails=False, media_close_timeout=None,
-               disconnect_latency=0, suppress_disconnect_timeout=False):
+               disconnect_latency=0, suppress_disconnect_timeout=False,
+               stop_latency=0, media_stop_timeout=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -121,6 +126,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
 
     if media_close_timeout is not None:
         module.MEDIA_CLOSE_TIMEOUT_SECONDS = media_close_timeout
+    if media_stop_timeout is not None:
+        module.MEDIA_STOP_TIMEOUT_SECONDS = media_stop_timeout
     module.synthesize_chunks = synthesize_chunks
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
@@ -144,6 +151,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     FakeRoom.write_latency = write_latency
     FakeRoom.stream_open_fails = stream_open_fails
     FakeRoom.disconnect_latency = disconnect_latency
+    FakeRoom.stop_latency = stop_latency
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
@@ -214,6 +222,23 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertIn("if unfinished:", shutdown)
         self.assertIn("cleanup_confirmed = False", shutdown)
         self.assertIn("emit(close_identifier, cleanup_confirmed)", shutdown)
+
+    def test_stalled_remote_stop_fails_closed_without_success_receipt(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 21, "command": "close"},
+        ]
+        start = time.monotonic()
+        trace, receipts = run_worker(
+            True, records=records, stop_latency=0.4,
+            media_stop_timeout=0.03, media_close_timeout=0.1,
+        )
+        self.assertLess(time.monotonic() - start, 0.35)
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertFalse(any(x["id"] == 21 and x["ok"] for x in receipts))
+        self.assertTrue(any(x["id"] == 21 and not x["ok"] for x in receipts))
 
     def test_close_receipt_waits_for_livekit_disconnect(self):
         records = [
