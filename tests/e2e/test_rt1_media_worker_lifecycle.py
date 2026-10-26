@@ -59,6 +59,66 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.worker.create("op-a", 1)
 
+    def test_atomic_create_admission_across_worker_connections(self):
+        # Two worker processes may share the durable ledger but not a Python lock.
+        # Hold the first admission before INSERT and race a second connection.
+        # Without BEGIN IMMEDIATE, both can observe an empty ledger and allocate.
+        other = mod.MediaLifecycle(self.db, self.sender)
+        first_admitting = threading.Event()
+        release_first = threading.Event()
+        second_entered = threading.Event()
+        second_read = threading.Event()
+        original_write = self.worker._write
+        original_get = other._get
+
+        def paused_write(operation_id, generation, phase, session_id):
+            if phase == "creating":
+                first_admitting.set()
+                if not release_first.wait(3):
+                    raise AssertionError("first admission never released")
+            return original_write(operation_id, generation, phase, session_id)
+
+        def observed_get(operation_id):
+            if operation_id == "op-b":
+                second_read.set()
+            return original_get(operation_id)
+
+        self.worker._write = paused_write
+        other._get = observed_get
+        results = []
+        failures = []
+
+        def attempt(worker, operation_id):
+            try:
+                results.append(worker.create(operation_id, 1))
+            except BaseException as error:
+                failures.append(error)
+
+        first = threading.Thread(target=attempt, args=(self.worker, "op-a"))
+        second = threading.Thread(
+            target=lambda: (second_entered.set(), attempt(other, "op-b"))
+        )
+        try:
+            first.start()
+            self.assertTrue(first_admitting.wait(2))
+            second.start()
+            self.assertTrue(second_entered.wait(1))
+            self.assertFalse(
+                second_read.wait(0.2),
+                "second worker read an uncommitted media admission",
+            )
+        finally:
+            release_first.set()
+            first.join(3)
+            if second.ident is not None:
+                second.join(3)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(results, ["session-a"])
+        self.assertEqual(len(failures), 1)
+        self.assertIsInstance(failures[0], RuntimeError)
+        self.assertEqual(self.sender.created, 1)
+
     def test_cancel_during_remote_create_forces_compensating_stop(self):
         self.sender.wait_on_create = True
         errors = []
