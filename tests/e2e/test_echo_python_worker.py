@@ -101,7 +101,7 @@ class DelayedInput:
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
                close_latency=0, tts_chunks=None, write_latency=0,
-               stream_open_fails=False):
+               stream_open_fails=False, media_close_timeout=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -115,6 +115,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
         else:
             yield b"RIFF" + text.encode("utf-8")
 
+    if media_close_timeout is not None:
+        module.MEDIA_CLOSE_TIMEOUT_SECONDS = media_close_timeout
     module.synthesize_chunks = synthesize_chunks
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
@@ -169,6 +171,27 @@ class EchoWorkerTests(unittest.TestCase):
                             for text, topic in trace["stops"]))
         self.assertEqual(trace["disconnected"], 1)
         self.assertTrue(any(item["id"] == 1 and item["ok"] for item in receipts))
+        self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
+
+    def test_stalled_provider_stream_close_is_bounded_during_stop(self):
+        # A provider can stall writer.aclose; shutdown must not inherit an
+        # unbounded wait from that remote operation.
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 2, "command": "close"},
+        ]
+        started = time.monotonic()
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.12,
+            close_latency=0.5, media_close_timeout=0.03,
+        )
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.45, "provider close blocked worker shutdown")
+        self.assertEqual(trace["disconnected"], 1)
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
     def test_canonical_pcm_is_published_as_private_pcm16_without_worker_tts(self):
