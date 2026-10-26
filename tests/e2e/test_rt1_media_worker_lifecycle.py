@@ -119,6 +119,71 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsInstance(failures[0], RuntimeError)
         self.assertEqual(self.sender.created, 1)
 
+    def test_competing_stop_cannot_overwrite_confirmed_shutdown(self):
+        # Independent worker connections must not issue concurrent remote STOPs.
+        # A late failed attempt must never turn a verified 'stopped' into
+        # 'uncertain', and a repeat CANCEL must not send STOP again.
+        other = mod.MediaLifecycle(self.db, self.sender)
+        entered = threading.Event()
+        release = threading.Event()
+        original_stop = self.sender.stop
+        errors = []
+        receipts = []
+
+        def slow_stop(operation_id, session_id, generation):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test STOP stalled")
+            return original_stop(operation_id, session_id, generation)
+
+        self.sender.stop = slow_stop
+        self.worker.create("op-a", 1)
+
+        def first_cancel():
+            try:
+                receipts.append(self.worker.cancel("op-a", 1))
+            except BaseException as error:
+                errors.append(error)
+
+        first = threading.Thread(target=first_cancel)
+        first.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with self.assertRaisesRegex(RuntimeError, "already in progress"):
+                other.cancel("op-a", 1)
+            self.assertEqual(other.status("op-a")[1], "stopping")
+        finally:
+            release.set()
+            first.join(3)
+        self.assertFalse(first.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(receipts), 1)
+        self.assertTrue(receipts[0].audio_stopped and receipts[0].video_stopped)
+        self.assertEqual(other.status("op-a")[1], "stopped")
+        self.assertEqual(self.sender.stopped, 1)
+        self.assertTrue(other.cancel("op-a", 1).video_stopped)
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_failed_stop_can_be_reconciled_by_restarted_worker(self):
+        self.worker.create("op-a", 1)
+        original_stop = self.sender.stop
+        attempts = []
+
+        def fail_once(operation_id, session_id, generation):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise ConnectionError("STOP receipt lost")
+            return original_stop(operation_id, session_id, generation)
+
+        self.sender.stop = fail_once
+        with self.assertRaises(ConnectionError):
+            self.worker.cancel("op-a", 1)
+        self.assertEqual(self.worker.status("op-a")[1], "uncertain")
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        restarted.reconcile()
+        self.assertEqual(restarted.status("op-a")[1], "stopped")
+        self.assertEqual(len(attempts), 2)
+
     def test_cancel_before_create_persists_tombstone_across_restart(self):
         other = mod.MediaLifecycle(self.db, self.sender)
         self.assertIsNone(other.cancel("op-a", 1))
