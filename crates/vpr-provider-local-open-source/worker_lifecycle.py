@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from threading import Event, Lock
+from time import monotonic
 from typing import Callable, Protocol
 
 
@@ -113,13 +114,19 @@ class MediaLifecycle:
                 return {"session_id": allocation.session_id, "audio_stopped": True, "video_stopped": True}
             operation.stopping = True
         try:
-            allocation.audio.stop()
-            allocation.video.stop()
-            # A close request alone is insufficient. Both senders must report
-            # that remote RTP publication has ceased.
-            audio_stopped = allocation.audio.wait_stopped(timeout)
-            video_stopped = allocation.video.wait_stopped(timeout)
-            if not (audio_stopped and video_stopped):
+            deadline = monotonic() + max(0.0, timeout)
+            # Attempt both STOP operations even when the first sender fails.
+            # Neither sender may remain running merely because its peer failed.
+            stop_failed = False
+            for sender in (allocation.audio, allocation.video):
+                try:
+                    sender.stop()
+                except Exception:
+                    stop_failed = True
+            # One shared deadline, not a fresh timeout for each sender.
+            audio_stopped = allocation.audio.wait_stopped(max(0.0, deadline - monotonic()))
+            video_stopped = allocation.video.wait_stopped(max(0.0, deadline - monotonic()))
+            if stop_failed or not (audio_stopped and video_stopped):
                 raise LifecycleError("audio/video STOP not independently confirmed")
             with self._guard:
                 operation.stopped = True
