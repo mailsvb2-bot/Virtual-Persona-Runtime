@@ -62,6 +62,9 @@ impl Rt1VisitorConversation {
         let id = manager.open(visitor_token, || {})?;
         let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
         let _ = manager.close(&id);
+        // Consume both owned arguments after closing the transient admission.
+        // No provider is started and no visitor engine escapes this boundary.
+        drop((manager, engine));
         admitted?;
         Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION".into())
     }
