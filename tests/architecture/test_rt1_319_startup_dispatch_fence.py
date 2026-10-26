@@ -1,4 +1,4 @@
-"""Guard against reintroducing unfenced visitor provider startup (#319)."""
+"""Guard RT1 against unbounded provider startup under owner transaction."""
 from pathlib import Path
 import unittest
 
@@ -7,23 +7,15 @@ CRATE = ROOT / "crates/vpr-owner-lab/src"
 
 
 class Rt1StartupFenceTest(unittest.TestCase):
-    def test_startup_dispatch_is_revoke_serialized(self):
+    def test_unbounded_visitor_startup_fails_closed_before_provider(self):
         conversation = (CRATE / "rt1_visitor_conversation.rs").read_text(encoding="utf8")
-        workspace = (CRATE / "rt1_workspace_service.rs").read_text(encoding="utf8")
-        manager = (CRATE / "rt1_visitor_session_manager.rs").read_text(encoding="utf8")
-        self.assertIn("manager.provider_dispatch(&id, || {", conversation)
-        self.assertRegex(
-            conversation,
-            r"\bengine\s*\.\s*start_visitor\s*\(\s*OwnerLabStartRequest\s*\{\s*consent\s*\}\s*\)",
-        )
-        self.assertIn("fn guarded_provider_dispatch<T>", workspace)
-        fenced = workspace.split("fn guarded_provider_dispatch<T>", 1)[1].split(
-            "    /// Serialize one short, bounded local enqueue", 1
+        start = conversation.split("    pub fn start(", 1)[1].split(
+            "    /// # Errors\n    /// Denies revoked visitor authority", 1
         )[0]
-        self.assertIn("self.transaction.lock()", fenced)
-        self.assertIn("workspace.authorize_visitor(", fenced)
-        self.assertLess(fenced.index("workspace.authorize_visitor("), fenced.index("dispatch()"))
-        self.assertIn("session.authority.provider_dispatch(", manager)
+        self.assertNotIn(".start_visitor(", start)
+        self.assertNotIn("manager.provider_dispatch(", start)
+        self.assertIn("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP", start)
+        self.assertLess(start.index("manager.close(&id)"), start.index("return Err("))
 
 
 if __name__ == "__main__":
