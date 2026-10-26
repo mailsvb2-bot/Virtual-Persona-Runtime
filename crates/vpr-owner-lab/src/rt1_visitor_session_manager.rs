@@ -280,7 +280,9 @@ mod tests {
             worker_locked_tx.send(()).unwrap();
             release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         });
-        worker_locked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker_locked_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
 
         let stops = Arc::new(AtomicUsize::new(0));
         let stop_count = Arc::clone(&stops);
@@ -306,7 +308,10 @@ mod tests {
         release_tx.send(()).unwrap();
         worker.join().unwrap();
         revoker.join().unwrap();
-        assert!(promptly_revoked, "visitor revocation blocked on provider worker");
+        assert!(
+            promptly_revoked,
+            "visitor revocation blocked on provider worker"
+        );
         assert_eq!(manager.active_count(), 0);
         assert_eq!(stops.load(Ordering::SeqCst), 1);
     }
