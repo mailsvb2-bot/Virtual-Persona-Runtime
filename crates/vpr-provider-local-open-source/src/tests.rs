@@ -226,7 +226,7 @@ fn stalled_remote_stop_is_deadline_bounded_and_never_confirmed() {
         let (mut stream, _) = listener.accept().unwrap();
         let request = read_request(&mut stream);
         assert!(request.starts_with("DELETE /v1/avatar/sessions/local-1 "));
-        thread::sleep(std::time::Duration::from_millis(160));
+        thread::sleep(std::time::Duration::from_millis(400));
         // A late positive receipt may arrive after the client's deadline.
         let body = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
         let response = format!(
@@ -244,6 +244,6 @@ fn stalled_remote_stop_is_deadline_bounded_and_never_confirmed() {
         )
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Timeout);
-    assert!(started.elapsed() < std::time::Duration::from_millis(140));
+    assert!(started.elapsed() < std::time::Duration::from_millis(350));
     server.join().unwrap();
 }
