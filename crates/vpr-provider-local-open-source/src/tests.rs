@@ -392,3 +392,29 @@ fn remote_stop_with_stalled_receipt_body_is_never_confirmed() {
     assert!(started.elapsed() < Duration::from_millis(350));
     server.join().unwrap();
 }
+
+#[test]
+fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
+    // The worker has accepted CREATE but withheld its allocation receipt.
+    // Without a session id the client cannot address a compensating STOP.
+    // This RT0 compatibility route must fail closed; RT1 bounded startup
+    // remains unavailable until the worker provides a cancellation contract.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("POST /v1/avatar/sessions "));
+        thread::sleep(Duration::from_millis(300));
+        let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    });
+    let avatar = LocalOpenSourceAvatar::new(
+        LocalOpenSourceAvatarConfig::new(format!("http://{address}"), "worker-secret")
+            .with_timeout(Duration::from_millis(40)),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let result = avatar.create_session(&Probe(AtomicBool::new(false)));
+    assert!(result.is_err());
+    assert!(started.elapsed() < Duration::from_millis(250));
+    server.join().unwrap();
+}
