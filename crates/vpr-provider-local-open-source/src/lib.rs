@@ -345,12 +345,12 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
     }
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
-        let id = Self::validate_session(session)?;
-        let response = self
-            .authorized(self.client.delete(self.session_url(id)?))
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        expect_success(response).map(|_| ())
+        // Closing the local lifecycle must not silently downgrade the RT1
+        // teardown contract to a generic HTTP 2xx acknowledgement.
+        self.stop_session_confirmed(
+            session,
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
     }
 }
 
