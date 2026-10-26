@@ -48,7 +48,7 @@ impl Rt1VisitorConversation {
     pub fn start(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
-        mut engine: OwnerLabEngine,
+        engine: OwnerLabEngine,
         consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
         // The reviewed engine must match the durable Persona admitted by the
@@ -71,9 +71,8 @@ impl Rt1VisitorConversation {
         // revoke. Reject before creating any provider resource until the
         // provider contract supports bounded cancel + confirmed teardown.
         let _ = consent;
-        let _ = engine.revoke();
         let _ = manager.close(&id);
-        return Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into());
+        Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into())
     }
 
     /// # Errors
