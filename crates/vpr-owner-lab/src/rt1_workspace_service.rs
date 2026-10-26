@@ -239,36 +239,6 @@ impl Rt1WorkspaceService {
         )
     }
 
-    /// Serialize final provider dispatch with the canonical owner publication
-    /// transaction. The callback MUST be bounded and MUST NOT re-enter the
-    /// workspace; this cannot be used for an unbounded stream or media sender.
-    /// Owner pause/unpublish cannot commit while a dispatch is in progress.
-    ///
-    /// # Errors
-    /// Denies stale authorization before invoking the provider operation.
-    pub(crate) fn guarded_provider_dispatch<T>(
-        &self,
-        bearer_token: &str,
-        permit: &VisitorPermit,
-        dispatch: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
-        guarded_dispatch_under_transaction(
-            self.transaction,
-            || {
-                let record = required_persona()?;
-                let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
-                workspace.authorize_visitor(
-                    bearer_token,
-                    permit,
-                    &record.snapshot.persona_id,
-                    record.snapshot.persona_version,
-                    server_now_millis()?,
-                )
-            },
-            dispatch,
-        )
-    }
-
     /// Serialize one short, bounded local enqueue with owner pause/unpublish.
     /// A `SyncSender` guarantees a nonblocking local `try_send`; callers cannot
     /// substitute arbitrary provider/network side effects while holding the
@@ -343,19 +313,6 @@ impl Rt1WorkspaceService {
         operation(workspace, owner_token)?;
         commit_current_record(&record)
     }
-}
-
-/// One final in-process dispatch boundary. Never run provider I/O after
-/// a committed owner revocation; owner changes serialize on this same lock.
-/// The external call must be bounded, otherwise revocation liveness suffers.
-fn guarded_dispatch_under_transaction<T>(
-    transaction: &Mutex<()>,
-    authorize: impl FnOnce() -> Result<(), String>,
-    dispatch: impl FnOnce() -> Result<T, String>,
-) -> Result<T, String> {
-    let _guard = transaction.lock();
-    authorize()?;
-    dispatch()
 }
 
 /// Validate the current publication before inserting into a bounded local
