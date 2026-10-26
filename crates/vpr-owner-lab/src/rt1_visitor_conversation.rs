@@ -64,43 +64,17 @@ impl Rt1VisitorConversation {
             let _ = manager.close(&id);
             return Err(error);
         }
-        // The provider's initial remote session creation is external egress.
-        // Serialize its final authorization and dispatch against owner pause.
-        // Never call the provider from an unfenced pre/post authorization gap.
-        let started = manager.provider_dispatch(&id, || {
-            engine
-                .start_visitor(OwnerLabStartRequest { consent })
-                .map_err(|error| error.code().to_owned())
-        });
-        let bundle = match started {
-            Ok(bundle) => bundle,
-            Err(error) => {
-                let _ = manager.close(&id);
-                return Err(error);
-            }
-        };
-        // WebRTC needs Answer/ICE provider operations. This wrapper does not
-        // yet expose an epoch-fenced signaling path, so never return an offer
-        // that a caller cannot safely complete.
-        if matches!(&bundle.transport, LabRealtimeTransport::WebRtc { .. }) {
-            let _ = manager.close(&id);
-            let _ = engine.revoke();
-            return Err("RT1 WebRTC signaling not yet supported".into());
-        }
-        // A pause can happen during the remote avatar creation. The callback
-        // sets cancelled even before the real runtime handle is available.
-        let revoker = engine.session_revocation_handle();
-        *interrupt.session.lock() = revoker;
-        if interrupt.cancelled.load(Ordering::Acquire)
-            || manager
-                .authorize_persona(&id, &persona_id, persona_version)
-                .is_err()
-        {
-            interrupt.stop();
-            let _ = engine.revoke();
-            let _ = manager.close(&id);
-            return Err("visitor authorization revoked during startup".into());
-        }
+        // Provider startup currently has no enforceable deadline or remote
+        // sender STOP. Holding the canonical workspace transaction across this
+        // unbounded call prevents owner pause/unpublish from committing. A
+        // detached startup is also unsafe: it can create remote media after a
+        // revoke. Reject before creating any provider resource until the
+        // provider contract supports bounded cancel + confirmed teardown.
+        let _ = consent;
+        let _ = engine.revoke();
+        let _ = manager.close(&id);
+        return Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into());
+        #[allow(unreachable_code)]
         Ok((
             Self {
                 manager,
