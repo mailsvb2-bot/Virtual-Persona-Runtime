@@ -181,7 +181,12 @@ fn remote_stop_requires_audio_video_and_session_receipt() {
             std::time::Instant::now() + std::time::Duration::from_secs(2),
         )
         .unwrap();
-    assert!(captured.recv().unwrap().starts_with("DELETE /v1/avatar/sessions/local-1 "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
 }
 
 #[test]
@@ -192,12 +197,14 @@ fn remote_stop_rejects_plain_success_and_partial_stop() {
         r#"{"session_id":"other","audio_stopped":true,"video_stopped":true}"#,
     ] {
         let (endpoint, captured) = serve(vec![("200 OK", receipt.into())]);
-        assert!(provider(endpoint)
-            .stop_session_confirmed(
-                &test_session(),
-                std::time::Instant::now() + std::time::Duration::from_secs(2),
-            )
-            .is_err());
+        assert!(
+            provider(endpoint)
+                .stop_session_confirmed(
+                    &test_session(),
+                    std::time::Instant::now() + std::time::Duration::from_secs(2),
+                )
+                .is_err()
+        );
         assert!(captured.recv().unwrap().starts_with("DELETE "));
     }
 }
