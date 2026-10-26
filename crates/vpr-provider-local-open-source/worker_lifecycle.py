@@ -127,7 +127,7 @@ class MediaLifecycle:
             audio_stopped = allocation.audio.wait_stopped(max(0.0, deadline - monotonic()))
             video_stopped = allocation.video.wait_stopped(max(0.0, deadline - monotonic()))
             if stop_failed or not (audio_stopped and video_stopped):
-                raise LifecycleError("audio/video STOP not independently confirmed")
+                raise LifecycleError("audio/video STOP unconfirmed: sender shutdown not independently verified")
             with self._guard:
                 operation.stopped = True
             return {"session_id": allocation.session_id, "audio_stopped": True, "video_stopped": True}
