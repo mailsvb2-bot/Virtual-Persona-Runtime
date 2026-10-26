@@ -19,6 +19,14 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertNotRegex(start, r"\.start_visitor\s*\(")
         self.assertNotIn("manager.provider_dispatch(", start)
         self.assertNotIn("std::thread::spawn(", start)
+        # No dormant provider-dispatch API may bypass this fail-closed entry.
+        session = (SOURCE.parent / "rt1_visitor_session.rs").read_text(encoding="utf-8")
+        manager = (SOURCE.parent / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
+        workspace = (SOURCE.parent / "rt1_workspace_service.rs").read_text(encoding="utf-8")
+        self.assertNotIn("fn provider_dispatch<", session)
+        self.assertNotIn("fn provider_dispatch<", manager)
+        self.assertNotIn("fn guarded_provider_dispatch<", workspace)
+        self.assertNotIn("fn guarded_dispatch_under_transaction<", workspace)
 
 
 if __name__ == "__main__":
