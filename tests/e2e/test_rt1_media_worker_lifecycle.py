@@ -119,6 +119,78 @@ class LifecycleTests(unittest.TestCase):
         self.assertIsInstance(failures[0], RuntimeError)
         self.assertEqual(self.sender.created, 1)
 
+    def test_cross_process_cancel_cannot_be_lost_after_create_reads_stale_phase(self):
+        # The two worker objects have independent Python locks and SQLite
+        # connections. Pause CREATE *after* it reads 'creating' on completion.
+        # Without an IMMEDIATE transaction around read+write, the other worker
+        # can commit CANCEL and CREATE can then overwrite it with 'active'.
+        other = mod.MediaLifecycle(self.db, self.sender)
+        read_creating = threading.Event()
+        release_finalize = threading.Event()
+        cancel_started = threading.Event()
+        cancel_finished = threading.Event()
+        original_get = self.worker._get
+        created = []
+        receipts = []
+        failures = []
+
+        def paused_get(operation_id):
+            row = original_get(operation_id)
+            if (
+                operation_id == "op-a"
+                and self.sender.created == 1
+                and row is not None
+                and row[1] == "creating"
+            ):
+                read_creating.set()
+                if not release_finalize.wait(3):
+                    raise AssertionError("CREATE finalization never released")
+            return row
+
+        self.worker._get = paused_get
+
+        def run_create():
+            try:
+                created.append(self.worker.create("op-a", 1))
+            except BaseException as error:
+                failures.append(error)
+
+        def run_cancel():
+            cancel_started.set()
+            try:
+                receipts.append(other.cancel("op-a", 1))
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                cancel_finished.set()
+
+        creator = threading.Thread(target=run_create)
+        canceller = threading.Thread(target=run_cancel)
+        try:
+            creator.start()
+            self.assertTrue(read_creating.wait(2))
+            canceller.start()
+            self.assertTrue(cancel_started.wait(1))
+            self.assertFalse(
+                cancel_finished.wait(0.2),
+                "CANCEL committed between CREATE completion read and write",
+            )
+        finally:
+            release_finalize.set()
+            creator.join(3)
+            if canceller.ident is not None:
+                canceller.join(3)
+        self.assertFalse(creator.is_alive())
+        self.assertFalse(canceller.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(created, ["session-a"])
+        self.assertEqual(len(receipts), 1)
+        self.assertIsNotNone(receipts[0])
+        self.assertTrue(receipts[0].audio_stopped and receipts[0].video_stopped)
+        self.assertEqual(self.sender.created, 1)
+        self.assertEqual(self.sender.stopped, 1)
+        self.assertEqual(other.status("op-a")[1], "stopped")
+
     def test_competing_stop_cannot_overwrite_confirmed_shutdown(self):
         # Independent worker connections must not issue concurrent remote STOPs.
         # A late failed attempt must never turn a verified 'stopped' into
