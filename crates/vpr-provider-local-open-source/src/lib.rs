@@ -314,11 +314,13 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
                 retryable: false,
             });
         }
-        if receipt.session_id == id && receipt.audio_stopped && receipt.video_stopped {
-            Ok(())
-        } else {
-            Err(invalid_response())
+        // Reject stale or ambiguous confirmations. Only the exact current
+        // session and explicit positive receipts for *both* media senders
+        // satisfy the worker contract; a generic successful DELETE does not.
+        if receipt.session_id != id || !receipt.audio_stopped || !receipt.video_stopped {
+            return Err(invalid_response());
         }
+        Ok(())
     }
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
