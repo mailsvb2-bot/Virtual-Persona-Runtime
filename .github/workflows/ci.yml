@@ -24,6 +24,8 @@ jobs:
           rustc --version
           cargo --version
           rustc --version | grep '^rustc 1\.88\.0 '
+      - name: RT1 worker durable lifecycle and revoke/STOP races
+        run: python3 tests/e2e/test_rt1_media_worker_lifecycle.py
       - name: Echo private LiveKit sender and STOP contract
         run: python3 tests/e2e/test_echo_python_worker.py
       - name: RT1 worker operation and remote media STOP lifecycle
