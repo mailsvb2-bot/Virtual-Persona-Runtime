@@ -492,14 +492,12 @@ async def run():
             task.cancel()
         cleanup_confirmed = True
         if pending:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*pending, return_exceptions=True),
-                    timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                # Some third-party coroutines may suppress cancellation.
-                # Never block owner STOP indefinitely or claim full cleanup.
+            # wait() returns at the deadline even if a third-party task
+            # suppresses CancelledError; wait_for(gather()) would not.
+            _, unfinished = await asyncio.wait(
+                pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
+            )
+            if unfinished:
                 cleanup_confirmed = False
         try:
             await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
