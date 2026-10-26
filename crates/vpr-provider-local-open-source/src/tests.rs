@@ -247,3 +247,16 @@ fn stalled_remote_stop_is_deadline_bounded_and_never_confirmed() {
     assert!(started.elapsed() < std::time::Duration::from_millis(350));
     server.join().unwrap();
 }
+
+#[test]
+fn bounded_startup_fails_closed_without_remote_cancel_contract() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let probe = Probe(AtomicBool::new(false));
+    let error = avatar
+        .create_session_bounded(
+            &probe,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+}
