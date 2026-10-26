@@ -260,6 +260,58 @@ mod tests {
     }
 
     #[test]
+    fn revoke_does_not_wait_for_stalled_provider_worker() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let manager = Arc::new(VisitorSessionManager::new(Arc::new(
+            Rt1WorkspaceService::new(),
+        )));
+        // Simulate an unresponsive provider worker holding its conversation
+        // engine mutex. The canonical registry must never acquire that mutex
+        // while revoking admission or running the transport stop callback.
+        let engine = Arc::new(Mutex::new(()));
+        let (worker_locked_tx, worker_locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_engine = Arc::clone(&engine);
+        let worker = std::thread::spawn(move || {
+            let _held = worker_engine.lock();
+            worker_locked_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        worker_locked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let stops = Arc::new(AtomicUsize::new(0));
+        let stop_count = Arc::clone(&stops);
+        manager.sessions.lock().insert(
+            "stalled".into(),
+            Arc::new(ManagedVisitor {
+                authority: Rt1VisitorSession::inert_for_revocation_test(),
+                revoked: AtomicBool::new(false),
+                stop: Arc::new(move || {
+                    stop_count.fetch_add(1, Ordering::SeqCst);
+                }),
+            }),
+        );
+
+        let (revoked_tx, revoked_rx) = mpsc::channel();
+        let revoking_manager = Arc::clone(&manager);
+        let revoker = std::thread::spawn(move || {
+            revoking_manager.revoke_all();
+            revoked_tx.send(()).unwrap();
+        });
+        // Unstick the fake worker even on failure so the test cannot hang CI.
+        let promptly_revoked = revoked_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        revoker.join().unwrap();
+        assert!(promptly_revoked, "visitor revocation blocked on provider worker");
+        assert_eq!(manager.active_count(), 0);
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn registry_drain_does_not_stop_sessions_added_after_drain() {
         use std::sync::atomic::AtomicUsize;
 
