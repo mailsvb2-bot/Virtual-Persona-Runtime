@@ -427,7 +427,12 @@ fn failed_create_http_response_must_not_allow_duplicate_allocation_retry() {
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::Unavailable);
         assert!(!error.retryable);
-        assert!(captured.recv().unwrap().starts_with("POST /v1/avatar/sessions "));
+        assert!(
+            captured
+                .recv()
+                .unwrap()
+                .starts_with("POST /v1/avatar/sessions ")
+        );
     }
 }
 
