@@ -73,18 +73,28 @@ class MediaLifecycle:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
         with self._lock:
-            previous = self._get(operation_id)
-            if previous is not None:
-                if previous[0] == generation and previous[1] == "active":
-                    return previous[2]
-                raise RuntimeError("operation already exists or has been cancelled")
-            # This core deliberately admits at most ONE remote publisher at once.
-            # Reconcile unknown outcomes before permitting a different operation.
-            if self._db.execute(
-                "SELECT 1 FROM media_operations WHERE phase != 'stopped' LIMIT 1"
-            ).fetchone():
-                raise RuntimeError("worker has unresolved media allocation")
-            self._write(operation_id, generation, "creating", None)
+            # The Python lock is per process. BEGIN IMMEDIATE also serializes
+            # admission across distinct worker processes sharing this ledger.
+            # Commit the durable CREATE intent before any provider allocation.
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                previous = self._get(operation_id)
+                if previous is not None:
+                    if previous[0] == generation and previous[1] == "active":
+                        self._db.execute("COMMIT")
+                        return previous[2]
+                    raise RuntimeError("operation already exists or has been cancelled")
+                # At most ONE unresolved remote publisher, across processes.
+                if self._db.execute(
+                    "SELECT 1 FROM media_operations WHERE phase != 'stopped' LIMIT 1"
+                ).fetchone():
+                    raise RuntimeError("worker has unresolved media allocation")
+                self._write(operation_id, generation, "creating", None)
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
         try:
             session_id = self._backend.allocate(operation_id, generation)
             if not session_id:
