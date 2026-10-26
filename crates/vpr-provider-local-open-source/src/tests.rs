@@ -439,7 +439,11 @@ fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
     .unwrap();
     let started = std::time::Instant::now();
     let result = avatar.create_session(&Probe(AtomicBool::new(false)));
-    assert!(result.is_err());
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    // A timeout does not prove the remote worker failed to allocate.
+    // Repeating CREATE could create a second uncontrolled media sender.
+    assert!(!error.retryable);
     assert!(started.elapsed() < Duration::from_millis(250));
     server.join().unwrap();
 }
