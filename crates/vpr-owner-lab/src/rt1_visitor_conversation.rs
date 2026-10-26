@@ -7,9 +7,7 @@ use parking_lot::Mutex;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{
-    LabSignalBundle, LabTextResult, OwnerLabEngine,
-};
+use crate::state::{LabSignalBundle, LabTextResult, OwnerLabEngine};
 
 #[derive(Default)]
 struct LiveVisitorInterrupt {
