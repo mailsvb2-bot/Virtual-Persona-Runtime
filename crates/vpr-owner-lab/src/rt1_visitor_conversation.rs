@@ -8,8 +8,7 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment,
-    OwnerLabEngine, OwnerLabStartRequest,
+    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
 };
 
 #[derive(Default)]
@@ -49,68 +48,22 @@ impl Rt1VisitorConversation {
     pub fn start(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
-        mut engine: OwnerLabEngine,
-        consent: bool,
+        engine: OwnerLabEngine,
+        _consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
-        // The reviewed engine must match the durable Persona admitted by the
-        // server, not a previously cached owner profile or corrected revision.
+        // A remote provider that hangs while holding the publication lock
+        // blocks owner pause/unpublish indefinitely. A detached timeout thread
+        // cannot cancel that provider. RT1 must remain fail-closed until the
+        // provider supplies a bounded, enforceable STOP/cancellation contract.
         let (persona_id, persona_version) = engine
             .reviewed_persona_binding()
             .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
         let persona_id = persona_id.to_owned();
-        let interrupt = Arc::new(LiveVisitorInterrupt::default());
-        let callback = Arc::clone(&interrupt);
-        let id = manager.open(visitor_token, move || callback.stop())?;
-        if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
-            let _ = manager.close(&id);
-            return Err(error);
-        }
-        // The provider's initial remote session creation is external egress.
-        // Serialize its final authorization and dispatch against owner pause.
-        // Never call the provider from an unfenced pre/post authorization gap.
-        let started = manager.provider_dispatch(&id, || {
-            engine
-                .start_visitor(OwnerLabStartRequest { consent })
-                .map_err(|error| error.code().to_owned())
-        });
-        let bundle = match started {
-            Ok(bundle) => bundle,
-            Err(error) => {
-                let _ = manager.close(&id);
-                return Err(error);
-            }
-        };
-        // WebRTC needs Answer/ICE provider operations. This wrapper does not
-        // yet expose an epoch-fenced signaling path, so never return an offer
-        // that a caller cannot safely complete.
-        if matches!(&bundle.transport, LabRealtimeTransport::WebRtc { .. }) {
-            let _ = manager.close(&id);
-            let _ = engine.revoke();
-            return Err("RT1 WebRTC signaling not yet supported".into());
-        }
-        // A pause can happen during the remote avatar creation. The callback
-        // sets cancelled even before the real runtime handle is available.
-        let revoker = engine.session_revocation_handle();
-        *interrupt.session.lock() = revoker;
-        if interrupt.cancelled.load(Ordering::Acquire)
-            || manager
-                .authorize_persona(&id, &persona_id, persona_version)
-                .is_err()
-        {
-            interrupt.stop();
-            let _ = engine.revoke();
-            let _ = manager.close(&id);
-            return Err("visitor authorization revoked during startup".into());
-        }
-        Ok((
-            Self {
-                manager,
-                id,
-                engine: Mutex::new(engine),
-                interrupt,
-            },
-            bundle,
-        ))
+        let id = manager.open(visitor_token, || {})?;
+        let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
+        let _ = manager.close(&id);
+        admitted?;
+        Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION".into())
     }
 
     /// # Errors
