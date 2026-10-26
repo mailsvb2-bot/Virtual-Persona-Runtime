@@ -417,6 +417,21 @@ fn remote_stop_with_stalled_receipt_body_is_never_confirmed() {
 }
 
 #[test]
+fn failed_create_http_response_must_not_allow_duplicate_allocation_retry() {
+    // A worker can allocate a remote sender and still reply with HTTP 503.
+    // Retrying that CREATE is unsafe without worker-side idempotency.
+    for status in ["500 Internal Server Error", "503 Service Unavailable"] {
+        let (endpoint, captured) = serve(vec![(status, "{}".to_owned())]);
+        let error = provider(endpoint)
+            .create_session(&Probe(AtomicBool::new(false)))
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(!error.retryable);
+        assert!(captured.recv().unwrap().starts_with("POST /v1/avatar/sessions "));
+    }
+}
+
+#[test]
 fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
     // The worker has accepted CREATE but withheld its allocation receipt.
     // Without a session id the client cannot address a compensating STOP.
