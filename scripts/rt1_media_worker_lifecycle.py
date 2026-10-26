@@ -118,22 +118,41 @@ class MediaLifecycle:
         raise RuntimeError("operation revoked during allocation")
 
     def cancel(self, operation_id: str, generation: int) -> StopReceipt | None:
+        if not operation_id or generation < 1:
+            raise ValueError("invalid operation identity")
         with self._lock:
-            row = self._get(operation_id)
-            if row is None or row[0] != generation:
-                raise KeyError("unknown or stale operation")
-            _, phase, session_id = row
-            if phase == "stopped":
-                return StopReceipt(operation_id, session_id or "", generation, True, True)
-            if phase == "creating":
-                self._write(operation_id, generation, "stopping", None)
-                # CREATE completion owns the eventual compensating STOP. When
-                # CREATE never completes, caller must keep operation unresolved.
-                return None
-            if not session_id:
-                self._write(operation_id, generation, "uncertain", None)
-                return None
-            self._write(operation_id, generation, "stopping", session_id)
+            # A CANCEL can arrive before CREATE, including from another worker
+            # process. Reserve a durable tombstone atomically so that a late
+            # CREATE can never allocate after the owner has revoked authority.
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._get(operation_id)
+                if row is None:
+                    self._write(operation_id, generation, "stopped", None)
+                    self._db.execute("COMMIT")
+                    return StopReceipt(operation_id, "", generation, True, True)
+                if row[0] != generation:
+                    raise KeyError("unknown or stale operation")
+                _, phase, session_id = row
+                if phase == "stopped":
+                    self._db.execute("COMMIT")
+                    return StopReceipt(operation_id, session_id or "", generation, True, True)
+                if phase == "creating":
+                    self._write(operation_id, generation, "stopping", None)
+                    # CREATE completion owns compensating STOP. An unresolved
+                    # allocation must never be acknowledged as stopped.
+                    self._db.execute("COMMIT")
+                    return None
+                if not session_id:
+                    self._write(operation_id, generation, "uncertain", None)
+                    self._db.execute("COMMIT")
+                    return None
+                self._write(operation_id, generation, "stopping", session_id)
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
         return self._finish_stop(operation_id, session_id, generation)
 
     def _finish_stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
