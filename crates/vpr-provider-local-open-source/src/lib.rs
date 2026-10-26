@@ -125,6 +125,21 @@ impl LocalOpenSourceAvatar {
         Ok(id)
     }
 
+    fn finalize_created_session(
+        &self,
+        session: RealtimeAvatarSession,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        if cancellation.is_cancelled() {
+            // Never report a revoked allocation as active. Even if the worker
+            // supplies a STOP receipt, this particular create operation failed.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let _ = self.stop_session_confirmed(&session, deadline);
+            return Err(cancelled());
+        }
+        Ok(session)
+    }
+
     fn ensure_active(cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
         if cancellation.is_cancelled() {
             Err(cancelled())
@@ -175,12 +190,7 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
         // return a newly created session once the caller has revoked access.
         // Best-effort cleanup is deliberately NOT treated as proof of STOP:
         // the caller receives Cancelled even when the remote DELETE succeeds.
-        if cancellation.is_cancelled() {
-            let deadline = std::time::Instant::now() + Duration::from_secs(2);
-            let _ = self.stop_session_confirmed(&session, deadline);
-            return Err(cancelled());
-        }
-        Ok(session)
+        self.finalize_created_session(session, cancellation)
     }
 
     fn submit_answer(
