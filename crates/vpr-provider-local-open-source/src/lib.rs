@@ -198,7 +198,13 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
                 failure.retryable = false;
                 failure
             })?;
-        let response = expect_success(response)?;
+        // The CREATE request has already reached the remote worker.
+        // Even an HTTP 5xx can follow a successful allocation, so automatic
+        // retry could create an orphaned second audio/video publisher.
+        let response = expect_success(response).map_err(|mut failure| {
+            failure.retryable = false;
+            failure
+        })?;
         // After the remote allocation response arrives, retain its session id even
         // when authority was revoked while the provider was responding.
         // Cancelling JSON extraction here would orphan an allocated sender:
