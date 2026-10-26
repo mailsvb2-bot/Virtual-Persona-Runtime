@@ -209,8 +209,9 @@ class EchoWorkerTests(unittest.TestCase):
         # also have exited. The CI architecture check guards this contract.
         source = WORKER.read_text(encoding="utf-8")
         shutdown = source.split("    finally:\\n        pending = set(tasks.values())", 1)[-1]
-        self.assertIn("asyncio.wait_for(", shutdown)
-        self.assertIn("asyncio.gather(*pending, return_exceptions=True)", shutdown)
+        self.assertIn("await asyncio.wait(", shutdown)
+        self.assertIn("pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS", shutdown)
+        self.assertIn("if unfinished:", shutdown)
         self.assertIn("cleanup_confirmed = False", shutdown)
         self.assertIn("emit(close_identifier, cleanup_confirmed)", shutdown)
 
