@@ -309,3 +309,50 @@ fn post_allocation_live_authority_does_not_send_cleanup() {
         "local-1"
     );
 }
+
+#[test]
+fn cancellation_during_remote_allocation_prevents_admission_and_requests_verified_stop() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (created_tx, created_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (request_tx, request_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut create_stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut create_stream);
+        assert!(request.starts_with("POST /v1/avatar/sessions "));
+        created_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let body = r#"{"id":"local-1","offer":{"type":"offer","sdp":"offer-sdp"}}"#;
+        let response = format!(
+            "HTTP/1.1 201 Created\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+            body.len()
+        );
+        create_stream.write_all(response.as_bytes()).unwrap();
+        drop(create_stream);
+        let (mut stop_stream, _) = listener.accept().unwrap();
+        request_tx.send(read_request(&mut stop_stream)).unwrap();
+        let receipt = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{receipt}",
+            receipt.len()
+        );
+        stop_stream.write_all(response.as_bytes()).unwrap();
+    });
+    let avatar = provider(format!("http://{address}"));
+    let probe = Probe(AtomicBool::new(false));
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            result_tx.send(avatar.create_session(&probe)).unwrap();
+        });
+        created_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        probe.0.store(true, Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        let error = result_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(request_rx.recv_timeout(Duration::from_secs(3)).unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 "));
+    });
+    server.join().unwrap();
+}
