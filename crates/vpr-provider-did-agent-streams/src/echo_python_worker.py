@@ -21,6 +21,7 @@ MAX_STREAMED_PCM_QUEUE = 8
 PCM_QUEUE_BACKPRESSURE_SECONDS = 0.15
 MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
+MEDIA_CLOSE_TIMEOUT_SECONDS = 2
 
 
 def emit(identifier, ok, stage=None):
@@ -149,7 +150,7 @@ async def run():
         await asyncio.wait_for(ready.wait(), timeout=25)
     except Exception:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     agents = [
         participant.identity
@@ -159,7 +160,7 @@ async def run():
     ]
     if not agents:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     emit(initial.get("id", 0), True)
 
@@ -197,7 +198,7 @@ async def run():
                     await writer.write(chunk)
                     published = True
                 failure_stage = "pcm_stream_close"
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
@@ -223,7 +224,7 @@ async def run():
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if active_pcm is state:
@@ -276,7 +277,7 @@ async def run():
                     chunk = await next_chunk()
                 if generation_at_start != generation:
                     raise asyncio.CancelledError()
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 # A closed byte stream is only provider delivery, never verified
                 # RTP playout, audio hearing, or lip synchronisation.
@@ -304,7 +305,7 @@ async def run():
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if tasks.get(identifier) is asyncio.current_task():
@@ -487,7 +488,7 @@ async def run():
             task.cancel()
         if tasks:
             await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
 
 
 if __name__ == "__main__":
