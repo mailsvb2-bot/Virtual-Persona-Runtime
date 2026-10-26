@@ -15,7 +15,7 @@ class Rt1StartupFenceTest(unittest.TestCase):
         self.assertNotIn(".start_visitor(", start)
         self.assertNotIn("manager.provider_dispatch(", start)
         self.assertIn("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP", start)
-        self.assertLess(start.index("manager.close(&id)"), start.index("return Err("))
+        self.assertLess(start.index("manager.close(&id)"), start.index("Err(\"RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP\""))
 
 
 if __name__ == "__main__":
