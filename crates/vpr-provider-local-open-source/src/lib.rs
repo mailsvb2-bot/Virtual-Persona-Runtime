@@ -347,10 +347,7 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         // Closing the local lifecycle must not silently downgrade the RT1
         // teardown contract to a generic HTTP 2xx acknowledgement.
-        self.stop_session_confirmed(
-            session,
-            std::time::Instant::now() + Duration::from_secs(2),
-        )
+        self.stop_session_confirmed(session, std::time::Instant::now() + Duration::from_secs(2))
     }
 }
 
