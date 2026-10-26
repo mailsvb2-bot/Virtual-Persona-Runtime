@@ -134,8 +134,17 @@ impl LocalOpenSourceAvatar {
             // Never report a revoked allocation as active. Even if the worker
             // supplies a STOP receipt, this particular create operation failed.
             let deadline = std::time::Instant::now() + Duration::from_secs(2);
-            let _ = self.stop_session_confirmed(&session, deadline);
-            return Err(cancelled());
+            return match self.stop_session_confirmed(&session, deadline) {
+                Ok(()) => Err(cancelled()),
+                // No confirmed remote STOP: never reduce an uncertain live
+                // publisher to an ordinary successful local cancellation.
+                // Do not mark retryable: re-issuing CREATE could allocate a
+                // second sender while the first still exists.
+                Err(_) => Err(ProviderError {
+                    kind: ProviderErrorKind::Unavailable,
+                    retryable: false,
+                }),
+            };
         }
         Ok(session)
     }
