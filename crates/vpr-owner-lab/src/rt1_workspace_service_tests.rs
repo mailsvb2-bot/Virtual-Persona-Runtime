@@ -244,4 +244,3 @@ fn service_signature_does_not_accept_client_claimed_readiness() {
     let _ = Rt1WorkspaceService::new();
     assert!(required_persona().is_err());
 }
-
