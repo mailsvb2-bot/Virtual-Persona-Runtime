@@ -189,7 +189,8 @@ async def run():
                         "sample_rate": str(state["rate"]),
                         "channels": str(state["channels"]),
                     },
-                    destination_identities=agents,\n                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
+                    destination_identities=agents,
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while True:
                     chunk = await state["queue"].get()
                     if state["generation"] != generation:
@@ -217,7 +218,10 @@ async def run():
                 generation += 1
                 if published:
                     try:
-                        await asyncio.wait_for(\n                            room.local_participant.send_text("{}", topic="did.interrupt"),\n                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,\n                        )
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     except Exception:
                         pass
             if state["end_id"] is not None:
@@ -269,7 +273,8 @@ async def run():
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
                     attributes=attributes,
-                    destination_identities=agents,\n                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
+                    destination_identities=agents,
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while chunk is not None:
                     if generation_at_start != generation:
                         raise asyncio.CancelledError()
@@ -299,7 +304,10 @@ async def run():
                         task.cancel()
                 if published:
                     try:
-                        await asyncio.wait_for(\n                            room.local_participant.send_text("{}", topic="did.interrupt"),\n                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,\n                        )
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     except Exception:
                         pass
             emit(identifier, False)
@@ -441,7 +449,10 @@ async def run():
                         emit(state["end_id"], False)
                         state["end_id"] = None
                     try:
-                        await asyncio.wait_for(\n                            room.local_participant.send_text("{}", topic="did.interrupt"),\n                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,\n                        )
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                         emit(identifier, True)
                     except Exception:
                         emit(identifier, False)
@@ -457,7 +468,10 @@ async def run():
                     for task in tuple(tasks.values()):
                         task.cancel()
                     # This is a text STOP command, never browser-published audio.
-                    await asyncio.wait_for(\n                            room.local_participant.send_text("{}", topic="did.interrupt"),\n                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,\n                        )
+                    await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
@@ -470,7 +484,10 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    await asyncio.wait_for(\n                            room.local_participant.send_text("{}", topic="did.interrupt"),\n                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,\n                        )
+                    await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     # Do not acknowledge close before cancelled tasks and the
                     # transport have actually finished closing. A sent STOP
                     # control packet is not a completed local teardown.
