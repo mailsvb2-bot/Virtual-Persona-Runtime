@@ -260,3 +260,40 @@ fn bounded_startup_fails_closed_without_remote_cancel_contract() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
 }
+
+#[test]
+fn post_allocation_revoke_attempts_verified_remote_stop_and_never_admits_session() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.into(),
+    )]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let result = avatar.finalize_created_session(test_session(), &cancelled_probe);
+    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::Cancelled);
+    assert!(captured.recv().unwrap().starts_with("DELETE /v1/avatar/sessions/local-1 "));
+}
+
+#[test]
+fn post_allocation_revoke_never_admits_session_when_remote_stop_is_unconfirmed() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#.into(),
+    )]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let result = avatar.finalize_created_session(test_session(), &cancelled_probe);
+    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::Cancelled);
+    assert!(captured.recv().unwrap().starts_with("DELETE /v1/avatar/sessions/local-1 "));
+}
+
+#[test]
+fn post_allocation_live_authority_does_not_send_cleanup() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let active_probe = Probe(AtomicBool::new(false));
+    assert_eq!(
+        avatar.finalize_created_session(test_session(), &active_probe)
+            .unwrap().provider_session_id,
+        "local-1"
+    );
+}
