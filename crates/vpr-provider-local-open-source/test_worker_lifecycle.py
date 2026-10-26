@@ -85,6 +85,17 @@ class LifecycleTests(unittest.TestCase):
         video.stopped = True
         self.assertTrue(lifecycle.stop("session-1", 0.1)["video_stopped"])
 
+    def test_audio_stop_failure_does_not_skip_video_stop(self):
+        lifecycle = MediaLifecycle()
+        class FailedAudio(Sender):
+            def stop(self):
+                raise RuntimeError("audio failed")
+        audio, video = FailedAudio(), Sender()
+        lifecycle.create("operation-1", lambda _: MediaAllocation("session-1", audio, video))
+        with self.assertRaisesRegex(LifecycleError, "unconfirmed"):
+            lifecycle.stop("session-1", 0.1)
+        self.assertTrue(video.requested)
+
     @staticmethod
     def _attempt(fn, errors):
         try:
