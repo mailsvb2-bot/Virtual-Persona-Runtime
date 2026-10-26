@@ -23,6 +23,9 @@ const SPEECH_TIMEOUT: Duration = Duration::from_secs(80);
 // A missing vendor STOP receipt must never delay local safety fencing for five seconds.
 // Successful dispatch is not proof of remote audible playback completion.
 const INTERRUPT_TIMEOUT: Duration = Duration::from_millis(350);
+// Final close waits for the local LiveKit disconnect receipt, not just
+// an interrupt packet. On timeout the child is forcibly terminated.
+const CLOSE_RECEIPT_TIMEOUT: Duration = Duration::from_millis(900);
 const MAX_PHRASE_BYTES: usize = 4096;
 const MAX_RECEIPT_BYTES: usize = 512;
 
@@ -500,22 +503,23 @@ impl DidEchoBackend for EchoPythonBackend {
             };
         }
         worker.mark_stopped()?;
-        // STOP must clear already queued avatar speech, not merely disconnect
-        // the private publisher and leave D-ID playing its queued audio.
-        let interrupted = worker.request(
-            json!({"command": "interrupt"}),
-            INTERRUPT_TIMEOUT,
+        // Close performs the interrupt, cancels queued speech, and only
+        // acknowledges after local LiveKit disconnect completes. This is
+        // stronger than an interrupt receipt, but is NOT remote playback proof.
+        let closed = worker.request(
+            json!({"command": "close"}),
+            CLOSE_RECEIPT_TIMEOUT,
             None,
             true,
         );
         // Even on timeout or a disconnected pipe, terminate the only private
         // publisher. Never return success when the interrupt receipt was absent.
         let terminated = worker.terminate();
-        let success = interrupted.is_ok() && terminated.is_ok();
+        let success = closed.is_ok() && terminated.is_ok();
         *worker.stop_receipt.lock().map_err(|_| unavailable())? = Some(success);
         // Retain only the stop receipt until canonical close explicitly forgets
         // this publisher. A second STOP must reproduce the SAME result.
-        interrupted.and(terminated)
+        closed.and(terminated)
     }
     fn forget(&self, session_id: &str) -> Result<(), ProviderError> {
         let worker = self.worker(session_id)?;
