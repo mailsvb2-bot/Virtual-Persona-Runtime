@@ -164,6 +164,50 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(other.cancel("op-a", 1).video_stopped)
         self.assertEqual(self.sender.stopped, 1)
 
+    def test_stop_lock_survives_other_process_and_recovers_after_exit(self):
+        # A different process owns the STOP lock. CANCEL must fail closed
+        # without sending a competing STOP; a subsequent worker can reconcile
+        # once the OS releases the lock after process termination.
+        import os
+        import subprocess
+        import sys
+
+        if os.name == "nt":
+            self.skipTest("POSIX interprocess flock regression")
+        self.worker.create("op-a", 1)
+        lock_path = str(self.db) + ".stop.lock"
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import fcntl,os,sys;"
+                    "fd=os.open(sys.argv[1],os.O_CREAT|os.O_RDWR,0o600);"
+                    "fcntl.flock(fd,fcntl.LOCK_EX);"
+                    "print('locked',flush=True);"
+                    "sys.stdin.read(1)"
+                ),
+                lock_path,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+        try:
+            self.assertEqual(child.stdout.readline().strip(), b"locked")
+            with self.assertRaisesRegex(RuntimeError, "already in progress"):
+                self.worker.cancel("op-a", 1)
+            self.assertEqual(self.worker.status("op-a")[1], "stopping")
+            self.assertEqual(self.sender.stopped, 0)
+        finally:
+            child.kill()
+            child.wait(timeout=3)
+            child.stdout.close()
+            child.stdin.close()
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        restarted.reconcile()
+        self.assertEqual(restarted.status("op-a")[1], "stopped")
+        self.assertEqual(self.sender.stopped, 1)
+
     def test_failed_stop_can_be_reconciled_by_restarted_worker(self):
         self.worker.create("op-a", 1)
         original_stop = self.sender.stop
