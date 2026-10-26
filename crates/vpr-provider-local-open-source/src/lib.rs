@@ -259,6 +259,35 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
         expect_success(response).map(|_| ())
     }
 
+    fn stop_session_confirmed(
+        &self,
+        session: &RealtimeAvatarSession,
+        deadline: std::time::Instant,
+    ) -> Result<(), ProviderError> {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
+        let id = Self::validate_session(session)?;
+        // This is a stronger worker contract than the legacy DELETE:
+        // plain 2xx/204 is NOT proof that audio and video have stopped.
+        let response = self
+            .authorized(self.client.delete(self.session_url(id)?))
+            .timeout(remaining)
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = expect_success(response)?;
+        let receipt: RemoteMediaStopReceipt = decode_json_response(response, None)?;
+        if receipt.session_id == id && receipt.audio_stopped && receipt.video_stopped {
+            Ok(())
+        } else {
+            Err(invalid_response())
+        }
+    }
+
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
         let id = Self::validate_session(session)?;
         let response = self
@@ -267,6 +296,14 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .map_err(|error| map_transport_error(&error))?;
         expect_success(response).map(|_| ())
     }
+}
+
+/// Worker-attested remote sender teardown; a generic HTTP success is insufficient.
+#[derive(Deserialize)]
+struct RemoteMediaStopReceipt {
+    session_id: String,
+    audio_stopped: bool,
+    video_stopped: bool,
 }
 
 #[derive(Serialize)]
