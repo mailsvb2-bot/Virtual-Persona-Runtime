@@ -405,7 +405,7 @@ fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
         let (mut stream, _) = listener.accept().unwrap();
         assert!(read_request(&mut stream).starts_with("POST /v1/avatar/sessions "));
         thread::sleep(Duration::from_millis(300));
-        let _ = stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let _ = stream.write_all(\n            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",\n        );
     });
     let avatar = LocalOpenSourceAvatar::new(
         LocalOpenSourceAvatarConfig::new(format!("http://{address}"), "worker-secret")
