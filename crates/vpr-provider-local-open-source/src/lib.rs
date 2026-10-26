@@ -191,7 +191,13 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .authorized(self.client.post(self.sessions_url()?))
             .json(&CreateSessionRequest {})
             .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .map_err(|error| {
+                let mut failure = map_transport_error(&error);
+                // CREATE may have reached the worker before transport failure.
+                // Without a session id, retrying risks a second live publisher.
+                failure.retryable = false;
+                failure
+            })?;
         let response = expect_success(response)?;
         // After the remote allocation response arrives, retain its session id even
         // when authority was revoked while the provider was responding.
