@@ -76,6 +76,17 @@ impl Rt1VisitorConversation {
         Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into())
     }
 
+    /// The RT1 contract requires a provider-confirmed remote sender stop,
+    /// not merely cancellation of the local worker or a closed queue.
+    /// No adapter currently provides that receipt for every audio/video
+    /// sender; deny use of the visitor transport until it does.
+    ///
+    /// # Errors
+    /// Always rejects unverified remote media teardown.
+    pub fn require_confirmed_remote_media_stop(&self) -> Result<(), String> {
+        Err("RT1_REMOTE_SENDER_STOP_NOT_CONFIRMED".into())
+    }
+
     /// # Errors
     /// Denies revoked visitor authority or returns the canonical turn error.
     pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
