@@ -110,7 +110,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
                close_latency=0, tts_chunks=None, write_latency=0,
                stream_open_fails=False, media_close_timeout=None,
                disconnect_latency=0, suppress_disconnect_timeout=False,
-               stop_latency=0, media_stop_timeout=None):
+               stop_latency=0, media_stop_timeout=None, media_io_timeout=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -128,6 +128,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
         module.MEDIA_CLOSE_TIMEOUT_SECONDS = media_close_timeout
     if media_stop_timeout is not None:
         module.MEDIA_STOP_TIMEOUT_SECONDS = media_stop_timeout
+    if media_io_timeout is not None:
+        module.MEDIA_IO_TIMEOUT_SECONDS = media_io_timeout
     module.synthesize_chunks = synthesize_chunks
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
@@ -222,6 +224,32 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertIn("if unfinished:", shutdown)
         self.assertIn("cleanup_confirmed = False", shutdown)
         self.assertIn("emit(close_identifier, cleanup_confirmed)", shutdown)
+
+    def test_stalled_livekit_pcm_write_times_out_and_never_claims_delivery(self):
+        pcm = bytes([4, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 71, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 72, "command": "pcm_chunk", "stream_id": 71, "pcm_hex": pcm.hex()},
+            {"id": 73, "command": "pcm_end", "stream_id": 71},
+            {"id": 74, "command": "close"},
+        ]
+        started = time.monotonic()
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.16,
+            write_latency=0.5, media_io_timeout=0.03,
+            media_close_timeout=0.05,
+        )
+        self.assertLess(time.monotonic() - started, 0.45)
+        self.assertEqual(trace["audio"], [])
+        self.assertFalse(any(r["id"] == 73 and r["ok"] for r in receipts))
+        self.assertTrue(any(
+            r["id"] == 71 and not r["ok"] and r.get("stage") == "pcm_stream_write"
+            for r in receipts
+        ))
+        self.assertEqual(trace["disconnected"], 1)
 
     def test_stalled_remote_stop_fails_closed_without_success_receipt(self):
         records = [
