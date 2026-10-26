@@ -70,6 +70,9 @@ impl Rt1VisitorConversation {
         // provider contract supports bounded cancel + confirmed teardown.
         let _ = consent;
         let _ = manager.close(&id);
+        // Consume owned handles without initiating remote provider I/O.
+        drop(engine);
+        drop(manager);
         Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into())
     }
 
