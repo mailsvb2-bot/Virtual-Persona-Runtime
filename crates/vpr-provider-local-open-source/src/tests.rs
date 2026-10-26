@@ -384,10 +384,8 @@ fn remote_stop_with_stalled_receipt_body_is_never_confirmed() {
     });
     let avatar = provider(format!("http://{address}"));
     let started = std::time::Instant::now();
-    let result = avatar.stop_session_confirmed(
-        &test_session(),
-        started + Duration::from_millis(50),
-    );
+    let result =
+        avatar.stop_session_confirmed(&test_session(), started + Duration::from_millis(50));
     assert!(result.is_err());
     assert!(started.elapsed() < Duration::from_millis(350));
     server.join().unwrap();
