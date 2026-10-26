@@ -144,3 +144,37 @@ impl Drop for Rt1VisitorConversation {
         let _ = self.engine.lock().revoke();
     }
 }
+
+#[cfg(test)]
+mod rt1_interrupt_concurrency_tests {
+    use super::*;
+    use std::sync::mpsc::{channel, sync_channel};
+    use std::time::Duration;
+
+    #[test]
+    fn visitor_stop_does_not_wait_for_a_hung_provider_worker() {
+        // A remote provider may be stuck in startup. The revocation callback
+        // must not acquire the engine mutex or wait for that remote request.
+        let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let (started_tx, started_rx) = sync_channel(1);
+        let (release_tx, release_rx) = channel::<()>();
+        let provider = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let stopped = Arc::clone(&interrupt);
+        let (done_tx, done_rx) = sync_channel(1);
+        let revoker = std::thread::spawn(move || {
+            stopped.stop();
+            done_tx.send(()).unwrap();
+        });
+        let result = done_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        provider.join().unwrap();
+        revoker.join().unwrap();
+        assert!(result.is_ok(), "visitor local STOP waited for provider I/O");
+        assert!(interrupt.cancelled.load(Ordering::Acquire));
+    }
+}
