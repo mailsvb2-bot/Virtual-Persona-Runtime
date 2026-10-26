@@ -217,3 +217,33 @@ fn expired_remote_stop_deadline_never_calls_provider() {
         .unwrap_err();
     assert_eq!(err.kind, ProviderErrorKind::Timeout);
 }
+
+#[test]
+fn stalled_remote_stop_is_deadline_bounded_and_never_confirmed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        assert!(request.starts_with("DELETE /v1/avatar/sessions/local-1 "));
+        thread::sleep(std::time::Duration::from_millis(160));
+        // A late positive receipt may arrive after the client's deadline.
+        let body = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    let avatar = provider(format!("http://{address}"));
+    let started = std::time::Instant::now();
+    let error = avatar
+        .stop_session_confirmed(
+            &test_session(),
+            started + std::time::Duration::from_millis(25),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_millis(140));
+    server.join().unwrap();
+}
