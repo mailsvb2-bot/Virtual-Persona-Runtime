@@ -11,7 +11,7 @@ VENDOR_SCRIPT = (UI / "scripts" / "vendor-livekit.mjs").read_text(encoding="utf-
 PACKAGE = json.loads((UI / "package.json").read_text(encoding="utf-8"))
 LOCK = json.loads((UI / "package-lock.json").read_text(encoding="utf-8"))
 
-VERSION = "2.22.3"
+VERSION = "2.23.0"
 ASSET = UI / "dist" / "vendor" / "livekit-client.umd.js"
 DIGEST = UI / "dist" / "vendor" / "livekit-client.umd.js.sha256"
 LICENSE = UI / "vendor" / "livekit-client.LICENSE"
@@ -45,7 +45,7 @@ if not str(locked.get("integrity", "")).startswith("sha512-"):
     raise SystemExit("package-lock LiveKit entry must retain npm integrity evidence")
 
 for required in (
-    'const EXPECTED_VERSION = "2.22.3";',
+    'const EXPECTED_VERSION = "2.23.0";',
     "node_modules/livekit-client/dist/livekit-client.umd.js",
     "createHash",
     "sha256",
