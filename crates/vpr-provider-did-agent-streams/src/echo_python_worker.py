@@ -269,7 +269,7 @@ async def run():
                     raise asyncio.CancelledError()
                 if not chunk:
                     raise ValueError("empty TTS stream")
-                writer = await room.local_participant.stream_bytes(
+                writer = await asyncio.wait_for(room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
                     attributes=attributes,
