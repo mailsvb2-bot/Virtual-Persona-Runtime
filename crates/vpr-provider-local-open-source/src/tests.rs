@@ -363,3 +363,32 @@ fn cancellation_during_remote_allocation_prevents_admission_and_requests_verifie
     });
     server.join().unwrap();
 }
+
+#[test]
+fn remote_stop_with_stalled_receipt_body_is_never_confirmed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("DELETE /v1/avatar/sessions/local-1 "));
+        let receipt = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            receipt.len()
+        );
+        stream.write_all(headers.as_bytes()).unwrap();
+        // Headers are not a STOP receipt. The worker might stall before
+        // sending even one byte of its purported confirmation.
+        thread::sleep(Duration::from_millis(400));
+        let _ = stream.write_all(receipt.as_bytes());
+    });
+    let avatar = provider(format!("http://{address}"));
+    let started = std::time::Instant::now();
+    let result = avatar.stop_session_confirmed(
+        &test_session(),
+        started + Duration::from_millis(50),
+    );
+    assert!(result.is_err());
+    assert!(started.elapsed() < Duration::from_millis(350));
+    server.join().unwrap();
+}
