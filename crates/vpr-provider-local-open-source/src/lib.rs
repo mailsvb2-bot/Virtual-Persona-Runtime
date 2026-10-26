@@ -170,7 +170,17 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
         let body: CreateSessionResponse = decode_json_response(response, Some(cancellation))?;
-        body.try_into()
+        let session: RealtimeAvatarSession = body.try_into()?;
+        // Cancellation can race with a successful remote allocation. Never
+        // return a newly created session once the caller has revoked access.
+        // Best-effort cleanup is deliberately NOT treated as proof of STOP:
+        // the caller receives Cancelled even when the remote DELETE succeeds.
+        if cancellation.is_cancelled() {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let _ = self.stop_session_confirmed(&session, deadline);
+            return Err(cancelled());
+        }
+        Ok(session)
     }
 
     fn submit_answer(
