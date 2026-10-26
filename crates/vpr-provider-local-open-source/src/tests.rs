@@ -288,7 +288,9 @@ fn post_allocation_revoke_never_admits_session_when_remote_stop_is_unconfirmed()
     let avatar = provider(endpoint);
     let cancelled_probe = Probe(AtomicBool::new(true));
     let result = avatar.finalize_created_session(test_session(), &cancelled_probe);
-    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::Cancelled);
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
     assert!(
         captured
             .recv()
@@ -417,4 +419,22 @@ fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
     assert!(result.is_err());
     assert!(started.elapsed() < Duration::from_millis(250));
     server.join().unwrap();
+}
+
+#[test]
+fn revoked_allocation_with_failed_stop_never_returns_plain_cancelled() {
+    let (endpoint, captured) = serve(vec![("503 Service Unavailable", "{}".to_owned())]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let error = avatar
+        .finalize_created_session(test_session(), &cancelled_probe)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
 }
