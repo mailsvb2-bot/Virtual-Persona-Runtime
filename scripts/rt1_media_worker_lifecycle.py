@@ -5,8 +5,10 @@ that does not acknowledge stop until RTP audio and video senders are stopped.
 """
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -43,6 +45,7 @@ class MediaLifecycle:
             CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
         )""")
         self._lock = threading.RLock()
+        self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
     def _get(self, operation_id: str):
@@ -159,19 +162,68 @@ class MediaLifecycle:
                 raise
         return self._finish_stop(operation_id, session_id, generation)
 
-    def _finish_stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
+    @contextmanager
+    def _exclusive_stop(self):
+        """OS-held STOP ownership; a crashed process releases it automatically.
+
+        A non-blocking lock avoids waiting behind a hung provider. No second
+        caller may send STOP or overwrite its result while the first is alive.
+        Reconciliation may retry after the owning process exits.
+        """
+        fd = os.open(self._stop_lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        locked = False
         try:
-            receipt = self._backend.stop(operation_id, session_id, generation)
-        except Exception:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    if os.fstat(fd).st_size == 0:
+                        os.write(fd, b"\0")
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as error:
+                raise RuntimeError(
+                    "remote STOP already in progress; shutdown not confirmed"
+                ) from error
+            locked = True
+            yield
+        finally:
+            if locked:
+                if os.name == "nt":
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+
+    def _finish_stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
+        with self._exclusive_stop():
             with self._lock:
-                self._write(operation_id, generation, "uncertain", session_id)
-            raise
-        with self._lock:
-            if not self._validate(receipt, operation_id, session_id, generation):
-                self._write(operation_id, generation, "uncertain", session_id)
-                raise RuntimeError("remote audio/video STOP not confirmed")
-            self._write(operation_id, generation, "stopped", session_id)
-        return receipt
+                row = self._get(operation_id)
+                if row is None or row[0] != generation or row[2] != session_id:
+                    raise RuntimeError("STOP target changed; shutdown not confirmed")
+                if row[1] == "stopped":
+                    # Only a prior verified STOP can persist a session id here.
+                    return StopReceipt(operation_id, session_id, generation, True, True)
+                if row[1] not in ("active", "stopping", "uncertain"):
+                    raise RuntimeError("STOP target unresolved; shutdown not confirmed")
+                self._write(operation_id, generation, "stopping", session_id)
+            try:
+                receipt = self._backend.stop(operation_id, session_id, generation)
+            except Exception:
+                with self._lock:
+                    self._write(operation_id, generation, "uncertain", session_id)
+                raise
+            with self._lock:
+                if not self._validate(receipt, operation_id, session_id, generation):
+                    self._write(operation_id, generation, "uncertain", session_id)
+                    raise RuntimeError("remote audio/video STOP not confirmed")
+                self._write(operation_id, generation, "stopped", session_id)
+            return receipt
 
     def reconcile(self):
         """Replay STOP only for known session IDs; NEVER replay CREATE."""
