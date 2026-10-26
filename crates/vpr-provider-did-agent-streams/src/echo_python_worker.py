@@ -219,8 +219,8 @@ async def run():
                 if published:
                     try:
                         await asyncio.wait_for(
-                            room.local_participant.send_text("{}", topic="did.interrupt"),
-                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
                     except Exception:
                         pass
@@ -305,8 +305,8 @@ async def run():
                 if published:
                     try:
                         await asyncio.wait_for(
-                            room.local_participant.send_text("{}", topic="did.interrupt"),
-                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
                     except Exception:
                         pass
@@ -450,8 +450,8 @@ async def run():
                         state["end_id"] = None
                     try:
                         await asyncio.wait_for(
-                            room.local_participant.send_text("{}", topic="did.interrupt"),
-                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
                         emit(identifier, True)
                     except Exception:
@@ -469,8 +469,8 @@ async def run():
                         task.cancel()
                     # This is a text STOP command, never browser-published audio.
                     await asyncio.wait_for(
-                            room.local_participant.send_text("{}", topic="did.interrupt"),
-                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
                     emit(identifier, True)
                 elif command == "close":
@@ -485,8 +485,8 @@ async def run():
                     for task in tuple(tasks.values()):
                         task.cancel()
                     await asyncio.wait_for(
-                            room.local_participant.send_text("{}", topic="did.interrupt"),
-                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
                     # Do not acknowledge close before cancelled tasks and the
                     # transport have actually finished closing. A sent STOP
