@@ -26,6 +26,8 @@ jobs:
           rustc --version | grep '^rustc 1\.88\.0 '
       - name: Echo private LiveKit sender and STOP contract
         run: python3 tests/e2e/test_echo_python_worker.py
+      - name: RT1 worker operation and remote media STOP lifecycle
+        run: python3 -m unittest discover -s crates/vpr-provider-local-open-source -p test_worker_lifecycle.py -v
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
       - name: Piper speech bridge PCM and authorization contract
