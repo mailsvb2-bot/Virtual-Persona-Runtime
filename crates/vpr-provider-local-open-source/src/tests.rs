@@ -154,3 +154,59 @@ fn cancellation_prevents_network_work() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
 }
+
+fn test_session() -> RealtimeAvatarSession {
+    RealtimeAvatarSession {
+        provider_resource_id: "local-1".into(),
+        provider_session_id: "local-1".into(),
+        transport: RealtimeAvatarTransport::WebRtc {
+            offer: WebRtcSessionDescription {
+                kind: "offer".into(),
+                sdp: "test-offer".into(),
+            },
+            ice_servers: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn remote_stop_requires_audio_video_and_session_receipt() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.into(),
+    )]);
+    provider(endpoint)
+        .stop_session_confirmed(
+            &test_session(),
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(captured.recv().unwrap().starts_with("DELETE /v1/avatar/sessions/local-1 "));
+}
+
+#[test]
+fn remote_stop_rejects_plain_success_and_partial_stop() {
+    for receipt in [
+        "{}",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"other","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", receipt.into())]);
+        assert!(provider(endpoint)
+            .stop_session_confirmed(
+                &test_session(),
+                std::time::Instant::now() + std::time::Duration::from_secs(2),
+            )
+            .is_err());
+        assert!(captured.recv().unwrap().starts_with("DELETE "));
+    }
+}
+
+#[test]
+fn expired_remote_stop_deadline_never_calls_provider() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let err = avatar
+        .stop_session_confirmed(&test_session(), std::time::Instant::now())
+        .unwrap_err();
+    assert_eq!(err.kind, ProviderErrorKind::Timeout);
+}
