@@ -203,6 +203,17 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertEqual(trace["disconnected"], 1)
         self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
 
+    def test_close_cleanup_is_bounded_and_receipt_requires_completed_drain(self):
+        # Executed worker control flow must never emit a successful STOP
+        # solely because its disconnect completed: cancelled writers must
+        # also have exited. The CI architecture check guards this contract.
+        source = WORKER.read_text(encoding="utf-8")
+        shutdown = source.split("    finally:\\n        pending = set(tasks.values())", 1)[-1]
+        self.assertIn("asyncio.wait_for(", shutdown)
+        self.assertIn("asyncio.gather(*pending, return_exceptions=True)", shutdown)
+        self.assertIn("cleanup_confirmed = False", shutdown)
+        self.assertIn("emit(close_identifier, cleanup_confirmed)", shutdown)
+
     def test_close_receipt_waits_for_livekit_disconnect(self):
         records = [
             {"id": 0, "command": "open",
