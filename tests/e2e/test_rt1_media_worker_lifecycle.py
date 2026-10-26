@@ -121,8 +121,8 @@ class LifecycleTests(unittest.TestCase):
 
     def test_cancel_before_create_persists_tombstone_across_restart(self):
         other = mod.MediaLifecycle(self.db, self.sender)
-        receipt = other.cancel("op-a", 1)
-        self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
+        self.assertIsNone(other.cancel("op-a", 1))
+        self.assertIsNone(other.cancel("op-a", 1))
         self.assertEqual(other.status("op-a")[1], "stopped")
         with self.assertRaisesRegex(RuntimeError, "cancelled"):
             self.worker.create("op-a", 1)
