@@ -69,6 +69,21 @@ fn provider(endpoint: String) -> LocalOpenSourceAvatar {
 }
 
 #[test]
+fn ordinary_close_requires_positive_remote_stop_receipt() {
+    for receipt in [
+        r#"{}"#,
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"different","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", receipt.to_owned())]);
+        let error = provider(endpoint).close_session(&test_session()).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(!error.retryable);
+        assert!(captured.recv().unwrap().starts_with("DELETE /v1/avatar/sessions/local-1 "));
+    }
+}
+
+#[test]
 fn full_worker_control_plane_matches_contract() {
     let create = r#"{"id":"local-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":"stun:example.test"}]}"#;
     let (endpoint, captured) = serve(vec![
@@ -77,7 +92,10 @@ fn full_worker_control_plane_matches_contract() {
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
-        ("200 OK", "{}".to_owned()),
+        (
+            "200 OK",
+            r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.to_owned(),
+        ),
     ]);
     let avatar = provider(endpoint);
     let probe = Probe(AtomicBool::new(false));
