@@ -131,7 +131,11 @@ mod tests {
                 } else {
                     r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":true,"video_stopped":true}"#
                 };
-                let status = if attempt == 0 { "202 Accepted" } else { "200 OK" };
+                let status = if attempt == 0 {
+                    "202 Accepted"
+                } else {
+                    "200 OK"
+                };
                 write!(
                     socket,
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -140,14 +144,9 @@ mod tests {
                 .unwrap();
             }
         });
-        let client = RemoteOperationClient::new(
-            &endpoint,
-            "worker-secret",
-            Duration::from_secs(3),
-        )
-        .unwrap();
-        let remote = Rt1RemoteMediaRevocation::new(client, "pending-stop".into(), 3)
-            .unwrap();
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "pending-stop".into(), 3).unwrap();
         assert!(!remote.is_revoked());
         assert!(!remote.is_stop_confirmed());
         assert_eq!(
