@@ -428,24 +428,30 @@ mod tests {
         let client =
             RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
-        let confirmed = Arc::new(AtomicBool::new(false));
-        let callback_confirmation = Arc::clone(&confirmed);
+        let remote = Arc::new(
+            crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation::new(
+                client,
+                "owner-revoked-1".into(),
+                1,
+            )
+            .unwrap(),
+        );
+        let callback_remote = Arc::clone(&remote);
         manager.sessions.lock().insert(
             "owner-session".into(),
             Arc::new(ManagedVisitor {
                 authority: Rt1VisitorSession::inert_for_revocation_test(),
                 revoked: AtomicBool::new(false),
                 stop: Arc::new(move || {
-                    if client.cancel_confirmed("owner-revoked-1", 1).is_ok() {
-                        callback_confirmation.store(true, Ordering::SeqCst);
-                    }
+                    let _ = callback_remote.revoke_confirmed();
                 }),
             }),
         );
         manager.revoke_all();
         server.join().unwrap();
         assert_eq!(request_count.load(Ordering::SeqCst), 1);
-        assert!(confirmed.load(Ordering::SeqCst));
+        assert!(remote.is_revoked());
+        assert!(remote.is_stop_confirmed());
         assert_eq!(manager.active_count(), 0);
         manager.revoke_all();
         assert_eq!(request_count.load(Ordering::SeqCst), 1);
