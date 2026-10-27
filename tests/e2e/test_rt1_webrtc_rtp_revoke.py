@@ -19,10 +19,10 @@ from pathlib import Path
 
 class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
     async def test_two_sender_transport_stops_on_revoke(self):
-        try:
-            from aiortc import RTCPeerConnection, AudioStreamTrack, VideoStreamTrack
-        except ImportError:
-            self.skipTest("Install aiortc to execute the real RTP probe")
+        # This is a required CI safety probe, never an optional dependency test.
+        # A broken/missing aiortc installation must fail the job, not silently
+        # report a green workflow with zero RTP packets tested.
+        from aiortc import RTCPeerConnection, AudioStreamTrack, VideoStreamTrack
         publisher = RTCPeerConnection()
         receiver = RTCPeerConnection()
         audio = AudioStreamTrack()
