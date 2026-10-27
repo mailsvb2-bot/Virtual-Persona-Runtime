@@ -49,6 +49,23 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
             ):
                 self._send(400, {"error": "invalid operation id"})
                 return
+            if method == "GET":
+                # Durable status is observable without reopening the session.
+                # The state is *not* a STOP receipt; only a completed backend
+                # confirmation can advance the operation to "stopped".
+                row = lifecycle.status(operation_id)
+                if row is None:
+                    self._send(404, {"error": "unknown operation"})
+                    return
+                generation, phase, session_id = row
+                self._send(200, {
+                    "operation_id": operation_id,
+                    "generation": generation,
+                    "phase": phase,
+                    "session_id": session_id,
+                    "stop_confirmed": phase == "stopped" and session_id is not None,
+                })
+                return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length < 1 or length > 1024:
@@ -81,6 +98,9 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
             except Exception:
                 self._send(503, {"error": "worker failure", "stop_confirmed": False})
+
+        def do_GET(self):
+            self._request("GET")
 
         def do_PUT(self):
             self._request("PUT")
