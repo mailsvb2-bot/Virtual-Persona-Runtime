@@ -92,6 +92,37 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(stopped["phase"], "stopped")
         self.assertIs(stopped["stop_confirmed"], True)
 
+    def test_failed_remote_video_stop_quarantines_operation_and_denies_recreate(self):
+        original_stop = self.backend.stop
+
+        def partial_stop(operation_id, session_id, generation):
+            self.backend.stops += 1
+            return StopReceipt(operation_id, session_id, generation, True, False)
+
+        self.backend.stop = partial_stop
+        status, created = self.request("PUT")
+        self.assertEqual(status, 200)
+        self.assertEqual(created["session_id"], "media-1")
+        status, error = self.request("DELETE")
+        self.assertEqual(status, 409)
+        self.assertIs(error["stop_confirmed"], False)
+
+        status_request = Request(
+            self.url, headers={"Authorization": "Bearer test-secret"}
+        )
+        with urlopen(status_request, timeout=3) as response:
+            state = json.load(response)
+        self.assertEqual(state["phase"], "uncertain")
+        self.assertIs(state["stop_confirmed"], False)
+        self.assertEqual(self.request("PUT")[0], 409)
+        self.assertEqual(self.backend.allocations, 1)
+
+        self.backend.stop = original_stop
+        status, confirmed = self.request("DELETE")
+        self.assertEqual(status, 200)
+        self.assertIs(confirmed["audio_stopped"], True)
+        self.assertIs(confirmed["video_stopped"], True)
+
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
         self.assertEqual(status, 202)
