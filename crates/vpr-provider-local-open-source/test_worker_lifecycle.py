@@ -43,7 +43,16 @@ class LifecycleTests(unittest.TestCase):
 
     def test_cancel_before_create_keeps_tombstone(self):
         lifecycle = MediaLifecycle()
-        lifecycle.cancel("operation-1", 0.1)
+        receipt = lifecycle.cancel("operation-1", 0.1)
+        self.assertEqual(receipt, {
+            "operation_id": "operation-1",
+            "cancelled_before_create": True,
+        })
+        # No sender existed: never fabricate an audio/video STOP receipt.
+        self.assertNotIn("audio_stopped", receipt)
+        self.assertNotIn("video_stopped", receipt)
+        again = lifecycle.cancel("operation-1", 0.1)
+        self.assertEqual(again, {"cancelled_before_create": True})
         with self.assertRaises(LifecycleError):
             lifecycle.create("operation-1", lambda _: self.fail("unexpected allocation"))
 
