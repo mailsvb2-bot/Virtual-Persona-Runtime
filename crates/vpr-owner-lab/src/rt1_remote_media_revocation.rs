@@ -95,3 +95,81 @@ impl VisitorSessionManager {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::Duration;
+
+    #[test]
+    fn remote_stop_pending_never_confirms_and_can_be_reconciled() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            for attempt in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                loop {
+                    let read = socket.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|segment| segment == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                assert!(request.starts_with(b"DELETE /v1/avatar/operations/pending-stop "));
+                let body = if attempt == 0 {
+                    r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":false,"video_stopped":false}"#
+                } else {
+                    r#"{"operation_id":"pending-stop","generation":3,"session_id":"remote-session","audio_stopped":true,"video_stopped":true}"#
+                };
+                let status = if attempt == 0 { "202 Accepted" } else { "200 OK" };
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let client = RemoteOperationClient::new(
+            &endpoint,
+            "worker-secret",
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "pending-stop".into(), 3)
+            .unwrap();
+        assert!(!remote.is_revoked());
+        assert!(!remote.is_stop_confirmed());
+        assert_eq!(
+            remote.revoke_confirmed().unwrap_err(),
+            "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
+        );
+        assert!(remote.is_revoked());
+        assert!(!remote.is_stop_confirmed());
+        remote.revoke_confirmed().unwrap();
+        assert!(remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn remote_operation_identity_must_be_valid_before_admission() {
+        let client = RemoteOperationClient::new(
+            "http://127.0.0.1:42119",
+            "worker-secret",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert!(Rt1RemoteMediaRevocation::new(client.clone(), "bad/id".into(), 1).is_err());
+        assert!(Rt1RemoteMediaRevocation::new(client, "safe-operation".into(), 0).is_err());
+    }
+}
