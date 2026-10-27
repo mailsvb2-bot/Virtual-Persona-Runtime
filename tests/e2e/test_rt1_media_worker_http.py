@@ -72,6 +72,26 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.backend.stops, 1)
         self.assertEqual(self.request("PUT")[0], 409)
 
+    def test_authenticated_durable_status_never_invents_stop_receipt(self):
+        request = Request(self.url, headers={"Authorization": "Bearer test-secret"})
+        try:
+            urlopen(request, timeout=3)
+            self.fail("unknown operation unexpectedly resolved")
+        except HTTPError as error:
+            self.assertEqual(error.code, 404)
+        status, created = self.request("PUT")
+        self.assertEqual(status, 200)
+        with urlopen(request, timeout=3) as response:
+            current = json.load(response)
+        self.assertEqual(current["phase"], "active")
+        self.assertIs(current["stop_confirmed"], False)
+        self.assertEqual(current["session_id"], created["session_id"])
+        self.assertEqual(self.request("DELETE")[0], 200)
+        with urlopen(request, timeout=3) as response:
+            stopped = json.load(response)
+        self.assertEqual(stopped["phase"], "stopped")
+        self.assertIs(stopped["stop_confirmed"], True)
+
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
         self.assertEqual(status, 202)
