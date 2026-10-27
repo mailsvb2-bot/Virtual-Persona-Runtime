@@ -397,23 +397,36 @@ mod tests {
         let server_count = Arc::clone(&request_count);
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let mut bytes = Vec::new();
             let mut buf = [0_u8; 4096];
             loop {
                 let n = socket.read(&mut buf).unwrap();
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 bytes.extend_from_slice(&buf[..n]);
-                if bytes.windows(4).any(|window| window == b"\r\n\r\n") { break; }
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
             }
             let request = String::from_utf8_lossy(&bytes);
             assert!(request.starts_with("DELETE /v1/avatar/operations/owner-revoked-1 "));
             server_count.fetch_add(1, Ordering::SeqCst);
             let reply = r#"{"operation_id":"owner-revoked-1","generation":1,"session_id":"remote-1","audio_stopped":true,"video_stopped":true}"#;
-            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", reply.len(), reply).unwrap();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.len(),
+                reply
+            )
+            .unwrap();
         });
 
-        let client = RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         let confirmed = Arc::new(AtomicBool::new(false));
         let callback_confirmation = Arc::clone(&confirmed);
