@@ -382,4 +382,59 @@ mod tests {
         let result = finish_buffered(Ok("unreleased"), || Err("visitor session revoked".into()));
         assert_eq!(result.unwrap_err(), "visitor session revoked");
     }
+
+    #[test]
+    fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+        use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let server_count = Arc::clone(&request_count);
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let mut bytes = Vec::new();
+            let mut buf = [0_u8; 4096];
+            loop {
+                let n = socket.read(&mut buf).unwrap();
+                if n == 0 { break; }
+                bytes.extend_from_slice(&buf[..n]);
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") { break; }
+            }
+            let request = String::from_utf8_lossy(&bytes);
+            assert!(request.starts_with("DELETE /v1/avatar/operations/owner-revoked-1 "));
+            server_count.fetch_add(1, Ordering::SeqCst);
+            let reply = r#"{"operation_id":"owner-revoked-1","generation":1,"session_id":"remote-1","audio_stopped":true,"video_stopped":true}"#;
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", reply.len(), reply).unwrap();
+        });
+
+        let client = RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let confirmed = Arc::new(AtomicBool::new(false));
+        let callback_confirmation = Arc::clone(&confirmed);
+        manager.sessions.lock().insert(
+            "owner-session".into(),
+            Arc::new(ManagedVisitor {
+                authority: Rt1VisitorSession::inert_for_revocation_test(),
+                revoked: AtomicBool::new(false),
+                stop: Arc::new(move || {
+                    if client.cancel_confirmed("owner-revoked-1", 1).is_ok() {
+                        callback_confirmation.store(true, Ordering::SeqCst);
+                    }
+                }),
+            }),
+        );
+        manager.revoke_all();
+        server.join().unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(confirmed.load(Ordering::SeqCst));
+        assert_eq!(manager.active_count(), 0);
+        manager.revoke_all();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
 }
