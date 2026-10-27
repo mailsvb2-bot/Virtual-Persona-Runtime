@@ -86,7 +86,7 @@ class MediaLifecycle:
                 operation.complete.set()
                 operation.stopped = True
                 self._operations[operation_id] = operation
-                return {"operation_id": operation_id, "audio_stopped": True, "video_stopped": True}
+                return {"operation_id": operation_id, "cancelled_before_create": True}
             operation.cancelled.set()
         if not operation.complete.wait(timeout):
             raise LifecycleError("CREATE still running: remote STOP is unconfirmed")
@@ -106,7 +106,7 @@ class MediaLifecycle:
             allocation = operation.allocation
             if allocation is None:
                 if operation.stopped:
-                    return {"audio_stopped": True, "video_stopped": True}
+                    return {"cancelled_before_create": True}
                 raise LifecycleError("allocation not resolved: STOP unconfirmed")
             if operation.stopping and not operation.stopped:
                 raise LifecycleError("concurrent STOP still unconfirmed")
