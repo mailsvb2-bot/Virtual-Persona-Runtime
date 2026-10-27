@@ -59,6 +59,7 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
 
         publisher_candidates = []
         receiver_candidates = []
+        received_frames = {"audio": 0, "video": 0}
 
         @publisher.on("icecandidate")
         def from_publisher(candidate):
@@ -74,6 +75,8 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                 try:
                     while track.readyState == "live":
                         await track.recv()
+                        if track.kind in received_frames:
+                            received_frames[track.kind] += 1
                 except Exception:
                     pass
 
@@ -108,6 +111,14 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(before)
             self.assertGreater(before["audio"], 0, "No real outbound audio RTP")
             self.assertGreater(before["video"], 0, "No real outbound video RTP")
+            # Packet counters alone do not prove independent visitor playback.
+            # Require decoded frames to reach the receiving peer on both tracks.
+            for _ in range(60):
+                if received_frames["audio"] > 0 and received_frames["video"] > 0:
+                    break
+                await asyncio.sleep(0.1)
+            self.assertGreater(received_frames["audio"], 0, "Visitor received no audio frames")
+            self.assertGreater(received_frames["video"], 0, "Visitor received no video frames")
 
             # Revoke via the real worker lifecycle owner, NOT by independently
             # closing transports in this test. Its STOP receipt is issued
@@ -127,7 +138,12 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(video.readyState, "ended")
             # Post-close no active sender or peer can emit further RTP; this
             # local test cannot attest a separately hosted remote publisher.
+            frozen_frames = dict(received_frames)
             await asyncio.sleep(0.25)
+            self.assertEqual(
+                received_frames, frozen_frames,
+                "Received frames continued after confirmed remote STOP",
+            )
             self.assertEqual(publisher.connectionState, "closed")
         finally:
             audio.stop()
