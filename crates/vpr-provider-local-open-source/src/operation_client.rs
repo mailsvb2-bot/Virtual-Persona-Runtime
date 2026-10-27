@@ -45,7 +45,10 @@ pub struct OperationStatus {
 }
 
 fn denied() -> ProviderError {
-    ProviderError { kind: ProviderErrorKind::Unavailable, retryable: false }
+    ProviderError {
+        kind: ProviderErrorKind::Unavailable,
+        retryable: false,
+    }
 }
 
 impl RemoteOperationClient {
@@ -56,20 +59,30 @@ impl RemoteOperationClient {
         if token.trim().is_empty() || timeout.is_zero() {
             return Err(denied());
         }
-        let client = super::build_provider_http_client(timeout)
-            .map_err(|_| denied())?;
-        Ok(Self { client, base, token: token.to_owned() })
+        let client = super::build_provider_http_client(timeout).map_err(|_| denied())?;
+        Ok(Self {
+            client,
+            base,
+            token: token.to_owned(),
+        })
     }
 
     fn url(&self, operation_id: &str) -> Result<reqwest::Url, ProviderError> {
-        if operation_id.is_empty() || operation_id.len() > 128
-            || !operation_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        if operation_id.is_empty()
+            || operation_id.len() > 128
+            || !operation_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
         {
             return Err(denied());
         }
         let mut url = self.base.clone();
-        url.path_segments_mut().map_err(|()| denied())?
-            .extend(["v1", "avatar", "operations", operation_id]);
+        url.path_segments_mut().map_err(|()| denied())?.extend([
+            "v1",
+            "avatar",
+            "operations",
+            operation_id,
+        ]);
         Ok(url)
     }
 
@@ -79,15 +92,18 @@ impl RemoteOperationClient {
         if generation == 0 {
             return Err(denied());
         }
-        let response = self.client.put(self.url(operation_id)?)
+        let response = self
+            .client
+            .put(self.url(operation_id)?)
             .bearer_auth(&self.token)
             .json(&Generation { generation })
-            .send().map_err(|_| denied())?;
+            .send()
+            .map_err(|_| denied())?;
         if !response.status().is_success() {
             return Err(denied());
         }
-        let reply: CreateReply = super::decode_json_response(response, None)
-            .map_err(|_| denied())?;
+        let reply: CreateReply =
+            super::decode_json_response(response, None).map_err(|_| denied())?;
         if reply.operation_id != operation_id || reply.session_id.is_empty() {
             return Err(denied());
         }
@@ -96,23 +112,31 @@ impl RemoteOperationClient {
 
     /// # Errors
     /// 202 means pending, never confirmed; requires both positive media receipts.
-    pub fn cancel_confirmed(&self, operation_id: &str, generation: u64)
-        -> Result<String, ProviderError>
-    {
+    pub fn cancel_confirmed(
+        &self,
+        operation_id: &str,
+        generation: u64,
+    ) -> Result<String, ProviderError> {
         if generation == 0 {
             return Err(denied());
         }
-        let response = self.client.delete(self.url(operation_id)?)
+        let response = self
+            .client
+            .delete(self.url(operation_id)?)
             .bearer_auth(&self.token)
             .json(&Generation { generation })
-            .send().map_err(|_| denied())?;
+            .send()
+            .map_err(|_| denied())?;
         if !response.status().is_success() || response.status().as_u16() == 202 {
             return Err(denied());
         }
-        let reply: CancelReply = super::decode_json_response(response, None)
-            .map_err(|_| denied())?;
-        if reply.operation_id != operation_id || reply.generation != generation
-            || reply.session_id.is_empty() || !reply.audio_stopped || !reply.video_stopped
+        let reply: CancelReply =
+            super::decode_json_response(response, None).map_err(|_| denied())?;
+        if reply.operation_id != operation_id
+            || reply.generation != generation
+            || reply.session_id.is_empty()
+            || !reply.audio_stopped
+            || !reply.video_stopped
         {
             return Err(denied());
         }
@@ -122,16 +146,23 @@ impl RemoteOperationClient {
     /// # Errors
     /// Status is diagnostic only; never substitutes for a signed-off stop call.
     pub fn status(&self, operation_id: &str) -> Result<OperationStatus, ProviderError> {
-        let response = self.client.get(self.url(operation_id)?)
+        let response = self
+            .client
+            .get(self.url(operation_id)?)
             .bearer_auth(&self.token)
-            .send().map_err(|_| denied())?;
+            .send()
+            .map_err(|_| denied())?;
         if !response.status().is_success() {
             return Err(denied());
         }
-        let state: OperationStatus = super::decode_json_response(response, None)
-            .map_err(|_| denied())?;
-        if state.operation_id != operation_id || state.generation == 0
-            || !matches!(state.phase.as_str(), "creating" | "active" | "stopping" | "stopped" | "uncertain")
+        let state: OperationStatus =
+            super::decode_json_response(response, None).map_err(|_| denied())?;
+        if state.operation_id != operation_id
+            || state.generation == 0
+            || !matches!(
+                state.phase.as_str(),
+                "creating" | "active" | "stopping" | "stopped" | "uncertain"
+            )
             || (state.stop_confirmed && (state.phase != "stopped" || state.session_id.is_none()))
         {
             return Err(denied());
