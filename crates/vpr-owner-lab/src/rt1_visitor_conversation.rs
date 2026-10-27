@@ -48,10 +48,13 @@ impl LiveVisitorInterrupt {
         }
         // Never hold the engine, registry or operation mutex across remote IO.
         // A missing/partial STOP receipt keeps this operation unconfirmed.
-        if let Some((client, operation_id, generation)) = self.remote.lock().take() {
+        let pending = self.remote.lock().clone();
+        if let Some((client, operation_id, generation)) = pending {
             if client.cancel_confirmed(&operation_id, generation).is_ok() {
                 self.remote_stop_confirmed.store(true, Ordering::Release);
+                self.remote.lock().take();
             }
+            // On failure retain identity for a later confirmed STOP attempt.
         }
     }
 }
