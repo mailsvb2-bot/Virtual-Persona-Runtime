@@ -57,13 +57,27 @@ class MediaLifecycle:
             self._operations[operation_id] = operation
         try:
             allocation = allocate(operation.cancelled)
-            if not allocation.session_id:
-                raise LifecycleError("missing session id")
             with self._guard:
-                if allocation.session_id in self._sessions:
-                    raise LifecycleError("duplicate session id")
+                # Every returned allocation may already have live RTP senders.
+                # Keep its handles even when its session ID is rejected, so
+                # a failed STOP can be retried by operation ID.
                 operation.allocation = allocation
-                self._sessions[allocation.session_id] = operation_id
+                if not allocation.session_id:
+                    rejected = "missing session id"
+                elif allocation.session_id in self._sessions:
+                    rejected = "duplicate session id"
+                else:
+                    rejected = None
+                    self._sessions[allocation.session_id] = operation_id
+            if rejected is not None:
+                operation.cancelled.set()
+                try:
+                    self._stop_operation(operation, timeout=2.0)
+                except BaseException as stop_error:
+                    raise LifecycleError(
+                        f"{rejected}; audio/video STOP unconfirmed"
+                    ) from stop_error
+                raise LifecycleError(rejected)
             if operation.cancelled.is_set():
                 self._stop_operation(operation, timeout=2.0)
                 raise LifecycleError("CREATE cancelled")

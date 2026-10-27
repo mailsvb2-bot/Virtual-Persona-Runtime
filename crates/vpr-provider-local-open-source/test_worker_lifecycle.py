@@ -41,6 +41,58 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(count), 1)
         self.assertTrue(lifecycle.stop("session-1", 0.1)["video_stopped"])
 
+    def test_duplicate_session_id_stops_rejected_senders_without_touching_owner(self):
+        lifecycle = MediaLifecycle()
+        first_audio, first_video = Sender(), Sender()
+        rejected_audio, rejected_video = Sender(), Sender()
+        lifecycle.create(
+            "operation-1",
+            lambda _: MediaAllocation("session-1", first_audio, first_video),
+        )
+        with self.assertRaisesRegex(LifecycleError, "duplicate session id"):
+            lifecycle.create(
+                "operation-2",
+                lambda _: MediaAllocation("session-1", rejected_audio, rejected_video),
+            )
+        self.assertTrue(rejected_audio.requested)
+        self.assertTrue(rejected_video.requested)
+        self.assertFalse(first_audio.requested)
+        self.assertFalse(first_video.requested)
+        self.assertTrue(lifecycle.stop("session-1", 0.1)["video_stopped"])
+
+    def test_missing_session_id_stops_unadopted_senders(self):
+        lifecycle = MediaLifecycle()
+        audio, video = Sender(), Sender()
+        with self.assertRaisesRegex(LifecycleError, "missing session id"):
+            lifecycle.create(
+                "operation-1",
+                lambda _: MediaAllocation("", audio, video),
+            )
+        self.assertTrue(audio.requested)
+        self.assertTrue(video.requested)
+
+    def test_rejected_allocation_retains_handle_when_stop_unconfirmed(self):
+        lifecycle = MediaLifecycle()
+        original_audio, original_video = Sender(), Sender()
+        lifecycle.create(
+            "operation-1",
+            lambda _: MediaAllocation("session-1", original_audio, original_video),
+        )
+        rejected_audio, rejected_video = Sender(), Sender(stopped=False)
+        with self.assertRaisesRegex(LifecycleError, "STOP unconfirmed"):
+            lifecycle.create(
+                "operation-2",
+                lambda _: MediaAllocation("session-1", rejected_audio, rejected_video),
+            )
+        self.assertTrue(rejected_audio.requested)
+        self.assertTrue(rejected_video.requested)
+        self.assertFalse(original_audio.requested)
+        rejected_video.stopped = True
+        receipt = lifecycle.cancel("operation-2", 0.1)
+        self.assertTrue(receipt["audio_stopped"])
+        self.assertTrue(receipt["video_stopped"])
+        self.assertFalse(original_video.requested)
+
     def test_cancel_before_create_keeps_tombstone(self):
         lifecycle = MediaLifecycle()
         receipt = lifecycle.cancel("operation-1", 0.1)
