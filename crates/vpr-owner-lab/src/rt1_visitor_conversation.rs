@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
+use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
@@ -16,9 +17,27 @@ struct LiveVisitorInterrupt {
     cancelled: AtomicBool,
     session: Mutex<Option<SessionRevocationHandle>>,
     turn: Mutex<Option<TurnInterruptHandle>>,
+    remote: Mutex<Option<(RemoteOperationClient, String, u64)>>,
+    remote_stop_confirmed: AtomicBool,
 }
 
 impl LiveVisitorInterrupt {
+    // Bind the *same* operation identity used by worker CREATE. If owner
+    // revocation wins first, refuse attachment and keep entry fail-closed.
+    fn attach_remote(
+        &self,
+        client: RemoteOperationClient,
+        operation_id: String,
+        generation: u64,
+    ) -> Result<(), String> {
+        let mut remote = self.remote.lock();
+        if self.cancelled.load(Ordering::Acquire) || remote.is_some() || generation == 0 {
+            return Err("RT1_REMOTE_OPERATION_NOT_ADMITTED".into());
+        }
+        *remote = Some((client, operation_id, generation));
+        Ok(())
+    }
+
     fn stop(&self) {
         self.cancelled.store(true, Ordering::Release);
         if let Some(turn) = self.turn.lock().clone() {
@@ -26,6 +45,13 @@ impl LiveVisitorInterrupt {
         }
         if let Some(session) = self.session.lock().clone() {
             let _ = session.revoke_authority();
+        }
+        // Never hold the engine, registry or operation mutex across remote IO.
+        // A missing/partial STOP receipt keeps this operation unconfirmed.
+        if let Some((client, operation_id, generation)) = self.remote.lock().take() {
+            if client.cancel_confirmed(&operation_id, generation).is_ok() {
+                self.remote_stop_confirmed.store(true, Ordering::Release);
+            }
         }
     }
 }
