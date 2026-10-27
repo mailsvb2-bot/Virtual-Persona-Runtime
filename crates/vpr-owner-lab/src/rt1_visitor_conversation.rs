@@ -27,7 +27,6 @@ impl LiveVisitorInterrupt {
         if let Some(session) = self.session.lock().clone() {
             let _ = session.revoke_authority();
         }
-
     }
 }
 
