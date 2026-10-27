@@ -126,9 +126,15 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
             lifecycle.create("rtp-operation", lambda _: worker.MediaAllocation(
                 "rtp-session", RealSender(audio), RealSender(video)
             ))
+            # The revocation entry point is operation-owned, not an
+            # out-of-band session STOP: repeat CREATE must stay forbidden.
             receipt = await asyncio.wait_for(
-                asyncio.to_thread(lifecycle.stop, "rtp-session", 3.0), timeout=4
+                asyncio.to_thread(lifecycle.cancel, "rtp-operation", 3.0), timeout=4
             )
+            with self.assertRaises(worker.LifecycleError):
+                lifecycle.create("rtp-operation", lambda _: self.fail(
+                    "revoked operation unexpectedly allocated another RTP sender"
+                ))
             self.assertTrue(receipt["audio_stopped"])
             self.assertTrue(receipt["video_stopped"])
             self.assertTrue(transport_closed.is_set())
