@@ -7,6 +7,7 @@ mod persona_store_lease;
 mod provider_credentials;
 mod providers;
 mod rt1_owner_controller;
+mod rt1_remote_media_revocation;
 mod rt1_visitor_conversation;
 mod rt1_visitor_session;
 mod rt1_visitor_session_manager;
@@ -36,6 +37,7 @@ pub use owner_context::{ReviewedOwnerClaimSnapshot, ReviewedOwnerContextSnapshot
 pub use persona_persistence::{persist_reviewed_capture, restore_reviewed_persona};
 pub use persona_store_lease::acquire_persona_store_lease;
 pub use rt1_owner_controller::Rt1OwnerController;
+pub use rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 pub use rt1_visitor_conversation::Rt1VisitorConversation;
 pub use rt1_visitor_session::Rt1VisitorSession;
 pub use rt1_visitor_session_manager::VisitorSessionManager;
