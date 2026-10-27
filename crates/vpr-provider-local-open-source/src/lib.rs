@@ -544,5 +544,7 @@ const fn cancelled() -> ProviderError {
     }
 }
 
+pub mod operation_client;
+
 #[cfg(test)]
 mod tests;
