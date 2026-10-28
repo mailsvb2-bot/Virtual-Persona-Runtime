@@ -4,6 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
+use std::time::Duration;
+use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
@@ -37,6 +40,7 @@ pub struct Rt1VisitorConversation {
     id: String,
     engine: Mutex<OwnerLabEngine>,
     interrupt: Arc<LiveVisitorInterrupt>,
+    remote: Arc<Rt1RemoteMediaRevocation>,
 }
 
 impl Rt1VisitorConversation {
@@ -49,30 +53,105 @@ impl Rt1VisitorConversation {
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
         engine: OwnerLabEngine,
-        _consent: bool,
+        consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
-        // A remote provider that hangs while holding the publication lock
-        // blocks owner pause/unpublish indefinitely. A detached timeout thread
-        // cannot cancel that provider. RT1 must remain fail-closed until the
-        // provider supplies a bounded, enforceable STOP/cancellation contract.
+        if !consent {
+            return Err("CONSENT_REQUIRED".into());
+        }
         let (persona_id, persona_version) = engine
             .reviewed_persona_binding()
             .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
         let persona_id = persona_id.to_owned();
-        // Bind the revocation callback at admission time, before any
-        // provider work could start. Never register an empty STOP callback:
-        // owner pause/unpublish must reach this visitor's cancellation handle
-        // without waiting on the conversation engine mutex.
+
+        let endpoint = std::env::var("RT1_WORKER_ENDPOINT")
+            .map_err(|_| "RT1_WORKER_ENDPOINT_NOT_CONFIGURED".to_owned())?;
+        let token = std::env::var("RT1_WORKER_TOKEN")
+            .map_err(|_| "RT1_WORKER_TOKEN_NOT_CONFIGURED".to_owned())?;
+        let client = RemoteOperationClient::new(&endpoint, &token, Duration::from_secs(5))
+            .map_err(|_| "RT1_WORKER_CONFIGURATION_INVALID".to_owned())?;
+
+        // The operation identity exists BEFORE admission so a concurrent
+        // owner pause can create a durable cancellation tombstone.
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce)
+            .map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
+        let operation_id: String = nonce.iter().map(|octet| format!("{octet:02x}")).collect();
+        let remote = Arc::new(Rt1RemoteMediaRevocation::new(
+            client.clone(), operation_id.clone(), 1,
+        )?);
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
-        let stop_handle = Arc::clone(&interrupt);
-        let id = manager.open(visitor_token, move || stop_handle.stop())?;
+        let stop_interrupt = Arc::clone(&interrupt);
+        let stop_remote = Arc::clone(&remote);
+        let id = manager.open(visitor_token, move || {
+            stop_interrupt.stop();
+            let _ = stop_remote.revoke_confirmed();
+        })?;
+
         let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
-        let _ = manager.close(&id);
-        // Consume both owned arguments after closing the transient admission.
-        // No provider is started and no visitor engine escapes this boundary.
-        drop((manager, engine));
-        admitted?;
-        Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION".into())
+        if let Err(error) = admitted {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
+
+        // Exactly one CREATE; never retry an ambiguous response. The worker
+        // owns durable idempotence and STOP for an in-flight allocation.
+        let started = (|| -> Result<LabSignalBundle, String> {
+            let session_id = client.create(&operation_id, 1)
+                .map_err(|_| "RT1_REMOTE_CREATE_UNCONFIRMED".to_owned())?;
+            manager.authorize(&id)?;
+            if remote.is_revoked() {
+                return Err("RT1_VISITOR_REVOKED_DURING_CREATE".into());
+            }
+            let offer = client.offer(&operation_id, &session_id)
+                .map_err(|_| "RT1_REMOTE_OFFER_UNAVAILABLE".to_owned())?;
+            manager.authorize(&id)?;
+            if remote.is_revoked() {
+                return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into());
+            }
+            Ok(LabSignalBundle {
+                evidence_session_sequence: 1,
+                transport: crate::state::LabRealtimeTransport::WebRtc {
+                    offer: crate::state::LabSessionDescription {
+                        kind: offer.kind,
+                        sdp: offer.sdp,
+                    },
+                    ice_servers: Vec::new(),
+                },
+                capabilities: Vec::new(),
+                client_control: None,
+            })
+        })();
+        let bundle = match started {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                let _ = manager.close(&id);
+                let _ = remote.revoke_confirmed();
+                return Err(error);
+            }
+        };
+        Ok((Self {
+            manager,
+            id,
+            engine: Mutex::new(engine),
+            interrupt,
+            remote,
+        }, bundle))
+    }
+
+    /// Submit an answer only for the current canonical visitor session.
+    /// # Errors
+    /// A revoked publication or failed remote SDP operation is denied.
+    pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
+        self.manager.authorize(&self.id)?;
+        if self.remote.is_revoked() {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        self.remote.submit_answer(sdp)?;
+        self.manager.authorize(&self.id)?;
+        if self.remote.is_revoked() {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        Ok(())
     }
 
     /// # Errors
