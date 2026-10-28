@@ -1,4 +1,4 @@
-"""RT1 provider startup remains closed until enforceable provider cancellation exists."""
+"""RT1 startup registers bounded remote cancellation before admitting media."""
 from pathlib import Path
 import re
 import unittest
@@ -13,7 +13,13 @@ class Rt1StartupCancellationGate(unittest.TestCase):
     def test_startup_does_not_call_unbounded_provider(self):
         source = SOURCE.read_text(encoding="utf-8")
         start = source.split("    pub fn start(", 1)[1].split("    /// # Errors", 1)[0]
-        self.assertIn("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION", start)
+        self.assertNotIn("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION", start)
+        self.assertIn("RemoteOperationClient::new(", start)
+        self.assertIn("client.create(&operation_id, 1)", start)
+        self.assertIn("client.offer(&operation_id, &session_id)", start)
+        self.assertIn("stop_remote.revoke_confirmed()", start)
+        self.assertLess(start.index("manager.open("), start.index("client.create("))
+        self.assertGreaterEqual(start.count("manager.authorize(&id)"), 2)
         self.assertIn("manager.authorize_persona(", start)
         self.assertIn("manager.close(&id)", start)
         self.assertNotRegex(start, r"\.start_visitor\s*\(")
