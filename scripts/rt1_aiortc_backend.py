@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from rt1_media_worker_lifecycle import StopReceipt
 
@@ -22,6 +22,8 @@ class _Session:
     video: object
     operation_id: str
     generation: int
+    gate: asyncio.Lock = field(default_factory=asyncio.Lock)
+    closed: bool = False
 
 
 class AiortcSenderBackend:
@@ -100,9 +102,21 @@ class AiortcSenderBackend:
             entry = self._sessions.get(session_id)
         if not entry or (entry.operation_id, entry.generation) != (operation_id, generation):
             raise RuntimeError("unknown or revoked WebRTC session")
-        if entry.peer.remoteDescription is not None:
-            raise RuntimeError("WebRTC answer already accepted")
-        await entry.peer.setRemoteDescription(RTCSessionDescription(sdp=sdp, type="answer"))
+        # One final session-level media gate: answer and STOP must never
+        # overlap across an await point. A late answer cannot reopen a
+        # sender after STOP has begun or been confirmed.
+        async with entry.gate:
+            with self._lock:
+                current = self._sessions.get(session_id)
+            if current is not entry or entry.closed:
+                raise RuntimeError("WebRTC operation revoked before answer")
+            if entry.peer.remoteDescription is not None:
+                raise RuntimeError("WebRTC answer already accepted")
+            await entry.peer.setRemoteDescription(
+                RTCSessionDescription(sdp=sdp, type="answer")
+            )
+            if entry.closed:
+                raise RuntimeError("WebRTC operation revoked during answer")
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))
@@ -113,15 +127,23 @@ class AiortcSenderBackend:
         if not entry or (entry.operation_id, entry.generation) != (operation_id, generation):
             # Never fabricate STOP for a session that may live on another worker.
             raise RuntimeError("remote WebRTC sender missing; STOP unconfirmed")
-        entry.audio.stop()
-        entry.video.stop()
-        await entry.peer.close()
-        if (entry.audio.readyState != "ended" or entry.video.readyState != "ended"
-                or entry.peer.connectionState != "closed"):
-            raise RuntimeError("WebRTC sender shutdown not independently confirmed")
-        with self._lock:
-            self._sessions.pop(session_id, None)
-        return StopReceipt(operation_id, session_id, generation, True, True)
+        async with entry.gate:
+            # Mark revoked before any asynchronous close so no new answer
+            # may be admitted while the sender is shutting down.
+            entry.closed = True
+            entry.audio.stop()
+            entry.video.stop()
+            await entry.peer.close()
+            if (
+                entry.audio.readyState != "ended"
+                or entry.video.readyState != "ended"
+                or entry.peer.connectionState != "closed"
+            ):
+                raise RuntimeError("WebRTC sender shutdown not independently confirmed")
+            with self._lock:
+                if self._sessions.get(session_id) is entry:
+                    self._sessions.pop(session_id)
+            return StopReceipt(operation_id, session_id, generation, True, True)
 
     def shutdown(self):
         with self._lock:
