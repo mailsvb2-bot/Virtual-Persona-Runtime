@@ -209,10 +209,17 @@ impl Rt1VisitorConversation {
     pub fn close(&self) -> Result<(), String> {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
-        self.engine
+        // The manager's stop callback deliberately cannot return a network
+        // receipt. An explicit close MUST inspect the remote STOP outcome,
+        // including when the visitor registration was already revoked.
+        // Attempt local cleanup regardless of the remote result.
+        let remote_stop = self.remote.revoke_confirmed();
+        let local_stop = self
+            .engine
             .lock()
             .revoke()
-            .map_err(|error| error.code().to_owned())
+            .map_err(|error| error.code().to_owned());
+        finish_close(remote_stop, local_stop)
     }
 }
 
@@ -221,6 +228,39 @@ impl Drop for Rt1VisitorConversation {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
         let _ = self.engine.lock().revoke();
+    }
+}
+
+// A remote STOP without both sender receipts must never be reported as a
+// successful close, even when local engine cleanup succeeded.
+fn finish_close(remote_stop: Result<(), String>, local_stop: Result<(), String>) -> Result<(), String> {
+    remote_stop?;
+    local_stop
+}
+
+#[cfg(test)]
+mod close_outcome_tests {
+    use super::finish_close;
+
+    #[test]
+    fn unconfirmed_remote_stop_overrides_successful_local_cleanup() {
+        assert_eq!(
+            finish_close(Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()), Ok(())),
+            Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into())
+        );
+    }
+
+    #[test]
+    fn local_failure_is_preserved_after_confirmed_remote_stop() {
+        assert_eq!(
+            finish_close(Ok(()), Err("LOCAL_REVOKE_FAILED".into())),
+            Err("LOCAL_REVOKE_FAILED".into())
+        );
+    }
+
+    #[test]
+    fn close_requires_both_remote_and_local_success() {
+        assert!(finish_close(Ok(()), Ok(())).is_ok());
     }
 }
 
