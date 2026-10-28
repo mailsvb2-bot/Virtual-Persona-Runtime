@@ -73,7 +73,8 @@ impl Rt1RemoteMediaRevocation {
         if self.revoked.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        self.worker.answer(&self.operation_id, sdp)
+        self.worker
+            .answer(&self.operation_id, sdp)
             .map_err(|_| "RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned())
     }
 
