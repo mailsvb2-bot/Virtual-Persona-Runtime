@@ -122,6 +122,27 @@ impl VisitorSessionManager {
         finish_buffered(result, || session.authorize())
     }
 
+    /// Atomically authorize and enqueue one bounded local media fragment under
+    /// the canonical workspace transaction. This is NOT an external sender:
+    /// consumers must apply their own final provider-egress fence and STOP.
+    ///
+    /// # Errors
+    /// Denies unknown/revoked visitors, stale canonical permits, and full queues.
+    pub fn enqueue_media_fragment<T>(
+        &self,
+        session_id: &str,
+        sender: &std::sync::mpsc::SyncSender<T>,
+        fragment: T,
+    ) -> Result<(), String> {
+        let session = self.lookup(session_id)?;
+        if session.revoked.load(Ordering::Acquire) {
+            return Err("visitor session revoked".into());
+        }
+        // authorize + try_send share the workspace lock with pause/unpublish.
+        // No arbitrary callbacks/provider operations run under that lock.
+        session.authority.enqueue_fragment(sender, fragment)
+    }
+
     /// Explicit final authorization gate before one protected operation.
     /// The caller must bind provider cancellation to the stop callback.
     ///
@@ -291,6 +312,36 @@ mod tests {
         assert_eq!(manager.active_count(), 1);
         manager.revoke_all();
         assert_eq!(new_stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn media_queue_never_receives_fragment_without_canonical_publication() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            manager
+                .enqueue_media_fragment("unknown", &sender, vec![1_u8])
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn revoked_registration_never_enqueues_media() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(true),
+            stop: Arc::new(|| {}),
+        });
+        manager.sessions.lock().insert("revoked".into(), session);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            manager
+                .enqueue_media_fragment("revoked", &sender, vec![1_u8])
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]
