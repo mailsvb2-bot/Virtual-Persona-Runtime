@@ -27,6 +27,21 @@ struct CreateReply {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RemoteOffer {
+    pub kind: String,
+    pub sdp: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OfferReply {
+    operation_id: String,
+    session_id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    sdp: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct CancelReply {
     operation_id: String,
     session_id: String,
@@ -108,6 +123,37 @@ impl RemoteOperationClient {
             return Err(denied());
         }
         Ok(reply.session_id)
+    }
+
+    /// Fetch an offer for a specific, previously allocated operation.
+    /// # Errors
+    /// Denies mismatched sessions or malformed SDP responses.
+    pub fn offer(&self, operation_id: &str, session_id: &str) -> Result<RemoteOffer, ProviderError> {
+        let mut url = self.url(operation_id)?;
+        url.path_segments_mut().map_err(|()| denied())?.push("offer");
+        let response = self.client.get(url).bearer_auth(&self.token)
+            .send().map_err(|_| denied())?;
+        if !response.status().is_success() { return Err(denied()); }
+        let reply: OfferReply = super::decode_json_response(response, None).map_err(|_| denied())?;
+        if reply.operation_id != operation_id || reply.session_id != session_id
+            || reply.kind != "offer" || reply.sdp.trim().is_empty() {
+            return Err(denied());
+        }
+        Ok(RemoteOffer { kind: reply.kind, sdp: reply.sdp })
+    }
+
+    /// Submit the visitor's answer to the same remote operation.
+    /// # Errors
+    /// Denies empty SDP or failure to authenticate the active session.
+    pub fn answer(&self, operation_id: &str, sdp: &str) -> Result<(), ProviderError> {
+        if sdp.trim().is_empty() { return Err(denied()); }
+        let mut url = self.url(operation_id)?;
+        url.path_segments_mut().map_err(|()| denied())?.push("answer");
+        let response = self.client.post(url).bearer_auth(&self.token)
+            .json(&serde_json::json!({"type":"answer", "sdp":sdp}))
+            .send().map_err(|_| denied())?;
+        if !response.status().is_success() { return Err(denied()); }
+        Ok(())
     }
 
     /// # Errors
