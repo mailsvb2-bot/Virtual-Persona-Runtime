@@ -42,10 +42,14 @@ class AiortcSenderBackend:
         self._loop.run_forever()
 
     def _call(self, coroutine):
+        future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
-            return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(self._timeout)
+            return future.result(self._timeout)
         except concurrent.futures.TimeoutError as exc:
-            # A timeout is UNCERTAIN, never confirmation that a sender stopped.
+            # Do not let a timed-out CREATE/ANSWER/STOP continue unbounded in
+            # the background. Cancellation is best-effort: even after cancel,
+            # remote outcome remains UNCERTAIN until a real STOP receipt.
+            future.cancel()
             raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
 
     def allocate(self, operation_id: str, generation: int) -> str:

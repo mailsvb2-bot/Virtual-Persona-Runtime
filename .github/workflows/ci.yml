@@ -34,6 +34,8 @@ jobs:
         run: python3 tests/e2e/test_rt1_media_worker_http.py -v
       - name: RT1 media SDP authorization and revoke fence
         run: python3 tests/e2e/test_rt1_media_signaling_http.py -v
+      - name: RT1 aiortc timeout cancellation regression
+        run: python3 tests/e2e/test_rt1_aiortc_backend_timeout.py -v
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
       - name: Piper speech bridge PCM and authorization contract
