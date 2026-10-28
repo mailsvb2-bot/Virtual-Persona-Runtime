@@ -123,6 +123,18 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertIs(confirmed["audio_stopped"], True)
         self.assertIs(confirmed["video_stopped"], True)
 
+    def test_post_to_operation_resource_cannot_cancel_or_tombstone(self):
+        # POST is only valid at /answer. A POST to the operation resource
+        # must not silently become DELETE, before or after allocation.
+        self.assertEqual(self.request("POST")[0], 405)
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.request("POST")[0], 405)
+        self.assertEqual(self.backend.stops, 0)
+        self.assertEqual(self.lifecycle.status("operation-1")[1], "active")
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(self.backend.stops, 1)
+
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
         self.assertEqual(status, 202)

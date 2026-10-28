@@ -88,7 +88,10 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 except Exception:
                     self._send(409, {"error": "media answer unavailable"})
                 return
-            if len(segments) != 4:
+            # Only DELETE may revoke an operation. In particular, POST on the
+            # operation resource must never fall through to CANCEL; POST is
+            # reserved for the distinct /answer signaling endpoint.
+            if len(segments) != 4 or method not in ("GET", "PUT", "DELETE"):
                 self._send(405, {"error": "unsupported method"})
                 return
             if method == "GET":
