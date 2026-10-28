@@ -75,7 +75,11 @@ impl Rt1VisitorConversation {
         let mut nonce = [0_u8; 16];
         getrandom::fill(&mut nonce)
             .map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
-        let operation_id: String = nonce.iter().map(|octet| format!("{octet:02x}")).collect();
+        let operation_id = nonce.iter().fold(String::with_capacity(32), |mut result, octet| {
+            use std::fmt::Write;
+            write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
+            result
+        });
         let remote = Arc::new(Rt1RemoteMediaRevocation::new(
             client.clone(), operation_id.clone(), 1,
         )?);
