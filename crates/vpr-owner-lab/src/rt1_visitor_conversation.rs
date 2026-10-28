@@ -3,10 +3,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use parking_lot::Mutex;
 use std::time::Duration;
 use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
-use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
@@ -73,15 +73,18 @@ impl Rt1VisitorConversation {
         // The operation identity exists BEFORE admission so a concurrent
         // owner pause can create a durable cancellation tombstone.
         let mut nonce = [0_u8; 16];
-        getrandom::fill(&mut nonce)
-            .map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
-        let operation_id = nonce.iter().fold(String::with_capacity(32), |mut result, octet| {
-            use std::fmt::Write;
-            write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
-            result
-        });
+        getrandom::fill(&mut nonce).map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
+        let operation_id = nonce
+            .iter()
+            .fold(String::with_capacity(32), |mut result, octet| {
+                use std::fmt::Write;
+                write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
+                result
+            });
         let remote = Arc::new(Rt1RemoteMediaRevocation::new(
-            client.clone(), operation_id.clone(), 1,
+            client.clone(),
+            operation_id.clone(),
+            1,
         )?);
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
         let stop_interrupt = Arc::clone(&interrupt);
@@ -100,13 +103,15 @@ impl Rt1VisitorConversation {
         // Exactly one CREATE; never retry an ambiguous response. The worker
         // owns durable idempotence and STOP for an in-flight allocation.
         let started = (|| -> Result<LabSignalBundle, String> {
-            let session_id = client.create(&operation_id, 1)
+            let session_id = client
+                .create(&operation_id, 1)
                 .map_err(|_| "RT1_REMOTE_CREATE_UNCONFIRMED".to_owned())?;
             manager.authorize(&id)?;
             if remote.is_revoked() {
                 return Err("RT1_VISITOR_REVOKED_DURING_CREATE".into());
             }
-            let offer = client.offer(&operation_id, &session_id)
+            let offer = client
+                .offer(&operation_id, &session_id)
                 .map_err(|_| "RT1_REMOTE_OFFER_UNAVAILABLE".to_owned())?;
             manager.authorize(&id)?;
             if remote.is_revoked() {
@@ -133,13 +138,16 @@ impl Rt1VisitorConversation {
                 return Err(error);
             }
         };
-        Ok((Self {
-            manager,
-            id,
-            engine: Mutex::new(engine),
-            interrupt,
-            remote,
-        }, bundle))
+        Ok((
+            Self {
+                manager,
+                id,
+                engine: Mutex::new(engine),
+                interrupt,
+                remote,
+            },
+            bundle,
+        ))
     }
 
     /// Submit an answer only for the current canonical visitor session.
