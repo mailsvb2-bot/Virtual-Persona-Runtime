@@ -40,7 +40,9 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 self._send(400, {"error": "invalid request"})
                 return
             segments = parts.path.strip("/").split("/")
-            if len(segments) != 4 or segments[:3] != ["v1", "avatar", "operations"]:
+            if segments[:3] != ["v1", "avatar", "operations"] or (
+                len(segments) != 4 and not (len(segments) == 5 and segments[4] in ("offer", "answer"))
+            ):
                 self._send(404, {"error": "not found"})
                 return
             operation_id = segments[3]
@@ -48,6 +50,46 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 char.isascii() and (char.isalnum() or char in "-_") for char in operation_id
             ):
                 self._send(400, {"error": "invalid operation id"})
+                return
+            if method == "GET" and len(segments) == 5 and segments[4] == "offer":
+                row = lifecycle.status(operation_id)
+                if row is None or row[1] != "active" or not row[2]:
+                    self._send(410, {"error": "media operation not active"})
+                    return
+                try:
+                    offer = lifecycle._backend.offer(operation_id, row[2], row[0])
+                    # Do not expose an offer if STOP won during backend I/O.
+                    if lifecycle.status(operation_id) != row:
+                        self._send(410, {"error": "operation revoked"})
+                        return
+                    self._send(200, {"operation_id": operation_id, "session_id": row[2], **offer})
+                except Exception:
+                    self._send(409, {"error": "media offer unavailable"})
+                return
+            if method == "POST" and len(segments) == 5 and segments[4] == "answer":
+                row = lifecycle.status(operation_id)
+                if row is None or row[1] != "active" or not row[2]:
+                    self._send(410, {"error": "media operation not active"})
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 1 <= length <= 65536:
+                        raise ValueError("invalid SDP size")
+                    payload = json.loads(self.rfile.read(length))
+                    if payload.get("type") != "answer" or not isinstance(payload.get("sdp"), str):
+                        raise ValueError("invalid SDP answer")
+                    lifecycle._backend.answer(operation_id, row[2], row[0], payload["sdp"])
+                    if lifecycle.status(operation_id) != row:
+                        self._send(410, {"error": "operation revoked during answer"})
+                        return
+                    self._send(200, {"operation_id": operation_id, "accepted": True})
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    self._send(400, {"error": "invalid SDP answer"})
+                except Exception:
+                    self._send(409, {"error": "media answer unavailable"})
+                return
+            if len(segments) != 4:
+                self._send(405, {"error": "unsupported method"})
                 return
             if method == "GET":
                 # Durable status is observable without reopening the session.
@@ -107,5 +149,8 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
 
         def do_DELETE(self):
             self._request("DELETE")
+
+        def do_POST(self):
+            self._request("POST")
 
     return Handler
