@@ -233,7 +233,10 @@ impl Drop for Rt1VisitorConversation {
 
 // A remote STOP without both sender receipts must never be reported as a
 // successful close, even when local engine cleanup succeeded.
-fn finish_close(remote_stop: Result<(), String>, local_stop: Result<(), String>) -> Result<(), String> {
+fn finish_close(
+    remote_stop: Result<(), String>,
+    local_stop: Result<(), String>,
+) -> Result<(), String> {
     remote_stop?;
     local_stop
 }
