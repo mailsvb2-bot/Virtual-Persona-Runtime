@@ -42,5 +42,62 @@ class SenderTimeoutTests(unittest.TestCase):
             backend.shutdown()
 
 
+
+class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_remote_answer_must_complete_before_confirmed_stop(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from rt1_aiortc_backend import _Session
+
+        answer_started = asyncio.Event()
+        release_answer = asyncio.Event()
+        events = []
+
+        class Track:
+            readyState = "live"
+
+            def stop(self):
+                self.readyState = "ended"
+                events.append("track-stop")
+
+        class Peer:
+            connectionState = "connected"
+            remoteDescription = None
+
+            async def setRemoteDescription(self, description):
+                answer_started.set()
+                await release_answer.wait()
+                self.remoteDescription = description
+                events.append("answer")
+
+            async def close(self):
+                self.connectionState = "closed"
+                events.append("peer-stop")
+
+        backend = AiortcSenderBackend(timeout=2)
+        peer = Peer()
+        session = _Session(peer, Track(), Track(), "op", 1)
+        backend._sessions["session"] = session
+        try:
+            with patch.dict(
+                sys.modules,
+                {"aiortc": SimpleNamespace(RTCSessionDescription=lambda **values: values)},
+            ):
+                answer = asyncio.create_task(backend._answer("op", "session", 1, "sdp"))
+                await asyncio.wait_for(answer_started.wait(), 1)
+                stop = asyncio.create_task(backend._stop("op", "session", 1))
+                await asyncio.sleep(0.01)
+                self.assertFalse(stop.done(), "STOP raced unfinished SDP answer")
+                release_answer.set()
+                await asyncio.wait_for(answer, 1)
+                receipt = await asyncio.wait_for(stop, 1)
+                self.assertTrue(receipt.audio_stopped)
+                self.assertTrue(receipt.video_stopped)
+                self.assertLess(events.index("answer"), events.index("peer-stop"))
+                with self.assertRaises(RuntimeError):
+                    await backend._answer("op", "session", 1, "late-sdp")
+        finally:
+            backend.shutdown()
+
 if __name__ == "__main__":
     unittest.main()
