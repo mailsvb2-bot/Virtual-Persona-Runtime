@@ -65,6 +65,18 @@ impl Rt1RemoteMediaRevocation {
         Ok(())
     }
 
+    /// Submit SDP only while the operation is not revoked.
+    /// # Errors
+    /// Denies revoked operations and remote signaling failures.
+    pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
+        let _serial = self.stop_gate.lock();
+        if self.revoked.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        self.worker.answer(&self.operation_id, sdp)
+            .map_err(|_| "RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned())
+    }
+
     #[must_use]
     pub fn is_revoked(&self) -> bool {
         self.revoked.load(Ordering::Acquire)
