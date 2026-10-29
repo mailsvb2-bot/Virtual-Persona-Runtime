@@ -27,9 +27,17 @@ struct CreateReply {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RemoteIceServer {
+    pub urls: Vec<String>,
+    pub username: Option<String>,
+    pub credential: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RemoteOffer {
     pub kind: String,
     pub sdp: String,
+    pub ice_servers: Vec<RemoteIceServer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +47,8 @@ struct OfferReply {
     #[serde(rename = "type")]
     kind: String,
     sdp: String,
+    #[serde(default)]
+    ice_servers: Vec<RemoteIceServer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,6 +168,7 @@ impl RemoteOperationClient {
         Ok(RemoteOffer {
             kind: reply.kind,
             sdp: reply.sdp,
+            ice_servers: reply.ice_servers,
         })
     }
 
