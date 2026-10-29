@@ -65,6 +65,19 @@ struct VisitorAnswer {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct VisitorVoice {
+    session_id: String,
+    pcm: Vec<u8>,
+}
+
+// S16LE mono/16 kHz, 30s maximum. JSON arrays require up to four ASCII
+// bytes per PCM byte. Only the explicitly local, authenticated RT1 route
+// accepts this larger request; ordinary owner endpoints keep 128 KiB.
+const MAX_RT1_VOICE_BYTES: usize = 16_000 * 2 * 30;
+const MAX_RT1_VOICE_JSON_BODY: u64 = (MAX_RT1_VOICE_BYTES * 4 + 4096) as u64;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VisitorIce {
     session_id: String,
     candidate: Option<String>,
@@ -98,6 +111,7 @@ pub(super) fn route_post(
         "/api/rt1/visitor/start" => visitor_start(request, state),
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
+        "/api/rt1/visitor/voice" => visitor_voice(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
         "/api/rt1/visitor/close" => visitor_close(request, state),
         _ => return None,
@@ -256,6 +270,22 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
         })
         .map_err(|_| error_response(409, "RT1_VISITOR_ICE_DENIED"))?;
     Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+fn visitor_voice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    if !super::is_json(request) {
+        return Err(error_response(415, "JSON_REQUIRED"));
+    }
+    let raw = super::read_body(request, MAX_RT1_VOICE_JSON_BODY)?;
+    let body: VisitorVoice =
+        serde_json::from_slice(&raw).map_err(|_| error_response(400, "INVALID_INPUT"))?;
+    if body.pcm.is_empty() || body.pcm.len() > MAX_RT1_VOICE_BYTES || body.pcm.len() % 2 != 0 {
+        return Err(error_response(400, "RT1_INVALID_MICROPHONE_AUDIO"));
+    }
+    let result = lookup(state, &body.session_id)?
+        .voice_turn(body.pcm)
+        .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
+    Ok(json_response(200, &result))
 }
 
 fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
