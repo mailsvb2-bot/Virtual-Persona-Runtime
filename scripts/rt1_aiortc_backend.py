@@ -9,10 +9,48 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
+import os
 import threading
 from dataclasses import dataclass, field
 
 from rt1_media_worker_lifecycle import StopReceipt
+
+
+def parse_ice_servers(raw: str | None) -> list[dict]:
+    """Single canonical ICE configuration for worker and visitor.
+
+    TURN credentials are short-lived access credentials, not long-term worker
+    API secrets. Malformed or insecure ICE settings fail startup closed.
+    """
+    if raw is None or not raw.strip():
+        return []
+    servers = json.loads(raw)
+    if not isinstance(servers, list) or len(servers) > 8:
+        raise ValueError("RT1 ICE must be an array of at most 8 servers")
+    result = []
+    for item in servers:
+        if not isinstance(item, dict) or set(item) - {"urls", "username", "credential"}:
+            raise ValueError("invalid ICE server object")
+        urls = item.get("urls")
+        if not isinstance(urls, list) or not 1 <= len(urls) <= 8:
+            raise ValueError("invalid ICE server URL list")
+        if any(not isinstance(url, str) or not url.startswith(
+            ("stun:", "stuns:", "turn:", "turns:")
+        ) or len(url) > 1024 for url in urls):
+            raise ValueError("invalid ICE URL")
+        username = item.get("username")
+        credential = item.get("credential")
+        if (username is None) != (credential is None):
+            raise ValueError("incomplete ICE credentials")
+        if any(value is not None and (
+            not isinstance(value, str) or not value or len(value) > 512
+        ) for value in (username, credential)):
+            raise ValueError("invalid ICE credentials")
+        if any(url.startswith(("turn:", "turns:")) for url in urls) and not username:
+            raise ValueError("TURN requires ephemeral credentials")
+        result.append({"urls": urls, "username": username, "credential": credential})
+    return result
 
 
 @dataclass
@@ -33,6 +71,7 @@ class AiortcSenderBackend:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         self._timeout = timeout
+        self._ice_servers = parse_ice_servers(os.environ.get('RT1_ICE_SERVERS_JSON'))
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run_loop, name="rt1-aiortc", daemon=True)
         self._lock = threading.RLock()
@@ -58,9 +97,12 @@ class AiortcSenderBackend:
         return self._call(self._allocate(operation_id, generation))
 
     async def _allocate(self, operation_id: str, generation: int) -> str:
-        from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack
+        from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
         session_id = f"rt1-{operation_id}-{generation}"
-        peer = RTCPeerConnection()
+        peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
+            RTCIceServer(urls=item["urls"], username=item["username"], credential=item["credential"])
+            for item in self._ice_servers
+        ]))
         audio = AudioStreamTrack()
         video = VideoStreamTrack()
         try:
@@ -91,7 +133,7 @@ class AiortcSenderBackend:
         description = entry.peer.localDescription
         if description is None or entry.peer.connectionState == "closed":
             raise RuntimeError("WebRTC offer not available")
-        return {"type": description.type, "sdp": description.sdp}
+        return {"type": description.type, "sdp": description.sdp, "ice_servers": self._ice_servers}
 
     def answer(self, operation_id: str, session_id: str, generation: int, sdp: str):
         return self._call(self._answer(operation_id, session_id, generation, sdp))
