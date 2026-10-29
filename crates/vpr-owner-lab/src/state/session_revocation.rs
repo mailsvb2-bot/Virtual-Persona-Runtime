@@ -13,6 +13,19 @@ impl OwnerLabEngine {
         self.session.as_ref().map(ActiveSession::revocation_handle)
     }
 
+    /// Stop-only capability for a server-owned LiveKit avatar publisher.
+    /// Unlike a voice turn this cannot publish content, and does not require
+    /// locking the conversation engine after admission.
+    #[must_use]
+    pub fn visitor_avatar_stop_handle(&self) -> Option<vpr_runtime::RealtimeAvatarStopHandle> {
+        if self.session_audience != Some(super::LabSessionAudience::Visitor) {
+            return None;
+        }
+        self.avatar
+            .as_ref()?
+            .stop_handle(std::sync::Arc::clone(&self.provider))
+    }
+
     /// Withdraws runtime authority without waiting for an in-flight voice worker
     /// or an unreliable remote-provider close. Teardown must call this BEFORE
     /// waiting for quiescence: a timed-out stream must not leave the session active.
