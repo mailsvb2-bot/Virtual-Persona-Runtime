@@ -23,6 +23,8 @@ jobs:
           python-version: '3.12'
       - name: Install real WebRTC transport
         run: python -m pip install 'aiortc>=1.10,<2'
+      - name: Validate ICE/STUN/TURN configuration
+        run: python tests/e2e/test_rt1_ice_configuration.py -v
       - name: Negotiate and revoke actual audio/video RTP
         run: python tests/e2e/test_rt1_webrtc_rtp_revoke.py -v
 
