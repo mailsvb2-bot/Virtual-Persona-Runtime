@@ -1,8 +1,7 @@
-"""RT1 visitor microphone must remain fail-closed until #319 media egress is fenced.
+"""RT1 visitor microphone may use only canonical private Echo with independent STOP.
 
-The Rust unit tests for the denial helper alone do not prove that the public
-voice entrypoints actually invoke it. Check the entrypoint bodies, and run
-this guard in required CI. This is a source-level guard, not RT0 evidence.
+Guard the narrow, stop-capable buffered path while denying arbitrary sender
+or client callback egress. Source checks are not live provider evidence.
 """
 
 from pathlib import Path
@@ -40,11 +39,26 @@ class VisitorVoiceEgressGate(unittest.TestCase):
     def setUpClass(cls):
         cls.source = SOURCE.read_text(encoding="utf-8")
 
-    def test_buffered_voice_entrypoint_is_denial_only(self):
-        self.assertEqual(
-            method_body(self.source, "voice_turn"),
-            "unsupported_visitor_voice_egress()",
-        )
+    def test_buffered_voice_requires_stop_only_capability_and_canonical_runtime(self):
+        body = method_body(self.source, "voice_turn")
+        self.assertIn("self.remote.is_some()", body)
+        self.assertIn("self.interrupt.cancelled.load(Ordering::Acquire)", body)
+        self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
+        self.assertIn("return unsupported_visitor_voice_egress()", body)
+        self.assertIn("validate_microphone_audio(&pcm_s16le_mono_16khz)?", body)
+        self.assertGreaterEqual(body.count("self.manager.authorize(&self.id)?"), 2)
+        self.assertIn(".voice_turn(pcm_s16le_mono_16khz, move |handle|", body)
+        self.assertIn("*callback.turn.lock() = Some(handle.clone())", body)
+        self.assertIn("handle.interrupt()", body)
+        self.assertNotIn("emit_segment(", body)
+        self.assertNotIn("std::thread::spawn(", body)
+
+    def test_owner_revocation_dispatches_only_stop_capability(self):
+        source = self.source
+        self.assertIn("engine.visitor_avatar_stop_handle()", source)
+        self.assertIn("self.backend_stop.lock().take()", source)
+        self.assertIn("stop.stop()", source)
+        self.assertIn("self.cancelled.store(true, Ordering::Release)", source)
 
     def test_streaming_voice_entrypoint_cannot_invoke_callback_or_provider(self):
         self.assertEqual(
