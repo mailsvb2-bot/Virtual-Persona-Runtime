@@ -73,6 +73,15 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
   expect(start.body.signal.transport.offer.sdp).toContain("backend-e2e-");
   const session_id = String(start.body.session_id);
 
+  // A regular D-ID WebRTC avatar has no independent private Echo STOP.
+  // RT1 must never send visitor microphone audio to that unfenced adapter.
+  const unsupportedVoice = await call("/api/rt1/visitor/voice", {
+    session_id,
+    pcm: [0, 0, 0, 0],
+  });
+  expect(unsupportedVoice.status).toBe(409);
+
+
   const answer = await call("/api/rt1/visitor/answer", {
     session_id,
     sdp: "v=0 canonical-browser-answer",
