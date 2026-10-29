@@ -6,6 +6,9 @@
   const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave"];
   let csrf = "";
   let peer = null;
+  let liveKitRoom = null;
+  let liveKitAudioTrack = null;
+  let liveKitVideoTrack = null;
   let sessionId = null;
   let stopping = false;
   let checking = null;
@@ -84,6 +87,69 @@
     await ownerRevoke("/api/rt1/owner/unpublish");
   }));
 
+  async function loadLiveKitSdk() {
+    if (window.LivekitClient) return window.LivekitClient;
+    await new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "/vendor/livekit-client.umd.js";
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Не удалось загрузить LiveKit SDK."));
+      document.head.append(script);
+    });
+    if (!window.LivekitClient) throw new Error("LiveKit SDK недоступен.");
+    return window.LivekitClient;
+  }
+
+  async function connectLiveKit(transport) {
+    if (!transport.server_url || !transport.token) {
+      throw new Error("Провайдер не предоставил LiveKit-сессию.");
+    }
+    const sdk = await loadLiveKitSdk();
+    const room = new sdk.Room();
+    liveKitRoom = room;
+    room.on(sdk.RoomEvent.TrackSubscribed, (track) => {
+      if (room !== liveKitRoom) return;
+      if (track.kind === "video") {
+        liveKitVideoTrack = track;
+        track.attach(el("video"));
+      } else if (track.kind === "audio") {
+        liveKitAudioTrack = track;
+        track.attach(el("audio"));
+        void el("audio").play().catch(() => {
+          message("Нажмите «Включить звук», если браузер блокирует воспроизведение.", true);
+        });
+      }
+      if (liveKitAudioTrack && liveKitVideoTrack) {
+        message("Видео и звук Persona подключены.");
+      }
+    });
+    room.on(sdk.RoomEvent.TrackUnsubscribed, (track) => {
+      if (room !== liveKitRoom) return;
+      if (track === liveKitAudioTrack) {
+        track.detach(el("audio"));
+        liveKitAudioTrack = null;
+        el("audio").srcObject = null;
+      }
+      if (track === liveKitVideoTrack) {
+        track.detach(el("video"));
+        liveKitVideoTrack = null;
+        el("video").srcObject = null;
+      }
+    });
+    room.on(sdk.RoomEvent.Disconnected, () => {
+      if (room === liveKitRoom && sessionId && !stopping) {
+        void leave().catch((error) => message(String(error.message || error), true));
+      }
+    });
+    await room.connect(transport.server_url, transport.token);
+    if (room.canPlaybackAudio === false) {
+      message("LiveKit подключён. Разрешите воспроизведение звука.", true);
+    } else {
+      message("LiveKit подключён. Ожидаем голос и видео Persona.");
+    }
+  }
+
   function cleanupLocal() {
     if (checking) {
       clearInterval(checking);
@@ -95,6 +161,13 @@
       peer.close();
       peer = null;
     }
+    if (liveKitRoom) {
+      const room = liveKitRoom;
+      liveKitRoom = null;
+      try { void room.disconnect(); } catch (_) { /* Server STOP is separate. */ }
+    }
+    liveKitAudioTrack = null;
+    liveKitVideoTrack = null;
     el("video").srcObject = null;
     el("audio").srcObject = null;
   }
@@ -149,9 +222,10 @@
     sessionId = start.session_id;
     try {
       const transport = start.signal.transport;
-      if (!transport || transport.kind !== "web_rtc" || !transport.offer) {
-        throw new Error("Worker не предоставил WebRTC offer.");
-      }
+      if (!transport) throw new Error("Провайдер не предоставил медиасессию.");
+      if (transport.kind === "live_kit") {
+        await connectLiveKit(transport);
+      } else if (transport.kind === "web_rtc" && transport.offer) {
       const offer = transport.offer;
       peer = new RTCPeerConnection({
         iceServers: Array.isArray(transport.ice_servers)
@@ -193,6 +267,9 @@
         session_id: sessionId,
         sdp: peer.localDescription.sdp
       });
+      } else {
+        throw new Error("Неподдерживаемый тип медиасессии.");
+      }
       checking = setInterval(async () => {
         if (!sessionId || stopping) return;
         try {
@@ -207,7 +284,7 @@
           try { await leave(); } catch (_) { /* Leave remains retryable. */ }
         }
       }, 2000);
-      message("Ожидаем аудио и видео от worker…");
+      if (transport.kind === "web_rtc") message("Ожидаем аудио и видео от Persona…");
     } catch (error) {
       cleanupLocal();
       try { await leave(); } catch (_) { /* Keep session id for STOP retry. */ }
