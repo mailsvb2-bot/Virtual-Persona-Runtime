@@ -346,8 +346,35 @@ impl Rt1VisitorConversation {
     ///
     /// # Errors
     /// Always denies unsupported visitor microphone provider egress.
-    pub fn voice_turn(&self, _pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
-        unsupported_visitor_voice_egress()
+    pub fn voice_turn(&self, pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
+        // Never enable arbitrary provider egress. Only the canonical
+        // server-owned Echo sender exposes an independent bounded STOP that
+        // does not require the engine mutex held during this voice turn.
+        if self.remote.is_some()
+            || self.interrupt.cancelled.load(Ordering::Acquire)
+            || self.interrupt.backend_stop.lock().is_none()
+        {
+            return unsupported_visitor_voice_egress();
+        }
+        validate_microphone_audio(&pcm_s16le_mono_16khz)?;
+        self.manager.authorize(&self.id)?;
+        let callback = Arc::clone(&self.interrupt);
+        let result = self
+            .engine
+            .lock()
+            .voice_turn(pcm_s16le_mono_16khz, move |handle| {
+                *callback.turn.lock() = Some(handle.clone());
+                if callback.cancelled.load(Ordering::Acquire) {
+                    let _ = handle.interrupt();
+                }
+            })
+            .map_err(|error| error.code().to_owned());
+        // Withdrawing publication wins over a late provider success.
+        self.manager.authorize(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        result
     }
 
     /// Visitor streaming is fail-closed: never call an arbitrary egress
