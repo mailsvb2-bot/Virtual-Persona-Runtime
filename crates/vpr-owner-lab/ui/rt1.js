@@ -3,7 +3,7 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const status = el("status");
-  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave"];
+  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak"];
   let csrf = "";
   let peer = null;
   let liveKitRoom = null;
@@ -12,6 +12,7 @@
   let sessionId = null;
   let stopping = false;
   let checking = null;
+  let microphone = null;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -47,6 +48,7 @@
       buttons.forEach((id) => { el(id).disabled = false; });
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
+      el("speak").disabled = !sessionId;
     }
   }
 
@@ -172,7 +174,97 @@
     }
   }
 
+  function disconnectMicrophone() {
+    if (!microphone) return null;
+    const capture = microphone;
+    microphone = null;
+    clearTimeout(capture.timeout);
+    capture.processor.onaudioprocess = null;
+    capture.processor.disconnect();
+    capture.source.disconnect();
+    capture.stream.getTracks().forEach((track) => track.stop());
+    void capture.context.close().catch(() => {});
+    el("speak").textContent = "Говорить";
+    return capture;
+  }
+
+  async function beginMicrophone() {
+    if (!sessionId || stopping || microphone) return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Микрофон доступен только в защищённом браузере.");
+    }
+    const id = sessionId;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+      video: false
+    });
+    if (sessionId !== id || stopping) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const context = new (window.AudioContext || window.webkitAudioContext)();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(2048, 1, 1);
+    const pcm = [];
+    const maxBytes = 16000 * 2 * 30;
+    let consumed = 0;
+    let nextSample = 0;
+    const stride = context.sampleRate / 16000;
+    const capture = { id, stream, context, source, processor, pcm, timeout: null };
+    microphone = capture;
+    processor.onaudioprocess = (event) => {
+      if (microphone !== capture || sessionId !== id) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const end = consumed + input.length;
+      while (nextSample < end && pcm.length < maxBytes) {
+        const index = Math.max(0, Math.min(input.length - 1, Math.floor(nextSample - consumed)));
+        const value = Math.max(-1, Math.min(1, input[index]));
+        const sample = value < 0 ? Math.round(value * 32768) : Math.round(value * 32767);
+        pcm.push(sample & 255, (sample >> 8) & 255);
+        nextSample += stride;
+      }
+      consumed = end;
+      if (pcm.length >= maxBytes) void endMicrophone();
+    };
+    source.connect(processor);
+    processor.connect(context.destination);
+    capture.timeout = setTimeout(() => void endMicrophone(), 30_000);
+    el("speak").textContent = "Отправить речь";
+    message("Микрофон включён. Говорите, затем нажмите «Отправить речь».");
+  }
+
+  async function endMicrophone() {
+    const capture = disconnectMicrophone();
+    if (!capture || capture.id !== sessionId || stopping) return;
+    if (capture.pcm.length < 2) {
+      message("Микрофон не получил аудиоданных.", true);
+      return;
+    }
+    message("Persona обрабатывает голосовой запрос…");
+    try {
+      const result = await api("/api/rt1/visitor/voice", {
+        session_id: capture.id,
+        pcm: capture.pcm
+      });
+      if (sessionId !== capture.id || stopping) return;
+      el("speech-result").textContent =
+        "Вы: " + result.transcript + " · Persona: " + result.reply;
+      message("Ответ Persona отправлен действующему аватару.");
+    } catch (error) {
+      if (sessionId === capture.id) {
+        message("Голос недоступен для выбранного провайдера или сессии: " +
+          String(error.message || error), true);
+      }
+    }
+  }
+
+  el("speak").addEventListener("click", () => {
+    if (microphone) void endMicrophone();
+    else void beginMicrophone().catch((error) => message(String(error.message || error), true));
+  });
+
   function cleanupLocal() {
+    disconnectMicrophone();
     if (checking) {
       clearInterval(checking);
       checking = null;
@@ -210,6 +302,7 @@
       stopping = false;
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
+      el("speak").disabled = !sessionId;
     }
   }
 
