@@ -128,12 +128,15 @@ local_lab_files = {
     Path("crates/vpr-owner-lab/ui/rt1.js"),
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
+local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
 if (
     'format!("127.0.0.1:{port}")' not in entry
-    or 'env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in entry
     or 'if path.starts_with("/api/rt1/")' not in entry
-    or 'if !rt1_local_experiment_enabled()' not in entry
-    or '"/rt1" if rt1_local_experiment_enabled()' not in entry
+    or 'if !http_rt1::enabled()' not in entry
+    or 'http_rt1::static_get_response(path)' not in entry
+    or 'std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in local_lab
+    or 'if !enabled()' not in local_lab
+    or '"/rt1" =>' not in local_lab
 ):
     raise SystemExit("RT1 local experiment must be loopback-only and default-denied")
 
