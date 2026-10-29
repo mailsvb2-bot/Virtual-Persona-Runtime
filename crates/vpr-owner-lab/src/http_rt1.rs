@@ -89,10 +89,13 @@ pub(super) fn route_post(
             };
             let controller = Rt1OwnerController::new();
             match controller.provision_owner() {
-                Ok((owner_id, owner_token)) => json_response(200, &serde_json::json!({
-                    "owner_id": owner_id,
-                    "owner_token": owner_token,
-                })),
+                Ok((owner_id, owner_token)) => json_response(
+                    200,
+                    &serde_json::json!({
+                        "owner_id": owner_id,
+                        "owner_token": owner_token,
+                    }),
+                ),
                 Err(_) => error_response(409, "RT1_OWNER_PROVISION_DENIED"),
             }
         }
@@ -106,24 +109,28 @@ pub(super) fn route_post(
             let readiness = || -> Result<(), String> {
                 let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
                 let status = engine.status();
-                if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
+                if !status.egress_enabled
+                    || status.owner_context_state != OwnerContextState::Reviewed
+                {
                     return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
                 }
                 for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
-                    if std::env::var(name).ok().is_none_or(|value| value.trim().is_empty()) {
+                    if std::env::var(name)
+                        .ok()
+                        .is_none_or(|value| value.trim().is_empty())
+                    {
                         return Err("RT1_WORKER_NOT_CONFIGURED".into());
                     }
                 }
                 Ok(())
             };
-            match controller.publish(
-                &body.owner_token,
-                body.expected_persona_version,
-                readiness,
-            ) {
-                Ok(visitor_token) => json_response(200, &serde_json::json!({
-                    "visitor_token": visitor_token,
-                })),
+            match controller.publish(&body.owner_token, body.expected_persona_version, readiness) {
+                Ok(visitor_token) => json_response(
+                    200,
+                    &serde_json::json!({
+                        "visitor_token": visitor_token,
+                    }),
+                ),
                 Err(_) => error_response(409, "RT1_PUBLISH_DENIED"),
             }
         }
@@ -139,11 +146,14 @@ pub(super) fn route_post(
                 controller.unpublish(&body.owner_token)
             };
             match result {
-                Ok(()) => json_response(200, &serde_json::json!({
-                    "ok": true,
-                    "publication_revoked": true,
-                    "remote_stop_confirmed": false,
-                })),
+                Ok(()) => json_response(
+                    200,
+                    &serde_json::json!({
+                        "ok": true,
+                        "publication_revoked": true,
+                        "remote_stop_confirmed": false,
+                    }),
+                ),
                 Err(_) => error_response(403, "RT1_OWNER_ACTION_DENIED"),
             }
         }
@@ -191,10 +201,13 @@ pub(super) fn route_post(
                         return Some(error_response(409, "RT1_SESSION_COLLISION"));
                     }
                     active.insert(session_id.clone(), Arc::new(conversation));
-                    json_response(200, &serde_json::json!({
-                        "session_id": session_id,
-                        "signal": bundle,
-                    }))
+                    json_response(
+                        200,
+                        &serde_json::json!({
+                            "session_id": session_id,
+                            "signal": bundle,
+                        }),
+                    )
                 }
                 Err(_) => error_response(409, "RT1_VISITOR_START_DENIED"),
             }
@@ -204,7 +217,12 @@ pub(super) fn route_post(
                 Ok(body) => body,
                 Err(response) => return Some(response),
             };
-            let conversation = state.rt1.conversations.lock().get(&body.session_id).cloned();
+            let conversation = state
+                .rt1
+                .conversations
+                .lock()
+                .get(&body.session_id)
+                .cloned();
             match conversation {
                 Some(conversation) if conversation.submit_answer(&body.sdp).is_ok() => {
                     json_response(200, &serde_json::json!({"ok":true}))
@@ -217,11 +235,19 @@ pub(super) fn route_post(
                 Ok(body) => body,
                 Err(response) => return Some(response),
             };
-            let conversation = state.rt1.conversations.lock().get(&body.session_id).cloned();
+            let conversation = state
+                .rt1
+                .conversations
+                .lock()
+                .get(&body.session_id)
+                .cloned();
             match conversation {
-                Some(conversation) => json_response(200, &serde_json::json!({
-                    "active": conversation.is_active(),
-                })),
+                Some(conversation) => json_response(
+                    200,
+                    &serde_json::json!({
+                        "active": conversation.is_active(),
+                    }),
+                ),
                 None => error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"),
             }
         }
@@ -230,14 +256,22 @@ pub(super) fn route_post(
                 Ok(body) => body,
                 Err(response) => return Some(response),
             };
-            let conversation = state.rt1.conversations.lock().get(&body.session_id).cloned();
+            let conversation = state
+                .rt1
+                .conversations
+                .lock()
+                .get(&body.session_id)
+                .cloned();
             match conversation {
                 Some(conversation) if conversation.close().is_ok() => {
                     state.rt1.conversations.lock().remove(&body.session_id);
-                    json_response(200, &serde_json::json!({
-                        "ok":true,
-                        "remote_stop_confirmed":true,
-                    }))
+                    json_response(
+                        200,
+                        &serde_json::json!({
+                            "ok":true,
+                            "remote_stop_confirmed":true,
+                        }),
+                    )
                 }
                 Some(_) => error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"),
                 None => error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"),
