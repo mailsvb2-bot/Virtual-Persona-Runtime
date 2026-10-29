@@ -47,6 +47,4 @@ impl OwnerLabEngine {
         self.close_avatar_resource()?;
         self.close()
     }
-
-
 }
