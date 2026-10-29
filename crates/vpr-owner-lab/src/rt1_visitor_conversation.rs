@@ -262,10 +262,7 @@ impl Rt1VisitorConversation {
     ///
     /// # Errors
     /// Rejects revoked authority, diagnostic sessions and provider failure.
-    pub fn submit_ice(
-        &self,
-        candidate: vpr_integration::WebRtcIceCandidate,
-    ) -> Result<(), String> {
+    pub fn submit_ice(&self, candidate: vpr_integration::WebRtcIceCandidate) -> Result<(), String> {
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) || self.remote.is_some() {
             return Err("RT1_VISITOR_ICE_DENIED".into());
