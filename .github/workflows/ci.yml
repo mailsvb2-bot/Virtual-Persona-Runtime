@@ -270,6 +270,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Backend-integrated browser E2E
         run: npm run test:e2e:backend
+      - name: Canonical RT1 visitor/provider create-answer-stop E2E
+        run: npm run test:e2e:rt1:canonical
 
   owner-lab-ui-voice-e2e:
     runs-on: ubuntu-24.04
