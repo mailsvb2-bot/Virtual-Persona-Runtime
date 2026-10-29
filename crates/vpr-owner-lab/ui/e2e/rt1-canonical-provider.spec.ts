@@ -57,6 +57,14 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
   });
   expect(answer.status).toBe(200);
 
+  const ice = await call("/api/rt1/visitor/ice", {
+    session_id,
+    candidate: "candidate:1 1 udp 1 192.0.2.1 9000 typ host",
+    sdp_mid: "0",
+    sdp_mline_index: 0,
+  });
+  expect(ice.status, JSON.stringify(ice.body)).toBe(200);
+
   const requestsBefore = (await (await request.get(`${provider}/__state`)).json()).requests;
   const creates = requestsBefore.filter(
     (item: { method: string; path: string }) =>
@@ -68,6 +76,12 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
       item.method === "POST" && /\/streams\/stream-\d+\/sdp$/.test(item.path),
   );
   expect(sdps).toHaveLength(1);
+  const candidates = requestsBefore.filter(
+    (item: { method: string; path: string }) =>
+      item.method === "POST" && /\/streams\/stream-\d+\/ice$/.test(item.path),
+  );
+  expect(candidates).toHaveLength(1);
+
 
   const pause = await call("/api/rt1/owner/pause", { owner_token });
   expect(pause.status).toBe(200);
