@@ -256,6 +256,31 @@ impl Rt1VisitorConversation {
         Ok(())
     }
 
+    /// Forward ICE exclusively through the existing avatar provider and
+    /// the admitted visitor's canonical runtime turn. Diagnostic worker
+    /// sessions do not expose this separate signaling channel.
+    ///
+    /// # Errors
+    /// Rejects revoked authority, diagnostic sessions and provider failure.
+    pub fn submit_ice(
+        &self,
+        candidate: vpr_integration::WebRtcIceCandidate,
+    ) -> Result<(), String> {
+        self.manager.authorize(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) || self.remote.is_some() {
+            return Err("RT1_VISITOR_ICE_DENIED".into());
+        }
+        self.engine
+            .lock()
+            .apply(OwnerLabTurnInput::Ice(candidate))
+            .map_err(|error| error.code().to_owned())?;
+        self.manager.authorize(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        Ok(())
+    }
+
     /// # Errors
     /// Denies revoked visitor authority or returns the canonical turn error.
     pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
