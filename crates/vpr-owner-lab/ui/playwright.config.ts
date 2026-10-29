@@ -7,6 +7,7 @@ export default defineConfig({
     "backend-voice-journey.spec.ts",
     "backend-expressive-journey.spec.ts",
     "rt1-local-canary.spec.ts",
+    "rt1-canonical-provider.spec.ts",
   ],
   timeout: 30_000,
   fullyParallel: false,
