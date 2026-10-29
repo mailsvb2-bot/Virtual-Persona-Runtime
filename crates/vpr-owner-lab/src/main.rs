@@ -214,6 +214,12 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
+/// Local experimental visitor journey is disabled unless deliberately opted in.
+/// This does not promote RT1 public API maturity or permit non-loopback binds.
+fn rt1_local_experiment_enabled() -> bool {
+    env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")
+}
+
 fn handle_request(mut request: Request, state: &Arc<AppState>) {
     if !valid_host(&request, state.port) {
         let _ = request.respond(error_response(403, "HOST_DENIED"));
@@ -233,9 +239,13 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
 fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
-        "/rt1" => static_response(RT1_HTML, "text/html; charset=utf-8"),
-        "/rt1.js" => static_response(RT1_JS, JS_MIME),
-        "/rt1.css" => static_response(RT1_CSS, "text/css; charset=utf-8"),
+        "/rt1" if rt1_local_experiment_enabled() => {
+            static_response(RT1_HTML, "text/html; charset=utf-8")
+        },
+        "/rt1.js" if rt1_local_experiment_enabled() => static_response(RT1_JS, JS_MIME),
+        "/rt1.css" if rt1_local_experiment_enabled() => {
+            static_response(RT1_CSS, "text/css; charset=utf-8")
+        },
         "/app.js" => static_response(APP_JS, JS_MIME),
         "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
         "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
@@ -337,8 +347,13 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
-    if let Some(response) = http_rt1::route_post(path, request, state) {
-        return response;
+    if path.starts_with("/api/rt1/") {
+        if !rt1_local_experiment_enabled() {
+            return error_response(404, "NOT_FOUND");
+        }
+        if let Some(response) = http_rt1::route_post(path, request, state) {
+            return response;
+        }
     }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
