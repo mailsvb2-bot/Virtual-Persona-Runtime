@@ -126,6 +126,8 @@ local_lab_files = {
     Path("crates/vpr-owner-lab/src/main.rs"),
     Path("crates/vpr-owner-lab/src/http_rt1.rs"),
     Path("crates/vpr-owner-lab/ui/rt1.js"),
+    # Test-only caller of the gated local RT1 route, never shipped as an API surface.
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-canonical-provider.spec.ts"),
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
