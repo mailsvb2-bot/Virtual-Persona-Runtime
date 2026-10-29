@@ -240,7 +240,10 @@ fn visitor_answer(request: &mut tiny_http::Request, state: &AppState) -> Rt1Http
 
 fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorIce = parse_json(request)?;
-    if body.candidate.as_ref().is_some_and(|value| value.len() > 4096)
+    if body
+        .candidate
+        .as_ref()
+        .is_some_and(|value| value.len() > 4096)
         || body.sdp_mid.as_ref().is_some_and(|value| value.len() > 256)
     {
         return Err(error_response(400, "RT1_INVALID_ICE_CANDIDATE"));
