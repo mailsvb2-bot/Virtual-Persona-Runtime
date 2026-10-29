@@ -414,6 +414,23 @@ impl OwnerLabEngine {
         self.close_avatar_resource()
     }
 
+    /// Stop the canonical visitor provider even when owner revocation has
+    /// already withdrawn the local session permit. Do not confuse a revoked
+    /// permit with a confirmed remote provider shutdown.
+    ///
+    /// # Errors
+    /// Propagates a failed provider close; a caller must retain the session
+    /// for cleanup retry rather than acknowledge STOP prematurely.
+    pub fn stop_visitor_provider_confirmed(&mut self) -> Result<(), LabError> {
+        if self.session_audience != Some(LabSessionAudience::Visitor) {
+            return Err(LabError::InvalidState);
+        }
+        // The owner may have revoked this session via a stop-only capability
+        // before this call. Closing a revoked provider is still mandatory.
+        self.close_avatar_resource()?;
+        self.close()
+    }
+
     /// Closes the avatar resource and canonical runtime session.
     ///
     /// # Errors
