@@ -142,10 +142,19 @@
         void leave().catch((error) => message(String(error.message || error), true));
       }
     });
+    // Disconnecting while connect() is pending does not prove the SDK
+    // cancelled its underlying transport. A late successful connection
+    // must be torn down again after pagehide/revoke/timeout cleanup.
+    const connection = room.connect(transport.server_url, transport.token);
+    void connection.then(() => {
+      if (room !== liveKitRoom) {
+        return Promise.resolve(room.disconnect()).catch(() => {});
+      }
+    }).catch(() => {});
     let timeoutId;
     try {
       await Promise.race([
-        room.connect(transport.server_url, transport.token),
+        connection,
         new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error("LiveKit не подключился за 15 секунд.")), 15000);
         })
