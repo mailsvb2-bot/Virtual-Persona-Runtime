@@ -27,7 +27,7 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
     }
   });
   try {
-    await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
     await expect(page.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
   } catch (error) {
     throw new Error(`Canonical Owner Lab did not initialize; browserErrors=${JSON.stringify(browserErrors)}; pendingRequests=${JSON.stringify([...pendingRequests])}; failedRequests=${JSON.stringify(failedRequests)}; assertion=${String(error)}`);
