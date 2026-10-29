@@ -65,6 +65,15 @@ struct VisitorAnswer {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct VisitorIce {
+    session_id: String,
+    candidate: Option<String>,
+    sdp_mid: Option<String>,
+    sdp_mline_index: Option<u16>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OwnerToken {
     owner_token: String,
 }
@@ -88,6 +97,7 @@ pub(super) fn route_post(
         "/api/rt1/owner/unpublish" => owner_revoke(request, true),
         "/api/rt1/visitor/start" => visitor_start(request, state),
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
+        "/api/rt1/visitor/ice" => visitor_ice(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
         "/api/rt1/visitor/close" => visitor_close(request, state),
         _ => return None,
@@ -224,6 +234,23 @@ fn visitor_answer(request: &mut tiny_http::Request, state: &AppState) -> Rt1Http
     lookup(state, &body.session_id)?
         .submit_answer(&body.sdp)
         .map_err(|_| error_response(409, "RT1_VISITOR_ANSWER_DENIED"))?;
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorIce = parse_json(request)?;
+    if body.candidate.as_ref().is_some_and(|value| value.len() > 4096)
+        || body.sdp_mid.as_ref().is_some_and(|value| value.len() > 256)
+    {
+        return Err(error_response(400, "RT1_INVALID_ICE_CANDIDATE"));
+    }
+    lookup(state, &body.session_id)?
+        .submit_ice(vpr_integration::WebRtcIceCandidate {
+            candidate: body.candidate,
+            sdp_mid: body.sdp_mid,
+            sdp_mline_index: body.sdp_mline_index,
+        })
+        .map_err(|_| error_response(409, "RT1_VISITOR_ICE_DENIED"))?;
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
