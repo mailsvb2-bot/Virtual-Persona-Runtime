@@ -7,7 +7,7 @@ use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use parking_lot::Mutex;
 use std::time::Duration;
 use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
-use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
+use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
@@ -20,6 +20,7 @@ struct LiveVisitorInterrupt {
     cancelled: AtomicBool,
     session: Mutex<Option<SessionRevocationHandle>>,
     turn: Mutex<Option<TurnInterruptHandle>>,
+    backend_stop: Mutex<Option<RealtimeAvatarStopHandle>>,
 }
 
 impl LiveVisitorInterrupt {
@@ -30,6 +31,16 @@ impl LiveVisitorInterrupt {
         }
         if let Some(session) = self.session.lock().clone() {
             let _ = session.revoke_authority();
+        }
+        // Provider STOP can take network time: never block owner pause on it
+        // or on the conversation engine mutex. The explicit visitor close
+        // still requires a separate confirmed close_session receipt.
+        if let Some(stop) = self.backend_stop.lock().take() {
+            std::thread::spawn(move || {
+                if let Err(error) = stop.stop() {
+                    eprintln!("RT1 best-effort backend STOP failed: {error:?}");
+                }
+            });
         }
     }
 }
@@ -80,6 +91,7 @@ impl Rt1VisitorConversation {
             }
         };
         *interrupt.session.lock() = engine.session_revocation_handle();
+        *interrupt.backend_stop.lock() = engine.visitor_avatar_stop_handle();
         if interrupt.cancelled.load(Ordering::Acquire)
             || manager
                 .authorize_persona(&id, &persona_id, persona_version)
