@@ -308,6 +308,31 @@ impl Rt1VisitorConversation {
             .enqueue_media_fragment(&self.id, sender, fragment)
     }
 
+    /// Admit one complete browser microphone utterance into the canonical
+    /// bounded pre-egress queue, without invoking STT/LLM/TTS or a sender.
+    /// The existing RT0 voice contract is S16LE, mono, 16 kHz, max 30s.
+    ///
+    /// # Errors
+    /// Rejects malformed/empty/unbounded audio, stale publication and a full
+    /// queue. This operation does NOT authorize external media delivery.
+    pub fn stage_microphone_audio(
+        &self,
+        sender: &std::sync::mpsc::SyncSender<Vec<u8>>,
+        pcm_s16le_mono_16khz: Vec<u8>,
+    ) -> Result<(), String> {
+        const MAX_VOICE_BYTES: usize = 16_000 * 2 * 30;
+        if pcm_s16le_mono_16khz.is_empty()
+            || pcm_s16le_mono_16khz.len() > MAX_VOICE_BYTES
+            || pcm_s16le_mono_16khz.len() % 2 != 0
+        {
+            return Err("RT1_INVALID_MICROPHONE_AUDIO".into());
+        }
+        if self.remote.is_some() {
+            return Err("RT1_DIAGNOSTIC_VOICE_NOT_AUTHORIZED".into());
+        }
+        self.queue_media_fragment(sender, pcm_s16le_mono_16khz)
+    }
+
     /// RT1 voice provider egress is deliberately denied until the canonical
     /// workspace owns a revocation-serialized final media delivery/STOP gate.
     /// A pre/post authorization check around external provider I/O is unsafe:
