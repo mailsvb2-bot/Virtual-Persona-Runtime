@@ -124,7 +124,15 @@ impl Rt1VisitorConversation {
                         kind: offer.kind,
                         sdp: offer.sdp,
                     },
-                    ice_servers: Vec::new(),
+                    ice_servers: offer
+                        .ice_servers
+                        .into_iter()
+                        .map(|server| crate::state::LabIceServer {
+                            urls: server.urls,
+                            username: server.username,
+                            credential: server.credential,
+                        })
+                        .collect(),
                 },
                 capabilities: Vec::new(),
                 client_control: None,
