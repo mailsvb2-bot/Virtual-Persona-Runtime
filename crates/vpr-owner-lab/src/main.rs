@@ -7,6 +7,7 @@ mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
 mod http_references;
+mod http_rt1;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
@@ -45,6 +46,7 @@ const JS_MIME: &str = "text/javascript; charset=utf-8";
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' https: wss:; media-src 'self' blob:; style-src 'self'; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
+const RT1_HTML: &str = include_str!("../ui/rt1.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
 const TTS_SELECTOR_JS: &str = include_str!("../ui/dist/tts-selector.js");
 const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
@@ -63,6 +65,7 @@ const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 type HttpResponse = Response<Cursor<Vec<u8>>>;
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
+    rt1: http_rt1::Rt1HttpState,
     rt0_evidence_mode: bool,
     voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
@@ -164,6 +167,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
+        rt1: http_rt1::Rt1HttpState::default(),
         rt0_evidence_mode,
         voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
@@ -227,6 +231,7 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
 fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
+        "/rt1" => static_response(RT1_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, JS_MIME),
         "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
         "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
@@ -328,6 +333,9 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    if let Some(response) = http_rt1::route_post(path, request, state) {
+        return response;
+    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }
