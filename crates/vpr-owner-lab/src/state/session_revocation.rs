@@ -13,7 +13,7 @@ impl OwnerLabEngine {
         self.session.as_ref().map(ActiveSession::revocation_handle)
     }
 
-    /// Stop-only capability for a server-owned LiveKit avatar publisher.
+    /// Stop-only capability for a server-owned `LiveKit` avatar publisher.
     /// Unlike a voice turn this cannot publish content, and does not require
     /// locking the conversation engine after admission.
     #[must_use]
