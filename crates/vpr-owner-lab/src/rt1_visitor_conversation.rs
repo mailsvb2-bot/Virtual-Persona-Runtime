@@ -320,13 +320,7 @@ impl Rt1VisitorConversation {
         sender: &std::sync::mpsc::SyncSender<Vec<u8>>,
         pcm_s16le_mono_16khz: Vec<u8>,
     ) -> Result<(), String> {
-        const MAX_VOICE_BYTES: usize = 16_000 * 2 * 30;
-        if pcm_s16le_mono_16khz.is_empty()
-            || pcm_s16le_mono_16khz.len() > MAX_VOICE_BYTES
-            || pcm_s16le_mono_16khz.len() % 2 != 0
-        {
-            return Err("RT1_INVALID_MICROPHONE_AUDIO".into());
-        }
+        validate_microphone_audio(&pcm_s16le_mono_16khz)?;
         if self.remote.is_some() {
             return Err("RT1_DIAGNOSTIC_VOICE_NOT_AUTHORIZED".into());
         }
@@ -434,6 +428,29 @@ mod close_outcome_tests {
     #[test]
     fn close_requires_both_remote_and_local_success() {
         assert!(finish_close(Ok(()), Ok(())).is_ok());
+    }
+}
+
+fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
+    // Match the existing RT0 voice input duration and PCM framing limits.
+    const MAX_VOICE_BYTES: usize = 16_000 * 2 * 30;
+    if pcm.is_empty() || pcm.len() > MAX_VOICE_BYTES || pcm.len() % 2 != 0 {
+        return Err("RT1_INVALID_MICROPHONE_AUDIO".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod microphone_staging_tests {
+    use super::validate_microphone_audio;
+
+    #[test]
+    fn canonical_microphone_frame_limits_match_rt0() {
+        assert!(validate_microphone_audio(&[]).is_err());
+        assert!(validate_microphone_audio(&[0_u8]).is_err());
+        assert!(validate_microphone_audio(&[0_u8; 2]).is_ok());
+        assert!(validate_microphone_audio(&vec![0_u8; 16_000 * 2 * 30]).is_ok());
+        assert!(validate_microphone_audio(&vec![0_u8; 16_000 * 2 * 30 + 2]).is_err());
     }
 }
 
