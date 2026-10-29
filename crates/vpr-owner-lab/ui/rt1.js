@@ -14,6 +14,7 @@
   let checking = null;
   let microphone = null;
   let voiceEnabled = false;
+  let voiceInFlight = false;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -192,7 +193,7 @@
   }
 
   async function beginMicrophone() {
-    if (!sessionId || stopping || microphone || !voiceEnabled) return;
+    if (!sessionId || stopping || microphone || !voiceEnabled || voiceInFlight) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Микрофон доступен только в защищённом браузере.");
     }
@@ -257,6 +258,9 @@
       message("Микрофон не получил аудиоданных.", true);
       return;
     }
+    if (voiceInFlight) return;
+    voiceInFlight = true;
+    el("speak").disabled = true;
     message("Persona обрабатывает голосовой запрос…");
     try {
       const result = await api("/api/rt1/visitor/voice", {
@@ -272,6 +276,9 @@
         message("Голос недоступен для выбранного провайдера или сессии: " +
           String(error.message || error), true);
       }
+    } finally {
+      voiceInFlight = false;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled;
     }
   }
 
@@ -321,7 +328,7 @@
       stopping = false;
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
-      el("speak").disabled = !sessionId;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight;
     }
   }
 
@@ -363,7 +370,7 @@
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
     sessionId = start.session_id;
     voiceEnabled = start.voice_enabled === true;
-    el("speak").disabled = !voiceEnabled;
+    el("speak").disabled = !voiceEnabled || voiceInFlight;
     try {
       const transport = start.signal.transport;
       if (!transport) throw new Error("Провайдер не предоставил медиасессию.");
