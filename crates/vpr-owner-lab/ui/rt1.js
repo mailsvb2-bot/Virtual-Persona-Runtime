@@ -164,7 +164,7 @@
     if (liveKitRoom) {
       const room = liveKitRoom;
       liveKitRoom = null;
-      try { void room.disconnect(); } catch (_) { /* Server STOP is separate. */ }
+      try { void Promise.resolve(room.disconnect()).catch(() => {}); } catch (_) { /* Server STOP is separate. */ }
     }
     liveKitAudioTrack = null;
     liveKitVideoTrack = null;
@@ -190,6 +190,14 @@
       el("leave").disabled = !sessionId;
     }
   }
+
+  el("unlock-audio").addEventListener("click", () => busy(async () => {
+    if (liveKitRoom && typeof liveKitRoom.startAudio === "function") {
+      await liveKitRoom.startAudio();
+    }
+    await el("audio").play();
+    message("Воспроизведение звука разрешено.");
+  }));
 
   el("leave").addEventListener("click", () => busy(leave));
 
