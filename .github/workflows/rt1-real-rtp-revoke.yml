@@ -48,6 +48,9 @@ jobs:
       - name: Install browser test dependencies
         working-directory: crates/vpr-owner-lab/ui
         run: npm ci --ignore-scripts
+      - name: Build browser modules for the Rust embedded UI
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm run build
       - name: Build the real Rust Owner Lab
         run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
@@ -71,6 +74,9 @@ jobs:
       - name: Install UI dependencies
         working-directory: crates/vpr-owner-lab/ui
         run: npm ci --ignore-scripts
+      - name: Build browser modules for the Rust embedded UI
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm run build
       - name: Build canonical Rust Owner Lab
         run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
