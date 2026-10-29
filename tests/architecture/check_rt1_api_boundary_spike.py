@@ -119,15 +119,36 @@ forbidden_markers = (
     "Rt1PublicApi",
     'id="rt1-public-api"',
 )
+# A strictly local, explicitly opted-in RT1 transport experiment is
+# permitted without promoting the release API contract. No other production
+# surface may contain an RT1 API marker.
+local_lab_files = {
+    Path("crates/vpr-owner-lab/src/main.rs"),
+    Path("crates/vpr-owner-lab/src/http_rt1.rs"),
+    Path("crates/vpr-owner-lab/ui/rt1.js"),
+}
+entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
+if (
+    'format!("127.0.0.1:{port}")' not in entry
+    or 'env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in entry
+    or 'if path.starts_with("/api/rt1/")' not in entry
+    or 'if !rt1_local_experiment_enabled()' not in entry
+    or '"/rt1" if rt1_local_experiment_enabled()' not in entry
+):
+    raise SystemExit("RT1 local experiment must be loopback-only and default-denied")
+
 for source in CRATES.rglob("*"):
     if not source.is_file() or source.suffix not in surface_suffixes:
         continue
+    relative = source.relative_to(ROOT)
     text = source.read_text(encoding="utf-8")
     marker = next((item for item in forbidden_markers if item in text), None)
-    if marker is not None:
+    if marker is not None and not (
+        relative in local_lab_files and marker == "/api/rt1/"
+    ):
         raise SystemExit(
             "production RT1 API surface appeared while RT1 remains blocked "
-            f"on RT0 exit: {source.relative_to(ROOT)} (marker={marker!r})"
+            f"on RT0 exit: {relative} (marker={marker!r})"
         )
 
 for required_spec_marker in (
