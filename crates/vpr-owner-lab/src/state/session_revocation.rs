@@ -23,7 +23,7 @@ impl OwnerLabEngine {
         }
         self.avatar
             .as_ref()?
-            .stop_handle(std::sync::Arc::clone(&self.provider))
+            .backend_stop_handle(std::sync::Arc::clone(&self.provider))
     }
 
     /// Withdraws runtime authority without waiting for an in-flight voice worker
