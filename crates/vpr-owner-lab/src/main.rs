@@ -47,6 +47,8 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ht
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const RT1_HTML: &str = include_str!("../ui/rt1.html");
+const RT1_JS: &str = include_str!("../ui/rt1.js");
+const RT1_CSS: &str = include_str!("../ui/rt1.css");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
 const TTS_SELECTOR_JS: &str = include_str!("../ui/dist/tts-selector.js");
 const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
@@ -232,6 +234,8 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/rt1" => static_response(RT1_HTML, "text/html; charset=utf-8"),
+        "/rt1.js" => static_response(RT1_JS, JS_MIME),
+        "/rt1.css" => static_response(RT1_CSS, "text/css; charset=utf-8"),
         "/app.js" => static_response(APP_JS, JS_MIME),
         "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
         "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
