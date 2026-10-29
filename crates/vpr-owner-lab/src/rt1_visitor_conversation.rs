@@ -221,11 +221,18 @@ impl Rt1VisitorConversation {
         // including when the visitor registration was already revoked.
         // Attempt local cleanup regardless of the remote result.
         let remote_stop = self.remote.revoke_confirmed();
-        let local_stop = self
-            .engine
-            .lock()
-            .revoke()
-            .map_err(|error| error.code().to_owned());
+        let local_stop = {
+            let mut engine = self.engine.lock();
+            // The RT1 aiortc operation is remote-owned. This visitor engine
+            // was constructed for reviewed Persona identity but never ran
+            // OwnerLabEngine::start_visitor; revoking an absent local session
+            // would falsely report failure after a confirmed remote STOP.
+            if engine.session_revocation_handle().is_some() {
+                engine.revoke().map_err(|error| error.code().to_owned())
+            } else {
+                Ok(())
+            }
+        };
         finish_close(remote_stop, local_stop)
     }
 }
@@ -234,7 +241,12 @@ impl Drop for Rt1VisitorConversation {
     fn drop(&mut self) {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
-        let _ = self.engine.lock().revoke();
+        // Best-effort retry is never treated as a durable STOP receipt.
+        let _ = self.remote.revoke_confirmed();
+        let mut engine = self.engine.lock();
+        if engine.session_revocation_handle().is_some() {
+            let _ = engine.revoke();
+        }
     }
 }
 
