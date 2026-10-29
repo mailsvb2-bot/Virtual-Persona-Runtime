@@ -150,6 +150,13 @@ impl Rt1VisitorConversation {
         ))
     }
 
+    /// Whether this visitor retains the current canonical publication permit.
+    /// The caller must drop the browser transport on false, not retry CREATE.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        !self.remote.is_revoked() && self.manager.authorize(&self.id).is_ok()
+    }
+
     /// Submit an answer only for the current canonical visitor session.
     /// # Errors
     /// A revoked publication or failed remote SDP operation is denied.
