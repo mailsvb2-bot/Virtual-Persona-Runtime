@@ -145,6 +145,10 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 self._send(503, {"error": "worker failure", "stop_confirmed": False})
 
         def do_GET(self):
+            # Readiness only: no media identity, operation state, or token.
+            if self.path == "/healthz":
+                self._send(200, {"status": "ok"})
+                return
             self._request("GET")
 
         def do_PUT(self):
