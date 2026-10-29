@@ -21,7 +21,7 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("engine.start_visitor(OwnerLabStartRequest { consent })", canonical)
         self.assertIn("manager.open(visitor_token", canonical)
         self.assertIn("manager.authorize_persona(", canonical)
-        self.assertGreaterEqual(canonical.count("manager.authorize_persona("), 2)
+        self.assertGreaterEqual(len(re.findall(r"manager\s*\.\s*authorize_persona\s*\(", canonical)), 2)
         self.assertIn("interrupt.stop()", canonical)
         self.assertIn("engine.stop_visitor_provider_confirmed()", canonical)
         self.assertNotIn("RemoteOperationClient::new(", canonical)
