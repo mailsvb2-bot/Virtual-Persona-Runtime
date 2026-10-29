@@ -156,6 +156,8 @@ test("visitor microphone stays disabled during pending voice and unconfirmed rem
       async disconnect(): Promise<void> {}
     }
     win.LivekitClient = { Room: FakeRoom, RoomEvent: {} };
+    // Make the unrelated audio-unlock action deterministic and awaitable.
+    Object.defineProperty(HTMLMediaElement.prototype, "play", { configurable: true, value: async () => {} });
     const navigatorWithMedia = navigator as Navigator & { mediaDevices: { getUserMedia: () => Promise<unknown> } };
     Object.defineProperty(navigatorWithMedia, "mediaDevices", {
       configurable: true,
@@ -213,6 +215,7 @@ test("visitor microphone stays disabled during pending voice and unconfirmed rem
   await expect(page.locator("#speak")).toBeDisabled();
   // A separate busy() action must not override the pending voice-turn lock.
   await page.locator("#unlock-audio").click();
+  await expect(page.locator("#status")).toContainText("Воспроизведение звука разрешено");
   await expect(page.locator("#speak")).toBeDisabled();
   (release as (() => void) | null)?.();
   await expect(page.locator("#speak")).toBeEnabled();
