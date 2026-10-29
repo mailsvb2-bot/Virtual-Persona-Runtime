@@ -50,7 +50,8 @@
       buttons.forEach((id) => { el(id).disabled = false; });
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
-      el("speak").disabled = !sessionId || !voiceEnabled;
+      // A concurrent owner action must not re-enable capture while a voice turn is pending.
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight;
     }
   }
 
@@ -313,6 +314,8 @@
   async function leave() {
     if (!sessionId || stopping) return;
     stopping = true;
+    // A failed remote STOP must remain retryable, but cannot authorize new speech.
+    voiceEnabled = false;
     const id = sessionId;
     cleanupLocal();
     try {
