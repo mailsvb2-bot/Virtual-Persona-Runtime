@@ -69,6 +69,7 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
   const start = await call("/api/rt1/visitor/start", { visitor_token, consent: true });
   expect(start.status, JSON.stringify(start.body)).toBe(200);
   expect(start.body.signal.transport.kind).toBe("web_rtc");
+  expect(start.body.voice_enabled).toBe(false);
   expect(start.body.signal.transport.offer.kind).toBe("offer");
   expect(start.body.signal.transport.offer.sdp).toContain("backend-e2e-");
   const session_id = String(start.body.session_id);
