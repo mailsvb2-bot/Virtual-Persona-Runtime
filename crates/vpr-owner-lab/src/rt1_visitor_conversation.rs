@@ -238,7 +238,7 @@ impl Rt1VisitorConversation {
         } else {
             self.engine
                 .lock()
-                .apply(OwnerLabTurnInput::Answer(crate::state::LabSessionDescription {
+                .apply(OwnerLabTurnInput::Answer(vpr_integration::WebRtcSessionDescription {
                     kind: "answer".into(),
                     sdp: sdp.to_owned(),
                 }))
