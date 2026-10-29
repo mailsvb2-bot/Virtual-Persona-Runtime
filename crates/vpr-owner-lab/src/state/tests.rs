@@ -327,7 +327,11 @@ fn visitor_private_echo_stop_capability_is_scoped_and_survives_revocation() {
     visitor.revoke_authority().unwrap();
     stop.stop().unwrap();
     assert_eq!(stats.stop.load(Ordering::SeqCst), 1);
-    assert!(visitor.apply(OwnerLabTurnInput::Text("stale".into())).is_err());
+    assert!(
+        visitor
+            .apply(OwnerLabTurnInput::Text("stale".into()))
+            .is_err()
+    );
     visitor.stop_visitor_provider_confirmed().unwrap();
     assert_eq!(stats.close.load(Ordering::SeqCst), 1);
 
