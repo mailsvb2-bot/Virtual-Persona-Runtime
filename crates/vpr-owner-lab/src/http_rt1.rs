@@ -213,6 +213,7 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         &serde_json::json!({
             "session_id": session_id,
             "signal": bundle,
+            "diagnostic_rtp": std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
         }),
     ))
 }
