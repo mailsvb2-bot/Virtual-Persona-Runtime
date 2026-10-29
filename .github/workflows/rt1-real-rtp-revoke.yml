@@ -25,3 +25,32 @@ jobs:
         run: python -m pip install 'aiortc>=1.10,<2'
       - name: Negotiate and revoke actual audio/video RTP
         run: python tests/e2e/test_rt1_webrtc_rtp_revoke.py -v
+
+  local-owner-visitor-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: crates/vpr-owner-lab/ui/package-lock.json
+      - name: Install real aiortc sender
+        run: python -m pip install 'aiortc>=1.10,<2'
+      - name: Install browser test dependencies
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm ci --ignore-scripts
+      - name: Build the real Rust Owner Lab
+        run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+      - name: Install Chromium
+        working-directory: crates/vpr-owner-lab/ui
+        run: npx playwright install --with-deps chromium
+      - name: Owner publishes, visitor receives real RTP, owner revokes and STOP confirms
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm run test:e2e:rt1
