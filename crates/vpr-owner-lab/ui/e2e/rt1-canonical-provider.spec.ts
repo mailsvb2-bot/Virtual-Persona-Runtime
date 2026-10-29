@@ -13,8 +13,12 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
   // Keep the real browser/assets/backend path: no mocked bootstrap or retries.
   const browserErrors: string[] = [];
   const failedRequests: string[] = [];
+  const pendingRequests = new Set<string>();
   page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("request", (request) => pendingRequests.add(request.url()));
+  page.on("requestfinished", (request) => pendingRequests.delete(request.url()));
   page.on("requestfailed", (request) => {
+    pendingRequests.delete(request.url());
     failedRequests.push(`${request.url()}: ${request.failure()?.errorText ?? "unknown"}`);
   });
   page.on("response", (response) => {
@@ -22,11 +26,11 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
       failedRequests.push(`${response.status()} ${response.url()}`);
     }
   });
-  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
   try {
+    await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(page.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
   } catch (error) {
-    throw new Error(`Canonical Owner Lab did not initialize; browserErrors=${JSON.stringify(browserErrors)}; failedRequests=${JSON.stringify(failedRequests)}; assertion=${String(error)}`);
+    throw new Error(`Canonical Owner Lab did not initialize; browserErrors=${JSON.stringify(browserErrors)}; pendingRequests=${JSON.stringify([...pendingRequests])}; failedRequests=${JSON.stringify(failedRequests)}; assertion=${String(error)}`);
   }
   expect(browserErrors, "Owner Lab must initialize without uncaught browser exceptions").toEqual([]);
   await page.getByLabel("Идентификатор Persona").fill("canonical-rt1-e2e");
