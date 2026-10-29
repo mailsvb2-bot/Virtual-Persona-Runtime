@@ -45,8 +45,9 @@ impl LiveVisitorInterrupt {
     }
 }
 
-/// One dedicated existing conversation engine per authorized visitor.
-/// This does not provide network exposure, audio chunks or `LiveKit` sender STOP.
+/// One dedicated canonical conversation engine per authorized visitor.
+/// Private Echo may transmit microphone speech only with cancellable runtime
+/// turns and an independent stop-only sender capability.
 pub struct Rt1VisitorConversation {
     manager: Arc<VisitorSessionManager>,
     id: String,
@@ -367,7 +368,13 @@ impl Rt1VisitorConversation {
         {
             return unsupported_visitor_voice_egress();
         }
-        validate_microphone_audio(&pcm_s16le_mono_16khz)?;
+        // Stage the exact PCM under the canonical publication transaction.
+        // This is a bounded in-process handoff, not an external sender.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.stage_microphone_audio(&sender, pcm_s16le_mono_16khz)?;
+        let pcm_s16le_mono_16khz = receiver
+            .try_recv()
+            .map_err(|_| "RT1_MICROPHONE_QUEUE_UNAVAILABLE".to_owned())?;
         self.manager.authorize(&self.id)?;
         let callback = Arc::clone(&self.interrupt);
         let result = self
