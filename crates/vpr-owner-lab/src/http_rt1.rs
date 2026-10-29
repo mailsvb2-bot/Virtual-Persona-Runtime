@@ -186,6 +186,19 @@ pub(super) fn route_post(
                 _ => error_response(409, "RT1_VISITOR_ANSWER_DENIED"),
             }
         }
+        "/api/rt1/visitor/status" => {
+            let body: VisitorSession = match parse_json(request) {
+                Ok(body) => body,
+                Err(response) => return Some(response),
+            };
+            let conversation = state.rt1.conversations.lock().get(&body.session_id).cloned();
+            match conversation {
+                Some(conversation) => json_response(200, &serde_json::json!({
+                    "active": conversation.is_active(),
+                })),
+                None => error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"),
+            }
+        }
         "/api/rt1/visitor/close" => {
             let body: VisitorSession = match parse_json(request) {
                 Ok(body) => body,
