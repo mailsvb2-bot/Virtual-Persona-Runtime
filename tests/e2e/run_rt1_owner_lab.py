@@ -14,7 +14,7 @@ def main():
         "VPR_OWNER_LAB_ALLOW_EGRESS": "true",
         "VPR_OWNER_LAB_PORT": "18787",
         "VPR_RT1_LOCAL_EXPERIMENT": "true",
-        "VPR_RT1_DIAGNOSTIC_RTP": "true",
+        "VPR_RT1_DIAGNOSTIC_RTP": "false" if os.environ.get("VPR_RT1_E2E_CANONICAL") == "true" else "true",
         "RT1_WORKER_ENDPOINT": "http://127.0.0.1:18789",
         "RT1_WORKER_TOKEN": "rt1-local-e2e-secret",
         "VPR_OWNER_LAB_PERSONA_STORE_PATH": str(
