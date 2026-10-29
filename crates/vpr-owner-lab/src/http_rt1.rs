@@ -119,12 +119,14 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
-        for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
-            if std::env::var(name)
-                .ok()
-                .is_none_or(|value| value.trim().is_empty())
-            {
-                return Err("RT1_WORKER_NOT_CONFIGURED".into());
+        if std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true") {
+            for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
+                if std::env::var(name)
+                    .ok()
+                    .is_none_or(|value| value.trim().is_empty())
+                {
+                    return Err("RT1_WORKER_NOT_CONFIGURED".into());
+                }
             }
         }
         Ok(())
@@ -172,9 +174,13 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
     }
     let manager = Rt1OwnerController::new().visitor_sessions();
-    let (conversation, bundle) =
+    let started = if std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true") {
+        Rt1VisitorConversation::start_diagnostic(manager, body.visitor_token, engine, true)
+    } else {
         Rt1VisitorConversation::start(manager, body.visitor_token, engine, true)
-            .map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
+    };
+    let (conversation, bundle) =
+        started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
     let mut raw = [0_u8; 32];
     if getrandom::fill(&mut raw).is_err() {
         let _ = conversation.close();
