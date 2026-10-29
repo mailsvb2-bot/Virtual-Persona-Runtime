@@ -147,7 +147,7 @@ test("RT1 disconnects a LiveKit connection that completes after pagehide revoke"
 });
 
 
-test("visitor microphone cannot start a second turn while canonical voice request is pending", async ({ page }) => {
+test("visitor microphone stays disabled during pending voice and unconfirmed remote STOP", async ({ page }) => {
   await page.addInitScript(() => {
     const win = window as typeof window & { LivekitClient?: unknown; __fakeProcessor?: { port: { onmessage: ((event: {data: Float32Array}) => void) | null } } };
     class FakeRoom {
@@ -211,7 +211,21 @@ test("visitor microphone cannot start a second turn while canonical voice reques
   await page.locator("#speak").click();
   await expect.poll(() => voiceRequests).toBe(1);
   await expect(page.locator("#speak")).toBeDisabled();
+  // A separate busy() action must not override the pending voice-turn lock.
+  await page.locator("#unlock-audio").click();
+  await expect(page.locator("#speak")).toBeDisabled();
   (release as (() => void) | null)?.();
   await expect(page.locator("#speak")).toBeEnabled();
+  expect(voiceRequests).toBe(1);
+
+  // STOP without a receipt is not a successful close. Keep retry available,
+  // but do not allow a fresh microphone turn on the uncertain remote session.
+  await page.unroute("**/api/rt1/visitor/close");
+  await page.route("**/api/rt1/visitor/close", (route) =>
+    route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ code: "RT1_REMOTE_STOP_UNCONFIRMED" }) }));
+  await page.locator("#leave").click();
+  await expect(page.locator("#leave")).toBeEnabled();
+  await expect(page.locator("#speak")).toBeDisabled();
+  await expect(page.locator("#status")).toContainText("RT1_REMOTE_STOP_UNCONFIRMED");
   expect(voiceRequests).toBe(1);
 });
