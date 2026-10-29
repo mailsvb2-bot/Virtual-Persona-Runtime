@@ -12,6 +12,32 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+/// This local-only diagnostic journey is not a released RT1 API.
+pub(super) fn enabled() -> bool {
+    std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")
+}
+
+pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
+    if !enabled() {
+        return None;
+    }
+    match path {
+        "/rt1" => Some(super::static_response(
+            include_str!("../ui/rt1.html"),
+            "text/html; charset=utf-8",
+        )),
+        "/rt1.js" => Some(super::static_response(
+            include_str!("../ui/rt1.js"),
+            super::JS_MIME,
+        )),
+        "/rt1.css" => Some(super::static_response(
+            include_str!("../ui/rt1.css"),
+            "text/css; charset=utf-8",
+        )),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
