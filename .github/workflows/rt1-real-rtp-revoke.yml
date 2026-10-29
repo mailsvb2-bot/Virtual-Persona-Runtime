@@ -56,3 +56,26 @@ jobs:
       - name: Owner publishes, visitor receives real RTP, owner revokes and STOP confirms
         working-directory: crates/vpr-owner-lab/ui
         run: npm run test:e2e:rt1
+
+  canonical-avatar-provider-visitor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24.21.0
+          cache: npm
+          cache-dependency-path: crates/vpr-owner-lab/ui/package-lock.json
+      - name: Install UI dependencies
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm ci --ignore-scripts
+      - name: Build canonical Rust Owner Lab
+        run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
+      - name: Install Chromium
+        working-directory: crates/vpr-owner-lab/ui
+        run: npx playwright install --with-deps chromium
+      - name: Published visitor drives canonical D-ID create answer revoke STOP
+        working-directory: crates/vpr-owner-lab/ui
+        run: npm run test:e2e:rt1:canonical
