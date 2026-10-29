@@ -142,7 +142,20 @@
         void leave().catch((error) => message(String(error.message || error), true));
       }
     });
-    await room.connect(transport.server_url, transport.token);
+    let timeoutId;
+    try {
+      await Promise.race([
+        room.connect(transport.server_url, transport.token),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("LiveKit не подключился за 15 секунд.")), 15000);
+        })
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (room !== liveKitRoom) {
+      throw new Error("LiveKit-сессия уже отозвана.");
+    }
     if (room.canPlaybackAudio === false) {
       message("LiveKit подключён. Разрешите воспроизведение звука.", true);
     } else {
