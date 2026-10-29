@@ -120,6 +120,25 @@
 
   el("leave").addEventListener("click", () => busy(leave));
 
+  function waitForIceGathering(connection, timeoutMs = 15000) {
+    if (connection.iceGatheringState === "complete") return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        connection.removeEventListener("icegatheringstatechange", check);
+        reject(new Error("ICE-соединение не подготовлено. Проверьте сеть."));
+      }, timeoutMs);
+      function check() {
+        if (connection.iceGatheringState === "complete") {
+          clearTimeout(timer);
+          connection.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }
+      }
+      connection.addEventListener("icegatheringstatechange", check);
+      check();
+    });
+  }
+
   el("join").addEventListener("click", () => busy(async () => {
     if (sessionId) return;
     if (!el("consent").checked) throw new Error("Необходимо согласие на сессию.");
@@ -169,6 +188,7 @@
       await peer.setRemoteDescription({ type: "offer", sdp: offer.sdp });
       const answer = await peer.createAnswer();
       await peer.setLocalDescription(answer);
+      await waitForIceGathering(peer);
       await api("/api/rt1/visitor/answer", {
         session_id: sessionId,
         sdp: peer.localDescription.sdp
