@@ -266,6 +266,18 @@
             }))
           : []
       });
+      const gatheredIce = [];
+      if (start.diagnostic_rtp === false) {
+        peer.onicecandidate = (event) => {
+          if (event.candidate) {
+            gatheredIce.push({
+              candidate: event.candidate.candidate,
+              sdp_mid: event.candidate.sdpMid,
+              sdp_mline_index: event.candidate.sdpMLineIndex
+            });
+          }
+        };
+      }
       const remoteAudio = new MediaStream();
       const remoteVideo = new MediaStream();
       peer.ontrack = (event) => {
@@ -297,6 +309,9 @@
         session_id: sessionId,
         sdp: peer.localDescription.sdp
       });
+      for (const ice of gatheredIce) {
+        await api("/api/rt1/visitor/ice", { session_id: sessionId, ...ice });
+      }
       } else {
         throw new Error("Неподдерживаемый тип медиасессии.");
       }
