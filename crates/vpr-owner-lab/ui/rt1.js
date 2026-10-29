@@ -13,6 +13,7 @@
   let stopping = false;
   let checking = null;
   let microphone = null;
+  let voiceEnabled = false;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -48,7 +49,7 @@
       buttons.forEach((id) => { el(id).disabled = false; });
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
-      el("speak").disabled = !sessionId;
+      el("speak").disabled = !sessionId || !voiceEnabled;
     }
   }
 
@@ -191,7 +192,7 @@
   }
 
   async function beginMicrophone() {
-    if (!sessionId || stopping || microphone) return;
+    if (!sessionId || stopping || microphone || !voiceEnabled) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Микрофон доступен только в защищённом браузере.");
     }
@@ -313,6 +314,8 @@
         throw new Error("Удалённый STOP ещё не подтверждён.");
       }
       sessionId = null;
+      voiceEnabled = false;
+      el("speak").disabled = true;
       message("Звонок завершён, остановка аудио и видео подтверждена.");
     } finally {
       stopping = false;
@@ -359,6 +362,8 @@
     message("Устанавливается защищённое медиасоединение…");
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
     sessionId = start.session_id;
+    voiceEnabled = start.voice_enabled === true;
+    el("speak").disabled = !voiceEnabled;
     try {
       const transport = start.signal.transport;
       if (!transport) throw new Error("Провайдер не предоставил медиасессию.");
