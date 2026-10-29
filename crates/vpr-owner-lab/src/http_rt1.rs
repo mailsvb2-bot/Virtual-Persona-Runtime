@@ -221,12 +221,14 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         let _ = conversation.close();
         return Err(error_response(409, "RT1_SESSION_COLLISION"));
     }
+    let voice_enabled = conversation.supports_private_voice();
     active.insert(session_id.clone(), Arc::new(conversation));
     Ok(json_response(
         200,
         &serde_json::json!({
             "session_id": session_id,
             "signal": bundle,
+            "voice_enabled": voice_enabled,
             "diagnostic_rtp": std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
         }),
     ))
