@@ -179,8 +179,10 @@
     const capture = microphone;
     microphone = null;
     clearTimeout(capture.timeout);
-    capture.processor.onaudioprocess = null;
-    capture.processor.disconnect();
+    if (capture.processor) {
+      capture.processor.port.onmessage = null;
+      capture.processor.disconnect();
+    }
     capture.source.disconnect();
     capture.stream.getTracks().forEach((track) => track.stop());
     void capture.context.close().catch(() => {});
@@ -202,35 +204,49 @@
       stream.getTracks().forEach((track) => track.stop());
       return;
     }
-    const context = new (window.AudioContext || window.webkitAudioContext)();
+    // Reuse the canonical RT0 AudioWorklet rather than UI-thread audio capture.
+    const context = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,
+      latencyHint: "interactive"
+    });
+    if (context.sampleRate !== 16000) {
+      stream.getTracks().forEach((track) => track.stop());
+      void context.close().catch(() => {});
+      throw new Error("Браузер не поддерживает запись с частотой 16 кГц.");
+    }
     const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(2048, 1, 1);
     const pcm = [];
     const maxBytes = 16000 * 2 * 30;
-    let consumed = 0;
-    let nextSample = 0;
-    const stride = context.sampleRate / 16000;
-    const capture = { id, stream, context, source, processor, pcm, timeout: null };
+    const capture = { id, stream, context, source, processor: null, pcm, timeout: null };
     microphone = capture;
-    processor.onaudioprocess = (event) => {
-      if (microphone !== capture || sessionId !== id) return;
-      const input = event.inputBuffer.getChannelData(0);
-      const end = consumed + input.length;
-      while (nextSample < end && pcm.length < maxBytes) {
-        const index = Math.max(0, Math.min(input.length - 1, Math.floor(nextSample - consumed)));
-        const value = Math.max(-1, Math.min(1, input[index]));
-        const sample = value < 0 ? Math.round(value * 32768) : Math.round(value * 32767);
-        pcm.push(sample & 255, (sample >> 8) & 255);
-        nextSample += stride;
+    try {
+      await context.audioWorklet.addModule("/mic-worklet.js");
+      // Permission may be revoked while the browser loads the processor.
+      if (microphone !== capture || sessionId !== id || stopping) {
+        if (microphone === capture) disconnectMicrophone();
+        return;
       }
-      consumed = end;
-      if (pcm.length >= maxBytes) void endMicrophone();
-    };
-    source.connect(processor);
-    processor.connect(context.destination);
-    capture.timeout = setTimeout(() => void endMicrophone(), 30_000);
-    el("speak").textContent = "Отправить речь";
-    message("Микрофон включён. Говорите, затем нажмите «Отправить речь».");
+      const processor = new AudioWorkletNode(context, "vpr-mic-capture");
+      capture.processor = processor;
+      processor.port.onmessage = (event) => {
+        if (microphone !== capture || sessionId !== id || stopping) return;
+        const input = new Float32Array(event.data);
+        for (let index = 0; index < input.length && pcm.length < maxBytes; index += 1) {
+          const value = Math.max(-1, Math.min(1, input[index]));
+          const sample = value < 0 ? Math.round(value * 32768) : Math.round(value * 32767);
+          pcm.push(sample & 255, (sample >> 8) & 255);
+        }
+        if (pcm.length >= maxBytes) void endMicrophone();
+      };
+      source.connect(processor);
+      processor.connect(context.destination);
+      capture.timeout = setTimeout(() => void endMicrophone(), 30_000);
+      el("speak").textContent = "Отправить речь";
+      message("Микрофон включён. Говорите, затем нажмите «Отправить речь».");
+    } catch (error) {
+      if (microphone === capture) disconnectMicrophone();
+      throw error;
+    }
   }
 
   async function endMicrophone() {
