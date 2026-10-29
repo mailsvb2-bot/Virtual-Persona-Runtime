@@ -81,203 +81,165 @@ pub(super) fn route_post(
     request: &mut tiny_http::Request,
     state: &Arc<AppState>,
 ) -> Option<HttpResponse> {
-    let response = match path {
-        "/api/rt1/owner/provision" => {
-            let _: serde_json::Value = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let controller = Rt1OwnerController::new();
-            match controller.provision_owner() {
-                Ok((owner_id, owner_token)) => json_response(
-                    200,
-                    &serde_json::json!({
-                        "owner_id": owner_id,
-                        "owner_token": owner_token,
-                    }),
-                ),
-                Err(_) => error_response(409, "RT1_OWNER_PROVISION_DENIED"),
-            }
-        }
-        "/api/rt1/owner/publish" => {
-            let body: OwnerPublish = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let controller = Rt1OwnerController::new();
-            // Readiness is always decided by the server, not a browser flag.
-            let readiness = || -> Result<(), String> {
-                let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
-                let status = engine.status();
-                if !status.egress_enabled
-                    || status.owner_context_state != OwnerContextState::Reviewed
-                {
-                    return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
-                }
-                for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
-                    if std::env::var(name)
-                        .ok()
-                        .is_none_or(|value| value.trim().is_empty())
-                    {
-                        return Err("RT1_WORKER_NOT_CONFIGURED".into());
-                    }
-                }
-                Ok(())
-            };
-            match controller.publish(&body.owner_token, body.expected_persona_version, readiness) {
-                Ok(visitor_token) => json_response(
-                    200,
-                    &serde_json::json!({
-                        "visitor_token": visitor_token,
-                    }),
-                ),
-                Err(_) => error_response(409, "RT1_PUBLISH_DENIED"),
-            }
-        }
-        "/api/rt1/owner/pause" | "/api/rt1/owner/unpublish" => {
-            let body: OwnerToken = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let controller = Rt1OwnerController::new();
-            let result = if path.ends_with("/pause") {
-                controller.pause(&body.owner_token)
-            } else {
-                controller.unpublish(&body.owner_token)
-            };
-            match result {
-                Ok(()) => json_response(
-                    200,
-                    &serde_json::json!({
-                        "ok": true,
-                        "publication_revoked": true,
-                        "remote_stop_confirmed": false,
-                    }),
-                ),
-                Err(_) => error_response(403, "RT1_OWNER_ACTION_DENIED"),
-            }
-        }
-        "/api/rt1/visitor/start" => {
-            let body: VisitorStart = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            if !body.consent {
-                return Some(error_response(403, "CONSENT_REQUIRED"));
-            }
-            // Distinct visitor-scoped engine. Never share the owner's engine.
-            let providers = match ProviderBundle::from_env(false) {
-                Ok(providers) => providers,
-                Err(_) => return Some(error_response(503, "RT1_PROVIDER_UNAVAILABLE")),
-            };
-            let mut engine = match super::engine_bootstrap::assemble(providers, true) {
-                Ok(engine) => engine,
-                Err(_) => return Some(error_response(503, "RT1_ENGINE_UNAVAILABLE")),
-            };
-            match restore_reviewed_persona(&mut engine) {
-                Ok(true) => {}
-                _ => return Some(error_response(409, "RT1_PERSONA_NOT_REVIEWED")),
-            };
-            let manager = Rt1OwnerController::new().visitor_sessions();
-            match Rt1VisitorConversation::start(manager, body.visitor_token, engine, true) {
-                Ok((conversation, bundle)) => {
-                    let mut raw = [0_u8; 32];
-                    if getrandom::fill(&mut raw).is_err() {
-                        let _ = conversation.close();
-                        return Some(error_response(503, "RT1_SESSION_ENTROPY_UNAVAILABLE"));
-                    }
-                    let mut session_id = String::with_capacity(64);
-                    for octet in raw {
-                        use std::fmt::Write;
-                        if write!(&mut session_id, "{octet:02x}").is_err() {
-                            let _ = conversation.close();
-                            return Some(error_response(500, "RT1_SESSION_ID_FAILURE"));
-                        }
-                    }
-                    let mut active = state.rt1.conversations.lock();
-                    if active.contains_key(&session_id) {
-                        drop(active);
-                        let _ = conversation.close();
-                        return Some(error_response(409, "RT1_SESSION_COLLISION"));
-                    }
-                    active.insert(session_id.clone(), Arc::new(conversation));
-                    json_response(
-                        200,
-                        &serde_json::json!({
-                            "session_id": session_id,
-                            "signal": bundle,
-                        }),
-                    )
-                }
-                Err(_) => error_response(409, "RT1_VISITOR_START_DENIED"),
-            }
-        }
-        "/api/rt1/visitor/answer" => {
-            let body: VisitorAnswer = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let conversation = state
-                .rt1
-                .conversations
-                .lock()
-                .get(&body.session_id)
-                .cloned();
-            match conversation {
-                Some(conversation) if conversation.submit_answer(&body.sdp).is_ok() => {
-                    json_response(200, &serde_json::json!({"ok":true}))
-                }
-                _ => error_response(409, "RT1_VISITOR_ANSWER_DENIED"),
-            }
-        }
-        "/api/rt1/visitor/status" => {
-            let body: VisitorSession = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let conversation = state
-                .rt1
-                .conversations
-                .lock()
-                .get(&body.session_id)
-                .cloned();
-            match conversation {
-                Some(conversation) => json_response(
-                    200,
-                    &serde_json::json!({
-                        "active": conversation.is_active(),
-                    }),
-                ),
-                None => error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"),
-            }
-        }
-        "/api/rt1/visitor/close" => {
-            let body: VisitorSession = match parse_json(request) {
-                Ok(body) => body,
-                Err(response) => return Some(response),
-            };
-            let conversation = state
-                .rt1
-                .conversations
-                .lock()
-                .get(&body.session_id)
-                .cloned();
-            match conversation {
-                Some(conversation) if conversation.close().is_ok() => {
-                    state.rt1.conversations.lock().remove(&body.session_id);
-                    json_response(
-                        200,
-                        &serde_json::json!({
-                            "ok":true,
-                            "remote_stop_confirmed":true,
-                        }),
-                    )
-                }
-                Some(_) => error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"),
-                None => error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"),
-            }
-        }
+    let result = match path {
+        "/api/rt1/owner/provision" => owner_provision(request),
+        "/api/rt1/owner/publish" => owner_publish(request, state),
+        "/api/rt1/owner/pause" => owner_revoke(request, false),
+        "/api/rt1/owner/unpublish" => owner_revoke(request, true),
+        "/api/rt1/visitor/start" => visitor_start(request, state),
+        "/api/rt1/visitor/answer" => visitor_answer(request, state),
+        "/api/rt1/visitor/status" => visitor_status(request, state),
+        "/api/rt1/visitor/close" => visitor_close(request, state),
         _ => return None,
     };
-    Some(response)
+    Some(result.unwrap_or_else(|response| response))
+}
+
+type Rt1HttpResult = Result<HttpResponse, HttpResponse>;
+
+fn owner_provision(request: &mut tiny_http::Request) -> Rt1HttpResult {
+    let _: serde_json::Value = parse_json(request)?;
+    let (owner_id, owner_token) = Rt1OwnerController::new()
+        .provision_owner()
+        .map_err(|_| error_response(409, "RT1_OWNER_PROVISION_DENIED"))?;
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "owner_id": owner_id,
+            "owner_token": owner_token,
+        }),
+    ))
+}
+
+fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: OwnerPublish = parse_json(request)?;
+    let readiness = || -> Result<(), String> {
+        let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
+        let status = engine.status();
+        if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
+            return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
+        }
+        for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
+            if std::env::var(name)
+                .ok()
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                return Err("RT1_WORKER_NOT_CONFIGURED".into());
+            }
+        }
+        Ok(())
+    };
+    let visitor_token = Rt1OwnerController::new()
+        .publish(&body.owner_token, body.expected_persona_version, readiness)
+        .map_err(|_| error_response(409, "RT1_PUBLISH_DENIED"))?;
+    Ok(json_response(
+        200,
+        &serde_json::json!({"visitor_token": visitor_token}),
+    ))
+}
+
+fn owner_revoke(request: &mut tiny_http::Request, unpublish: bool) -> Rt1HttpResult {
+    let body: OwnerToken = parse_json(request)?;
+    let controller = Rt1OwnerController::new();
+    if unpublish {
+        controller.unpublish(&body.owner_token)
+    } else {
+        controller.pause(&body.owner_token)
+    }
+    .map_err(|_| error_response(403, "RT1_OWNER_ACTION_DENIED"))?;
+    // Existing stop callbacks cannot report remote receipts to this call.
+    // A durable publication revoke is not a verified media STOP.
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "ok": true,
+            "publication_revoked": true,
+            "remote_stop_confirmed": false,
+        }),
+    ))
+}
+
+fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorStart = parse_json(request)?;
+    if !body.consent {
+        return Err(error_response(403, "CONSENT_REQUIRED"));
+    }
+    let providers = ProviderBundle::from_env(false)
+        .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+    let mut engine = super::engine_bootstrap::assemble(providers, true)
+        .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
+    if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
+        return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
+    }
+    let manager = Rt1OwnerController::new().visitor_sessions();
+    let (conversation, bundle) =
+        Rt1VisitorConversation::start(manager, body.visitor_token, engine, true)
+            .map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
+    let mut raw = [0_u8; 32];
+    if getrandom::fill(&mut raw).is_err() {
+        let _ = conversation.close();
+        return Err(error_response(503, "RT1_SESSION_ENTROPY_UNAVAILABLE"));
+    }
+    let mut session_id = String::with_capacity(64);
+    for byte in raw {
+        session_id.push(char::from(super::HEX[usize::from(byte >> 4)]));
+        session_id.push(char::from(super::HEX[usize::from(byte & 0x0f)]));
+    }
+    let mut active = state.rt1.conversations.lock();
+    if active.contains_key(&session_id) {
+        drop(active);
+        let _ = conversation.close();
+        return Err(error_response(409, "RT1_SESSION_COLLISION"));
+    }
+    active.insert(session_id.clone(), Arc::new(conversation));
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "session_id": session_id,
+            "signal": bundle,
+        }),
+    ))
+}
+
+fn lookup(state: &AppState, session_id: &str) -> Rt1HttpResultConversation {
+    state
+        .rt1
+        .conversations
+        .lock()
+        .get(session_id)
+        .cloned()
+        .ok_or_else(|| error_response(404, "RT1_VISITOR_SESSION_NOT_FOUND"))
+}
+
+type Rt1HttpResultConversation = Result<Arc<Rt1VisitorConversation>, HttpResponse>;
+
+fn visitor_answer(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorAnswer = parse_json(request)?;
+    lookup(state, &body.session_id)?
+        .submit_answer(&body.sdp)
+        .map_err(|_| error_response(409, "RT1_VISITOR_ANSWER_DENIED"))?;
+    Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorSession = parse_json(request)?;
+    let active = lookup(state, &body.session_id)?.is_active();
+    Ok(json_response(200, &serde_json::json!({"active": active})))
+}
+
+fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorSession = parse_json(request)?;
+    // Do not erase a session until an actual remote STOP is confirmed.
+    // Keep it for a retry if the network is unreachable.
+    lookup(state, &body.session_id)?
+        .close()
+        .map_err(|_| error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"))?;
+    state.rt1.conversations.lock().remove(&body.session_id);
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "ok": true,
+            "remote_stop_confirmed": true,
+        }),
+    ))
 }
