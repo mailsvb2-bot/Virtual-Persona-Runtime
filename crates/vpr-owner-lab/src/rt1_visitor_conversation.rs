@@ -228,6 +228,17 @@ impl Rt1VisitorConversation {
         ))
     }
 
+    /// Whether the selected canonical avatar exposes an independent
+    /// server-owned STOP capability for private microphone speech.
+    /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
+    #[must_use]
+    pub fn supports_private_voice(&self) -> bool {
+        self.remote.is_none()
+            && !self.interrupt.cancelled.load(Ordering::Acquire)
+            && self.interrupt.backend_stop.lock().is_some()
+            && self.manager.authorize(&self.id).is_ok()
+    }
+
     /// Whether this visitor retains the current canonical publication permit.
     /// The caller must drop the browser transport on false, not retry CREATE.
     #[must_use]
