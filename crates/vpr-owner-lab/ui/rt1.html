@@ -26,18 +26,20 @@
 </section>
 <section>
 <h2>Посетитель</h2>
-<p>Введите код приглашения и подключитесь. Микрофон и камера посетителя не передаются.</p>
+<p>Введите код приглашения и подключитесь. Микрофон включается только по вашему действию «Говорить». Камера посетителя не передаётся.</p>
 <label>Код приглашения <input id="visitor-token" autocomplete="off" placeholder="Введите код приглашения"></label>
 <label class="check"><input id="consent" type="checkbox"> Я согласен(на) начать аудио- и видеосессию</label>
 <div class="actions">
 <button id="join" type="button">Начать разговор</button>
 <button id="leave" type="button" disabled>Завершить разговор</button>
 <button id="unlock-audio" type="button">Включить звук</button>
+<button id="speak" type="button" disabled>Говорить</button>
 </div>
 <div class="media">
 <video id="video" autoplay playsinline></video>
 <audio id="audio" autoplay></audio>
 </div>
+<p id="speech-result" aria-live="polite"></p>
 </section>
 <section aria-live="polite"><h2>Состояние</h2><p id="status">Не подключено</p></section>
 </main>
