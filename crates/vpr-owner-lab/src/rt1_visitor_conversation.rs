@@ -12,6 +12,7 @@ use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
     LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 #[derive(Default)]
@@ -40,16 +41,73 @@ pub struct Rt1VisitorConversation {
     id: String,
     engine: Mutex<OwnerLabEngine>,
     interrupt: Arc<LiveVisitorInterrupt>,
-    remote: Arc<Rt1RemoteMediaRevocation>,
+    remote: Option<Arc<Rt1RemoteMediaRevocation>>,
 }
 
 impl Rt1VisitorConversation {
+    /// Start with the configured canonical avatar provider and its existing
+    /// WebRTC/LiveKit transport. No synthetic sender is created here.
+    ///
+    /// # Errors
+    /// Rejects stale publication, failed provider allocation or raced revoke.
+    pub fn start(
+        manager: Arc<VisitorSessionManager>,
+        visitor_token: String,
+        mut engine: OwnerLabEngine,
+        consent: bool,
+    ) -> Result<(Self, LabSignalBundle), String> {
+        if !consent {
+            return Err("CONSENT_REQUIRED".into());
+        }
+        let (persona_id, persona_version) = engine
+            .reviewed_persona_binding()
+            .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
+        let persona_id = persona_id.to_owned();
+        let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let on_revoke = Arc::clone(&interrupt);
+        let id = manager.open(visitor_token, move || on_revoke.stop())?;
+        if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
+
+        let started = engine.start_visitor(OwnerLabStartRequest { consent });
+        let bundle = match started {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                let _ = manager.close(&id);
+                return Err(error.code().to_owned());
+            }
+        };
+        *interrupt.session.lock() = engine.session_revocation_handle();
+        if interrupt.cancelled.load(Ordering::Acquire)
+            || manager
+                .authorize_persona(&id, &persona_id, persona_version)
+                .is_err()
+        {
+            interrupt.stop();
+            let _ = engine.stop_visitor_provider_confirmed();
+            let _ = manager.close(&id);
+            return Err("RT1_VISITOR_REVOKED_DURING_PROVIDER_START".into());
+        }
+        Ok((
+            Self {
+                manager,
+                id,
+                engine: Mutex::new(engine),
+                interrupt,
+                remote: None,
+            },
+            bundle,
+        ))
+    }
+
     /// Start the real visitor-scoped avatar transport after canonical visitor
     /// admission. Only return the offer/token if authority remains current.
     ///
     /// # Errors
     /// Rejects invalid authority, failed provider startup or concurrent revoke.
-    pub fn start(
+    pub fn start_diagnostic(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
         engine: OwnerLabEngine,
@@ -152,7 +210,7 @@ impl Rt1VisitorConversation {
                 id,
                 engine: Mutex::new(engine),
                 interrupt,
-                remote,
+                remote: Some(remote),
             },
             bundle,
         ))
@@ -162,7 +220,9 @@ impl Rt1VisitorConversation {
     /// The caller must drop the browser transport on false, not retry CREATE.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        !self.remote.is_revoked() && self.manager.authorize(&self.id).is_ok()
+        !self.interrupt.cancelled.load(Ordering::Acquire)
+            && self.remote.as_ref().is_none_or(|remote| !remote.is_revoked())
+            && self.manager.authorize(&self.id).is_ok()
     }
 
     /// Submit an answer only for the current canonical visitor session.
@@ -170,12 +230,22 @@ impl Rt1VisitorConversation {
     /// A revoked publication or failed remote SDP operation is denied.
     pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
         self.manager.authorize(&self.id)?;
-        if self.remote.is_revoked() {
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        self.remote.submit_answer(sdp)?;
+        if let Some(remote) = &self.remote {
+            remote.submit_answer(sdp)?;
+        } else {
+            self.engine
+                .lock()
+                .apply(OwnerLabTurnInput::Answer(crate::state::LabSessionDescription {
+                    kind: "answer".into(),
+                    sdp: sdp.to_owned(),
+                }))
+                .map_err(|error| error.code().to_owned())?;
+        }
         self.manager.authorize(&self.id)?;
-        if self.remote.is_revoked() {
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
         Ok(())
@@ -228,15 +298,13 @@ impl Rt1VisitorConversation {
         // receipt. An explicit close MUST inspect the remote STOP outcome,
         // including when the visitor registration was already revoked.
         // Attempt local cleanup regardless of the remote result.
-        let remote_stop = self.remote.revoke_confirmed();
+        let remote_stop = self.remote.as_ref().map_or(Ok(()), |remote| remote.revoke_confirmed());
         let local_stop = {
             let mut engine = self.engine.lock();
-            // The RT1 aiortc operation is remote-owned. This visitor engine
-            // was constructed for reviewed Persona identity but never ran
-            // OwnerLabEngine::start_visitor; revoking an absent local session
-            // would falsely report failure after a confirmed remote STOP.
             if engine.session_revocation_handle().is_some() {
-                engine.revoke().map_err(|error| error.code().to_owned())
+                engine
+                    .stop_visitor_provider_confirmed()
+                    .map_err(|error| error.code().to_owned())
             } else {
                 Ok(())
             }
@@ -250,10 +318,12 @@ impl Drop for Rt1VisitorConversation {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
         // Best-effort retry is never treated as a durable STOP receipt.
-        let _ = self.remote.revoke_confirmed();
+        if let Some(remote) = &self.remote {
+            let _ = remote.revoke_confirmed();
+        }
         let mut engine = self.engine.lock();
         if engine.session_revocation_handle().is_some() {
-            let _ = engine.revoke();
+            let _ = engine.stop_visitor_provider_confirmed();
         }
     }
 }
