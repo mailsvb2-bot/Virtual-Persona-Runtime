@@ -10,22 +10,38 @@ SOURCE = (
 
 
 class Rt1StartupCancellationGate(unittest.TestCase):
-    def test_startup_does_not_call_unbounded_provider(self):
+    def test_canonical_provider_start_is_fenced_and_diagnostic_is_explicit(self):
         source = SOURCE.read_text(encoding="utf-8")
-        start = source.split("    pub fn start(", 1)[1].split("    /// # Errors", 1)[0]
-        self.assertNotIn("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCELLATION", start)
-        self.assertIn("RemoteOperationClient::new(", start)
-        self.assertRegex(start, r"client\s*\.\s*create\s*\(\s*&operation_id\s*,\s*1\s*\)")
-        self.assertRegex(start, r"client\s*\.\s*offer\s*\(\s*&operation_id\s*,\s*&session_id\s*\)")
-        self.assertIn("stop_remote.revoke_confirmed()", start)
-        self.assertLess(start.index("manager.open("), re.search(r"client\s*\.\s*create\s*\(", start).start())
-        self.assertGreaterEqual(start.count("manager.authorize(&id)"), 2)
-        self.assertIn("manager.authorize_persona(", start)
-        self.assertIn("manager.close(&id)", start)
-        self.assertNotRegex(start, r"\.start_visitor\s*\(")
-        self.assertNotIn("manager.provider_dispatch(", start)
-        self.assertNotIn("std::thread::spawn(", start)
-        # No dormant provider-dispatch API may bypass this fail-closed entry.
+        canonical = source.split("    pub fn start(", 1)[1].split(
+            "    pub fn start_diagnostic(", 1
+        )[0]
+        diagnostic = source.split("    pub fn start_diagnostic(", 1)[1].split(
+            "    /// Whether this visitor", 1
+        )[0]
+        self.assertIn("engine.start_visitor(OwnerLabStartRequest { consent })", canonical)
+        self.assertIn("manager.open(visitor_token", canonical)
+        self.assertIn("manager.authorize_persona(", canonical)
+        self.assertGreaterEqual(canonical.count("manager.authorize_persona("), 2)
+        self.assertIn("interrupt.stop()", canonical)
+        self.assertIn("engine.stop_visitor_provider_confirmed()", canonical)
+        self.assertNotIn("RemoteOperationClient::new(", canonical)
+        self.assertNotIn("std::thread::spawn(", canonical)
+        self.assertLess(canonical.index("manager.open("), canonical.index("engine.start_visitor("))
+
+        self.assertIn("RemoteOperationClient::new(", diagnostic)
+        self.assertRegex(diagnostic, r"client\s*\.\s*create\s*\(\s*&operation_id\s*,\s*1\s*\)")
+        self.assertRegex(diagnostic, r"client\s*\.\s*offer\s*\(\s*&operation_id\s*,\s*&session_id\s*\)")
+        self.assertIn("stop_remote.revoke_confirmed()", diagnostic)
+        self.assertLess(diagnostic.index("manager.open("),
+                        re.search(r"client\s*\.\s*create\s*\(", diagnostic).start())
+        self.assertGreaterEqual(diagnostic.count("manager.authorize(&id)"), 2)
+
+        http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
+        self.assertIn('std::env::var("VPR_RT1_DIAGNOSTIC_RTP")', http)
+        self.assertIn("Rt1VisitorConversation::start_diagnostic(", http)
+        self.assertIn("Rt1VisitorConversation::start(", http)
+        self.assertIn("Rt1VisitorConversation::start(manager", http)
+
         session = (SOURCE.parent / "rt1_visitor_session.rs").read_text(encoding="utf-8")
         manager = (SOURCE.parent / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
         workspace = (SOURCE.parent / "rt1_workspace_service.rs").read_text(encoding="utf-8")
