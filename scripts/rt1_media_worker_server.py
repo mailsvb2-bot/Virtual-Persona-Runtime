@@ -7,12 +7,33 @@ instead of forging successful STOP or allocating a replacement session.
 from __future__ import annotations
 
 import os
-import sqlite3
+import logging
+import threading
 from http.server import ThreadingHTTPServer
 
 from rt1_aiortc_backend import AiortcSenderBackend
 from rt1_media_worker_http import handler_for
 from rt1_media_worker_lifecycle import MediaLifecycle
+
+
+LOG = logging.getLogger("rt1.worker")
+
+
+def reconcile_until_shutdown(lifecycle: MediaLifecycle, shutdown: threading.Event, interval: float = 1.0):
+    """Retry only durable unresolved STOPs, never CREATE or unverified receipts.
+
+    An unreachable sender remains *uncertain* in SQLite. The control plane
+    continues to reject a new allocation while it is uncertain. A runtime
+    restart still fails closed when an old sender cannot be verified stopped.
+    """
+    if interval <= 0:
+        raise ValueError("reconcile interval must be positive")
+    while not shutdown.is_set():
+        try:
+            lifecycle.reconcile()
+        except Exception:
+            LOG.exception("RT1 STOP reconciliation pending; media remains fenced")
+        shutdown.wait(interval)
 
 
 def main():
@@ -35,10 +56,20 @@ def main():
         ("127.0.0.1", int(os.environ.get("RT1_WORKER_PORT", "8099"))),
         handler_for(lifecycle, token),
     )
+    shutdown = threading.Event()
+    reconciler = threading.Thread(
+        target=reconcile_until_shutdown,
+        args=(lifecycle, shutdown),
+        name="rt1-stop-reconcile",
+        daemon=True,
+    )
+    reconciler.start()
     try:
         server.serve_forever()
     finally:
         server.server_close()
+        shutdown.set()
+        reconciler.join(timeout=3)
         backend.shutdown()
 
 
