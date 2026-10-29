@@ -9,8 +9,26 @@ const csrfHeaders = (csrf: string) => ({
 });
 
 test("RT1 visitor reuses canonical D-ID provider for create, answer and confirmed close", async ({ page, request }) => {
-  await page.goto("/", { waitUntil: "commit" });
-  await expect(page.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+  // Module scripts must execute before we interpret Owner Lab bootstrap status.
+  // Keep the real browser/assets/backend path: no mocked bootstrap or retries.
+  const browserErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    failedRequests.push(`${request.url()}: ${request.failure()?.errorText ?? "unknown"}`);
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 400 && new URL(response.url()).origin === base) {
+      failedRequests.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+  try {
+    await expect(page.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+  } catch (error) {
+    throw new Error(`Canonical Owner Lab did not initialize; browserErrors=${JSON.stringify(browserErrors)}; failedRequests=${JSON.stringify(failedRequests)}; assertion=${String(error)}`);
+  }
+  expect(browserErrors, "Owner Lab must initialize without uncaught browser exceptions").toEqual([]);
   await page.getByLabel("Идентификатор Persona").fill("canonical-rt1-e2e");
   await page.getByRole("button", { name: "Создать Persona" }).click();
   const answers = ["Разговариваю спокойно", "Предпочитаю точность", "Объясняю кратко"];
