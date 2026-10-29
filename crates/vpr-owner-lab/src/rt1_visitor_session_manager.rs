@@ -374,9 +374,11 @@ mod tests {
     fn unknown_visitor_never_stages_audio() {
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        assert!(manager
-            .enqueue_media_fragment("missing", &sender, vec![1_u8, 2])
-            .is_err());
+        assert!(
+            manager
+                .enqueue_media_fragment("missing", &sender, vec![1_u8, 2])
+                .is_err()
+        );
         assert!(receiver.try_recv().is_err());
     }
 
@@ -390,9 +392,11 @@ mod tests {
         });
         manager.sessions.lock().insert("revoked".into(), session);
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        assert!(manager
-            .enqueue_media_fragment("revoked", &sender, vec![1_u8, 2])
-            .is_err());
+        assert!(
+            manager
+                .enqueue_media_fragment("revoked", &sender, vec![1_u8, 2])
+                .is_err()
+        );
         assert!(receiver.try_recv().is_err());
     }
 
