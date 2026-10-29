@@ -221,7 +221,10 @@ impl Rt1VisitorConversation {
     #[must_use]
     pub fn is_active(&self) -> bool {
         !self.interrupt.cancelled.load(Ordering::Acquire)
-            && self.remote.as_ref().is_none_or(|remote| !remote.is_revoked())
+            && self
+                .remote
+                .as_ref()
+                .is_none_or(|remote| !remote.is_revoked())
             && self.manager.authorize(&self.id).is_ok()
     }
 
@@ -238,10 +241,12 @@ impl Rt1VisitorConversation {
         } else {
             self.engine
                 .lock()
-                .apply(OwnerLabTurnInput::Answer(vpr_integration::WebRtcSessionDescription {
-                    kind: "answer".into(),
-                    sdp: sdp.to_owned(),
-                }))
+                .apply(OwnerLabTurnInput::Answer(
+                    vpr_integration::WebRtcSessionDescription {
+                        kind: "answer".into(),
+                        sdp: sdp.to_owned(),
+                    },
+                ))
                 .map_err(|error| error.code().to_owned())?;
         }
         self.manager.authorize(&self.id)?;
@@ -298,7 +303,10 @@ impl Rt1VisitorConversation {
         // receipt. An explicit close MUST inspect the remote STOP outcome,
         // including when the visitor registration was already revoked.
         // Attempt local cleanup regardless of the remote result.
-        let remote_stop = self.remote.as_ref().map_or(Ok(()), |remote| remote.revoke_confirmed());
+        let remote_stop = self
+            .remote
+            .as_ref()
+            .map_or(Ok(()), |remote| remote.revoke_confirmed());
         let local_stop = {
             let mut engine = self.engine.lock();
             if engine.session_revocation_handle().is_some() {
