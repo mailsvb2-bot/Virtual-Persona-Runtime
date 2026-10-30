@@ -125,7 +125,9 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
       headers,
       data: { session_id: visitorSessionId, sdp: originalAnswerSdp },
     });
-    expect(staleAnswer.status(), "revoked visitor must reject a valid late SDP answer").toBe(409);
+    // A confirmed STOP may remove the session (404); a retained revoked
+    // session must reject the answer (409). Neither may reach the sender.
+    expect([404, 409], "revoked visitor must reject a valid late SDP answer").toContain(staleAnswer.status());
   } finally {
     await visitorContext.close();
     await ownerContext.close();
