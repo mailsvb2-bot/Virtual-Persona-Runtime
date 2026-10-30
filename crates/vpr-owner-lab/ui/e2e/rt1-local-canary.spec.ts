@@ -77,6 +77,30 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
       audio: (document.getElementById("audio") as HTMLAudioElement).srcObject === null,
     }));
     expect(ended).toEqual({ video: true, audio: true });
+
+    // The same real browser-facing HTTP boundary must reject stale sessions
+    // and publication tokens after owner revocation. STOP alone is not enough:
+    // no late SDP or new visitor session may resurrect the media sender.
+    const bootstrap = await owner.request.get("/api/bootstrap");
+    expect(bootstrap.ok()).toBeTruthy();
+    const csrf = String((await bootstrap.json()).csrf_token);
+    const headers = {
+      "content-type": "application/json",
+      "x-vpr-csrf": csrf,
+      origin: new URL(owner.url()).origin,
+    };
+    const staleJoin = await owner.request.post("/api/rt1/visitor/start", {
+      headers,
+      data: { visitor_token: invite, consent: true },
+    });
+    expect(staleJoin.ok(), "revoked publication must deny a fresh RTP allocation").toBeFalsy();
+    const staleJoinBody = await staleJoin.json();
+    expect(staleJoinBody).not.toHaveProperty("session_id");
+    const activeAfterRevoke = await owner.request.post("/api/rt1/visitor/status", {
+      headers,
+      data: { session_id: "revoked-and-unknown" },
+    });
+    expect(activeAfterRevoke.ok()).toBeFalsy();
   } finally {
     await visitorContext.close();
     await ownerContext.close();
