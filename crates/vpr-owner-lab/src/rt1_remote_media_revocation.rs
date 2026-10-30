@@ -190,7 +190,9 @@ mod tests {
         let (release_answer_tx, release_answer_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = Vec::new();
             let mut buffer = [0_u8; 2048];
             loop {
@@ -205,7 +207,9 @@ mod tests {
             }
             assert!(request.starts_with(b"POST /v1/avatar/operations/raced-answer/answer "));
             answer_received_tx.send(()).unwrap();
-            release_answer_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            release_answer_rx
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
             let body = r#"{"operation_id":"raced-answer","accepted":true}"#;
             write!(
                 socket,
@@ -214,7 +218,9 @@ mod tests {
             ).unwrap();
 
             let (mut stop_socket, _) = listener.accept().unwrap();
-            stop_socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            stop_socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = Vec::new();
             loop {
                 let read = stop_socket.read(&mut buffer).unwrap();
@@ -236,12 +242,13 @@ mod tests {
         });
         let client =
             RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-        let remote = Arc::new(
-            Rt1RemoteMediaRevocation::new(client, "raced-answer".into(), 1).unwrap(),
-        );
+        let remote =
+            Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-answer".into(), 1).unwrap());
         let answer_remote = Arc::clone(&remote);
         let answer = std::thread::spawn(move || answer_remote.submit_answer("v=0\r\n"));
-        answer_received_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        answer_received_rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap();
         let stop_remote = Arc::clone(&remote);
         let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
         // revoke_confirmed() sets the revoked bit before waiting on the
