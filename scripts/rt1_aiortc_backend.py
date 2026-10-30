@@ -131,7 +131,7 @@ class AiortcSenderBackend:
         if not entry or (entry.operation_id, entry.generation) != (operation_id, generation):
             raise RuntimeError("unknown or revoked WebRTC session")
         description = entry.peer.localDescription
-        if description is None or entry.peer.connectionState == "closed":
+        if entry.closed or description is None or entry.peer.connectionState == "closed":
             raise RuntimeError("WebRTC offer not available")
         return {"type": description.type, "sdp": description.sdp, "ice_servers": self._ice_servers}
 
