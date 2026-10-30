@@ -15,6 +15,8 @@
   let microphone = null;
   let voiceEnabled = false;
   let voiceInFlight = false;
+  let microphonePending = false;
+  let microphoneRequest = 0;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -51,7 +53,7 @@
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
     }
   }
 
@@ -194,45 +196,50 @@
   }
 
   async function beginMicrophone() {
-    if (!sessionId || stopping || microphone || !voiceEnabled || voiceInFlight) return;
+    if (!sessionId || stopping || microphone || microphonePending || !voiceEnabled || voiceInFlight) return;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Микрофон доступен только в защищённом браузере.");
     }
     const id = sessionId;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true },
-      video: false
-    });
-    if (sessionId !== id || stopping) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    // Reuse the canonical RT0 AudioWorklet rather than UI-thread audio capture.
-    const context = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: 16000,
-      latencyHint: "interactive"
-    });
-    if (context.sampleRate !== 16000) {
-      stream.getTracks().forEach((track) => track.stop());
-      void context.close().catch(() => {});
-      throw new Error("Браузер не поддерживает запись с частотой 16 кГц.");
-    }
-    const source = context.createMediaStreamSource(stream);
-    const pcm = [];
-    const maxBytes = 16000 * 2 * 30;
-    const capture = { id, stream, context, source, processor: null, pcm, timeout: null };
-    microphone = capture;
+    const request = ++microphoneRequest;
+    microphonePending = true;
+    el("speak").disabled = true;
+    let stream = null;
+    let context = null;
+    let capture = null;
     try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: false
+      });
+      // The permission prompt can outlive an unsuccessful remote STOP.
+      // Session identity alone is not sufficient: a failed close retains it.
+      if (request !== microphoneRequest || sessionId !== id || stopping || !voiceEnabled || voiceInFlight) return;
+      // Reuse the canonical RT0 AudioWorklet rather than UI-thread audio capture.
+      context = new (window.AudioContext || window.webkitAudioContext)({
+        sampleRate: 16000,
+        latencyHint: "interactive"
+      });
+      if (context.sampleRate !== 16000) {
+        throw new Error("Браузер не поддерживает запись с частотой 16 кГц.");
+      }
+      const source = context.createMediaStreamSource(stream);
+      const pcm = [];
+      const maxBytes = 16000 * 2 * 30;
+      capture = { id, stream, context, source, processor: null, pcm, timeout: null };
+      microphone = capture;
       await context.audioWorklet.addModule("/mic-worklet.js");
-      // Permission may be revoked while the browser loads the processor.
-      if (microphone !== capture || sessionId !== id || stopping) {
+      // Recheck after another async boundary, including failed STOP and pagehide.
+      if (microphone !== capture || request !== microphoneRequest ||
+          sessionId !== id || stopping || !voiceEnabled || voiceInFlight) {
         if (microphone === capture) disconnectMicrophone();
         return;
       }
       const processor = new AudioWorkletNode(context, "vpr-mic-capture");
       capture.processor = processor;
       processor.port.onmessage = (event) => {
-        if (microphone !== capture || sessionId !== id || stopping) return;
+        if (microphone !== capture || request !== microphoneRequest ||
+            sessionId !== id || stopping || !voiceEnabled || voiceInFlight) return;
         const input = new Float32Array(event.data);
         for (let index = 0; index < input.length && pcm.length < maxBytes; index += 1) {
           const value = Math.max(-1, Math.min(1, input[index]));
@@ -247,8 +254,20 @@
       el("speak").textContent = "Отправить речь";
       message("Микрофон включён. Говорите, затем нажмите «Отправить речь».");
     } catch (error) {
-      if (microphone === capture) disconnectMicrophone();
+      if (capture && microphone === capture) disconnectMicrophone();
       throw error;
+    } finally {
+      // Ownership transfers to disconnectMicrophone only after capture exists.
+      // A rejected AudioContext/source construction must not leak the stream.
+      if (!capture) {
+        if (context) void context.close().catch(() => {});
+        if (stream) stream.getTracks().forEach((track) => track.stop());
+      }
+      // A stale permission request must not unlock a newer session's controls.
+      if (request === microphoneRequest) {
+        microphonePending = false;
+        el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
+      }
     }
   }
 
@@ -289,6 +308,9 @@
   });
 
   function cleanupLocal() {
+    // Invalidate pending browser permission prompts even if STOP is unconfirmed.
+    microphoneRequest += 1;
+    microphonePending = false;
     disconnectMicrophone();
     if (checking) {
       clearInterval(checking);
@@ -331,7 +353,7 @@
       stopping = false;
       el("join").disabled = Boolean(sessionId);
       el("leave").disabled = !sessionId;
-      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight;
+      el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
     }
   }
 
@@ -463,6 +485,9 @@
 
   window.addEventListener("pagehide", () => {
     if (sessionId) {
+      // A page restored from BFCache must not resume an unverified sender.
+      voiceEnabled = false;
+      stopping = true;
       // A best-effort request is not a STOP receipt. The backend ledger
       // remains the source of truth after abrupt tab close.
       const body = JSON.stringify({ session_id: sessionId });
