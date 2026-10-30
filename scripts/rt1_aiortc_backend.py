@@ -169,10 +169,11 @@ class AiortcSenderBackend:
         if not entry or (entry.operation_id, entry.generation) != (operation_id, generation):
             # Never fabricate STOP for a session that may live on another worker.
             raise RuntimeError("remote WebRTC sender missing; STOP unconfirmed")
+        # Set the session's irrevocable STOP intent before waiting for an
+        # in-flight setRemoteDescription(). A hanging answer may hold the
+        # session gate; it must not be able to report success after STOP began.
+        entry.closed = True
         async with entry.gate:
-            # Mark revoked before any asynchronous close so no new answer
-            # may be admitted while the sender is shutting down.
-            entry.closed = True
             entry.audio.stop()
             entry.video.stop()
             await entry.peer.close()
