@@ -47,7 +47,11 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Playwright APIRequestContext connection pool. Both browser loading and
   // response integrity remain mandatory (no mocks and no timeout suppression).
   await installTransportFakes(page);
-  await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
+  // Wait until the parser has loaded module scripts before issuing a second
+  // wave of concurrent asset requests. The previous "commit" milestone
+  // raced the app's initial modules on busy CI runners and left #status at
+  // "Загрузка…" despite healthy backend/bootstrap responses.
+  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
   const appAssets = [
     "/", "/styles.css", "/app.js", "/tts-selector.js",
     "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
