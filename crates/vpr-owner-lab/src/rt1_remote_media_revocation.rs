@@ -181,6 +181,86 @@ mod tests {
     }
 
     #[test]
+    fn owner_revoke_during_remote_answer_never_returns_stale_success() {
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (answer_received_tx, answer_received_rx) = mpsc::channel();
+        let (release_answer_tx, release_answer_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let read = socket.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(b"POST /v1/avatar/operations/raced-answer/answer "));
+            answer_received_tx.send(()).unwrap();
+            release_answer_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let body = r#"{"operation_id":"raced-answer","accepted":true}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ).unwrap();
+
+            let (mut stop_socket, _) = listener.accept().unwrap();
+            stop_socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut request = Vec::new();
+            loop {
+                let read = stop_socket.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(b"DELETE /v1/avatar/operations/raced-answer "));
+            let body = r#"{"operation_id":"raced-answer","generation":1,"session_id":"remote-session","audio_stopped":true,"video_stopped":true}"#;
+            write!(
+                stop_socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ).unwrap();
+        });
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Arc::new(
+            Rt1RemoteMediaRevocation::new(client, "raced-answer".into(), 1).unwrap(),
+        );
+        let answer_remote = Arc::clone(&remote);
+        let answer = std::thread::spawn(move || answer_remote.submit_answer("v=0\r\n"));
+        answer_received_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let stop_remote = Arc::clone(&remote);
+        let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
+        // revoke_confirmed() sets the revoked bit before waiting on the
+        // ongoing answer's stop_gate. Observe it without assuming scheduling.
+        for _ in 0..1000 {
+            if remote.is_revoked() {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert!(remote.is_revoked());
+        release_answer_tx.send(()).unwrap();
+        assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_VISITOR_REVOKED");
+        stop.join().unwrap().unwrap();
+        assert!(remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn remote_operation_identity_must_be_valid_before_admission() {
         let client = RemoteOperationClient::new(
             "http://127.0.0.1:42119",
