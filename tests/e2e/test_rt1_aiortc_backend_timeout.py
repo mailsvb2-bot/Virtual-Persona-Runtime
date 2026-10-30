@@ -62,6 +62,7 @@ class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
 
         class Peer:
             connectionState = "connected"
+            localDescription = None
             remoteDescription = None
 
             async def setRemoteDescription(self, description):
