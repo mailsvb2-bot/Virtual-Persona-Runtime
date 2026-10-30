@@ -5,6 +5,12 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
   const visitorContext = await browser.newContext();
   const owner = await ownerContext.newPage();
   const visitor = await visitorContext.newPage();
+  let visitorSessionId: string | undefined;
+  visitor.on("response", async (response) => {
+    if (new URL(response.url()).pathname !== "/api/rt1/visitor/start" || !response.ok()) return;
+    const body = await response.json();
+    visitorSessionId = String(body.session_id);
+  });
 
   try {
     await owner.goto("/", { waitUntil: "commit", timeout: 25_000 });
@@ -96,11 +102,21 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     expect(staleJoin.ok(), "revoked publication must deny a fresh RTP allocation").toBeFalsy();
     const staleJoinBody = await staleJoin.json();
     expect(staleJoinBody).not.toHaveProperty("session_id");
+    expect(visitorSessionId, "the browser must have received a real session id").toBeTruthy();
     const activeAfterRevoke = await owner.request.post("/api/rt1/visitor/status", {
       headers,
-      data: { session_id: "revoked-and-unknown" },
+      data: { session_id: visitorSessionId },
     });
-    expect(activeAfterRevoke.ok()).toBeFalsy();
+    if (activeAfterRevoke.ok()) {
+      expect((await activeAfterRevoke.json()).active).toBe(false);
+    } else {
+      expect(activeAfterRevoke.status()).toBe(404);
+    }
+    const staleAnswer = await owner.request.post("/api/rt1/visitor/answer", {
+      headers,
+      data: { session_id: visitorSessionId, sdp: "v=0 stale-after-revoke" },
+    });
+    expect(staleAnswer.ok(), "closed visitor must never accept a late SDP answer").toBeFalsy();
   } finally {
     await visitorContext.close();
     await ownerContext.close();
