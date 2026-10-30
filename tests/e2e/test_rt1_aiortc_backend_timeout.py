@@ -88,8 +88,10 @@ class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
                 stop = asyncio.create_task(backend._stop("op", "session", 1))
                 await asyncio.sleep(0.01)
                 self.assertFalse(stop.done(), "STOP raced unfinished SDP answer")
+                self.assertTrue(session.closed, "STOP must fence the in-flight answer immediately")
                 release_answer.set()
-                await asyncio.wait_for(answer, 1)
+                with self.assertRaisesRegex(RuntimeError, "revoked during answer"):
+                    await asyncio.wait_for(answer, 1)
                 receipt = await asyncio.wait_for(stop, 1)
                 self.assertTrue(receipt.audio_stopped)
                 self.assertTrue(receipt.video_stopped)
