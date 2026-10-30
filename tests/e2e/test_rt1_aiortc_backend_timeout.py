@@ -89,6 +89,8 @@ class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.01)
                 self.assertFalse(stop.done(), "STOP raced unfinished SDP answer")
                 self.assertTrue(session.closed, "STOP must fence the in-flight answer immediately")
+                with self.assertRaisesRegex(RuntimeError, "offer not available"):
+                    await backend._offer("op", "session", 1)
                 release_answer.set()
                 with self.assertRaisesRegex(RuntimeError, "revoked during answer"):
                     await asyncio.wait_for(answer, 1)
