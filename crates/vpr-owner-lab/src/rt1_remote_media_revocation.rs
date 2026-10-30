@@ -75,7 +75,14 @@ impl Rt1RemoteMediaRevocation {
         }
         self.worker
             .answer(&self.operation_id, sdp)
-            .map_err(|_| "RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned())
+            .map_err(|_| "RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned())?;
+        // Owner revoke marks this flag before acquiring stop_gate. If it
+        // arrived during the in-flight HTTP request, a late provider ACK must
+        // not be exposed to the visitor as successful authorization.
+        if self.revoked.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        Ok(())
     }
 
     #[must_use]
