@@ -246,11 +246,9 @@ mod tests {
         let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
         // revoke_confirmed() sets the revoked bit before waiting on the
         // ongoing answer's stop_gate. Observe it without assuming scheduling.
-        for _ in 0..1000 {
-            if remote.is_revoked() {
-                break;
-            }
-            std::thread::yield_now();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !remote.is_revoked() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
         }
         assert!(remote.is_revoked());
         release_answer_tx.send(()).unwrap();
