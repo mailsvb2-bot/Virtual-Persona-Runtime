@@ -6,6 +6,12 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
   const owner = await ownerContext.newPage();
   const visitor = await visitorContext.newPage();
   let visitorSessionId: string | undefined;
+  let originalAnswerSdp: string | undefined;
+  visitor.on("request", (request) => {
+    if (new URL(request.url()).pathname !== "/api/rt1/visitor/answer") return;
+    const payload = request.postDataJSON() as { sdp?: unknown };
+    if (typeof payload.sdp === "string") originalAnswerSdp = payload.sdp;
+  });
   visitor.on("response", async (response) => {
     if (new URL(response.url()).pathname !== "/api/rt1/visitor/start" || !response.ok()) return;
     const body = await response.json();
@@ -99,7 +105,7 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
       headers,
       data: { visitor_token: invite, consent: true },
     });
-    expect(staleJoin.ok(), "revoked publication must deny a fresh RTP allocation").toBeFalsy();
+    expect(staleJoin.status(), "revoked publication must deny allocation, not fail for an unrelated reason").toBe(409);
     const staleJoinBody = await staleJoin.json();
     expect(staleJoinBody).not.toHaveProperty("session_id");
     expect(visitorSessionId, "the browser must have received a real session id").toBeTruthy();
@@ -112,11 +118,14 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     } else {
       expect(activeAfterRevoke.status()).toBe(404);
     }
+    // Replay the actual Chromium-generated SDP, not malformed placeholder text:
+    // otherwise a validation error could falsely satisfy the revoke regression.
+    expect(originalAnswerSdp, "Chromium must have sent a valid SDP answer").toMatch(/^v=0/);
     const staleAnswer = await owner.request.post("/api/rt1/visitor/answer", {
       headers,
-      data: { session_id: visitorSessionId, sdp: "v=0 stale-after-revoke" },
+      data: { session_id: visitorSessionId, sdp: originalAnswerSdp },
     });
-    expect(staleAnswer.ok(), "closed visitor must never accept a late SDP answer").toBeFalsy();
+    expect(staleAnswer.status(), "revoked visitor must reject a valid late SDP answer").toBe(409);
   } finally {
     await visitorContext.close();
     await ownerContext.close();
