@@ -62,7 +62,9 @@ class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
 
         class Peer:
             connectionState = "connected"
-            localDescription = None
+            # Supply a valid offer so the post-STOP denial cannot pass merely
+            # because the fake peer has no SDP to offer.
+            localDescription = SimpleNamespace(type="offer", sdp="v=0\r\n")
             remoteDescription = None
 
             async def setRemoteDescription(self, description):
@@ -80,6 +82,10 @@ class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
         session = _Session(peer, Track(), Track(), "op", 1)
         backend._sessions["session"] = session
         try:
+            self.assertEqual(
+                (await backend._offer("op", "session", 1))["type"], "offer",
+                "test must start with an offerable, authorized session",
+            )
             with patch.dict(
                 sys.modules,
                 {"aiortc": SimpleNamespace(RTCSessionDescription=lambda **values: values)},
