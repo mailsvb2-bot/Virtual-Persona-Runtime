@@ -205,6 +205,13 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     };
     let (conversation, bundle) =
         started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
+    // A concurrent owner pause may revoke the visitor after the worker
+    // produced an offer but before HTTP publishes the session identifier.
+    // Do not return a usable offer for an already-revoked publication.
+    if !conversation.is_active() {
+        let _ = conversation.close();
+        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
+    }
     let mut raw = [0_u8; 32];
     if getrandom::fill(&mut raw).is_err() {
         let _ = conversation.close();
