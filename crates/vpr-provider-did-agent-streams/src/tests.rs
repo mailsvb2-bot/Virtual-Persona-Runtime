@@ -187,9 +187,11 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     struct RevokeAtFinalCheck(AtomicUsize);
     impl CancellationProbe for RevokeAtFinalCheck {
         fn is_cancelled(&self) -> bool {
-            // Two admission probes and two body-read probes precede the
-            // final post-CREATE check. Revoke after decoding the id.
-            self.0.fetch_add(1, Ordering::SeqCst) >= 4
+            // Two admission checks plus four body-reader checks (before
+            // and after the body chunk and EOF) precede the post-CREATE
+            // authorization check. Revoke only after the session id is
+            // decoded, so this test actually exercises compensating DELETE.
+            self.0.fetch_add(1, Ordering::SeqCst) >= 6
         }
     }
 
@@ -203,14 +205,23 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     let probe = RevokeAtFinalCheck(AtomicUsize::new(0));
     let error = provider.create_session(&probe).unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
-    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(probe.0.load(Ordering::SeqCst) >= 7);
+    // Never hang the entire workspace suite if a future change moves
+    // cancellation ahead of the provider-id decode/compensating DELETE.
+    let timeout = std::time::Duration::from_secs(3);
     assert!(
         captured
-            .recv()
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("GET /agents/agent-7 ")
+    );
+    assert!(
+        captured
+            .recv_timeout(timeout)
             .unwrap()
             .starts_with("POST /agents/agent-7/streams ")
     );
-    let stop_request = captured.recv().unwrap();
+    let stop_request = captured.recv_timeout(timeout).unwrap();
     assert!(stop_request.starts_with("DELETE /agents/agent-7/streams/stream-1 "));
     assert!(stop_request.contains("session-1"));
 }
