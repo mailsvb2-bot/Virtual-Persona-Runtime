@@ -51,7 +51,11 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // wave of concurrent asset requests. The previous "commit" milestone
   // raced the app's initial modules on busy CI runners and left #status at
   // "Загрузка…" despite healthy backend/bootstrap responses.
-  await page.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+  // The app is checked for real bootstrap completion below. A congested
+  // browser may acknowledge the navigation before DOMContentLoaded, so avoid
+  // binding the whole E2E to that intermediate event. A stalled app still
+  // fails the explicit status and asset assertions; nothing is mocked.
+  await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
   const appAssets = [
     "/", "/styles.css", "/app.js", "/tts-selector.js",
     "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
