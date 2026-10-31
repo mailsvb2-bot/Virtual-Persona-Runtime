@@ -84,6 +84,48 @@ class SignalingTests(unittest.TestCase):
         self.assertEqual(self.req("PUT", body={"generation": 1})[0], 409)
         self.assertEqual(self.sender.answers, 1)
 
+    def test_concurrent_answer_and_delete_never_acknowledges_revoked_session(self):
+        # Two actual HTTP requests race on ThreadingHTTPServer. An in-flight
+        # backend answer must not be acknowledged after STOP wins, and the
+        # already allocated sender must be terminated with both receipts.
+        answer_entered = threading.Event()
+        release_answer = threading.Event()
+        original_answer = self.sender.answer
+
+        def slow_answer(operation_id, session_id, generation, sdp):
+            answer_entered.set()
+            if not release_answer.wait(3):
+                raise RuntimeError("test answer did not release")
+            # This test sender does not re-open a stopped media session.
+            return original_answer(operation_id, session_id, generation, sdp)
+
+        self.sender.answer = slow_answer
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+        answers = []
+
+        def post_answer():
+            answers.append(self.req(
+                "POST", "/answer", {"type": "answer", "sdp": "v=0 raced"}
+            ))
+
+        caller = threading.Thread(target=post_answer)
+        caller.start()
+        try:
+            self.assertTrue(answer_entered.wait(3), "the answer must reach backend")
+            stopped, receipt = self.req("DELETE", body={"generation": 1})
+            self.assertEqual(stopped, 200)
+            self.assertTrue(receipt["audio_stopped"])
+            self.assertTrue(receipt["video_stopped"])
+        finally:
+            release_answer.set()
+            caller.join(timeout=4)
+        self.assertFalse(caller.is_alive(), "answer must not hang after owner STOP")
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(answers[0][0], 409, "revoked answer must not receive success")
+        self.assertFalse(self.sender.active)
+        self.assertEqual(self.sender.answers, 0)
+        self.assertEqual(self.req("GET", "/offer")[0], 410)
+
     def test_no_signaling_without_token(self):
         self.assertEqual(self.req("PUT", body={"generation": 1}, token="invalid")[0], 401)
         self.assertEqual(self.req("GET", "/offer", token="invalid")[0], 401)
