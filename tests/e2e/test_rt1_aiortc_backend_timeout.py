@@ -18,6 +18,28 @@ class SenderTimeoutTests(unittest.TestCase):
         finally:
             backend.shutdown()
 
+    def test_cancelled_worker_future_does_not_confirm_stop(self):
+        from concurrent.futures import Future
+        from unittest.mock import patch
+
+        backend = AiortcSenderBackend(timeout=0.2)
+        cancelled = Future()
+        cancelled.cancel()
+
+        def fake_submit(coroutine, loop):
+            coroutine.close()
+            return cancelled
+
+        try:
+            with patch(
+                "rt1_aiortc_backend.asyncio.run_coroutine_threadsafe",
+                side_effect=fake_submit,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "cancelled; STOP unconfirmed"):
+                    backend._call(asyncio.sleep(0))
+        finally:
+            backend.shutdown()
+
     def test_timed_out_operation_is_cancelled_without_false_stop(self):
         backend = AiortcSenderBackend(timeout=0.2)
         started = threading.Event()
