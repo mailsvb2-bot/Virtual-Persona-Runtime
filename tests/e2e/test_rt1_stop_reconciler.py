@@ -64,6 +64,36 @@ class ReconcileTests(unittest.TestCase):
                 runner.join(timeout=1)
                 self.assertFalse(runner.is_alive())
 
+    def test_restart_cannot_invent_stop_for_lost_sender(self):
+        # Simulate a process restart with the same durable SQLite ledger but
+        # a fresh backend that has no previous sender handle. That backend
+        # cannot authenticate remote shutdown and must not clear quarantine.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "media.db"
+            original = FlakySender()
+            first = MediaLifecycle(path, original)
+            self.assertEqual(first.create("orphan", 1), "flaky-session")
+            with self.assertRaises(OSError):
+                first.cancel("orphan", 1)
+            self.assertEqual(first.status("orphan")[1], "uncertain")
+
+            class RestartedSender:
+                def allocate(self, operation_id, generation):
+                    raise AssertionError("recovery may not create a replacement")
+
+                def stop(self, operation_id, session_id, generation):
+                    raise RuntimeError("sender handle lost; STOP unconfirmed")
+
+            restarted = MediaLifecycle(path, RestartedSender())
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                restarted.reconcile()
+            self.assertEqual(restarted.status("orphan"), (1, "uncertain", "flaky-session"))
+            with self.assertRaises(RuntimeError):
+                restarted.create("replacement", 1)
+            with self.assertRaises(RuntimeError):
+                restarted.create("orphan", 1)
+            self.assertTrue(original.active, "test must not counterfeit remote teardown")
+
     def test_reconciler_rejects_nonpositive_interval(self):
         with tempfile.TemporaryDirectory() as directory:
             lifecycle = MediaLifecycle(Path(directory) / "media.db", FlakySender())
