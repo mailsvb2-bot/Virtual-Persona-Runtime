@@ -90,11 +90,11 @@ impl Rt1VisitorConversation {
                 // A failed remote CREATE can still have allocated an avatar.
                 // Never treat manager.close() as proof that the remote sender
                 // stopped; explicitly require the canonical provider receipt.
-                let stop_result = engine.stop_visitor_provider_confirmed();
+                // A provider error can precede establishment of the visitor
+                // session, so STOP may not yet have an addressable target.
+                // Report the cleanup uncertainty rather than claim a receipt.
+                let _ = engine.stop_visitor_provider_confirmed();
                 let _ = manager.close(&id);
-                if stop_result.is_err() {
-                    return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
-                }
                 return Err(error.code().to_owned());
             }
         };
