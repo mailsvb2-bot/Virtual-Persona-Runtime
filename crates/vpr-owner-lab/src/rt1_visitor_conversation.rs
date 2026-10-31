@@ -87,7 +87,14 @@ impl Rt1VisitorConversation {
         let bundle = match started {
             Ok(bundle) => bundle,
             Err(error) => {
+                // A failed remote CREATE can still have allocated an avatar.
+                // Never treat manager.close() as proof that the remote sender
+                // stopped; explicitly require the canonical provider receipt.
+                let stop_result = engine.stop_visitor_provider_confirmed();
                 let _ = manager.close(&id);
+                if stop_result.is_err() {
+                    return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
+                }
                 return Err(error.code().to_owned());
             }
         };
@@ -99,8 +106,11 @@ impl Rt1VisitorConversation {
                 .is_err()
         {
             interrupt.stop();
-            let _ = engine.stop_visitor_provider_confirmed();
+            let stop_result = engine.stop_visitor_provider_confirmed();
             let _ = manager.close(&id);
+            if stop_result.is_err() {
+                return Err("RT1_PROVIDER_START_REVOKED_STOP_UNCONFIRMED".into());
+            }
             return Err("RT1_VISITOR_REVOKED_DURING_PROVIDER_START".into());
         }
         Ok((
