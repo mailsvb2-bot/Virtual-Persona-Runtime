@@ -94,6 +94,35 @@ class ReconcileTests(unittest.TestCase):
                 restarted.create("orphan", 1)
             self.assertTrue(original.active, "test must not counterfeit remote teardown")
 
+    def test_restart_quarantines_active_id_before_any_http_admission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "media.db"
+            original = FlakySender()
+            first = MediaLifecycle(path, original)
+            self.assertEqual(first.create("old-active", 1), "flaky-session")
+            self.assertEqual(first.status("old-active")[1], "active")
+
+            class FreshBackend:
+                def allocate(self, operation_id, generation):
+                    raise AssertionError("stale CREATE must not reach provider")
+
+                def stop(self, operation_id, session_id, generation):
+                    raise RuntimeError("old sender unavailable; STOP unconfirmed")
+
+            restarted = MediaLifecycle(path, FreshBackend())
+            restarted.quarantine_after_restart()
+            self.assertEqual(
+                restarted.status("old-active"), (1, "uncertain", "flaky-session")
+            )
+            with self.assertRaises(RuntimeError):
+                restarted.create("old-active", 1)
+            with self.assertRaises(RuntimeError):
+                restarted.create("new-visitor", 1)
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                restarted.reconcile()
+            self.assertEqual(restarted.status("old-active")[1], "uncertain")
+            self.assertTrue(original.active)
+
     def test_reconciler_rejects_nonpositive_interval(self):
         with tempfile.TemporaryDirectory() as directory:
             lifecycle = MediaLifecycle(Path(directory) / "media.db", FlakySender())
