@@ -126,6 +126,52 @@ class SignalingTests(unittest.TestCase):
         self.assertEqual(self.sender.answers, 0)
         self.assertEqual(self.req("GET", "/offer")[0], 410)
 
+    def test_late_backend_success_cannot_ack_revoked_answer(self):
+        # A worker can finish an already in-flight Answer with a successful
+        # return even after STOP. The HTTP layer must not turn that stale
+        # provider result into an accepted visitor signaling response.
+        answer_entered = threading.Event()
+        release_answer = threading.Event()
+        backend_returned_success = threading.Event()
+
+        def late_successful_answer(operation_id, session_id, generation, sdp):
+            answer_entered.set()
+            if not release_answer.wait(3):
+                raise RuntimeError("test answer did not release")
+            backend_returned_success.set()
+            # Simulate an already-in-flight successful provider result. Do not
+            # mutate sender state: STOP has already closed the local sender.
+            return None
+
+        self.sender.answer = late_successful_answer
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+        answers = []
+
+        def post_answer():
+            answers.append(self.req(
+                "POST", "/answer", {"type": "answer", "sdp": "v=0 late-success"}
+            ))
+
+        caller = threading.Thread(target=post_answer)
+        caller.start()
+        try:
+            self.assertTrue(answer_entered.wait(3), "answer must reach backend")
+            stopped, receipt = self.req("DELETE", body={"generation": 1})
+            self.assertEqual(stopped, 200)
+            self.assertTrue(receipt["audio_stopped"])
+            self.assertTrue(receipt["video_stopped"])
+        finally:
+            release_answer.set()
+            caller.join(timeout=4)
+
+        self.assertFalse(caller.is_alive(), "answer must finish after STOP")
+        self.assertTrue(backend_returned_success.is_set(), "exercise late successful return")
+        self.assertEqual(len(answers), 1)
+        self.assertEqual(answers[0][0], 410, "stale provider success must not be acknowledged")
+        self.assertFalse(self.sender.active)
+        self.assertEqual(self.sender.answers, 0)
+        self.assertEqual(self.req("GET", "/offer")[0], 410)
+
     def test_no_signaling_without_token(self):
         self.assertEqual(self.req("PUT", body={"generation": 1}, token="invalid")[0], 401)
         self.assertEqual(self.req("GET", "/offer", token="invalid")[0], 401)
