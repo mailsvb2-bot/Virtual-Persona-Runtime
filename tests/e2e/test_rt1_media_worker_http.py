@@ -172,6 +172,42 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
         self.assertEqual(self.request("PUT")[0], 409)
 
+    def test_cancelled_create_failure_remains_uncertain_without_sender_receipt(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def failed_allocate(operation_id, generation):
+            entered.set()
+            if not release.wait(3):
+                raise RuntimeError("CREATE stalled")
+            raise RuntimeError("provider CREATE timed out; sender identity unknown")
+
+        self.backend.allocate = failed_allocate
+        results = []
+
+        def request_create():
+            results.append(self.request("PUT"))
+
+        caller = threading.Thread(target=request_create)
+        caller.start()
+        try:
+            self.assertTrue(entered.wait(3), "CREATE must reach provider")
+            status, result = self.request("DELETE")
+            self.assertEqual(status, 202)
+            self.assertIs(result["stop_confirmed"], False)
+        finally:
+            release.set()
+            caller.join(timeout=4)
+
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0], 409)
+        self.assertEqual(
+            self.lifecycle.status("operation-1"), (1, "uncertain", None)
+        )
+        self.assertEqual(self.request("PUT")[0], 409)
+        self.assertEqual(self.backend.stops, 0)
+
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
         self.assertEqual(status, 202)
