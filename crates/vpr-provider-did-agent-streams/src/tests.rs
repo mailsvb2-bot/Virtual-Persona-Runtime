@@ -187,9 +187,9 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     struct RevokeAtFinalCheck(AtomicUsize);
     impl CancellationProbe for RevokeAtFinalCheck {
         fn is_cancelled(&self) -> bool {
-            // create_session and create_webrtc_session each check once.
-            // Revoke after the server has returned the actual session id.
-            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+            // Two admission probes and two body-read probes precede the
+            // final post-CREATE check. Revoke after decoding the id.
+            self.0.fetch_add(1, Ordering::SeqCst) >= 4
         }
     }
 
