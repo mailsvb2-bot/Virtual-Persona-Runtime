@@ -56,22 +56,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // binding the whole E2E to that intermediate event. A stalled app still
   // fails the explicit status and asset assertions; nothing is mocked.
   await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
-  const appAssets = [
-    "/", "/styles.css", "/app.js", "/tts-selector.js",
-    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
-    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
-    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
-  ];
-  const assetResults = await page.evaluate(async (paths) =>
-    Promise.all(paths.map(async (path) => {
-      const response = await fetch(path, { cache: "no-store" });
-      const bytes = await response.arrayBuffer();
-      return { path, status: response.status, bytes: bytes.byteLength };
-    })), appAssets);
-  for (const asset of assetResults) {
-    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
-    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
-  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
@@ -100,6 +84,24 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     );
   }
 
+  // Audit assets only after the actual application bootstrap has completed;
+  // parallel no-store fetches must not compete with initial module execution.
+  const appAssets = [
+    "/", "/styles.css", "/app.js", "/tts-selector.js",
+    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
+    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
+    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
+  ];
+  const assetResults = await page.evaluate(async (paths) =>
+    Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, { cache: "no-store" });
+      const bytes = await response.arrayBuffer();
+      return { path, status: response.status, bytes: bytes.byteLength };
+    })), appAssets);
+  for (const asset of assetResults) {
+    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
+    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
+  }
   await expect(page.locator("#owner-workflow")).toBeVisible();
   await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
