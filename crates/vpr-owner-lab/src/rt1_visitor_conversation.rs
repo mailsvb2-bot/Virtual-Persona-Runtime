@@ -93,8 +93,19 @@ impl Rt1VisitorConversation {
                 // A provider error can precede establishment of the visitor
                 // session, so STOP may not yet have an addressable target.
                 // Report the cleanup uncertainty rather than claim a receipt.
-                let _ = engine.stop_visitor_provider_confirmed();
+                // The canonical engine can fail after creating a provider
+                // session. If a real stop-only handle exists, failure to close
+                // it must be surfaced as unconfirmed remote shutdown.
+                let has_sender = engine.visitor_avatar_stop_handle().is_some();
+                let cleanup = if has_sender {
+                    Some(engine.stop_visitor_provider_confirmed())
+                } else {
+                    None
+                };
                 let _ = manager.close(&id);
+                if matches!(cleanup, Some(Err(_))) {
+                    return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
+                }
                 return Err(error.code().to_owned());
             }
         };
