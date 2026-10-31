@@ -172,6 +172,46 @@ class SignalingTests(unittest.TestCase):
         self.assertEqual(self.sender.answers, 0)
         self.assertEqual(self.req("GET", "/offer")[0], 410)
 
+    def test_in_flight_offer_is_not_exposed_after_confirmed_stop(self):
+        offer_entered = threading.Event()
+        release_offer = threading.Event()
+        original_offer = self.sender.offer
+
+        def delayed_offer(operation_id, session_id, generation):
+            # Produce a valid offer before revoke, then hold it until STOP
+            # confirms. The HTTP layer must re-check durable authorization.
+            result = original_offer(operation_id, session_id, generation)
+            offer_entered.set()
+            if not release_offer.wait(3):
+                raise RuntimeError("test offer did not release")
+            return result
+
+        self.sender.offer = delayed_offer
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+        offers = []
+
+        def fetch_offer():
+            offers.append(self.req("GET", "/offer"))
+
+        caller = threading.Thread(target=fetch_offer)
+        caller.start()
+        try:
+            self.assertTrue(offer_entered.wait(3), "offer must reach backend")
+            stopped, receipt = self.req("DELETE", body={"generation": 1})
+            self.assertEqual(stopped, 200)
+            self.assertTrue(receipt["audio_stopped"])
+            self.assertTrue(receipt["video_stopped"])
+        finally:
+            release_offer.set()
+            caller.join(timeout=4)
+
+        self.assertFalse(caller.is_alive(), "offer must finish after STOP")
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0][0], 410, "stale offer cannot be published")
+        self.assertNotIn("sdp", offers[0][1])
+        self.assertFalse(self.sender.active)
+        self.assertEqual(self.req("GET", "/offer")[0], 410)
+
     def test_no_signaling_without_token(self):
         self.assertEqual(self.req("PUT", body={"generation": 1}, token="invalid")[0], 401)
         self.assertEqual(self.req("GET", "/offer", token="invalid")[0], 401)
