@@ -173,9 +173,13 @@ class AiortcSenderBackend:
         # in-flight setRemoteDescription(). A hanging answer may hold the
         # session gate; it must not be able to report success after STOP began.
         entry.closed = True
+        # Stop actual outgoing tracks before waiting for a stalled SDP answer.
+        # The gate still serializes peer.close() with setRemoteDescription().
+        # An unconfirmed close remains unconfirmed; these local track states
+        # alone never authorize a durable STOP receipt.
+        entry.audio.stop()
+        entry.video.stop()
         async with entry.gate:
-            entry.audio.stop()
-            entry.video.stop()
             await entry.peer.close()
             if (
                 entry.audio.readyState != "ended"
