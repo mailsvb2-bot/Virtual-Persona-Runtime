@@ -251,6 +251,14 @@ impl DidAgentStreamsAvatar {
         let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
         let client_interrupt = body.fluent && body.interrupt_enabled;
         let session: RealtimeAvatarSession = body.try_into()?;
+        // A revoke may arrive while the blocking D-ID CREATE is in flight.
+        // Do not publish the resulting viewer offer. Attempt compensating
+        // DELETE using the actual returned provider identity; an unsuccessful
+        // close is never interpreted as confirmed remote STOP.
+        if cancellation.is_cancelled() {
+            let _ = self.close_session(&session);
+            return Err(cancelled());
+        }
         if client_interrupt {
             self.client_control.register_interrupt(&session)?;
         }

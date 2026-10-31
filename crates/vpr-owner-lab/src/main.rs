@@ -7,6 +7,7 @@ mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
 mod http_references;
+mod http_rt1;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
@@ -63,6 +64,7 @@ const MIC_WORKLET_JS: &str = include_str!("../ui/mic-worklet.js");
 type HttpResponse = Response<Cursor<Vec<u8>>>;
 struct AppState {
     engine: Mutex<OwnerLabEngine>,
+    rt1: http_rt1::Rt1HttpState,
     rt0_evidence_mode: bool,
     voice_profile: Option<VoiceProfile>,
     owner_capture: http_owner_capture::OwnerCaptureHttpState,
@@ -164,6 +166,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     let state = Arc::new(AppState {
         engine: Mutex::new(engine),
+        rt1: http_rt1::Rt1HttpState::default(),
         rt0_evidence_mode,
         voice_profile,
         owner_capture: http_owner_capture::OwnerCaptureHttpState::default(),
@@ -225,6 +228,9 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
 }
 
 fn static_get_response(path: &str) -> Option<HttpResponse> {
+    if let Some(response) = http_rt1::static_get_response(path) {
+        return Some(response);
+    }
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, JS_MIME),
@@ -328,6 +334,14 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
+    if path.starts_with("/api/rt1/") {
+        if !http_rt1::enabled() {
+            return error_response(404, "NOT_FOUND");
+        }
+        if let Some(response) = http_rt1::route_post(path, request, state) {
+            return response;
+        }
+    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }

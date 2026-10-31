@@ -119,15 +119,43 @@ forbidden_markers = (
     "Rt1PublicApi",
     'id="rt1-public-api"',
 )
+# A strictly local, explicitly opted-in RT1 transport experiment is
+# permitted without promoting the release API contract. No other production
+# surface may contain an RT1 API marker.
+local_lab_files = {
+    Path("crates/vpr-owner-lab/src/main.rs"),
+    Path("crates/vpr-owner-lab/src/http_rt1.rs"),
+    Path("crates/vpr-owner-lab/ui/rt1.js"),
+    # Test-only caller of the gated local RT1 route, never shipped as an API surface.
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-canonical-provider.spec.ts"),
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-livekit.spec.ts"),
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-local-canary.spec.ts"),
+}
+entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
+local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
+if (
+    'format!("127.0.0.1:{port}")' not in entry
+    or 'if path.starts_with("/api/rt1/")' not in entry
+    or 'if !http_rt1::enabled()' not in entry
+    or 'http_rt1::static_get_response(path)' not in entry
+    or 'std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in local_lab
+    or 'if !enabled()' not in local_lab
+    or '"/rt1" =>' not in local_lab
+):
+    raise SystemExit("RT1 local experiment must be loopback-only and default-denied")
+
 for source in CRATES.rglob("*"):
     if not source.is_file() or source.suffix not in surface_suffixes:
         continue
+    relative = source.relative_to(ROOT)
     text = source.read_text(encoding="utf-8")
     marker = next((item for item in forbidden_markers if item in text), None)
-    if marker is not None:
+    if marker is not None and not (
+        relative in local_lab_files and marker == "/api/rt1/"
+    ):
         raise SystemExit(
             "production RT1 API surface appeared while RT1 remains blocked "
-            f"on RT0 exit: {source.relative_to(ROOT)} (marker={marker!r})"
+            f"on RT0 exit: {relative} (marker={marker!r})"
         )
 
 for required_spec_marker in (

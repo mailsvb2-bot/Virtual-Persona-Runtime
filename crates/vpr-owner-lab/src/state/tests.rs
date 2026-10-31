@@ -307,6 +307,44 @@ fn server_owned_resume_uses_a_fresh_authorized_turn_and_never_returns_browser_sp
 }
 
 #[test]
+fn visitor_private_echo_stop_capability_is_scoped_and_survives_revocation() {
+    let stats = Arc::new(Stats::default());
+    let mut visitor = OwnerLabEngine::new(
+        Box::new(FakeAvatar {
+            stats: Arc::clone(&stats),
+            server_echo: true,
+        }),
+        true,
+    )
+    .unwrap();
+    visitor.bind_reviewed_profile(reviewed_profile()).unwrap();
+    visitor
+        .start_visitor(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    let stop = visitor
+        .visitor_avatar_stop_handle()
+        .expect("private Echo visitor must have a stop-only capability");
+    visitor.revoke_authority().unwrap();
+    stop.stop().unwrap();
+    assert_eq!(stats.stop.load(Ordering::SeqCst), 1);
+    assert!(
+        visitor
+            .apply(OwnerLabTurnInput::Text("stale".into()))
+            .is_err()
+    );
+    visitor.stop_visitor_provider_confirmed().unwrap();
+    assert_eq!(stats.close.load(Ordering::SeqCst), 1);
+
+    let (mut webrtc, _) = engine(true);
+    webrtc.bind_reviewed_profile(reviewed_profile()).unwrap();
+    webrtc
+        .start_visitor(OwnerLabStartRequest { consent: true })
+        .unwrap();
+    assert!(webrtc.visitor_avatar_stop_handle().is_none());
+    webrtc.stop_visitor_provider_confirmed().unwrap();
+}
+
+#[test]
 fn echo_server_stop_works_while_engine_is_locked_and_after_authority_revoke() {
     let stats = Arc::new(Stats::default());
     let mut engine = OwnerLabEngine::new(

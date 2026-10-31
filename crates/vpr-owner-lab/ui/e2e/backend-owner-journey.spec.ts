@@ -47,27 +47,9 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Playwright APIRequestContext connection pool. Both browser loading and
   // response integrity remain mandatory (no mocks and no timeout suppression).
   await installTransportFakes(page);
-  await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
-  const appAssets = [
-    "/", "/styles.css", "/app.js", "/tts-selector.js",
-    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
-    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
-    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
-  ];
-  const assetResults = await page.evaluate(async (paths) =>
-    Promise.all(paths.map(async (path) => {
-      const response = await fetch(path, { cache: "no-store" });
-      const bytes = await response.arrayBuffer();
-      return { path, status: response.status, bytes: bytes.byteLength };
-    })), appAssets);
-  for (const asset of assetResults) {
-    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
-    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
-  }
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
-
+  // Record requests before navigation: module fetches may start immediately
+  // after the response headers, before Playwright's "commit" milestone.
+  // Attaching listeners later silently loses stalled/failed bootstrap assets.
   const pending = new Set<string>();
   const failed: string[] = [];
   page.on("request", (outgoing) => pending.add(outgoing.url()));
@@ -76,6 +58,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     pending.delete(outgoing.url());
     failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
   });
+  // Do not start a separate APIRequestContext bootstrap request while the
+  // browser is still fetching and evaluating its first application modules.
+  // The actual browser bootstrap is the acceptance condition below.
+  await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
@@ -92,6 +78,28 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     );
   }
 
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+
+  // Audit assets only after the actual application bootstrap has completed;
+  // parallel no-store fetches must not compete with initial module execution.
+  const appAssets = [
+    "/", "/styles.css", "/app.js", "/tts-selector.js",
+    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
+    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
+    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
+  ];
+  const assetResults = await page.evaluate(async (paths) =>
+    Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, { cache: "no-store" });
+      const bytes = await response.arrayBuffer();
+      return { path, status: response.status, bytes: bytes.byteLength };
+    })), appAssets);
+  for (const asset of assetResults) {
+    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
+    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
+  }
   await expect(page.locator("#owner-workflow")).toBeVisible();
   await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");

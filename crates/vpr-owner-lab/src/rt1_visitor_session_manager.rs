@@ -122,6 +122,26 @@ impl VisitorSessionManager {
         finish_buffered(result, || session.authorize())
     }
 
+    /// Queue one bounded media fragment under the SAME canonical workspace
+    /// publication transaction as pause/unpublish. No provider I/O occurs
+    /// while this transaction is held. The consumer still needs a final
+    /// revocation-serialized egress/STOP gate before any external delivery.
+    ///
+    /// # Errors
+    /// Refuses unknown, revoked or stale visitors and full queues.
+    pub fn enqueue_media_fragment<T>(
+        &self,
+        session_id: &str,
+        sender: &std::sync::mpsc::SyncSender<T>,
+        fragment: T,
+    ) -> Result<(), String> {
+        let session = self.lookup(session_id)?;
+        if session.revoked.load(Ordering::Acquire) {
+            return Err("visitor session revoked".into());
+        }
+        session.authority.enqueue_fragment(sender, fragment)
+    }
+
     /// Explicit final authorization gate before one protected operation.
     /// The caller must bind provider cancellation to the stop callback.
     ///
@@ -260,6 +280,63 @@ mod tests {
     }
 
     #[test]
+    fn revoke_does_not_wait_for_stalled_provider_worker() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let manager = Arc::new(VisitorSessionManager::new(Arc::new(
+            Rt1WorkspaceService::new(),
+        )));
+        // Simulate an unresponsive provider worker holding its conversation
+        // engine mutex. The canonical registry must never acquire that mutex
+        // while revoking admission or running the transport stop callback.
+        let engine = Arc::new(Mutex::new(()));
+        let (worker_locked_tx, worker_locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker_engine = Arc::clone(&engine);
+        let worker = std::thread::spawn(move || {
+            let _held = worker_engine.lock();
+            worker_locked_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        worker_locked_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+
+        let stops = Arc::new(AtomicUsize::new(0));
+        let stop_count = Arc::clone(&stops);
+        manager.sessions.lock().insert(
+            "stalled".into(),
+            Arc::new(ManagedVisitor {
+                authority: Rt1VisitorSession::inert_for_revocation_test(),
+                revoked: AtomicBool::new(false),
+                stop: Arc::new(move || {
+                    stop_count.fetch_add(1, Ordering::SeqCst);
+                }),
+            }),
+        );
+
+        let (revoked_tx, revoked_rx) = mpsc::channel();
+        let revoking_manager = Arc::clone(&manager);
+        let revoker = std::thread::spawn(move || {
+            revoking_manager.revoke_all();
+            revoked_tx.send(()).unwrap();
+        });
+        // Unstick the fake worker even on failure so the test cannot hang CI.
+        let promptly_revoked = revoked_rx.recv_timeout(Duration::from_secs(2)).is_ok();
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+        revoker.join().unwrap();
+        assert!(
+            promptly_revoked,
+            "visitor revocation blocked on provider worker"
+        );
+        assert_eq!(manager.active_count(), 0);
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn registry_drain_does_not_stop_sessions_added_after_drain() {
         use std::sync::atomic::AtomicUsize;
 
@@ -294,6 +371,36 @@ mod tests {
     }
 
     #[test]
+    fn unknown_visitor_never_stages_audio() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            manager
+                .enqueue_media_fragment("missing", &sender, vec![1_u8, 2])
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn revoked_visitor_never_stages_audio() {
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let session = Arc::new(ManagedVisitor {
+            authority: Rt1VisitorSession::inert_for_revocation_test(),
+            revoked: AtomicBool::new(true),
+            stop: Arc::new(|| {}),
+        });
+        manager.sessions.lock().insert("revoked".into(), session);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        assert!(
+            manager
+                .enqueue_media_fragment("revoked", &sender, vec![1_u8, 2])
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn no_visitor_session_without_canonical_publication() {
         let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
         assert!(manager.open("0".repeat(64), || {}).is_err());
@@ -324,5 +431,79 @@ mod tests {
     fn successful_computation_cannot_bypass_final_revocation() {
         let result = finish_buffered(Ok("unreleased"), || Err("visitor session revoked".into()));
         assert_eq!(result.unwrap_err(), "visitor session revoked");
+    }
+
+    #[test]
+    fn owner_revocation_dispatches_actual_remote_operation_cancel_http() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::AtomicUsize;
+        use std::time::Duration;
+        use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let server_count = Arc::clone(&request_count);
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut buf = [0_u8; 4096];
+            loop {
+                let n = socket.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&buf[..n]);
+                if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&bytes);
+            assert!(request.starts_with("DELETE /v1/avatar/operations/owner-revoked-1 "));
+            server_count.fetch_add(1, Ordering::SeqCst);
+            let reply = r#"{"operation_id":"owner-revoked-1","generation":1,"session_id":"remote-1","audio_stopped":true,"video_stopped":true}"#;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                reply.len(),
+                reply
+            )
+            .unwrap();
+        });
+
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let remote = Arc::new(
+            crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation::new(
+                client,
+                "owner-revoked-1".into(),
+                1,
+            )
+            .unwrap(),
+        );
+        let callback_remote = Arc::clone(&remote);
+        manager.sessions.lock().insert(
+            "owner-session".into(),
+            Arc::new(ManagedVisitor {
+                authority: Rt1VisitorSession::inert_for_revocation_test(),
+                revoked: AtomicBool::new(false),
+                stop: Arc::new(move || {
+                    let _ = callback_remote.revoke_confirmed();
+                }),
+            }),
+        );
+        manager.revoke_all();
+        server.join().unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+        assert!(remote.is_revoked());
+        assert!(remote.is_stop_confirmed());
+        assert_eq!(manager.active_count(), 0);
+        manager.revoke_all();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
     }
 }

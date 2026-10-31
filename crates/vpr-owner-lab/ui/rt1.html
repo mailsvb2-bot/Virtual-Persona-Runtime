@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Persona — защищённая сессия RT1</title>
+<link rel="stylesheet" href="/rt1.css">
+<script src="/rt1.js" defer></script>
+</head>
+<body>
+<main>
+<header><a href="/">← Owner Lab</a><h1>Persona · RT1</h1><p>Локальная проверка публикации и связи с посетителем. Диагностический WebRTC-тракт не является сгенерированным видео Persona.</p></header>
+<section>
+<h2>Владелец</h2>
+<p>Создайте доступ один раз после проверки Persona. Сохраните ключ владельца в надёжном месте — он не сохраняется в браузере.</p>
+<button id="provision" type="button">Создать кабинет владельца</button>
+<label>Ключ владельца <input id="owner-token" type="password" autocomplete="off" placeholder="Ключ владельца"></label>
+<label>Версия проверенной Persona <input id="persona-version" type="number" min="1" step="1" value="1"></label>
+<div class="actions">
+<button id="publish" type="button">Опубликовать и получить приглашение</button>
+<button id="pause" type="button">Приостановить</button>
+<button id="unpublish" type="button">Снять с публикации</button>
+</div>
+<label>Код приглашения <input id="invite-token" readonly placeholder="Появится после публикации"></label>
+</section>
+<section>
+<h2>Посетитель</h2>
+<p>Введите код приглашения и подключитесь. Микрофон включается только по вашему действию «Говорить». Камера посетителя не передаётся.</p>
+<label>Код приглашения <input id="visitor-token" autocomplete="off" placeholder="Введите код приглашения"></label>
+<label class="check"><input id="consent" type="checkbox"> Я согласен(на) начать аудио- и видеосессию</label>
+<div class="actions">
+<button id="join" type="button">Начать разговор</button>
+<button id="leave" type="button" disabled>Завершить разговор</button>
+<button id="unlock-audio" type="button">Включить звук</button>
+<button id="speak" type="button" disabled>Говорить</button>
+</div>
+<div class="media">
+<video id="video" autoplay playsinline></video>
+<audio id="audio" autoplay></audio>
+</div>
+<p id="speech-result" aria-live="polite"></p>
+</section>
+<section aria-live="polite"><h2>Состояние</h2><p id="status">Не подключено</p></section>
+</main>
+</body>
+</html>

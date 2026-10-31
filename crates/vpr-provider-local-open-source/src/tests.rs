@@ -69,6 +69,28 @@ fn provider(endpoint: String) -> LocalOpenSourceAvatar {
 }
 
 #[test]
+fn ordinary_close_requires_positive_remote_stop_receipt() {
+    for receipt in [
+        r"{}",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"different","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", receipt.to_owned())]);
+        let error = provider(endpoint)
+            .close_session(&test_session())
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(!error.retryable);
+        assert!(
+            captured
+                .recv()
+                .unwrap()
+                .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+        );
+    }
+}
+
+#[test]
 fn full_worker_control_plane_matches_contract() {
     let create = r#"{"id":"local-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":"stun:example.test"}]}"#;
     let (endpoint, captured) = serve(vec![
@@ -77,7 +99,10 @@ fn full_worker_control_plane_matches_contract() {
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
-        ("200 OK", "{}".to_owned()),
+        (
+            "200 OK",
+            r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.to_owned(),
+        ),
     ]);
     let avatar = provider(endpoint);
     let probe = Probe(AtomicBool::new(false));
@@ -153,4 +178,335 @@ fn cancellation_prevents_network_work() {
         .create_session(&Probe(AtomicBool::new(true)))
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+}
+
+fn test_session() -> RealtimeAvatarSession {
+    RealtimeAvatarSession {
+        provider_resource_id: "local-1".into(),
+        provider_session_id: "local-1".into(),
+        transport: RealtimeAvatarTransport::WebRtc {
+            offer: WebRtcSessionDescription {
+                kind: "offer".into(),
+                sdp: "test-offer".into(),
+            },
+            ice_servers: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn remote_stop_requires_audio_video_and_session_receipt() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.into(),
+    )]);
+    provider(endpoint)
+        .stop_session_confirmed(
+            &test_session(),
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )
+        .unwrap();
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
+}
+
+#[test]
+fn remote_stop_rejects_plain_success_and_partial_stop() {
+    for receipt in [
+        "{}",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"other","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", receipt.into())]);
+        assert!(
+            provider(endpoint)
+                .stop_session_confirmed(
+                    &test_session(),
+                    std::time::Instant::now() + std::time::Duration::from_secs(2),
+                )
+                .is_err()
+        );
+        assert!(captured.recv().unwrap().starts_with("DELETE "));
+    }
+}
+
+#[test]
+fn remote_stop_rejects_false_acknowledgements_for_both_media() {
+    // An acknowledgement must confirm BOTH senders. Null/false/string
+    // values or a receipt for a different session cannot authorize release.
+    for response in [
+        r#"{"session_id":"local-1","audio_stopped":false,"video_stopped":true}"#,
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#,
+        r#"{"session_id":"local-1","audio_stopped":null,"video_stopped":true}"#,
+        r#"{"session_id":"local-1","audio_stopped":"true","video_stopped":true}"#,
+        r#"{"session_id":"other","audio_stopped":true,"video_stopped":true}"#,
+    ] {
+        let (endpoint, captured) = serve(vec![("200 OK", response.to_owned())]);
+        let error = provider(endpoint)
+            .stop_session_confirmed(
+                &test_session(),
+                std::time::Instant::now() + Duration::from_secs(2),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        assert!(captured.recv().unwrap().starts_with("DELETE "));
+    }
+}
+
+#[test]
+fn expired_remote_stop_deadline_never_calls_provider() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let err = avatar
+        .stop_session_confirmed(&test_session(), std::time::Instant::now())
+        .unwrap_err();
+    assert_eq!(err.kind, ProviderErrorKind::Timeout);
+}
+
+#[test]
+fn stalled_remote_stop_is_deadline_bounded_and_never_confirmed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut stream);
+        assert!(request.starts_with("DELETE /v1/avatar/sessions/local-1 "));
+        thread::sleep(std::time::Duration::from_millis(400));
+        // A late positive receipt may arrive after the client's deadline.
+        let body = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    let avatar = provider(format!("http://{address}"));
+    let started = std::time::Instant::now();
+    let error = avatar
+        .stop_session_confirmed(
+            &test_session(),
+            started + std::time::Duration::from_millis(25),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_millis(350));
+    server.join().unwrap();
+}
+
+#[test]
+fn bounded_startup_fails_closed_without_remote_cancel_contract() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let probe = Probe(AtomicBool::new(false));
+    let error = avatar
+        .create_session_bounded(
+            &probe,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+}
+
+#[test]
+fn post_allocation_revoke_attempts_verified_remote_stop_and_never_admits_session() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.into(),
+    )]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let result = avatar.finalize_created_session(test_session(), &cancelled_probe);
+    assert_eq!(result.unwrap_err().kind, ProviderErrorKind::Cancelled);
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
+}
+
+#[test]
+fn post_allocation_revoke_never_admits_session_when_remote_stop_is_unconfirmed() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":false}"#.into(),
+    )]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let result = avatar.finalize_created_session(test_session(), &cancelled_probe);
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
+}
+
+#[test]
+fn post_allocation_live_authority_does_not_send_cleanup() {
+    let avatar = provider("http://127.0.0.1:1".into());
+    let active_probe = Probe(AtomicBool::new(false));
+    assert_eq!(
+        avatar
+            .finalize_created_session(test_session(), &active_probe)
+            .unwrap()
+            .provider_session_id,
+        "local-1"
+    );
+}
+
+#[test]
+fn cancellation_during_remote_allocation_prevents_admission_and_requests_verified_stop() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (created_tx, created_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (request_tx, request_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut create_stream, _) = listener.accept().unwrap();
+        let request = read_request(&mut create_stream);
+        assert!(request.starts_with("POST /v1/avatar/sessions "));
+        created_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        let body = r#"{"id":"local-1","offer":{"type":"offer","sdp":"offer-sdp"}}"#;
+        let response = format!(
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        create_stream.write_all(response.as_bytes()).unwrap();
+        drop(create_stream);
+        let (mut stop_stream, _) = listener.accept().unwrap();
+        request_tx.send(read_request(&mut stop_stream)).unwrap();
+        let receipt = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{receipt}",
+            receipt.len()
+        );
+        stop_stream.write_all(response.as_bytes()).unwrap();
+    });
+    let avatar = provider(format!("http://{address}"));
+    let probe = Probe(AtomicBool::new(false));
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            result_tx.send(avatar.create_session(&probe)).unwrap();
+        });
+        created_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        probe.0.store(true, Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        let error = result_rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(
+            request_rx
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+        );
+    });
+    server.join().unwrap();
+}
+
+#[test]
+fn remote_stop_with_stalled_receipt_body_is_never_confirmed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("DELETE /v1/avatar/sessions/local-1 "));
+        let receipt = r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#;
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            receipt.len()
+        );
+        stream.write_all(headers.as_bytes()).unwrap();
+        // Headers are not a STOP receipt. The worker might stall before
+        // sending even one byte of its purported confirmation.
+        thread::sleep(Duration::from_millis(400));
+        let _ = stream.write_all(receipt.as_bytes());
+    });
+    let avatar = provider(format!("http://{address}"));
+    let started = std::time::Instant::now();
+    let result =
+        avatar.stop_session_confirmed(&test_session(), started + Duration::from_millis(50));
+    assert!(result.is_err());
+    assert!(started.elapsed() < Duration::from_millis(350));
+    server.join().unwrap();
+}
+
+#[test]
+fn failed_create_http_response_must_not_allow_duplicate_allocation_retry() {
+    // A worker can allocate a remote sender and still reply with HTTP 503.
+    // Retrying that CREATE is unsafe without worker-side idempotency.
+    for status in ["500 Internal Server Error", "503 Service Unavailable"] {
+        let (endpoint, captured) = serve(vec![(status, "{}".to_owned())]);
+        let error = provider(endpoint)
+            .create_session(&Probe(AtomicBool::new(false)))
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(!error.retryable);
+        assert!(
+            captured
+                .recv()
+                .unwrap()
+                .starts_with("POST /v1/avatar/sessions ")
+        );
+    }
+}
+
+#[test]
+fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
+    // The worker has accepted CREATE but withheld its allocation receipt.
+    // Without a session id the client cannot address a compensating STOP.
+    // This RT0 compatibility route must fail closed; RT1 bounded startup
+    // remains unavailable until the worker provides a cancellation contract.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("POST /v1/avatar/sessions "));
+        thread::sleep(Duration::from_millis(300));
+        let _ = stream.write_all(
+            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+    });
+    let avatar = LocalOpenSourceAvatar::new(
+        LocalOpenSourceAvatarConfig::new(format!("http://{address}"), "worker-secret")
+            .with_timeout(Duration::from_millis(40)),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let result = avatar.create_session(&Probe(AtomicBool::new(false)));
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    // A timeout does not prove the remote worker failed to allocate.
+    // Repeating CREATE could create a second uncontrolled media sender.
+    assert!(!error.retryable);
+    assert!(started.elapsed() < Duration::from_millis(250));
+    server.join().unwrap();
+}
+
+#[test]
+fn revoked_allocation_with_failed_stop_never_returns_plain_cancelled() {
+    let (endpoint, captured) = serve(vec![("503 Service Unavailable", "{}".to_owned())]);
+    let avatar = provider(endpoint);
+    let cancelled_probe = Probe(AtomicBool::new(true));
+    let error = avatar
+        .finalize_created_session(test_session(), &cancelled_probe)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(!error.retryable);
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/sessions/local-1 ")
+    );
 }
