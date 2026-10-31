@@ -247,6 +247,25 @@ class MediaLifecycle:
                 self._write(operation_id, generation, "stopped", session_id)
             return receipt
 
+    def quarantine_after_restart(self):
+        """Fence every sender identity inherited without a live backend handle.
+
+        A fresh process cannot assume that an old aiortc peer is gone. Keep
+        known session IDs for authenticated STOP; never repeat CREATE and
+        never return an old 'active' session as an idempotent new admission.
+        """
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                self._db.execute(
+                    "UPDATE media_operations SET phase='uncertain' WHERE phase != 'stopped'"
+                )
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
+
     def reconcile(self):
         """Replay STOP only for known session IDs; NEVER replay CREATE."""
         with self._lock:
