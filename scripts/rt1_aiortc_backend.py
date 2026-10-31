@@ -92,6 +92,8 @@ class AiortcSenderBackend:
             # remote outcome remains UNCERTAIN until a real STOP receipt.
             future.cancel()
             raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
+        except concurrent.futures.CancelledError as exc:
+            raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
     def allocate(self, operation_id: str, generation: int) -> str:
         return self._call(self._allocate(operation_id, generation))
