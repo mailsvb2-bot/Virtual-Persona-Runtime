@@ -135,6 +135,43 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.request("DELETE")[0], 200)
         self.assertEqual(self.backend.stops, 1)
 
+    def test_revoke_during_slow_create_compensates_without_late_admission(self):
+        allocated = threading.Event()
+        release = threading.Event()
+        original_allocate = self.backend.allocate
+
+        def slow_allocate(operation_id, generation):
+            allocated.set()
+            if not release.wait(3):
+                raise RuntimeError("test CREATE remained blocked")
+            return original_allocate(operation_id, generation)
+
+        self.backend.allocate = slow_allocate
+        replies = []
+
+        def create():
+            replies.append(self.request("PUT"))
+
+        caller = threading.Thread(target=create)
+        caller.start()
+        try:
+            self.assertTrue(allocated.wait(3), "CREATE must reach the backend")
+            status, pending = self.request("DELETE")
+            self.assertEqual(status, 202, "pending CREATE is not confirmed STOP")
+            self.assertIs(pending["stop_confirmed"], False)
+            self.assertEqual(self.lifecycle.status("operation-1")[1], "stopping")
+        finally:
+            release.set()
+            caller.join(timeout=4)
+
+        self.assertFalse(caller.is_alive(), "late CREATE must finish compensation")
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0][0], 409, "revoked CREATE must never publish a session")
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.backend.stops, 1, "late allocation needs real compensating STOP")
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(self.request("PUT")[0], 409)
+
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
         self.assertEqual(status, 202)
