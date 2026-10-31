@@ -41,17 +41,12 @@ def main():
     path = os.environ["RT1_WORKER_DB"]
     backend = AiortcSenderBackend()
     lifecycle = MediaLifecycle(path, backend)
-    # Never trust process restart as proof that a remote RTP sender stopped.
-    # Operations that need recovery require an explicit reconciliation policy.
-    pending = lifecycle._db.execute(
-        "SELECT id,phase FROM media_operations WHERE phase != 'stopped' LIMIT 1"
-    ).fetchone()
-    if pending is not None:
-        backend.shutdown()
-        raise RuntimeError(
-            "Unresolved RTP allocation after restart; refuse worker admission: "
-            + repr(pending)
-        )
+    # Restart is not a remote STOP receipt. Fence all inherited sessions
+    # before exposing HTTP so an idempotent PUT cannot return a stale active
+    # session. The existing reconciler attempts authenticated STOP where a
+    # recoverable sender exists; otherwise SQLite remains uncertain and
+    # admission stays denied without trapping the worker in a restart loop.
+    lifecycle.quarantine_after_restart()
     server = ThreadingHTTPServer(
         ("127.0.0.1", int(os.environ.get("RT1_WORKER_PORT", "8099"))),
         handler_for(lifecycle, token),
