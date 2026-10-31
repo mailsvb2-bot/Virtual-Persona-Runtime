@@ -47,19 +47,9 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Playwright APIRequestContext connection pool. Both browser loading and
   // response integrity remain mandatory (no mocks and no timeout suppression).
   await installTransportFakes(page);
-  // Wait until the parser has loaded module scripts before issuing a second
-  // wave of concurrent asset requests. The previous "commit" milestone
-  // raced the app's initial modules on busy CI runners and left #status at
-  // "Загрузка…" despite healthy backend/bootstrap responses.
-  // The app is checked for real bootstrap completion below. A congested
-  // browser may acknowledge the navigation before DOMContentLoaded, so avoid
-  // binding the whole E2E to that intermediate event. A stalled app still
-  // fails the explicit status and asset assertions; nothing is mocked.
-  await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
-
+  // Record requests before navigation: module fetches may start immediately
+  // after the response headers, before Playwright's "commit" milestone.
+  // Attaching listeners later silently loses stalled/failed bootstrap assets.
   const pending = new Set<string>();
   const failed: string[] = [];
   page.on("request", (outgoing) => pending.add(outgoing.url()));
@@ -68,6 +58,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     pending.delete(outgoing.url());
     failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
   });
+  // Do not start a separate APIRequestContext bootstrap request while the
+  // browser is still fetching and evaluating its first application modules.
+  // The actual browser bootstrap is the acceptance condition below.
+  await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
@@ -83,6 +77,10 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
       `failed=${JSON.stringify(failed)}; readiness=${String(error)}`,
     );
   }
+
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
 
   // Audit assets only after the actual application bootstrap has completed;
   // parallel no-store fetches must not compete with initial module execution.
