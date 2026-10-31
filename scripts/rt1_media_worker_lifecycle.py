@@ -111,7 +111,10 @@ class MediaLifecycle:
                     row = self._get(operation_id)
                     # A failed CREATE may still have allocated remotely. Do not
                     # retry it or discard an already committed cancellation.
-                    if row and row[0] == generation and row[1] == "creating":
+                    if row and row[0] == generation and row[1] in ("creating", "stopping") and row[2] is None:
+                        # CANCEL may have committed while CREATE was in flight.
+                        # A failed/timeout CREATE has no verifiable sender ID;
+                        # keep the cancellation fenced as UNCERTAIN, never STOPPED.
                         self._write(operation_id, generation, "uncertain", None)
                     self._db.execute("COMMIT")
                 except BaseException:
