@@ -123,6 +123,27 @@ class ReconcileTests(unittest.TestCase):
             self.assertEqual(restarted.status("old-active")[1], "uncertain")
             self.assertTrue(original.active)
 
+    def test_restart_reconciles_only_with_real_reachable_sender_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "media.db"
+            sender = FlakySender()
+            first = MediaLifecycle(path, sender)
+            first.create("recoverable", 1)
+            # Simulate a provider whose sender identity survives the HTTP
+            # coordinator restart. Its first STOP loses acknowledgement.
+            with self.assertRaises(OSError):
+                first.cancel("recoverable", 1)
+
+            restarted = MediaLifecycle(path, sender)
+            restarted.quarantine_after_restart()
+            self.assertEqual(restarted.status("recoverable")[1], "uncertain")
+            restarted.reconcile()
+            self.assertEqual(
+                restarted.status("recoverable"), (1, "stopped", "flaky-session")
+            )
+            self.assertFalse(sender.active)
+            self.assertEqual(sender.stops, 2)
+
     def test_reconciler_rejects_nonpositive_interval(self):
         with tempfile.TemporaryDirectory() as directory:
             lifecycle = MediaLifecycle(Path(directory) / "media.db", FlakySender())
