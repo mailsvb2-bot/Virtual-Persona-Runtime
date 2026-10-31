@@ -204,7 +204,12 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     let error = provider.create_session(&probe).unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
-    assert!(captured.recv().unwrap().starts_with("POST /agents/agent-7/streams "));
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("POST /agents/agent-7/streams ")
+    );
     let stop_request = captured.recv().unwrap();
     assert!(stop_request.starts_with("DELETE /agents/agent-7/streams/stream-1 "));
     assert!(stop_request.contains("session-1"));
