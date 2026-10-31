@@ -181,6 +181,36 @@ fn assert_client_interrupt_contract(
 }
 
 #[test]
+fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAtFinalCheck(AtomicUsize);
+    impl CancellationProbe for RevokeAtFinalCheck {
+        fn is_cancelled(&self) -> bool {
+            // create_session and create_webrtc_session each check once.
+            // Revoke after the server has returned the actual session id.
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let created = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[],"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("200 OK", created.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+    let probe = RevokeAtFinalCheck(AtomicUsize::new(0));
+    let error = provider.create_session(&probe).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(captured.recv().unwrap().starts_with("GET /agents/agent-7 "));
+    assert!(captured.recv().unwrap().starts_with("POST /agents/agent-7/streams "));
+    let stop_request = captured.recv().unwrap();
+    assert!(stop_request.starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+    assert!(stop_request.contains("session-1"));
+}
+
+#[test]
 fn full_agents_streams_control_plane_matches_contract() {
     let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}],"fluent":true,"interrupt_enabled":true}"#;
     let (endpoint, captured) = serve(vec![
