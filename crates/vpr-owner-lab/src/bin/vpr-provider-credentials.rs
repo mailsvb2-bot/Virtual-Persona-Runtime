@@ -431,7 +431,7 @@ fn probe_profile_did(
             // The Windows credential store is the canonical owner of the voice
             // route. A process-only environment check rejects correctly saved
             // profiles and sends owners through setup again.
-            let stored_tts_ready = profile.tts.as_ref().is_some_and(|tts| tts.validate().is_ok());
+            let stored_tts_ready = stored_voice_route_ready(profile.tts.as_ref());
             let process_tts_ready = [
                 "VPR_OWNER_LAB_TTS_PROVIDER",
                 "VPR_OWNER_LAB_TTS_ENDPOINT",
@@ -568,6 +568,11 @@ fn redact_identifier(value: &str) -> String {
 }
 
 #[cfg(windows)]
+fn stored_voice_route_ready(stored: Option<&StoredTtsCredential>) -> bool {
+    stored.is_some_and(|tts| tts.validate().is_ok())
+}
+
+#[cfg(windows)]
 fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
     presenter.eq_ignore_ascii_case("expressive")
         && !echo_enabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
@@ -596,6 +601,23 @@ mod expressive_echo_preflight_tests {
             "Expressive",
             Some(" false ")
         ));
+    }
+
+    #[test]
+    fn securely_saved_tts_profile_counts_as_configured_voice_route() {
+        use super::{StoredTtsCredential, stored_voice_route_ready};
+        assert!(!stored_voice_route_ready(None));
+        let good = StoredTtsCredential {
+            provider: "piper".into(),
+            endpoint: "http://127.0.0.1:8765".into(),
+            api_key: "local-only".into(),
+            model: "ru_RU".into(),
+            voice: "voice".into(),
+        };
+        assert!(stored_voice_route_ready(Some(&good)));
+        let mut incomplete = good;
+        incomplete.endpoint.clear();
+        assert!(!stored_voice_route_ready(Some(&incomplete)));
     }
 
     #[test]
