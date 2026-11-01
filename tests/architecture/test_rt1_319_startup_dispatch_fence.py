@@ -43,7 +43,7 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("return Err(revoked_diagnostic_offer_error(&manager, &id, &remote));", diagnostic)
         self.assertIn('"RT1_VISITOR_REVOKED_DURING_OFFER".into()', source)
         self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()', source)
-        self.assertLess(diagnostic.index("let bundle = match started"),
+        self.assertLess(diagnostic.index("let bundle = started.map_err"),
                         diagnostic.rindex(".authorize_persona(&id, &persona_id, persona_version)"))
 
 
@@ -67,14 +67,14 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         diagnostic = source.split("    pub fn start_diagnostic(", 1)[1].split(
             "    /// Whether this visitor", 1
         )[0]
-        failure = diagnostic.split("let bundle = match started {", 1)[1].split(
-            "        Ok((", 1
+        failure = diagnostic.split("let bundle = started.map_err(|error| {", 1)[1].split(
+            "        })?;", 1
         )[0]
-        self.assertIn("Err(error) =>", failure)
+        self.assertIn("manager.close(&id)", failure)
         self.assertIn("remote.revoke_confirmed().is_err()", failure)
-        self.assertIn('return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into())', failure)
+        self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned()', failure)
         self.assertLess(failure.index("remote.revoke_confirmed().is_err()"),
-                        failure.index("return Err(error);"))
+                        failure.index("error\n"))
 
 
 if __name__ == "__main__":
