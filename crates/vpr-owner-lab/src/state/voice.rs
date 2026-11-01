@@ -251,6 +251,7 @@ impl OwnerLabEngine {
         let pre_llm_millis = elapsed_millis(total_started);
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        crate::voice_diagnostic::record("llm_generation", "started");
         let generation = self.streaming_generation(
             &turn,
             llm.as_ref(),
