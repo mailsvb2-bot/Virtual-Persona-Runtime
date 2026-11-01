@@ -64,15 +64,23 @@ pub fn event(
 }
 
 fn allowed_event(stage: &str, outcome: &str) -> bool {
-    matches!(
-        (stage, outcome),
-        ("voice_start", "request_received")
-            | ("stt_open", "accepted")
-            | ("stt_open", "provider_auth_denied")
-            | ("stt_open", "provider_policy_denied")
-            | ("stt_open", "provider_other_failure")
-            | ("stt_open", "runtime_authority_denied")
-    )
+    match stage {
+        "voice_start" => outcome == "request_received",
+        "stt_open" => matches!(
+            outcome,
+            "accepted"
+                | "provider_auth_denied"
+                | "provider_policy_denied"
+                | "provider_other_failure"
+                | "runtime_authority_denied"
+        ),
+        "voice_finish" => outcome == "processing_started",
+        "voice_worker" => matches!(outcome, "failed" | "completed"),
+        "stt_input" => matches!(outcome, "streaming" | "buffered" | "finished" | "failed"),
+        "llm_generation" => matches!(outcome, "started" | "completed" | "failed"),
+        "avatar_delivery" => matches!(outcome, "started" | "completed" | "failed"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
