@@ -19,8 +19,30 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
   });
 
   try {
+    // A cold CI browser may stall one module fetch before application code
+    // executes. Verify the real server remains responsive, then retry the
+    // navigation once; a persistently broken bootstrap still fails the test.
+    const failedAssets: string[] = [];
+    owner.on("requestfailed", (request) => {
+      failedAssets.push(`${request.url()}: ${request.failure()?.errorText ?? "unknown"}`);
+    });
     await owner.goto("/", { waitUntil: "commit", timeout: 25_000 });
-    await expect(owner.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+    try {
+      await expect(owner.locator("#status")).not.toHaveText("Загрузка…", { timeout: 20_000 });
+    } catch (firstFailure) {
+      const bootstrap = await owner.request.get("/api/bootstrap", { timeout: 10_000 });
+      expect(bootstrap.ok(), `Owner Lab backend unavailable: ${bootstrap.status()}`).toBeTruthy();
+      await owner.reload({ waitUntil: "commit", timeout: 25_000 });
+      try {
+        await expect(owner.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+      } catch (secondFailure) {
+        throw new Error(
+          `Owner Lab bootstrap failed after a real navigation retry; ` +
+          `requests=${JSON.stringify(failedAssets)}; first=${String(firstFailure)}; ` +
+          `second=${String(secondFailure)}`,
+        );
+      }
+    }
 
     await owner.getByLabel("Идентификатор Persona").fill("rt1-local-canary-persona");
     await owner.getByRole("button", { name: "Создать Persona" }).click();
