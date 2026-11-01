@@ -72,7 +72,7 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("active.remove(session_id)", helper)
         self.assertLess(helper.index("entry.insert(Arc::clone(conversation))"),
                         helper.index("if !active_now(conversation.as_ref())"))
-        self.assertIn("    }\\n    if !active_now(", helper)
+        self.assertIn("    }\n    if !active_now(", helper)
         registration = start.split("match register_visitor(", 1)[1]
         self.assertIn("Rt1VisitorConversation::is_active", registration)
         self.assertIn("conversation.close().is_err()", registration)
