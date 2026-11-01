@@ -57,20 +57,11 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 }
 
-// Credential setup must be possible before a voice route is saved. Only the
-// explicit readiness probe may require an operational Echo voice route.
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DidProbePurpose {
     CredentialSetup,
     LaunchReadiness,
-}
-
-#[cfg(windows)]
-impl DidProbePurpose {
-    fn enforces_voice_route(self) -> bool {
-        matches!(self, Self::LaunchReadiness)
-    }
 }
 
 #[cfg(windows)]
@@ -443,13 +434,9 @@ fn probe_profile_did(
     match provider.probe_runtime_access_detailed() {
         Ok(DidRuntimeAccessProbe::Presenter(presenter)) => {
             println!("D-ID credential probe: OK (presenter={presenter})");
-            // A credential probe is not a realtime-session readiness probe.
-            // Expressive V2 requires a private, server-owned Echo sender.
-            // Do not let the launcher report READY then show a black avatar.
-            // The Windows credential store is the canonical owner of the voice
-            // route. A process-only environment check rejects correctly saved
-            // profiles and sends owners through setup again.
-            if purpose.enforces_voice_route()
+            // Setup may store valid credentials before TTS configuration.
+            // Only readiness may admit an Expressive private Echo voice route.
+            if purpose == DidProbePurpose::LaunchReadiness
                 && expressive_echo_voice_route_denied(&presenter, profile)
             {
                 return Err(
