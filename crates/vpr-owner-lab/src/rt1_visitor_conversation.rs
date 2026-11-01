@@ -243,6 +243,18 @@ impl Rt1VisitorConversation {
                 return Err(error);
             }
         };
+        // The owner may revoke while the offer is being constructed. Never
+        // return a stale SDP bundle without one final publication check.
+        if manager.authorize_persona(&id, &persona_id, persona_version).is_err()
+            || remote.is_revoked()
+            || interrupt.cancelled.load(Ordering::Acquire)
+        {
+            let _ = manager.close(&id);
+            if remote.revoke_confirmed().is_err() {
+                return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+            }
+            return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into());
+        }
         Ok((
             Self {
                 manager,
