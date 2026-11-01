@@ -209,12 +209,16 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     // produced an offer but before HTTP publishes the session identifier.
     // Do not return a usable offer for an already-revoked publication.
     if !conversation.is_active() {
-        let _ = conversation.close();
+        if conversation.close().is_err() {
+            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
+        }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
     let mut raw = [0_u8; 32];
     if getrandom::fill(&mut raw).is_err() {
-        let _ = conversation.close();
+        if conversation.close().is_err() {
+            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
+        }
         return Err(error_response(503, "RT1_SESSION_ENTROPY_UNAVAILABLE"));
     }
     let mut session_id = String::with_capacity(64);
@@ -225,7 +229,9 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     let mut active = state.rt1.conversations.lock();
     if active.contains_key(&session_id) {
         drop(active);
-        let _ = conversation.close();
+        if conversation.close().is_err() {
+            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
+        }
         return Err(error_response(409, "RT1_SESSION_COLLISION"));
     }
     let voice_enabled = conversation.supports_private_voice();
