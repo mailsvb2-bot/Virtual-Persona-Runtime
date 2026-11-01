@@ -512,7 +512,6 @@ fn prompt_line(prompt: &str) -> Result<String, Box<dyn Error + Send + Sync>> {
     }
     Ok(value)
 }
-
 #[cfg(windows)]
 fn print_safe_profile(profile: &ProviderCredentialProfile) {
     match profile.avatar_provider.as_str() {
@@ -547,7 +546,6 @@ fn print_safe_profile(profile: &ProviderCredentialProfile) {
     }
     println!("  API keys: stored; values are never printed");
 }
-
 #[cfg(windows)]
 fn redact_identifier(value: &str) -> String {
     let chars: Vec<char> = value.trim().chars().collect();
@@ -558,7 +556,6 @@ fn redact_identifier(value: &str) -> String {
     let suffix: String = chars.iter().rev().take(4).rev().collect();
     format!("{prefix}…{suffix}")
 }
-
 #[cfg(windows)]
 fn expressive_echo_voice_route_denied(
     presenter: &str,
@@ -585,12 +582,10 @@ fn expressive_echo_voice_route_denied(
         .or(if route_ready { Some("true") } else { None });
     !route_ready || expressive_echo_preflight_denied(presenter, echo)
 }
-
 #[cfg(windows)]
 fn stored_voice_route_ready(stored: Option<&StoredTtsCredential>) -> bool {
     stored.is_some_and(|tts| tts.validate().is_ok())
 }
-
 #[cfg(windows)]
 fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
     presenter.eq_ignore_ascii_case("expressive")
