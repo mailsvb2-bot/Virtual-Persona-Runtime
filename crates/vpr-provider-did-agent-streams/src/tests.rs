@@ -831,6 +831,28 @@ fn failed_echo_stop_retains_identity_for_retry() {
     registry.close_session(&backend, "retry-sender").unwrap();
     assert!(!registry.contains("retry-sender").unwrap());
     assert_eq!(backend.0.load(Ordering::SeqCst), 2);
+
+    // A revoke arriving immediately after Echo OPEN must not erase the
+    // only sender identity when the compensating STOP fails. A later
+    // canonical close must still be able to retry that same STOP.
+    let revoked_backend = FailOnce(AtomicUsize::new(0));
+    let revoked_registry = DidEchoRegistry::default();
+    let revoked = Probe(AtomicBool::new(true));
+    assert!(revoked_registry
+        .open_session(
+            &revoked_backend,
+            "revoked-sender",
+            "wss://livekit.example.test/room/agent-echo",
+            "server-only-token",
+            &revoked,
+        )
+        .is_err());
+    assert!(revoked_registry.contains("revoked-sender").unwrap());
+    revoked_registry
+        .close_session(&revoked_backend, "revoked-sender")
+        .unwrap();
+    assert!(!revoked_registry.contains("revoked-sender").unwrap());
+    assert_eq!(revoked_backend.0.load(Ordering::SeqCst), 2);
 }
 
 #[test]
