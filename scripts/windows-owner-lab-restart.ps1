@@ -4,6 +4,7 @@ param(
     [switch]$Rt0Evidence,
     [switch]$Piper,
     [switch]$SystemVoice,
+    [switch]$UseCurrentBranch,
     [string]$VoiceProfile,
     # Dev/interim voices only; Irina dataset rights are not cleared for release.
     [ValidateSet('ru_RU-irina-medium','ru_RU-denis-medium')]
@@ -568,7 +569,13 @@ $labReady = $false
 try {
     Push-Location $repoRoot
     try {
-        if (-not $Rt0Evidence) {
+        if ($UseCurrentBranch) {
+            $dirty = @(git status --porcelain --untracked-files=all)
+            if ($LASTEXITCODE -ne 0 -or $dirty.Count -gt 0) {
+                throw 'UseCurrentBranch requires a clean worktree'
+            }
+            Write-Host 'Using current checked-out candidate branch without switching to main.'
+        } elseif (-not $Rt0Evidence) {
             git switch main
             if ($LASTEXITCODE -ne 0) { throw 'git switch main failed' }
             git pull --ff-only
