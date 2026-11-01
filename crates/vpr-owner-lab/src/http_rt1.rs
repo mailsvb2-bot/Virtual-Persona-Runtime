@@ -185,6 +185,106 @@ fn owner_revoke(request: &mut tiny_http::Request, unpublish: bool) -> Rt1HttpRes
     ))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum RegistrationFailure {
+    Collision,
+    Revoked,
+}
+
+/// Publish a registration before its final authority check, but release the
+/// registry lock before that check can trigger a slow authenticated STOP.
+fn register_visitor<T>(
+    sessions: &Mutex<HashMap<String, Arc<T>>>,
+    session_id: &str,
+    conversation: &Arc<T>,
+    active_now: impl FnOnce(&T) -> bool,
+) -> Result<(), RegistrationFailure> {
+    {
+        let mut active = sessions.lock();
+        match active.entry(session_id.to_owned()) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                return Err(RegistrationFailure::Collision);
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(Arc::clone(conversation));
+            }
+        }
+    }
+    if !active_now(conversation.as_ref()) {
+        let mut active = sessions.lock();
+        if active
+            .get(session_id)
+            .is_some_and(|current| Arc::ptr_eq(current, conversation))
+        {
+            active.remove(session_id);
+        }
+        return Err(RegistrationFailure::Revoked);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::{RegistrationFailure, register_visitor};
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn stalled_post_registration_authorization_never_holds_http_registry() {
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+        let worker_sessions = Arc::clone(&sessions);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            register_visitor(&worker_sessions, "slow", &Arc::new(1_u8), |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                false
+            })
+        });
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let lock_available = sessions.try_lock().is_some();
+        release_tx.send(()).unwrap();
+        assert!(lock_available, "slow provider STOP held all HTTP sessions");
+        assert_eq!(worker.join().unwrap(), Err(RegistrationFailure::Revoked));
+        assert!(sessions.lock().is_empty());
+    }
+
+    #[test]
+    fn revoked_candidate_cannot_erase_concurrent_replacement() {
+        let sessions = Mutex::new(HashMap::new());
+        let candidate = Arc::new(1_u8);
+        let replacement = Arc::new(2_u8);
+        let result = register_visitor(&sessions, "same", &candidate, |_| {
+            sessions
+                .lock()
+                .insert("same".into(), Arc::clone(&replacement));
+            false
+        });
+        assert_eq!(result, Err(RegistrationFailure::Revoked));
+        assert!(Arc::ptr_eq(
+            sessions.lock().get("same").unwrap(),
+            &replacement
+        ));
+    }
+
+    #[test]
+    fn collision_never_invokes_provider_authorization() {
+        let sessions = Mutex::new(HashMap::new());
+        let existing = Arc::new(1_u8);
+        sessions.lock().insert("same".into(), Arc::clone(&existing));
+        let candidate = Arc::new(2_u8);
+        let result = register_visitor(&sessions, "same", &candidate, |_| {
+            panic!("colliding registration must not invoke provider")
+        });
+        assert_eq!(result, Err(RegistrationFailure::Collision));
+        assert!(Arc::ptr_eq(sessions.lock().get("same").unwrap(), &existing));
+    }
+}
+
 fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorStart = parse_json(request)?;
     if !body.consent {
@@ -226,32 +326,30 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         session_id.push(char::from(super::HEX[usize::from(byte >> 4)]));
         session_id.push(char::from(super::HEX[usize::from(byte & 0x0f)]));
     }
-    let mut active = state.rt1.conversations.lock();
-    if active.contains_key(&session_id) {
-        drop(active);
-        if conversation.close().is_err() {
-            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
-        }
-        return Err(error_response(409, "RT1_SESSION_COLLISION"));
-    }
+    let conversation = Arc::new(conversation);
+    // Capability lookup and the post-registration authority check can invoke
+    // remote STOP. Never hold the shared HTTP registry during provider I/O.
     let voice_enabled = conversation.supports_private_voice();
-    active.insert(session_id.clone(), Arc::new(conversation));
-    // Recheck after registration, not only before it: an owner revoke can
-    // win between generation of the session ID and insertion into the map.
-    if !active
-        .get(&session_id)
-        .is_some_and(|session| session.is_active())
-    {
-        let revoked = active.remove(&session_id);
-        drop(active);
-        if let Some(session) = revoked {
-            if session.close().is_err() {
+    match register_visitor(
+        &state.rt1.conversations,
+        &session_id,
+        &conversation,
+        Rt1VisitorConversation::is_active,
+    ) {
+        Ok(()) => {}
+        Err(RegistrationFailure::Collision) => {
+            if conversation.close().is_err() {
+                return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
+            }
+            return Err(error_response(409, "RT1_SESSION_COLLISION"));
+        }
+        Err(RegistrationFailure::Revoked) => {
+            if conversation.close().is_err() {
                 return Err(error_response(409, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
             }
+            return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
         }
-        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    drop(active);
     Ok(json_response(
         200,
         &serde_json::json!({

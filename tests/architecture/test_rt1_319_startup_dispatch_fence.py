@@ -65,15 +65,19 @@ class Rt1StartupCancellationGate(unittest.TestCase):
     def test_http_registration_rechecks_revocation_and_drops_lock_before_cleanup(self):
         http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
         start = http.split("fn visitor_start(", 1)[1].split("fn lookup(", 1)[0]
-        registration = start.split("active.insert(session_id.clone(), Arc::new(conversation));", 1)[1]
-        self.assertIn("session.is_active()", registration)
-        self.assertIn("active.remove(&session_id)", registration)
-        self.assertIn("drop(active);", registration)
-        self.assertIn("session.close().is_err()", registration)
+        helper = http.split("fn register_visitor<T>(", 1)[1].split("fn visitor_start(", 1)[0]
+        self.assertIn("entry.insert(Arc::clone(conversation))", helper)
+        self.assertIn("if !active_now(conversation.as_ref())", helper)
+        self.assertIn("Arc::ptr_eq(current, conversation)", helper)
+        self.assertIn("active.remove(session_id)", helper)
+        self.assertLess(helper.index("entry.insert(Arc::clone(conversation))"),
+                        helper.index("if !active_now(conversation.as_ref())"))
+        self.assertIn("    }\\n    if !active_now(", helper)
+        registration = start.split("match register_visitor(", 1)[1]
+        self.assertIn("Rt1VisitorConversation::is_active", registration)
+        self.assertIn("conversation.close().is_err()", registration)
         self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"', registration)
-        self.assertLess(registration.index("active.remove(&session_id)"),
-                        registration.index("session.close().is_err()"))
-        self.assertLess(registration.index("session.close().is_err()"),
+        self.assertLess(registration.index("conversation.close().is_err()"),
                         registration.index("Ok(json_response("))
 
     def test_http_start_failures_preserve_remote_stop_uncertainty(self):
