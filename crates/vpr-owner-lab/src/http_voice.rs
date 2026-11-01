@@ -12,10 +12,10 @@ use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, reject_if_session_ending,
 };
 
-#[path = "http_voice_trace.rs"]
-mod voice_trace;
 #[path = "http_voice_event.rs"]
 mod voice_event;
+#[path = "http_voice_trace.rs"]
+mod voice_trace;
 use voice_event::VoiceStreamEvent;
 #[path = "http_voice_stream.rs"]
 mod voice_stream;
