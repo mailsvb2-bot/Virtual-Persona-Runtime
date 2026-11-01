@@ -35,6 +35,15 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertLess(diagnostic.index("manager.open("),
                         re.search(r"client\s*\.\s*create\s*\(", diagnostic).start())
         self.assertGreaterEqual(diagnostic.count("manager.authorize(&id)"), 2)
+        # SDP must never be returned without rechecking the current persona
+        # publication and remote STOP outcome after offer construction.
+        self.assertIn("manager.authorize_persona(&id, &persona_id, persona_version).is_err()", diagnostic)
+        self.assertIn("remote.is_revoked()", diagnostic)
+        self.assertIn("interrupt.cancelled.load(Ordering::Acquire)", diagnostic)
+        self.assertIn('return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into())', diagnostic)
+        self.assertLess(diagnostic.index("let bundle = match started"),
+                        diagnostic.rindex("manager.authorize_persona(&id, &persona_id, persona_version).is_err()"))
+
 
         http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
         self.assertIn('std::env::var("VPR_RT1_DIAGNOSTIC_RTP")', http)
