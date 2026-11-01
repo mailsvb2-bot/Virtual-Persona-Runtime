@@ -679,6 +679,13 @@ try {
         Stop-PortListener -ExpectedExe $oldExe
     }
     if ($Piper -or $SystemVoice) {
+        # Fixed-vocabulary diagnostics are written by the Rust server itself.
+        # No provider response bodies, speech or credentials enter this file.
+        $diagnosticsRoot = Join-Path $env:LOCALAPPDATA 'Virtual-Persona-Runtime\diagnostics'
+        $null = New-Item -ItemType Directory -Path $diagnosticsRoot -Force
+        $diagnosticsFile = Join-Path $diagnosticsRoot 'voice-stage.log'
+        $env:VPR_OWNER_LAB_VOICE_DIAGNOSTIC_FILE = $diagnosticsFile
+        Write-Host "Voice stage diagnostics: $diagnosticsFile"
         $env:VPR_OWNER_LAB_ALLOW_EGRESS = 'true'
         $env:VPR_OWNER_LAB_PORT = [string]$Port
         $env:VPR_OWNER_LAB_RT0_EVIDENCE = $rt0EvidenceValue
