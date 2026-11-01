@@ -232,7 +232,10 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     active.insert(session_id.clone(), Arc::new(conversation));
     // Recheck after registration, not only before it: an owner revoke can
     // win between generation of the session ID and insertion into the map.
-    if !active.get(&session_id).is_some_and(|session| session.is_active()) {
+    if !active
+        .get(&session_id)
+        .is_some_and(|session| session.is_active())
+    {
         let revoked = active.remove(&session_id);
         drop(active);
         if let Some(session) = revoked {
