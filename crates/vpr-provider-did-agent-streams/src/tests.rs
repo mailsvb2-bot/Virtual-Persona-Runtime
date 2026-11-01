@@ -850,15 +850,17 @@ fn failed_echo_stop_retains_identity_for_retry() {
         revoke_after_open: Some(&revoked),
     };
     let revoked_registry = DidEchoRegistry::default();
-    assert!(revoked_registry
-        .open_session(
-            &revoked_backend,
-            "revoked-sender",
-            "wss://livekit.example.test/room/agent-echo",
-            "server-only-token",
-            &revoked,
-        )
-        .is_err());
+    assert!(
+        revoked_registry
+            .open_session(
+                &revoked_backend,
+                "revoked-sender",
+                "wss://livekit.example.test/room/agent-echo",
+                "server-only-token",
+                &revoked,
+            )
+            .is_err()
+    );
     assert!(revoked_registry.contains("revoked-sender").unwrap());
     revoked_registry
         .close_session(&revoked_backend, "revoked-sender")
