@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use vpr_integration::ProviderErrorKind;
 #[cfg(windows)]
 use vpr_owner_lab::{
-    ProviderCredentialProfile, StoredTtsCredential, delete_provider_profile, load_provider_profile,
+    ProviderCredentialProfile, StoredTtsCredential, load_provider_profile,
     save_provider_profile,
 };
 #[cfg(windows)]
@@ -54,7 +54,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "status" => status(),
         "probe-did" => probe_did(),
         "probe-avatar" => probe_avatar(),
-        "clear" => clear(),
+        "clear" => provider_credentials_stt::clear(),
         _ => Err(
             "usage: vpr-provider-credentials <set|set-did|set-tts|set-stt|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
@@ -481,13 +481,6 @@ fn probe_profile_did(
             Err(message.into())
         }
     }
-}
-
-#[cfg(windows)]
-fn clear() -> Result<(), Box<dyn Error + Send + Sync>> {
-    delete_provider_profile()?;
-    println!("Secure VPR provider profile cleared.");
-    Ok(())
 }
 
 #[cfg(windows)]
