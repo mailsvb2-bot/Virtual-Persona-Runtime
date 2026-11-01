@@ -19,11 +19,13 @@ use crate::state::{
 fn diagnostic_operation_id() -> Result<String, String> {
     let mut nonce = [0_u8; 16];
     getrandom::fill(&mut nonce).map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
-    Ok(nonce.iter().fold(String::with_capacity(32), |mut result, octet| {
-        use std::fmt::Write;
-        write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
-        result
-    }))
+    Ok(nonce
+        .iter()
+        .fold(String::with_capacity(32), |mut result, octet| {
+            use std::fmt::Write;
+            write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
+            result
+        }))
 }
 
 /// Deny late-revoked diagnostic SDP unless the remote STOP is confirmed.
