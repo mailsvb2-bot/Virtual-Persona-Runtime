@@ -30,6 +30,7 @@ pub(super) fn deliver_phrase(
                 tts, provider, handle, phrase,
             )
             .map_err(|error| {
+                crate::voice_diagnostic::record("avatar_delivery", "failed");
                 eprintln!("VPR audio_delivery path=server_tts failed");
                 terminalize_avatar_output_error(turn, error)
             })?;
