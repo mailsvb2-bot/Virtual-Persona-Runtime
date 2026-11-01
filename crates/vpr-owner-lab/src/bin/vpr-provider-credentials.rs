@@ -582,5 +582,5 @@ fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>)
 }
 
 #[cfg(all(test, windows))]
-#[path = "provider_credentials_echo_tests.rs"]
+#[path = "support/provider_credentials_echo_tests.rs"]
 mod expressive_echo_preflight_tests;
