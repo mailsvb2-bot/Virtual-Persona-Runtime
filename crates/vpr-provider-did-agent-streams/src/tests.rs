@@ -973,7 +973,10 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     provider
         .speak_text(&first, "Серверный ответ.", &probe)
         .unwrap();
-    provider.close_session(&first).unwrap();
+    assert_eq!(
+        provider.close_session(&first).unwrap_err().kind,
+        ProviderErrorKind::Unavailable
+    );
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "stop"]
