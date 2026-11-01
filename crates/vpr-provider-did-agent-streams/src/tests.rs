@@ -794,6 +794,46 @@ impl DidEchoBackend for MockEchoBackend {
 }
 
 #[test]
+fn failed_echo_stop_retains_identity_for_retry() {
+    use std::sync::atomic::AtomicUsize;
+    struct FailOnce(AtomicUsize);
+    impl DidEchoBackend for FailOnce {
+        fn open(
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn speak(
+            &self,
+            _id: &str,
+            _text: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(super::unavailable())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let backend = FailOnce(AtomicUsize::new(0));
+    let registry = DidEchoRegistry::default();
+    registry.insert("retry-sender").unwrap();
+    assert!(registry.close_session(&backend, "retry-sender").is_err());
+    assert!(registry.contains("retry-sender").unwrap());
+    registry.close_session(&backend, "retry-sender").unwrap();
+    assert!(!registry.contains("retry-sender").unwrap());
+    assert_eq!(backend.0.load(Ordering::SeqCst), 2);
+}
+
+#[test]
 fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     use std::sync::Arc;
 
