@@ -59,5 +59,8 @@ fn initial_did_credential_setup_precedes_expressive_voice_readiness() {
     );
     assert!(profile.tts.is_none());
     assert!(!stored_voice_route_ready(profile.tts.as_ref()));
-    assert_ne!(DidProbePurpose::CredentialSetup, DidProbePurpose::LaunchReadiness);
+    assert_ne!(
+        DidProbePurpose::CredentialSetup,
+        DidProbePurpose::LaunchReadiness
+    );
 }
