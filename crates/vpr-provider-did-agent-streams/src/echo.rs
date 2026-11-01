@@ -168,12 +168,12 @@ impl DidEchoRegistry {
         if !self.contains(id)? {
             return Ok(());
         }
-        let stopped = backend.stop(id);
-        let forgotten = backend.forget(id);
-        if forgotten.is_ok() {
-            self.remove(id)?;
-        }
-        stopped.and(forgotten)
+        // A failed STOP has no receipt. Keep the sender registered so the
+        // canonical caller can retry against the same provider identity.
+        // Forgetting on failure destroys the only remaining stop capability.
+        backend.stop(id)?;
+        backend.forget(id)?;
+        self.remove(id)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {
