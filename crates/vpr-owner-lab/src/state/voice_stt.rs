@@ -27,6 +27,7 @@ impl VoiceSttInput {
         stt: &dyn SttPort,
         request: SttStreamRequest,
     ) -> Result<Self, LabError> {
+        crate::voice_diagnostic::record("stt_input", "streaming");
         match turn.open_stt_stream(stt, &request) {
             Ok(stream) => Ok(Self {
                 request,
