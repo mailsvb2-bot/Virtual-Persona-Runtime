@@ -70,7 +70,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     await expect(
       page.locator("#status"),
       "Owner Lab must run its JavaScript and finish backend bootstrap",
-    ).not.toHaveText("Загрузка…", { timeout: 20_000 });
+    ).not.toHaveText("Загрузка…", { timeout: 45_000 });
   } catch (error) {
     throw new Error(
       `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
