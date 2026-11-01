@@ -926,7 +926,12 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // An Echo STOP is server-owned and contains no browser did.interrupt
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
-    provider.close_session(&session).unwrap();
+    // Local Echo STOP succeeds, but remote D-ID LiveKit video STOP has no
+    // independently verified provider receipt. Fail closed at RT1 boundary.
+    assert_eq!(
+        provider.close_session(&session).unwrap_err().kind,
+        ProviderErrorKind::Unavailable
+    );
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
