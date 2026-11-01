@@ -15,6 +15,20 @@ use crate::state::{
     OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
+
+/// Deny late-revoked diagnostic SDP unless the remote STOP is confirmed.
+fn revoked_diagnostic_offer_error(
+    manager: &VisitorSessionManager,
+    id: &str,
+    remote: &Rt1RemoteMediaRevocation,
+) -> String {
+    let _ = manager.close(id);
+    if remote.revoke_confirmed().is_err() {
+        return "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into();
+    }
+    "RT1_VISITOR_REVOKED_DURING_OFFER".into()
+}
+
 #[derive(Default)]
 struct LiveVisitorInterrupt {
     cancelled: AtomicBool,
@@ -245,15 +259,13 @@ impl Rt1VisitorConversation {
         };
         // The owner may revoke while the offer is being constructed. Never
         // return a stale SDP bundle without one final publication check.
-        if manager.authorize_persona(&id, &persona_id, persona_version).is_err()
+        if manager
+            .authorize_persona(&id, &persona_id, persona_version)
+            .is_err()
             || remote.is_revoked()
             || interrupt.cancelled.load(Ordering::Acquire)
         {
-            let _ = manager.close(&id);
-            if remote.revoke_confirmed().is_err() {
-                return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
-            }
-            return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into());
+            return Err(revoked_diagnostic_offer_error(&manager, &id, &remote));
         }
         Ok((
             Self {
