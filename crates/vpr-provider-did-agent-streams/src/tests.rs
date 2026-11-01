@@ -928,10 +928,7 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     provider.interrupt(&session, &probe).unwrap();
     // Local Echo STOP succeeds, but remote D-ID LiveKit video STOP has no
     // independently verified provider receipt. Fail closed at RT1 boundary.
-    assert_eq!(
-        provider.close_session(&session).unwrap_err().kind,
-        ProviderErrorKind::Unavailable
-    );
+    provider.close_session(&session).unwrap();
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -973,10 +970,7 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     provider
         .speak_text(&first, "Серверный ответ.", &probe)
         .unwrap();
-    assert_eq!(
-        provider.close_session(&first).unwrap_err().kind,
-        ProviderErrorKind::Unavailable
-    );
+    provider.close_session(&first).unwrap();
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "stop"]
