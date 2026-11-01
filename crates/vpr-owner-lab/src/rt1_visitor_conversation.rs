@@ -15,7 +15,6 @@ use crate::state::{
     OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
-
 /// Deny late-revoked diagnostic SDP unless the remote STOP is confirmed.
 fn revoked_diagnostic_offer_error(
     manager: &VisitorSessionManager,
@@ -244,19 +243,16 @@ impl Rt1VisitorConversation {
                 client_control: None,
             })
         })();
-        let bundle = match started {
-            Ok(bundle) => bundle,
-            Err(error) => {
-                // A failed CREATE/OFFER may have allocated a remote sender.
-                // Closing registration is not a remote STOP receipt: preserve
-                // an uncertain STOP as the dominant fail-closed outcome.
-                let _ = manager.close(&id);
-                if remote.revoke_confirmed().is_err() {
-                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
-                }
-                return Err(error);
+        // CREATE/OFFER failure may leave a remote sender running. Treat an
+        // unconfirmed compensating STOP as the dominant error.
+        let bundle = started.map_err(|error| {
+            let _ = manager.close(&id);
+            if remote.revoke_confirmed().is_err() {
+                "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned()
+            } else {
+                error
             }
-        };
+        })?;
         // The owner may revoke while the offer is being constructed. Never
         // return a stale SDP bundle without one final publication check.
         if manager
