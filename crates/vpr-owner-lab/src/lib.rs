@@ -14,8 +14,8 @@ mod rt1_visitor_session_manager;
 mod rt1_workspace;
 mod rt1_workspace_service;
 mod state;
-mod voice_profile;
 mod voice_diagnostic;
+mod voice_profile;
 pub use voice_diagnostic::event as voice_trace_event;
 #[cfg(windows)]
 mod windows_secure_store;
