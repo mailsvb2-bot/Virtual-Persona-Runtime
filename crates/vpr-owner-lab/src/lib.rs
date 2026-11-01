@@ -16,6 +16,7 @@ mod rt1_workspace_service;
 mod state;
 mod voice_profile;
 mod voice_diagnostic;
+pub use voice_diagnostic::event as voice_trace_event;
 #[cfg(windows)]
 mod windows_secure_store;
 
