@@ -431,7 +431,7 @@ impl Rt1VisitorConversation {
     }
 
     /// True only for the durable worker path that verifies both remote RTP
-    /// sender tracks stopped. Canonical D-ID LiveKit Echo close is a local
+    /// sender tracks stopped. Canonical D-ID `LiveKit` Echo close is a local
     /// publisher disconnect, not authenticated remote video termination.
     #[must_use]
     pub fn has_remote_video_stop_receipt_path(&self) -> bool {
