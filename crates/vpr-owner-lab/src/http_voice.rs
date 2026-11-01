@@ -144,9 +144,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
                 input
             }
             Err(error) => {
-                // The browser evidence contains only a public reason code.
-                // Preserve a stage-specific server diagnostic without exposing audio
-                // samples, credentials, owner text or provider response bodies.
+                // Only public reason codes; never log private provider data.
                 eprintln!(
                     "VPR voice open denied: stage=begin_voice_input code={}",
                     error.code()
