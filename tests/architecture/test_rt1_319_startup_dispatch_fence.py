@@ -76,6 +76,20 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertLess(registration.index("session.close().is_err()"),
                         registration.index("Ok(json_response("))
 
+    def test_http_start_failures_preserve_remote_stop_uncertainty(self):
+        http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
+        start = http.split("fn visitor_start(", 1)[1].split("fn lookup(", 1)[0]
+        for failure in (
+            "RT1_VISITOR_REVOKED_DURING_START",
+            "RT1_SESSION_ENTROPY_UNAVAILABLE",
+            "RT1_SESSION_COLLISION",
+        ):
+            window = start.split('"' + failure + '"', 1)[0]
+            self.assertIn("conversation.close().is_err()", window)
+            self.assertIn('"RT1_REMOTE_STOP_UNCONFIRMED"', window)
+            self.assertLess(window.rfind("conversation.close().is_err()"),
+                            window.rfind('"RT1_REMOTE_STOP_UNCONFIRMED"'))
+
     def test_failed_diagnostic_start_cannot_hide_unconfirmed_remote_stop(self):
         source = SOURCE.read_text(encoding="utf-8")
         diagnostic = source.split("    pub fn start_diagnostic(", 1)[1].split(
