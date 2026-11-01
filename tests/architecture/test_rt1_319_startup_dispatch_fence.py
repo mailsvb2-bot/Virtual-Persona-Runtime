@@ -51,5 +51,20 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertNotIn("fn guarded_dispatch_under_transaction<", workspace)
 
 
+    def test_failed_diagnostic_start_cannot_hide_unconfirmed_remote_stop(self):
+        source = SOURCE.read_text(encoding="utf-8")
+        diagnostic = source.split("    pub fn start_diagnostic(", 1)[1].split(
+            "    /// Whether this visitor", 1
+        )[0]
+        failure = diagnostic.split("let bundle = match started {", 1)[1].split(
+            "        Ok((", 1
+        )[0]
+        self.assertIn("Err(error) =>", failure)
+        self.assertIn("remote.revoke_confirmed().is_err()", failure)
+        self.assertIn('return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into())', failure)
+        self.assertLess(failure.index("remote.revoke_confirmed().is_err()"),
+                        failure.index("return Err(error);"))
+
+
 if __name__ == "__main__":
     unittest.main()
