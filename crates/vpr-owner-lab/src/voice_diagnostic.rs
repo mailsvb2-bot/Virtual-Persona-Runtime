@@ -18,7 +18,12 @@ pub fn event(
     session: Option<u64>,
     request: Option<u64>,
 ) {
-    // This function is exported to the HTTP binary crate. Do not allow arbitrary\n    // provider text or caller-supplied labels to enter the diagnostic file.\n    if !allowed_event(stage, outcome) {\n        return;\n    }\n    let Ok(path) = std::env::var("VPR_OWNER_LAB_VOICE_DIAGNOSTIC_FILE") else {
+    // This function is exported to the HTTP binary crate. Do not allow arbitrary
+    // provider text or caller-supplied labels to enter the diagnostic file.
+    if !allowed_event(stage, outcome) {
+        return;
+    }
+    let Ok(path) = std::env::var("VPR_OWNER_LAB_VOICE_DIAGNOSTIC_FILE") else {
         return;
     };
     if path.is_empty() {
@@ -85,8 +90,15 @@ mod tests {
 
     #[test]
     fn trace_schema_is_fixed_and_has_no_sensitive_fields() {
-        let fields = ["schema", "timestamp_unix_ms", "process_id", "stage",
-            "outcome", "session_sequence", "request_sequence"];
+        let fields = [
+            "schema",
+            "timestamp_unix_ms",
+            "process_id",
+            "stage",
+            "outcome",
+            "session_sequence",
+            "request_sequence",
+        ];
         assert!(!fields.contains(&"api_key"));
         assert!(!fields.contains(&"transcript"));
         assert!(!fields.contains(&"audio"));
