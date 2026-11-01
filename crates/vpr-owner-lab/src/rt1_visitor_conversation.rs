@@ -15,6 +15,17 @@ use crate::state::{
     OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
+/// Generate the existing per-operation cancellation identity before admission.
+fn diagnostic_operation_id() -> Result<String, String> {
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce).map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
+    Ok(nonce.iter().fold(String::with_capacity(32), |mut result, octet| {
+        use std::fmt::Write;
+        write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
+        result
+    }))
+}
+
 /// Deny late-revoked diagnostic SDP unless the remote STOP is confirmed.
 fn revoked_diagnostic_offer_error(
     manager: &VisitorSessionManager,
@@ -177,15 +188,7 @@ impl Rt1VisitorConversation {
 
         // The operation identity exists BEFORE admission so a concurrent
         // owner pause can create a durable cancellation tombstone.
-        let mut nonce = [0_u8; 16];
-        getrandom::fill(&mut nonce).map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
-        let operation_id = nonce
-            .iter()
-            .fold(String::with_capacity(32), |mut result, octet| {
-                use std::fmt::Write;
-                write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
-                result
-            });
+        let operation_id = diagnostic_operation_id()?;
         let remote = Arc::new(Rt1RemoteMediaRevocation::new(
             client.clone(),
             operation_id.clone(),
