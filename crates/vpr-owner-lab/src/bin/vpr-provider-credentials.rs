@@ -562,11 +562,15 @@ fn expressive_echo_voice_route_denied(
         "VPR_OWNER_LAB_TTS_API_KEY",
         "VPR_OWNER_LAB_TTS_MODEL",
         "VPR_OWNER_LAB_TTS_VOICE",
-    ].iter().all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
+    ]
+    .iter()
+    .all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
     let route_ready = stored_ready || env_ready;
     let override_value = env::var("VPR_DID_ECHO_ENABLED").ok();
     // An explicitly disabled Echo must not be bypassed by stored credentials.
-    let echo = override_value.as_deref().or(if route_ready { Some("true") } else { None });
+    let echo = override_value
+        .as_deref()
+        .or(if route_ready { Some("true") } else { None });
     !route_ready || expressive_echo_preflight_denied(presenter, echo)
 }
 
