@@ -23,6 +23,7 @@ pub(super) fn deliver_phrase(
     ),
     LabError,
 > {
+    crate::voice_diagnostic::record("avatar_delivery", "started");
     if let Some(tts) = tts {
         let (delivery, timings) = turn
             .synthesize_and_deliver_realtime_avatar_audio_with_timings(
