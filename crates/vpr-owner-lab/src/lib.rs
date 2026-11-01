@@ -15,6 +15,7 @@ mod rt1_workspace;
 mod rt1_workspace_service;
 mod state;
 mod voice_profile;
+mod voice_diagnostic;
 #[cfg(windows)]
 mod windows_secure_store;
 
