@@ -39,7 +39,7 @@ jobs:
       - name: RT1 aiortc timeout cancellation regression
         run: python3 tests/e2e/test_rt1_aiortc_backend_timeout.py -v
       - name: D-ID V2 remote STOP observation privacy and non-promotion regression
-        run: python3 -m unittest tests/e2e/test_rt1_did_v2_remote_stop_observe.py -v
+        run: python3 tests/e2e/test_rt1_did_v2_remote_stop_observe.py -v
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
       - name: Piper speech bridge PCM and authorization contract
