@@ -37,12 +37,14 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertGreaterEqual(diagnostic.count("manager.authorize(&id)"), 2)
         # SDP must never be returned without rechecking the current persona
         # publication and remote STOP outcome after offer construction.
-        self.assertIn("manager.authorize_persona(&id, &persona_id, persona_version).is_err()", diagnostic)
+        self.assertRegex(diagnostic, r"manager\s*\.\s*authorize_persona\(&id, &persona_id, persona_version\)\s*\.is_err\(\)")
         self.assertIn("remote.is_revoked()", diagnostic)
         self.assertIn("interrupt.cancelled.load(Ordering::Acquire)", diagnostic)
-        self.assertIn('return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into())', diagnostic)
+        self.assertIn("return Err(revoked_diagnostic_offer_error(&manager, &id, &remote));", diagnostic)
+        self.assertIn('"RT1_VISITOR_REVOKED_DURING_OFFER".into()', source)
+        self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()', source)
         self.assertLess(diagnostic.index("let bundle = match started"),
-                        diagnostic.rindex("manager.authorize_persona(&id, &persona_id, persona_version).is_err()"))
+                        diagnostic.rindex(".authorize_persona(&id, &persona_id, persona_version)"))
 
 
         http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
