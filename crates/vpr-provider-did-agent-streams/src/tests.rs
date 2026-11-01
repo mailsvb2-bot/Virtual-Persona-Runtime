@@ -796,8 +796,11 @@ impl DidEchoBackend for MockEchoBackend {
 #[test]
 fn failed_echo_stop_retains_identity_for_retry() {
     use std::sync::atomic::AtomicUsize;
-    struct FailOnce(AtomicUsize);
-    impl DidEchoBackend for FailOnce {
+    struct FailOnce<'a> {
+        attempts: AtomicUsize,
+        revoke_after_open: Option<&'a Probe>,
+    }
+    impl DidEchoBackend for FailOnce<'_> {
         fn open(
             &self,
             _id: &str,
@@ -805,6 +808,9 @@ fn failed_echo_stop_retains_identity_for_retry() {
             _token: &str,
             _probe: &dyn CancellationProbe,
         ) -> Result<(), ProviderError> {
+            if let Some(probe) = self.revoke_after_open {
+                probe.0.store(true, Ordering::SeqCst);
+            }
             Ok(())
         }
         fn speak(
@@ -816,28 +822,34 @@ fn failed_echo_stop_retains_identity_for_retry() {
             Ok(())
         }
         fn stop(&self, _id: &str) -> Result<(), ProviderError> {
-            if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
                 Err(super::unavailable())
             } else {
                 Ok(())
             }
         }
     }
-    let backend = FailOnce(AtomicUsize::new(0));
+    let backend = FailOnce {
+        attempts: AtomicUsize::new(0),
+        revoke_after_open: None,
+    };
     let registry = DidEchoRegistry::default();
     registry.insert("retry-sender").unwrap();
     assert!(registry.close_session(&backend, "retry-sender").is_err());
     assert!(registry.contains("retry-sender").unwrap());
     registry.close_session(&backend, "retry-sender").unwrap();
     assert!(!registry.contains("retry-sender").unwrap());
-    assert_eq!(backend.0.load(Ordering::SeqCst), 2);
+    assert_eq!(backend.attempts.load(Ordering::SeqCst), 2);
 
     // A revoke arriving immediately after Echo OPEN must not erase the
     // only sender identity when the compensating STOP fails. A later
     // canonical close must still be able to retry that same STOP.
-    let revoked_backend = FailOnce(AtomicUsize::new(0));
+    let revoked = Probe(AtomicBool::new(false));
+    let revoked_backend = FailOnce {
+        attempts: AtomicUsize::new(0),
+        revoke_after_open: Some(&revoked),
+    };
     let revoked_registry = DidEchoRegistry::default();
-    let revoked = Probe(AtomicBool::new(true));
     assert!(revoked_registry
         .open_session(
             &revoked_backend,
@@ -852,7 +864,8 @@ fn failed_echo_stop_retains_identity_for_retry() {
         .close_session(&revoked_backend, "revoked-sender")
         .unwrap();
     assert!(!revoked_registry.contains("revoked-sender").unwrap());
-    assert_eq!(revoked_backend.0.load(Ordering::SeqCst), 2);
+    assert!(revoked.is_cancelled());
+    assert_eq!(revoked_backend.attempts.load(Ordering::SeqCst), 2);
 }
 
 #[test]
