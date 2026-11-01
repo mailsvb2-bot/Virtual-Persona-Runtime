@@ -34,6 +34,7 @@ pub(super) fn deliver_phrase(
                 eprintln!("VPR audio_delivery path=server_tts failed");
                 terminalize_avatar_output_error(turn, error)
             })?;
+        crate::voice_diagnostic::record("avatar_delivery", "completed");
         return Ok((delivery, None, Some(timings)));
     }
     let client_text = handle
