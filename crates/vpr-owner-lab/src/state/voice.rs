@@ -260,6 +260,7 @@ impl OwnerLabEngine {
             evidence_turn_sequence,
             &mut emit_segment,
         )?;
+        crate::voice_diagnostic::record("llm_generation", "completed");
         let evidence_output_sequence = generation
             .output_sequences
             .first()
