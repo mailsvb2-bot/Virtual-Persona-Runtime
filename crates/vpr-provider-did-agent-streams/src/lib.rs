@@ -551,7 +551,11 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 if let Some(backend) = &self.echo_backend {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
-                    return Ok(());
+                    // Closing the private Echo sender confirms only local
+                    // disconnect. D-ID V2 exposes no authenticated remote
+                    // video termination receipt through this adapter.
+                    // Never report success to RT1 as a remote media STOP.
+                    return Err(unavailable());
                 }
                 // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
                 // from the room and D-ID closes the unused session after its inactivity timeout.
