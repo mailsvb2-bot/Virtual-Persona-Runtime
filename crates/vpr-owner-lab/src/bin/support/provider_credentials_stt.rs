@@ -23,7 +23,6 @@ pub(super) fn set_stt_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     Ok(())
 }
 
-
 pub(super) fn clear() -> Result<(), Box<dyn Error + Send + Sync>> {
     vpr_owner_lab::delete_provider_profile()?;
     println!("Secure VPR provider profile cleared.");
