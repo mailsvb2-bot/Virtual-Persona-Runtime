@@ -122,7 +122,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             return error_response(http_evidence::error_status(error), error.code());
         }
     };
-    voice_trace::record(session_sequence, request_sequence, "voice_start", "request_received");
+    voice_trace::start(session_sequence, request_sequence);
     if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
         release_voice_busy(state);
         return error_response(http_evidence::error_status(error), error.code());
@@ -140,7 +140,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             }
         }) {
             Ok(input) => {
-                voice_trace::record(session_sequence, request_sequence, "stt_open", "accepted");
+                voice_trace::stt_accepted(session_sequence, request_sequence);
                 input
             }
             Err(error) => {
@@ -248,7 +248,7 @@ pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>
     {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
-    voice_trace::record(session_sequence, request_sequence, "voice_finish", "processing_started");
+    voice_trace::processing(session_sequence, request_sequence);
     spawn_voice_worker(state, session_sequence, request_sequence, input);
     json_response(
         202,
@@ -441,7 +441,7 @@ fn spawn_voice_worker(
             Err(_) => Err(LabError::Internal),
         };
         if let Err(ref error) = result {
-            voice_trace::record(session_sequence, request_sequence, "voice_worker", "failed");
+            voice_trace::failed(session_sequence, request_sequence);
             eprintln!(
                 "VPR voice request={} failed code={} (inspect STT stage diagnostics)",
                 request_sequence,
@@ -449,7 +449,7 @@ fn spawn_voice_worker(
             );
         }
         if result.is_ok() {
-            voice_trace::record(session_sequence, request_sequence, "voice_worker", "completed");
+            voice_trace::completed(session_sequence, request_sequence);
         }
         *worker_state.active_voice_interrupt.lock() = None;
         let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
