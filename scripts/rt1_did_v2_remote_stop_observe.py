@@ -43,9 +43,17 @@ def read_session(session_id: str, credential: str) -> tuple[int, dict]:
     return status, obj if isinstance(obj, dict) else {}
 
 
-def scalar(obj: dict, name: str):
-    value = obj.get(name)
-    return value if type(value) in (bool, int, float, str) and len(str(value)) <= 80 else None
+def status_category(obj: dict) -> str:
+    """Never print provider-controlled free text, even in a status field."""
+    value = obj.get("status")
+    if not isinstance(value, str):
+        return "missing"
+    status = value.strip().lower()
+    if status in {"active", "running", "connected", "streaming"}:
+        return "active"
+    if status in {"closed", "ended", "terminated", "completed", "failed", "expired", "disconnected"}:
+        return "terminal"
+    return "other"
 
 
 def main() -> int:
@@ -76,7 +84,7 @@ def main() -> int:
             "sample": i + 1,
             "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "http_status": code,
-            "provider_status": scalar(body, "status"),
+            "provider_status_category": status_category(body),
             "ended_at_present": bool(body.get("ended_at")),
             "closed_at_present": bool(body.get("closed_at")),
         }
