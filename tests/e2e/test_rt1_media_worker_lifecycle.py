@@ -351,6 +351,64 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(restarted.status("op-a")[1], "stopped")
         self.assertEqual(restarted.create("op-b", 1), "session-a")
 
+    def test_lost_create_reply_with_known_sender_id_is_recoverable_after_restart(self):
+        # The remote allocation may succeed before the CREATE response is lost.
+        # A stable preassigned identity lets restart retry authenticated STOP,
+        # but it must never turn the timeout itself into a STOP receipt.
+        class LostReplySender(Sender):
+            remote_active = False
+
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return f"rt1-{operation_id}-{generation}"
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                self.remote_active = True
+                raise TimeoutError("simulated lost CREATE reply")
+
+            def stop(self, operation_id, session_id, generation):
+                if not self.remote_active or session_id != self.recovery_session_id(operation_id, generation):
+                    raise RuntimeError("sender STOP not confirmed")
+                self.stopped += 1
+                self.remote_active = False
+                return mod.StopReceipt(operation_id, session_id, generation, True, True)
+
+        sender = LostReplySender()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(TimeoutError, "lost CREATE reply"):
+            worker.create("op-lost", 1)
+        self.assertEqual(worker.status("op-lost"), (1, "uncertain", "rt1-op-lost-1"))
+        self.assertTrue(sender.remote_active)
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
+        restarted.reconcile()
+        self.assertEqual(restarted.status("op-lost"), (1, "stopped", "rt1-op-lost-1"))
+        self.assertFalse(sender.remote_active)
+        self.assertEqual(sender.stopped, 1)
+        with self.assertRaises(RuntimeError):
+            restarted.create("op-lost", 1)
+
+    def test_lost_create_reply_without_authoritative_id_stays_quarantined(self):
+        class UnknownIdSender(Sender):
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                raise TimeoutError("remote CREATE outcome unknown")
+
+        sender = UnknownIdSender()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaises(TimeoutError):
+            worker.create("unknown", 1)
+        self.assertEqual(worker.status("unknown"), (1, "uncertain", None))
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(restarted.status("unknown"), (1, "uncertain", None))
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
+
     def test_unknown_id_after_restart_must_not_reallocate(self):
         self.worker._write("op-a", 1, "uncertain", None)
         restarted = mod.MediaLifecycle(self.db, self.sender)

@@ -11,6 +11,12 @@ from rt1_aiortc_backend import AiortcSenderBackend
 
 
 class SenderTimeoutTests(unittest.TestCase):
+    def test_preassigned_sender_identity_matches_allocation_contract(self):
+        self.assertEqual(
+            AiortcSenderBackend.recovery_session_id("op-42", 7),
+            "rt1-op-42-7",
+        )
+
     def test_successful_loop_call(self):
         backend = AiortcSenderBackend(timeout=2.0)
         try:

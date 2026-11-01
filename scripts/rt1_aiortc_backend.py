@@ -95,12 +95,21 @@ class AiortcSenderBackend:
         except concurrent.futures.CancelledError as exc:
             raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
+    @staticmethod
+    def recovery_session_id(operation_id: str, generation: int) -> str:
+        """Exact preassigned local sender ID, not proof of allocation or STOP.
+
+        This is safe only for this aiortc backend's deterministic identity.
+        Providers assigning IDs after CREATE must not implement this contract.
+        """
+        return f"rt1-{operation_id}-{generation}"
+
     def allocate(self, operation_id: str, generation: int) -> str:
         return self._call(self._allocate(operation_id, generation))
 
     async def _allocate(self, operation_id: str, generation: int) -> str:
         from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
-        session_id = f"rt1-{operation_id}-{generation}"
+        session_id = self.recovery_session_id(operation_id, generation)
         peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
             RTCIceServer(urls=item["urls"], username=item["username"], credential=item["credential"])
             for item in self._ice_servers
@@ -199,7 +208,7 @@ class AiortcSenderBackend:
             pending = list(self._sessions.values())
         for entry in pending:
             try:
-                self.stop(entry.operation_id, f"rt1-{entry.operation_id}-{entry.generation}", entry.generation)
+                self.stop(entry.operation_id, self.recovery_session_id(entry.operation_id, entry.generation), entry.generation)
             except Exception:
                 # Caller must inspect its durable ledger and retry reconciliation.
                 pass

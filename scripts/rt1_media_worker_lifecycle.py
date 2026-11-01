@@ -103,6 +103,22 @@ class MediaLifecycle:
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
         except BaseException:
+            # Some backends can name the exact sender *before* a remote
+            # CREATE response arrives. Preserve that identity when a timeout
+            # or lost response leaves allocation outcome unknown, so a
+            # restarted worker can attempt compensating STOP. This is NOT
+            # evidence that the sender exists or has stopped. Backends with
+            # server-assigned IDs must not guess one.
+            recovery_id = None
+            identity = getattr(self._backend, "recovery_session_id", None)
+            if callable(identity):
+                try:
+                    candidate = identity(operation_id, generation)
+                    if isinstance(candidate, str) and candidate:
+                        recovery_id = candidate
+                except Exception:
+                    # Never hide the original CREATE failure or invent an ID.
+                    pass
             with self._lock:
                 # A different worker may CANCEL between a read and a write.
                 # Never overwrite its durable tombstone with an old CREATE result.
@@ -111,11 +127,12 @@ class MediaLifecycle:
                     row = self._get(operation_id)
                     # A failed CREATE may still have allocated remotely. Do not
                     # retry it or discard an already committed cancellation.
-                    if row and row[0] == generation and row[1] in ("creating", "stopping") and row[2] is None:
+                    if row and row[0] == generation and row[1] in ("creating", "stopping", "uncertain") and row[2] is None:
                         # CANCEL may have committed while CREATE was in flight.
-                        # A failed/timeout CREATE has no verifiable sender ID;
-                        # keep the cancellation fenced as UNCERTAIN, never STOPPED.
-                        self._write(operation_id, generation, "uncertain", None)
+                        # A lost CREATE reply may still have a known, stable
+                        # sender ID; otherwise retain an unknown-id quarantine.
+                        # Neither outcome is a verified STOP.
+                        self._write(operation_id, generation, "uncertain", recovery_id)
                     self._db.execute("COMMIT")
                 except BaseException:
                     if self._db.in_transaction:
