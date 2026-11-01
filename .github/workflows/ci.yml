@@ -192,6 +192,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Real Windows Owner Lab canary E2E failed' }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
+      - name: Windows Expressive Echo credential setup and readiness regression
+        run: cargo test --locked -p vpr-owner-lab --bin vpr-provider-credentials
       - name: Windows clippy parity gate
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Windows live-proof credential isolation tests
