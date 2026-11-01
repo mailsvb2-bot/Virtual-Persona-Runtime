@@ -431,27 +431,7 @@ fn probe_profile_did(
             // The Windows credential store is the canonical owner of the voice
             // route. A process-only environment check rejects correctly saved
             // profiles and sends owners through setup again.
-            let stored_tts_ready = stored_voice_route_ready(profile.tts.as_ref());
-            let process_tts_ready = [
-                "VPR_OWNER_LAB_TTS_PROVIDER",
-                "VPR_OWNER_LAB_TTS_ENDPOINT",
-                "VPR_OWNER_LAB_TTS_API_KEY",
-                "VPR_OWNER_LAB_TTS_MODEL",
-                "VPR_OWNER_LAB_TTS_VOICE",
-            ]
-            .iter()
-            .all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
-            let explicitly_set = env::var("VPR_DID_ECHO_ENABLED").ok();
-            // Explicit operator disable always wins. Presence of a voice
-            // route only passes the configuration gate; it is NOT a receipt
-            // for an established Echo publisher or a remote STOP.
-            let voice_route_ready = stored_tts_ready || process_tts_ready;
-            let echo_enabled = explicitly_set.as_deref().or(if voice_route_ready {
-                Some("true")
-            } else {
-                None
-            });
-            if !voice_route_ready || expressive_echo_preflight_denied(&presenter, echo_enabled) {
+            if expressive_echo_voice_route_denied(&presenter, profile) {
                 return Err(
                     "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID authentication succeeded, but Expressive requires a configured server-owned Echo voice route. Save a working TTS route in Windows Credential Manager or configure the existing TTS environment. Never disable the revocation guard; this probe does not confirm an active media publisher."
                         .into(),
@@ -568,6 +548,29 @@ fn redact_identifier(value: &str) -> String {
 }
 
 #[cfg(windows)]
+fn expressive_echo_voice_route_denied(
+    presenter: &str,
+    profile: &ProviderCredentialProfile,
+) -> bool {
+    if !presenter.eq_ignore_ascii_case("expressive") {
+        return false;
+    }
+    let stored_ready = stored_voice_route_ready(profile.tts.as_ref());
+    let env_ready = [
+        "VPR_OWNER_LAB_TTS_PROVIDER",
+        "VPR_OWNER_LAB_TTS_ENDPOINT",
+        "VPR_OWNER_LAB_TTS_API_KEY",
+        "VPR_OWNER_LAB_TTS_MODEL",
+        "VPR_OWNER_LAB_TTS_VOICE",
+    ].iter().all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
+    let route_ready = stored_ready || env_ready;
+    let override_value = env::var("VPR_DID_ECHO_ENABLED").ok();
+    // An explicitly disabled Echo must not be bypassed by stored credentials.
+    let echo = override_value.as_deref().or(if route_ready { Some("true") } else { None });
+    !route_ready || expressive_echo_preflight_denied(presenter, echo)
+}
+
+#[cfg(windows)]
 fn stored_voice_route_ready(stored: Option<&StoredTtsCredential>) -> bool {
     stored.is_some_and(|tts| tts.validate().is_ok())
 }
@@ -579,50 +582,5 @@ fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>)
 }
 
 #[cfg(all(test, windows))]
-mod expressive_echo_preflight_tests {
-    use super::expressive_echo_preflight_denied;
-
-    #[test]
-    fn expressive_without_private_echo_is_rejected_before_ui_launch() {
-        assert!(expressive_echo_preflight_denied("expressive", None));
-        assert!(expressive_echo_preflight_denied(
-            "Expressive",
-            Some("false")
-        ));
-        assert!(!expressive_echo_preflight_denied(
-            "expressive",
-            Some("true")
-        ));
-        assert!(!expressive_echo_preflight_denied(
-            "Expressive",
-            Some(" True ")
-        ));
-        assert!(expressive_echo_preflight_denied(
-            "Expressive",
-            Some(" false ")
-        ));
-    }
-
-    #[test]
-    fn securely_saved_tts_profile_counts_as_configured_voice_route() {
-        use super::{StoredTtsCredential, stored_voice_route_ready};
-        assert!(!stored_voice_route_ready(None));
-        let good = StoredTtsCredential {
-            provider: "piper".into(),
-            endpoint: "http://127.0.0.1:8765".into(),
-            api_key: "local-only".into(),
-            model: "ru_RU".into(),
-            voice: "voice".into(),
-        };
-        assert!(stored_voice_route_ready(Some(&good)));
-        let mut incomplete = good;
-        incomplete.endpoint.clear();
-        assert!(!stored_voice_route_ready(Some(&incomplete)));
-    }
-
-    #[test]
-    fn legacy_presenters_remain_compatible_without_echo() {
-        assert!(!expressive_echo_preflight_denied("legacy", None));
-        assert!(!expressive_echo_preflight_denied("talk", None));
-    }
-}
+#[path = "provider_credentials_echo_tests.rs"]
+mod expressive_echo_preflight_tests;
