@@ -428,7 +428,11 @@ fn probe_profile_did(
             // A credential probe is not a realtime-session readiness probe.
             // Expressive V2 requires a private, server-owned Echo sender.
             // Do not let the launcher report READY then show a black avatar.
-            let tts_ready = [
+            // The Windows credential store is the canonical owner of the voice
+            // route. A process-only environment check rejects correctly saved
+            // profiles and sends owners through setup again.
+            let stored_tts_ready = profile.tts.as_ref().is_some_and(|tts| tts.validate().is_ok());
+            let process_tts_ready = [
                 "VPR_OWNER_LAB_TTS_PROVIDER",
                 "VPR_OWNER_LAB_TTS_ENDPOINT",
                 "VPR_OWNER_LAB_TTS_API_KEY",
@@ -438,15 +442,18 @@ fn probe_profile_did(
             .iter()
             .all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
             let explicitly_set = env::var("VPR_DID_ECHO_ENABLED").ok();
-            let echo_enabled = explicitly_set.as_deref().or(if tts_ready {
+            // Explicit operator disable always wins. Presence of a voice
+            // route only passes the configuration gate; it is NOT a receipt
+            // for an established Echo publisher or a remote STOP.
+            let voice_route_ready = stored_tts_ready || process_tts_ready;
+            let echo_enabled = explicitly_set.as_deref().or(if voice_route_ready {
                 Some("true")
             } else {
                 None
             });
-            if expressive_echo_preflight_denied(&presenter, echo_enabled)
-            {
+            if !voice_route_ready || expressive_echo_preflight_denied(&presenter, echo_enabled) {
                 return Err(
-                    "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID credentials are valid, but this Expressive presenter cannot open a secure session without server-owned Echo. The current credential profile contains only D-ID/Deepgram/DeepSeek, not a voice provider. The launcher must not claim avatar readiness. Configure server-owned Echo with a voice service; do not disable the revocation guard."
+                    "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID authentication succeeded, but Expressive requires a configured server-owned Echo voice route. Save a working TTS route in Windows Credential Manager or configure the existing TTS environment. Never disable the revocation guard; this probe does not confirm an active media publisher."
                         .into(),
                 );
             }
