@@ -307,7 +307,9 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     let body: VisitorSession = parse_json(request)?;
     // Do not erase a session until an actual remote STOP is confirmed.
     // Keep it for a retry if the network is unreachable.
-    lookup(state, &body.session_id)?
+    let conversation = lookup(state, &body.session_id)?;
+    let remote_stop_confirmed = conversation.has_remote_video_stop_receipt_path();
+    conversation
         .close()
         .map_err(|_| error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"))?;
     state.rt1.conversations.lock().remove(&body.session_id);
@@ -315,7 +317,9 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         200,
         &serde_json::json!({
             "ok": true,
-            "remote_stop_confirmed": true,
+            "local_stop_confirmed": true,
+            "remote_stop_confirmed": remote_stop_confirmed,
+            "remote_video_stop_confirmed": remote_stop_confirmed,
         }),
     ))
 }
