@@ -120,7 +120,12 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             return error_response(http_evidence::error_status(error), error.code());
         }
     };
-    vpr_owner_lab::voice_trace_event("voice_start", "request_received", Some(session_sequence), Some(request_sequence));
+    vpr_owner_lab::voice_trace_event(
+        "voice_start",
+        "request_received",
+        Some(session_sequence),
+        Some(request_sequence),
+    );
     if let Err(error) = state.evidence.lock().begin_voice_request(request_sequence) {
         release_voice_busy(state);
         return error_response(http_evidence::error_status(error), error.code());
@@ -138,9 +143,14 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             }
         }) {
             Ok(input) => {
-                vpr_owner_lab::voice_trace_event("stt_open", "accepted", Some(session_sequence), Some(request_sequence));
+                vpr_owner_lab::voice_trace_event(
+        "stt_open",
+        "accepted",
+        Some(session_sequence),
+        Some(request_sequence),
+    );
                 input
-            },
+            }
             Err(error) => {
                 // The browser evidence contains only a public reason code.
                 // Preserve a stage-specific server diagnostic without exposing audio
@@ -246,7 +256,12 @@ pub(super) fn finish_input_response(request: &mut Request, state: &Arc<AppState>
     {
         return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
     }
-    vpr_owner_lab::voice_trace_event("voice_finish", "processing_started", Some(session_sequence), Some(request_sequence));
+    vpr_owner_lab::voice_trace_event(
+        "voice_finish",
+        "processing_started",
+        Some(session_sequence),
+        Some(request_sequence),
+    );
     spawn_voice_worker(state, session_sequence, request_sequence, input);
     json_response(
         202,
@@ -439,7 +454,12 @@ fn spawn_voice_worker(
             Err(_) => Err(LabError::Internal),
         };
         if let Err(ref error) = result {
-            vpr_owner_lab::voice_trace_event("voice_worker", "failed", Some(session_sequence), Some(request_sequence));
+            vpr_owner_lab::voice_trace_event(
+        "voice_worker",
+        "failed",
+        Some(session_sequence),
+        Some(request_sequence),
+    );
             eprintln!(
                 "VPR voice request={} failed code={} (inspect STT stage diagnostics)",
                 request_sequence,
@@ -447,7 +467,12 @@ fn spawn_voice_worker(
             );
         }
         if result.is_ok() {
-            vpr_owner_lab::voice_trace_event("voice_worker", "completed", Some(session_sequence), Some(request_sequence));
+            vpr_owner_lab::voice_trace_event(
+        "voice_worker",
+        "completed",
+        Some(session_sequence),
+        Some(request_sequence),
+    );
         }
         *worker_state.active_voice_interrupt.lock() = None;
         let terminal = prepare_voice_terminal_event(&worker_state, request_sequence, result);
