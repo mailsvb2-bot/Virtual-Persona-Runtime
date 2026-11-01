@@ -44,11 +44,17 @@ impl VoiceSttInput {
                 eprintln!("VPR voice STT stage=open stage_detail=redacted");
                 let reason = match &error {
                     ProviderExecutionError::Provider(provider)
-                        if provider.kind == ProviderErrorKind::AuthenticationDenied => "provider_auth_denied",
+                        if provider.kind == ProviderErrorKind::AuthenticationDenied =>
+                    {
+                        "provider_auth_denied"
+                    }
                     ProviderExecutionError::Provider(provider)
-                        if provider.kind == ProviderErrorKind::PolicyDenied => "provider_policy_denied",
+                        if provider.kind == ProviderErrorKind::PolicyDenied =>
+                    {
+                        "provider_policy_denied"
+                    }
                     ProviderExecutionError::Provider(_) => "provider_other_failure",
-                    _ => "runtime_authority_denied",
+                    ProviderExecutionError::Denied(_) => "runtime_authority_denied",
                 };
                 crate::voice_diagnostic::record("stt_open", reason);
                 Err(terminalize_provider_error(turn, error))
