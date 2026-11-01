@@ -17,6 +17,10 @@ use vpr_provider_did_agent_streams::{
 #[cfg(windows)]
 use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
+#[cfg(windows)]
+#[path = "support/provider_credentials_stt.rs"]
+mod provider_credentials_stt;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("provider-credentials failed: {error}");
@@ -42,7 +46,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
         "set-tts" => set_tts_profile(),
-        "set-stt" => set_stt_profile(),
+        "set-stt" => provider_credentials_stt::set_stt_profile(),
         "set-llm" => set_llm_profile(env::args().nth(2).as_deref()),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
@@ -94,26 +98,6 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     probe_selected_avatar(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
-    print_safe_profile(&profile);
-    Ok(())
-}
-
-#[cfg(windows)]
-fn set_stt_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut profile = load_provider_profile()?
-        .ok_or("secure VPR profile is missing; configure providers first")?;
-    if profile.stt_provider != "deepgram" {
-        return Err("set-stt currently supports only the existing Deepgram profile".into());
-    }
-    println!("Replace ONLY Deepgram API key; D-ID, LLM and TTS are preserved.");
-    let key = prompt_secret("New Deepgram API key (hidden): ")?;
-    if key.is_empty() || key.trim() != key || key.chars().any(char::is_control) {
-        return Err("invalid Deepgram key format".into());
-    }
-    profile.stt_api_key = key;
-    profile.validate()?;
-    save_provider_profile(&profile)?;
-    println!("Deepgram credential replaced in Windows Credential Manager.");
     print_safe_profile(&profile);
     Ok(())
 }
