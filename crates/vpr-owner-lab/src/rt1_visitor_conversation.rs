@@ -430,6 +430,14 @@ impl Rt1VisitorConversation {
         Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
     }
 
+    /// True only for the durable worker path that verifies both remote RTP
+    /// sender tracks stopped. Canonical D-ID LiveKit Echo close is a local
+    /// publisher disconnect, not authenticated remote video termination.
+    #[must_use]
+    pub fn has_remote_video_stop_receipt_path(&self) -> bool {
+        self.remote.is_some()
+    }
+
     /// # Errors
     /// Always attempts provider cleanup, even if owner pause already removed
     /// the registration. A failed remote close remains retryable on a later call.
