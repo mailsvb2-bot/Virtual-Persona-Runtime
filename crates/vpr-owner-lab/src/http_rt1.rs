@@ -230,6 +230,19 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     }
     let voice_enabled = conversation.supports_private_voice();
     active.insert(session_id.clone(), Arc::new(conversation));
+    // Recheck after registration, not only before it: an owner revoke can
+    // win between generation of the session ID and insertion into the map.
+    if !active.get(&session_id).is_some_and(|session| session.is_active()) {
+        let revoked = active.remove(&session_id);
+        drop(active);
+        if let Some(session) = revoked {
+            if session.close().is_err() {
+                return Err(error_response(409, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
+            }
+        }
+        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
+    }
+    drop(active);
     Ok(json_response(
         200,
         &serde_json::json!({
