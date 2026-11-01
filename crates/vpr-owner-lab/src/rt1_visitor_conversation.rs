@@ -233,8 +233,13 @@ impl Rt1VisitorConversation {
         let bundle = match started {
             Ok(bundle) => bundle,
             Err(error) => {
+                // A failed CREATE/OFFER may have allocated a remote sender.
+                // Closing registration is not a remote STOP receipt: preserve
+                // an uncertain STOP as the dominant fail-closed outcome.
                 let _ = manager.close(&id);
-                let _ = remote.revoke_confirmed();
+                if remote.revoke_confirmed().is_err() {
+                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+                }
                 return Err(error);
             }
         };
