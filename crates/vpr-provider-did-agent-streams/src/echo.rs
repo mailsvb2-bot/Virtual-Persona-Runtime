@@ -122,11 +122,11 @@ impl DidEchoRegistry {
             return Err(error);
         }
         if cancellation.is_cancelled() {
-            let cleanup = backend.stop(id);
-            let forgotten = backend.forget(id);
-            self.remove(id)?;
-            // Report failed teardown, never successful revocation.
-            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
+            // Use the same canonical STOP finalizer as normal close. On a
+            // failed STOP/forget, retain the provider identity for retry:
+            // dropping it here would discard the only cleanup capability.
+            self.close_session(backend, id)?;
+            return Err(super::cancelled());
         }
         Ok(())
     }
