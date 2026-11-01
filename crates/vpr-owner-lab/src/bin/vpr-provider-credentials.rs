@@ -57,6 +57,22 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
 }
 
+// Credential setup must be possible before a voice route is saved. Only the
+// explicit readiness probe may require an operational Echo voice route.
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DidProbePurpose {
+    CredentialSetup,
+    LaunchReadiness,
+}
+
+#[cfg(windows)]
+impl DidProbePurpose {
+    fn enforces_voice_route(self) -> bool {
+        matches!(self, Self::LaunchReadiness)
+    }
+}
+
 #[cfg(windows)]
 fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("VPR RT0 provider setup: choose an avatar provider + Deepgram + DeepSeek.");
@@ -83,7 +99,7 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
         _ => return Err("avatar provider must be did or local-open-source".into()),
     };
 
-    probe_selected_avatar(&profile)?;
+    probe_selected_avatar(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
     print_safe_profile(&profile);
@@ -180,7 +196,7 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     let did_api_key = prompt_secret("D-ID API key: ")?;
     let did_agent_id = prompt_line("D-ID agent ID: ")?;
     profile.replace_did_credentials(&did_api_key, &did_agent_id);
-    probe_profile_did(&profile)?;
+    probe_profile_did(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Updated D-ID credentials securely for the current Windows user.");
     print_safe_profile(&profile);
@@ -207,7 +223,7 @@ fn use_did_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
     profile.select_did_avatar();
-    probe_profile_did(&profile)?;
+    probe_profile_did(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Selected D-ID avatar for the current Windows user.");
     print_safe_profile(&profile);
@@ -236,7 +252,7 @@ fn import_env_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
         ),
         _ => unreachable!("avatar provider resolver returns canonical names only"),
     };
-    probe_selected_avatar(&profile)?;
+    probe_selected_avatar(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Imported current CMD provider credentials into Windows Credential Manager.");
     print_safe_profile(&profile);
@@ -320,15 +336,16 @@ fn status() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn probe_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    probe_selected_avatar(&profile)
+    probe_selected_avatar(&profile, DidProbePurpose::LaunchReadiness)
 }
 
 #[cfg(windows)]
 fn probe_selected_avatar(
     profile: &ProviderCredentialProfile,
+    purpose: DidProbePurpose,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     match profile.avatar_provider.as_str() {
-        "did" | "d-id" | "did-agent-streams" => probe_profile_did(profile),
+        "did" | "d-id" | "did-agent-streams" => probe_profile_did(profile, purpose),
         "local" | "local-open-source" => probe_profile_local_avatar(profile),
         _ => Err("secure VPR provider profile selects an unsupported avatar provider".into()),
     }
@@ -370,12 +387,13 @@ fn probe_profile_local_avatar(
 fn probe_did() -> Result<(), Box<dyn Error + Send + Sync>> {
     let profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    probe_profile_did(&profile)
+    probe_profile_did(&profile, DidProbePurpose::LaunchReadiness)
 }
 
 #[cfg(windows)]
 fn probe_profile_did(
     profile: &ProviderCredentialProfile,
+    purpose: DidProbePurpose,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let provider = DidAgentStreamsAvatar::new(
         DidAgentStreamsConfig::new(
@@ -431,7 +449,9 @@ fn probe_profile_did(
             // The Windows credential store is the canonical owner of the voice
             // route. A process-only environment check rejects correctly saved
             // profiles and sends owners through setup again.
-            if expressive_echo_voice_route_denied(&presenter, profile) {
+            if purpose.enforces_voice_route()
+                && expressive_echo_voice_route_denied(&presenter, profile)
+            {
                 return Err(
                     "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID authentication succeeded, but Expressive requires a configured server-owned Echo voice route. Save a working TTS route in Windows Credential Manager or configure the existing TTS environment. Never disable the revocation guard; this probe does not confirm an active media publisher."
                         .into(),

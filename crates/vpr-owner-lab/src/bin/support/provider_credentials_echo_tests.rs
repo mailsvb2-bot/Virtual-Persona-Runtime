@@ -44,3 +44,21 @@ fn legacy_presenters_remain_compatible_without_echo() {
     assert!(!expressive_echo_preflight_denied("legacy", None));
     assert!(!expressive_echo_preflight_denied("talk", None));
 }
+
+#[test]
+fn initial_did_credential_setup_precedes_expressive_voice_readiness() {
+    use super::{DidProbePurpose, ProviderCredentialProfile, stored_voice_route_ready};
+
+    // The first secure D-ID profile has no TTS route yet. The operator must
+    // be able to store it before running set-tts; launch/probe stays gated.
+    let profile = ProviderCredentialProfile::canonical_rt0(
+        "username:password",
+        "agent",
+        "stt-key".into(),
+        "llm-key".into(),
+    );
+    assert!(profile.tts.is_none());
+    assert!(!stored_voice_route_ready(profile.tts.as_ref()));
+    assert!(!DidProbePurpose::CredentialSetup.enforces_voice_route());
+    assert!(DidProbePurpose::LaunchReadiness.enforces_voice_route());
+}
