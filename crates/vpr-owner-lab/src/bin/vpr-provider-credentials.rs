@@ -107,7 +107,7 @@ fn set_stt_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     }
     println!("Replace ONLY Deepgram API key; D-ID, LLM and TTS are preserved.");
     let key = prompt_secret("New Deepgram API key (hidden): ")?;
-    if key.is_empty() || key.trim() != key || key.contains(['\\r', '\\n']) {
+    if key.is_empty() || key.trim() != key || key.chars().any(char::is_control) {
         return Err("invalid Deepgram key format".into());
     }
     profile.stt_api_key = key;
