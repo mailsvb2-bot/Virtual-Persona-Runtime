@@ -223,7 +223,7 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertIn("pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS", shutdown)
         self.assertIn("if unfinished:", shutdown)
         self.assertIn("cleanup_confirmed = False", shutdown)
-        self.assertIn("emit(close_identifier, cleanup_confirmed)", shutdown)
+        self.assertIn("emit(close_identifier, cleanup_confirmed and close_control_confirmed)", shutdown)
 
     def test_stalled_livekit_pcm_write_times_out_and_never_claims_delivery(self):
         pcm = bytes([4, 0] * 160)
@@ -267,6 +267,30 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertEqual(trace["disconnected"], 1)
         self.assertFalse(any(x["id"] == 21 and x["ok"] for x in receipts))
         self.assertTrue(any(x["id"] == 21 and not x["ok"] for x in receipts))
+
+    def test_failed_close_interrupt_is_terminal_and_cannot_restart_media(self):
+        # A timed-out vendor interrupt is not a STOP receipt. Critically, the
+        # worker must still exit and disconnect: later queued SPEAK/PCM input
+        # must not resurrect media after the owner's CLOSE command.
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 81, "command": "close"},
+            {"id": 82, "command": "speak", "text": "must never publish"},
+            {"id": 83, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, stop_latency=0.4,
+            media_stop_timeout=0.03, media_close_timeout=0.1,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertEqual(trace["audio"], [])
+        self.assertEqual(trace["stream_options"], [])
+        self.assertEqual([r for r in receipts if r["id"] == 81],
+                         [{"id": 81, "ok": False}])
+        self.assertFalse(any(r["id"] in (82, 83) for r in receipts))
 
     def test_close_receipt_waits_for_livekit_disconnect(self):
         records = [

@@ -171,6 +171,7 @@ async def run():
     generation = 0
     active_pcm = None
     close_identifier = None
+    close_control_confirmed = True
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -484,14 +485,20 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    await asyncio.wait_for(
-                        room.local_participant.send_text("{}", topic="did.interrupt"),
-                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
-                        )
-                    # Do not acknowledge close before cancelled tasks and the
-                    # transport have actually finished closing. A sent STOP
-                    # control packet is not a completed local teardown.
+                    # CLOSE is terminal even if the provider refuses or
+                    # times out the interrupt. Continuing to read stdin would
+                    # permit a new SPEAK after owner revoke. The final receipt
+                    # must also remember that remote STOP control failed.
                     close_identifier = identifier
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
+                    except Exception:
+                        close_control_confirmed = False
+                    # A sent interrupt is not verified remote RTP shutdown.
+                    # Await task drain and room.disconnect before any receipt.
                     break
                 else:
                     emit(identifier, False)
@@ -524,7 +531,7 @@ async def run():
             raise
         if close_identifier is not None:
             # Local teardown receipt only; remote playback remains unproven.
-            emit(close_identifier, cleanup_confirmed)
+            emit(close_identifier, cleanup_confirmed and close_control_confirmed)
 
 
 if __name__ == "__main__":
