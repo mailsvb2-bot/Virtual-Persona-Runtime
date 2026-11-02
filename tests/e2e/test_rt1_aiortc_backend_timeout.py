@@ -2,6 +2,7 @@
 import asyncio
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -187,7 +188,16 @@ class SenderTimeoutTests(unittest.TestCase):
             self.assertEqual(audio.readyState, "ended")
             self.assertEqual(video.readyState, "ended")
             self.assertTrue(peer_closed.wait(2), "timed-out CREATE peer was not closed")
-            self.assertNotIn(session_id, backend._sessions)
+            # peer.close() signals before _stop removes its registry entry.
+            # Wait for the complete cleanup, not just the first close event.
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with backend._lock:
+                    if session_id not in backend._sessions:
+                        break
+                time.sleep(0.01)
+            with backend._lock:
+                self.assertNotIn(session_id, backend._sessions)
         finally:
             backend.shutdown()
 
