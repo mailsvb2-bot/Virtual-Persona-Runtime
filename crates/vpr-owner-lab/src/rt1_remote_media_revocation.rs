@@ -292,14 +292,14 @@ mod tests {
                         break;
                     }
                     request.extend_from_slice(&buffer[..read]);
-                    if request.windows(4).any(|part| part == b"\\r\\n\\r\\n") {
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
                         break;
                     }
                 }
                 assert!(request.starts_with(expected_path.as_bytes()));
                 write!(
                     socket,
-                    "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 )
                 .unwrap();
@@ -310,7 +310,7 @@ mod tests {
         let remote =
             Rt1RemoteMediaRevocation::new(client, "negative-answer".into(), 4).unwrap();
         assert_eq!(
-            remote.submit_answer("v=0\\r\\n").unwrap_err(),
+            remote.submit_answer("v=0\r\n").unwrap_err(),
             "RT1_REMOTE_ANSWER_UNCONFIRMED"
         );
         assert!(!remote.is_stop_confirmed());
