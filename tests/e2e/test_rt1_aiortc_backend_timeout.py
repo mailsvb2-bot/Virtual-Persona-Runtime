@@ -139,6 +139,59 @@ class SenderTimeoutTests(unittest.TestCase):
             backend.shutdown()
 
 
+    def test_timeout_after_sender_registration_stops_both_tracks_and_peer(self):
+        # Regression for timeout landing after the provider's last cancellation
+        # check but before its CREATE future is delivered to the caller.
+        # This is a simulated peer, not evidence of D-ID remote RTP STOP.
+        from rt1_aiortc_backend import _Session
+
+        registered = threading.Event()
+        peer_closed = threading.Event()
+        cancel_requested = threading.Event()
+
+        class Track:
+            def __init__(self):
+                self.readyState = "live"
+
+            def stop(self):
+                self.readyState = "ended"
+
+        class Peer:
+            connectionState = "connected"
+
+            async def close(self):
+                self.connectionState = "closed"
+                peer_closed.set()
+
+        backend = AiortcSenderBackend(timeout=0.2)
+        audio, video, peer = Track(), Track(), Peer()
+        session_id = backend.recovery_session_id("late-registered", 1)
+
+        async def register_then_stall():
+            with backend._lock:
+                backend._sessions[session_id] = _Session(
+                    peer, audio, video, "late-registered", 1
+                )
+            registered.set()
+            await asyncio.sleep(30)
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "timed out; STOP unconfirmed"):
+                backend._call(
+                    register_then_stall(),
+                    cancel_requested=cancel_requested,
+                    cancel_identity=("late-registered", 1),
+                )
+            self.assertTrue(registered.is_set())
+            self.assertTrue(cancel_requested.is_set())
+            self.assertEqual(audio.readyState, "ended")
+            self.assertEqual(video.readyState, "ended")
+            self.assertTrue(peer_closed.wait(2), "timed-out CREATE peer was not closed")
+            self.assertNotIn(session_id, backend._sessions)
+        finally:
+            backend.shutdown()
+
+
     def test_pre_cancelled_create_never_calls_provider(self):
         # A queued CREATE whose deadline expired before scheduling must not
         # even import/construct the remote transport.
