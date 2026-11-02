@@ -36,9 +36,8 @@ impl AuthorizedLlmStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn next_chunk(&mut self) -> Result<Option<String>, ProviderExecutionError> {
-        self.stream
-            .next_chunk(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .finish(self.stream.next_chunk(&self.permit.cancellation))
     }
 
     #[must_use]
@@ -58,9 +57,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn push_audio(&mut self, pcm: &[u8]) -> Result<(), ProviderExecutionError> {
-        self.stream
-            .push_audio(pcm, &self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .finish(self.stream.push_audio(pcm, &self.permit.cancellation))
     }
 
     /// Closes provider input without releasing the runtime-owned STT permit.
@@ -68,9 +66,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn finish_input(&mut self) -> Result<(), ProviderExecutionError> {
-        self.stream
-            .finish_input(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .finish(self.stream.finish_input(&self.permit.cancellation))
     }
 
     /// Pulls the next normalized recognition event under the same STT permit.
@@ -78,9 +75,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn next_event(&mut self) -> Result<Option<SttStreamEvent>, ProviderExecutionError> {
-        self.stream
-            .next_event(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .finish(self.stream.next_event(&self.permit.cancellation))
     }
 
     #[must_use]
@@ -284,9 +280,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
-        let stream = port
-            .open_stream(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)?;
+        let stream = permit.finish(port.open_stream(request, &permit.cancellation))?;
         Ok(AuthorizedLlmStream { stream, permit })
     }
 
@@ -304,8 +298,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
-        port.stream(request, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.finish(port.stream(request, &permit.cancellation, sink))
     }
 
     /// Opens one full-duplex STT stream through the canonical provider enforcement boundary.
@@ -324,9 +317,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
-        let stream = port
-            .open_stream(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)?;
+        let stream = permit.finish(port.open_stream(request, &permit.cancellation))?;
         Ok(AuthorizedSttStream { stream, permit })
     }
 
@@ -343,8 +334,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
-        port.transcribe(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        permit.finish(port.transcribe(request, &permit.cancellation))
     }
 
     /// Executes one TTS operation through the canonical provider enforcement boundary.
@@ -361,8 +351,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Tts)
             .map_err(ProviderExecutionError::from)?;
-        port.synthesize(request, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.finish(port.synthesize(request, &permit.cancellation, sink))
     }
 
     /// Executes one avatar-render operation through the canonical provider enforcement boundary.
@@ -379,8 +368,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Avatar)
             .map_err(ProviderExecutionError::from)?;
-        port.render(audio, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.finish(port.render(audio, &permit.cancellation, sink))
     }
 
     /// Moves an authorized turn into processing.
