@@ -18,7 +18,17 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         diagnostic = source.split("    pub fn start_diagnostic(", 1)[1].split(
             "    /// Whether this visitor", 1
         )[0]
-        self.assertIn("engine.start_visitor(OwnerLabStartRequest { consent })", canonical)
+        self.assertIn("engine.start_visitor_with_interrupt(", canonical)
+        self.assertIn("*startup_interrupt.turn.lock() = Some(handle.clone());", canonical)
+        self.assertIn("if startup_interrupt.cancelled.load(Ordering::Acquire)", canonical)
+        self.assertIn("handle.interrupt()", canonical)
+        self.assertLess(canonical.index("*startup_interrupt.turn.lock()"),
+                        canonical.index("*interrupt.turn.lock() = None"))
+        engine = (SOURCE.parent / "state.rs").read_text(encoding="utf-8")
+        session_revocation = (SOURCE.parent / "state" / "session_revocation.rs").read_text(encoding="utf-8")
+        self.assertIn("register_interrupt(turn.interrupt_handle());", engine)
+        self.assertIn("self.start_scoped(request, LabSessionAudience::Visitor, register_interrupt)",
+                      session_revocation)
         self.assertIn("manager.open(visitor_token", canonical)
         self.assertIn("manager.authorize_persona(", canonical)
         self.assertGreaterEqual(len(re.findall(r"manager\s*\.\s*authorize_persona\s*\(", canonical)), 2)
@@ -26,7 +36,8 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("engine.stop_visitor_provider_confirmed()", canonical)
         self.assertNotIn("RemoteOperationClient::new(", canonical)
         self.assertNotIn("std::thread::spawn(", canonical)
-        self.assertLess(canonical.index("manager.open("), canonical.index("engine.start_visitor("))
+        self.assertLess(canonical.index("manager.open("),
+                        canonical.index("engine.start_visitor_with_interrupt("))
 
         self.assertIn("RemoteOperationClient::new(", diagnostic)
         self.assertRegex(diagnostic, r"client\s*\.\s*create\s*\(\s*&operation_id\s*,\s*1\s*\)")
