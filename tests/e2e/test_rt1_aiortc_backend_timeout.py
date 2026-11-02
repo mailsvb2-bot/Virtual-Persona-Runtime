@@ -70,6 +70,75 @@ class SenderTimeoutTests(unittest.TestCase):
             backend.shutdown()
 
 
+    def test_provider_swallows_cancellation_but_late_create_cannot_publish_sender(self):
+        # Simulated non-cooperative aiortc provider, NOT real D-ID evidence.
+        # asyncio Future.cancel() alone is insufficient: the provider may
+        # swallow CancelledError and complete CREATE after the HTTP deadline.
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        started = threading.Event()
+        closed = threading.Event()
+        created = []
+
+        class Track:
+            def __init__(self):
+                self.readyState = "live"
+
+            def stop(self):
+                self.readyState = "ended"
+
+        class Peer:
+            def __init__(self, configuration):
+                self.audio = None
+                self.video = None
+                self.connectionState = "new"
+                created.append(self)
+
+            def addTrack(self, track):
+                if self.audio is None:
+                    self.audio = track
+                else:
+                    self.video = track
+
+            async def createOffer(self):
+                return object()
+
+            async def setLocalDescription(self, description):
+                started.set()
+                try:
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    # Deliberately ignore cancellation, as an uncooperative
+                    # provider implementation may do during network teardown.
+                    await asyncio.sleep(0.05)
+
+            async def close(self):
+                self.connectionState = "closed"
+                closed.set()
+
+        fake_aiortc = SimpleNamespace(
+            AudioStreamTrack=Track,
+            VideoStreamTrack=Track,
+            RTCPeerConnection=Peer,
+            RTCConfiguration=lambda **kwargs: kwargs,
+            RTCIceServer=lambda **kwargs: kwargs,
+        )
+        backend = AiortcSenderBackend(timeout=0.2)
+        try:
+            with patch.dict(sys.modules, {"aiortc": fake_aiortc}):
+                with self.assertRaisesRegex(RuntimeError, "timed out; STOP unconfirmed"):
+                    backend.allocate("late-create", 1)
+                self.assertTrue(started.is_set(), "CREATE did not reach the provider")
+                self.assertTrue(closed.wait(2), "late CREATE failed to close its peer")
+                self.assertEqual(len(created), 1)
+                self.assertEqual(created[0].audio.readyState, "ended")
+                self.assertEqual(created[0].video.readyState, "ended")
+                self.assertEqual(backend._sessions, {}, "revoked CREATE published a sender")
+        finally:
+            backend.shutdown()
+
+
 
 class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_remote_answer_must_complete_before_confirmed_stop(self):
