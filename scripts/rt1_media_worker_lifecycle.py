@@ -84,6 +84,9 @@ class MediaLifecycle:
                 self._db.execute("ROLLBACK")
             raise
         self._lock = threading.RLock()
+        # A timed-out CREATE still owns its provider thread until it exits.
+        # Bound outstanding allocations instead of spawning one per HTTP PUT.
+        self._create_gate = threading.BoundedSemaphore(1)
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
@@ -122,6 +125,8 @@ class MediaLifecycle:
         """
         if not 0 < timeout <= 60:
             raise ValueError("invalid CREATE timeout")
+        if not self._create_gate.acquire(blocking=False):
+            raise RuntimeError("another provider CREATE remains in flight")
         outcome = Queue(maxsize=1)
 
         def allocate():
@@ -129,10 +134,16 @@ class MediaLifecycle:
                 outcome.put((True, self.create(operation_id, generation)))
             except Exception as error:
                 outcome.put((False, error))
+            finally:
+                self._create_gate.release()
 
-        threading.Thread(
-            target=allocate, name="rt1-bounded-create", daemon=True
-        ).start()
+        try:
+            threading.Thread(
+                target=allocate, name="rt1-bounded-create", daemon=True
+            ).start()
+        except Exception:
+            self._create_gate.release()
+            raise
         try:
             succeeded, result = outcome.get(timeout=timeout)
         except Empty:
