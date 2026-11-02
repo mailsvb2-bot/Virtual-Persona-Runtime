@@ -346,7 +346,13 @@ fn visitor_answer(request: &mut tiny_http::Request, state: &AppState) -> Rt1Http
     let body: VisitorAnswer = parse_json(request)?;
     lookup(state, &body.session_id)?
         .submit_answer(&body.sdp)
-        .map_err(|_| error_response(409, "RT1_VISITOR_ANSWER_DENIED"))?;
+        .map_err(|code| {
+            if code == "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED" {
+                error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED")
+            } else {
+                error_response(409, "RT1_VISITOR_ANSWER_DENIED")
+            }
+        })?;
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
