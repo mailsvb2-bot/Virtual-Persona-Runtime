@@ -78,6 +78,15 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         self.assertIn('await api("/api/rt1/visitor/voice"', voice)
         self.assertIn('if (sessionId === capture.id && !stopping && voiceEnabled)', voice)
         self.assertIn('if (sessionId !== capture.id || stopping) return;', voice)
+        self.assertIn('if (epoch !== voiceRequestEpoch) return;', voice)
+
+    def test_interrupt_uses_canonical_stop_without_engine_mutex(self):
+        body = method_body(self.source, "interrupt_turn")
+        self.assertIn("self.manager.authorize(&self.id)?", body)
+        self.assertIn("stop.stop().is_err()", body)
+        self.assertIn("self.interrupt.stop()", body)
+        self.assertIn("self.manager.close(&self.id)", body)
+        self.assertNotIn("self.engine.lock()", body)
 
     def test_denial_helper_is_error_only(self):
         self.assertRegex(

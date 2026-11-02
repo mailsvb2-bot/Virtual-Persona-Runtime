@@ -112,6 +112,7 @@ pub(super) fn route_post(
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
         "/api/rt1/visitor/voice" => visitor_voice(request, state),
+        "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
         "/api/rt1/visitor/close" => visitor_close(request, state),
         _ => return None,
@@ -353,6 +354,17 @@ fn visitor_voice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         .voice_turn(body.pcm)
         .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
     Ok(json_response(200, &result))
+}
+
+fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorSession = parse_json(request)?;
+    lookup(state, &body.session_id)?
+        .interrupt_turn()
+        .map_err(|_| error_response(409, "RT1_VISITOR_INTERRUPT_DENIED"))?;
+    // Audio interrupt is not evidence of remote video shutdown.
+    Ok(json_response(200, &serde_json::json!({
+        "ok": true, "remote_video_stop_confirmed": false
+    })))
 }
 
 fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {

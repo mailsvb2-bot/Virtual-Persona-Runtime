@@ -443,7 +443,37 @@ impl Rt1VisitorConversation {
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
+        *self.interrupt.turn.lock() = None;
         result
+    }
+
+    /// Interrupt the canonical visitor turn and its independent private Echo
+    /// audio sender. This is NOT a remote video RTP STOP receipt.
+    ///
+    /// # Errors
+    /// Fails closed if private audio STOP is uncertain.
+    pub fn interrupt_turn(&self) -> Result<(), String> {
+        self.manager.authorize(&self.id)?;
+        if self.remote.is_some() || self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_INTERRUPT_DENIED".into());
+        }
+        let stop = self.interrupt.backend_stop.lock().clone()
+            .ok_or_else(|| "RT1_VISITOR_INTERRUPT_DENIED".to_owned())?;
+        // Never wait for engine.lock(): a blocked STT/LLM must be interruptible.
+        if let Some(turn) = self.interrupt.turn.lock().clone() {
+            let _ = turn.interrupt();
+        }
+        if stop.stop().is_err() {
+            // An unconfirmed sender must not accept another voice turn.
+            self.interrupt.stop();
+            let _ = self.manager.close(&self.id);
+            return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
+        }
+        self.manager.authorize(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        Ok(())
     }
 
     /// Visitor streaming is fail-closed: never call an arbitrary egress

@@ -188,6 +188,14 @@ test("visitor microphone stays disabled during pending voice and unconfirmed rem
       signal: {transport: {kind: "live_kit", server_url: "wss://example.test", token: "scoped"}},
     }) }));
   let voiceRequests = 0;
+  let interrupts = 0;
+  await page.route("**/api/rt1/visitor/interrupt", (route) => {
+    interrupts += 1;
+    return route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ ok: true, remote_video_stop_confirmed: false }),
+    });
+  });
   let release: (() => void) | null = null;
   await page.route("**/api/rt1/visitor/voice", async (route) => {
     voiceRequests += 1;
@@ -217,8 +225,12 @@ test("visitor microphone stays disabled during pending voice and unconfirmed rem
   await page.locator("#unlock-audio").click();
   await expect(page.locator("#status")).toContainText("Воспроизведение звука разрешено");
   await expect(page.locator("#speak")).toBeDisabled();
+  await page.locator("#interrupt").click();
+  await expect.poll(() => interrupts).toBe(1);
+  await expect(page.locator("#status")).toContainText("Ответ прерван");
   (release as (() => void) | null)?.();
   await expect(page.locator("#speak")).toBeEnabled();
+  await expect(page.locator("#status")).toContainText("Ответ прерван");
   expect(voiceRequests).toBe(1);
 
   // STOP without a receipt is not a successful close. Keep retry available,

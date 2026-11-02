@@ -3,7 +3,7 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const status = el("status");
-  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak"];
+  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt"];
   let csrf = "";
   let peer = null;
   let liveKitRoom = null;
@@ -17,6 +17,7 @@
   let voiceInFlight = false;
   let microphonePending = false;
   let microphoneRequest = 0;
+  let voiceRequestEpoch = 0;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -54,6 +55,7 @@
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
       el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
+      el("interrupt").disabled = !sessionId || stopping || !voiceEnabled || microphonePending;
     }
   }
 
@@ -280,6 +282,7 @@
     }
     if (voiceInFlight) return;
     voiceInFlight = true;
+    const epoch = voiceRequestEpoch;
     el("speak").disabled = true;
     message("Persona обрабатывает голосовой запрос…");
     try {
@@ -288,6 +291,7 @@
         pcm: capture.pcm
       });
       if (sessionId !== capture.id || stopping) return;
+      if (epoch !== voiceRequestEpoch) return;
       el("speech-result").textContent =
         "Вы: " + result.transcript + " · Persona: " + result.reply;
       message("Ответ Persona отправлен действующему аватару.");
@@ -295,14 +299,34 @@
       // Closing the session wins over any late voice-provider failure.
       // Do not replace a STOP warning or successful close with a stale error.
       if (sessionId === capture.id && !stopping && voiceEnabled) {
-        message("Голос недоступен для выбранного провайдера или сессии: " +
-          String(error.message || error), true);
+        if (epoch === voiceRequestEpoch) {
+          message("Голос недоступен для выбранного провайдера или сессии: " +
+            String(error.message || error), true);
+        }
       }
     } finally {
       voiceInFlight = false;
       el("speak").disabled = !sessionId || stopping || !voiceEnabled;
     }
   }
+
+  el("interrupt").addEventListener("click", () => busy(async () => {
+    if (!sessionId || stopping || !voiceEnabled) return;
+    const id = sessionId;
+    voiceRequestEpoch += 1;
+    disconnectMicrophone();
+    try {
+      await api("/api/rt1/visitor/interrupt", { session_id: id });
+    } catch (error) {
+      // A failed STOP cannot authorize another microphone upload.
+      voiceEnabled = false;
+      el("speak").disabled = true;
+      throw error;
+    }
+    if (sessionId === id && !stopping) {
+      message("Ответ прерван. Удалённая остановка видео этим не подтверждается.");
+    }
+  }));
 
   el("speak").addEventListener("click", () => {
     if (microphone) void endMicrophone();
@@ -312,6 +336,7 @@
   function cleanupLocal() {
     // Invalidate pending browser permission prompts even if STOP is unconfirmed.
     microphoneRequest += 1;
+    voiceRequestEpoch += 1;
     microphonePending = false;
     disconnectMicrophone();
     if (checking) {
@@ -340,6 +365,7 @@
     stopping = true;
     // A failed remote STOP must remain retryable, but cannot authorize new speech.
     voiceEnabled = false;
+    el("interrupt").disabled = true;
     const id = sessionId;
     cleanupLocal();
     try {
@@ -398,6 +424,7 @@
     sessionId = start.session_id;
     voiceEnabled = start.voice_enabled === true;
     el("speak").disabled = !voiceEnabled || voiceInFlight;
+    el("interrupt").disabled = !voiceEnabled;
     try {
       const transport = start.signal.transport;
       if (!transport) throw new Error("Провайдер не предоставил медиасессию.");

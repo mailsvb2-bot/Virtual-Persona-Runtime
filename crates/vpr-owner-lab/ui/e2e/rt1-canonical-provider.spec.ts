@@ -83,6 +83,10 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
   expect(unsupportedVoice.status).toBe(409);
 
 
+  // Legacy D-ID WebRTC has no private audio STOP capability.
+  const unsupportedInterrupt = await call("/api/rt1/visitor/interrupt", { session_id });
+  expect(unsupportedInterrupt.status).toBe(409);
+
   const answer = await call("/api/rt1/visitor/answer", {
     session_id,
     sdp: "v=0 canonical-browser-answer",
