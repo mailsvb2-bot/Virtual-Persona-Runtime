@@ -510,3 +510,54 @@ fn revoked_allocation_with_failed_stop_never_returns_plain_cancelled() {
             .starts_with("DELETE /v1/avatar/sessions/local-1 ")
     );
 }
+
+#[test]
+fn operation_answer_requires_exact_positive_worker_receipt() {
+    use crate::operation_client::RemoteOperationClient;
+
+    // 2xx is not sufficient: a pending, missing, stale or false acknowledgement
+    // must not be exposed to a visitor as an accepted SDP answer.
+    for (status, body, accepted) in [
+        (
+            "200 OK",
+            r#"{"operation_id":"rt1-answer","accepted":true}"#,
+            true,
+        ),
+        ("200 OK", "{}", false),
+        (
+            "200 OK",
+            r#"{"operation_id":"other-operation","accepted":true}"#,
+            false,
+        ),
+        (
+            "200 OK",
+            r#"{"operation_id":"rt1-answer","accepted":false}"#,
+            false,
+        ),
+        (
+            "200 OK",
+            r#"{"operation_id":"rt1-answer","accepted":"true"}"#,
+            false,
+        ),
+        (
+            "202 Accepted",
+            r#"{"operation_id":"rt1-answer","accepted":true}"#,
+            false,
+        ),
+        ("204 No Content", "", false),
+    ] {
+        let (endpoint, captured) = serve(vec![(status, body.to_owned())]);
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2))
+                .unwrap();
+        let result = client.answer("rt1-answer", "v=0\\r\\n");
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "incorrect SDP acceptance for HTTP {status}, body {body}"
+        );
+        let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(request.starts_with("POST /v1/avatar/operations/rt1-answer/answer "));
+        assert!(request.to_ascii_lowercase().contains("authorization: bearer worker-secret"));
+    }
+}
