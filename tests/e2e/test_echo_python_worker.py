@@ -90,10 +90,12 @@ class FakeRoom:
 
 
 class DelayedInput:
-    def __init__(self, records, delay_after_speak, delay_before_close=0):
+    def __init__(self, records, delay_after_speak, delay_before_close=0,
+                 delay_before_followup=0):
         self.records = list(records)
         self.delay_after_speak = delay_after_speak
         self.delay_before_close = delay_before_close
+        self.delay_before_followup = delay_before_followup
 
     def readline(self):
         if not self.records:
@@ -103,6 +105,8 @@ class DelayedInput:
             time.sleep(0.12)
         if self.delay_before_close and '"command": "close"' in line:
             time.sleep(self.delay_before_close)
+        if self.delay_before_followup and '"id": 202,' in line:
+            time.sleep(self.delay_before_followup)
         return line
 
 
@@ -110,7 +114,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
                close_latency=0, tts_chunks=None, write_latency=0,
                stream_open_fails=False, media_close_timeout=None,
                disconnect_latency=0, suppress_disconnect_timeout=False,
-               stop_latency=0, media_stop_timeout=None, media_io_timeout=None):
+               stop_latency=0, media_stop_timeout=None, media_io_timeout=None,
+               delay_before_followup=0):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -158,7 +163,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
              for record in (records if records is not None else default_records)],
-            delay_after_speak, delay_before_close,
+            delay_after_speak, delay_before_close, delay_before_followup,
         )
         sys.stdout = response
         try:
@@ -642,6 +647,57 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertTrue(any(topic == "did.interrupt" for _, topic in trace["stops"]))
         self.assertFalse(any(item["id"] == 51 and item["ok"] for item in receipts))
         self.assertFalse(any(item["id"] == 52 and item["ok"] for item in receipts))
+
+    def test_failed_partial_speech_stream_fences_later_speak(self):
+        # A failed vendor interrupt during a background stream exception
+        # must not admit another private audio publication.
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 201, "command": "speak", "text": "broken"},
+            {"id": 202, "command": "speak", "text": "forbidden"},
+            {"id": 203, "command": "close"},
+        ]
+
+        def chunks(text):
+            if text == "broken":
+                yield b"PARTIAL"
+                raise ValueError("truncated WAV")
+            yield b"FORBIDDEN"
+
+        trace, receipts = run_worker(
+            True, records=records, tts_chunks=chunks,
+            stop_latency=0.4, media_stop_timeout=0.03,
+            media_close_timeout=0.1, delay_before_followup=0.16,
+        )
+        self.assertEqual(trace["audio"], [b"PARTIAL"])
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertIn({"id": 201, "ok": False}, receipts)
+        self.assertFalse(any(item["id"] in (202, 203) for item in receipts))
+
+    def test_failed_pcm_open_fences_later_speak(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 301, "command": "pcm_begin",
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 202, "command": "speak", "text": "forbidden"},
+            {"id": 303, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, stream_open_fails=True,
+            delay_before_followup=0.16, media_close_timeout=0.1,
+        )
+        self.assertEqual(trace["audio"], [])
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertTrue(any(
+            item["id"] == 301 and not item["ok"]
+            and item.get("stage") == "pcm_stream_open"
+            for item in receipts
+        ))
+        self.assertFalse(any(item["id"] in (202, 303) for item in receipts))
 
     def test_queued_echo_utterances_have_a_hard_limit(self):
         records = [

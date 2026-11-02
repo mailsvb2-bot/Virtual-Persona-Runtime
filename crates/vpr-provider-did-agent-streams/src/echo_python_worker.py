@@ -172,6 +172,33 @@ async def run():
     active_pcm = None
     close_identifier = None
     close_control_confirmed = True
+    terminal_failure = False
+    room_disconnected = False
+    disconnect_gate = asyncio.Lock()
+
+    async def fail_closed_media_error():
+        """Fence all publication after a background vendor stream failure.
+
+        Neither interrupt delivery nor local disconnect proves remote RTP STOP.
+        """
+        nonlocal terminal_failure, close_control_confirmed, room_disconnected
+        terminal_failure = True
+        close_control_confirmed = False
+        for task in tuple(tasks.values()):
+            if task is not asyncio.current_task():
+                task.cancel()
+        if active_pcm is not None and active_pcm["task"] is not asyncio.current_task():
+            active_pcm["task"].cancel()
+        async with disconnect_gate:
+            if not room_disconnected:
+                try:
+                    await asyncio.wait_for(
+                        room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
+                    )
+                    room_disconnected = True
+                except Exception:
+                    # Final cleanup may retry; never manufacture a STOP receipt.
+                    pass
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -225,6 +252,7 @@ async def run():
                         )
                     except Exception:
                         pass
+            await fail_closed_media_error()
             if state["end_id"] is not None:
                 emit(state["end_id"], False)
                 state["end_id"] = None
@@ -311,6 +339,7 @@ async def run():
                         )
                     except Exception:
                         pass
+            await fail_closed_media_error()
             emit(identifier, False)
         finally:
             if writer is not None:
@@ -323,6 +352,9 @@ async def run():
 
     try:
         while raw := await asyncio.to_thread(sys.stdin.readline):
+            if terminal_failure:
+                # Never accept queued SPEAK/PCM/CLOSE after a stream failure.
+                break
             try:
                 request = json.loads(raw)
                 identifier = request["id"]
@@ -536,15 +568,16 @@ async def run():
             )
             if unfinished:
                 cleanup_confirmed = False
-        try:
-            await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
-        except Exception:
-            if close_identifier is not None:
-                emit(close_identifier, False)
-            raise
+        if not room_disconnected:
+            try:
+                await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
+            except Exception:
+                if close_identifier is not None:
+                    emit(close_identifier, False)
+                raise
         if close_identifier is not None:
             # Local teardown receipt only; remote playback remains unproven.
-            emit(close_identifier, cleanup_confirmed and close_control_confirmed)
+            emit(close_identifier, cleanup_confirmed and close_control_confirmed and not terminal_failure)
 
 
 if __name__ == "__main__":
