@@ -215,15 +215,13 @@ impl OpenAiCompatibleLlm {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        let response = request
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        // A provider may finish after revoke: never expose its response as
-        // an authorized stream even if the transport ignored cancellation.
+        let response = request.send();
+        // Cancellation wins over either a late success or a late transport
+        // error; neither may be reported as an authorized provider outcome.
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        Ok(response)
+        response.map_err(|error| map_transport_error(&error))
     }
 
     fn execute(
