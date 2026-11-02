@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from queue import Queue, Empty
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -109,6 +110,39 @@ class MediaLifecycle:
             and receipt.audio_stopped is True
             and receipt.video_stopped is True
         )
+
+    def create_bounded(self, operation_id: str, generation: int, timeout: float) -> str:
+        """Bound the HTTP CREATE wait without abandoning a late provider result.
+
+        The *same* durable create() continues in one daemon thread. On timeout
+        CANCEL is committed before returning, without waiting for a hung
+        provider STOP. A late allocated ID is compensated by create(); if the
+        provider never returns, the durable unknown-ID quarantine stays closed.
+        The periodic canonical reconciler owns STOP if CREATE already finished.
+        """
+        if not 0 < timeout <= 60:
+            raise ValueError("invalid CREATE timeout")
+        outcome = Queue(maxsize=1)
+
+        def allocate():
+            try:
+                outcome.put((True, self.create(operation_id, generation)))
+            except Exception as error:
+                outcome.put((False, error))
+
+        threading.Thread(
+            target=allocate, name="rt1-bounded-create", daemon=True
+        ).start()
+        try:
+            succeeded, result = outcome.get(timeout=timeout)
+        except Empty:
+            # This is an admission tombstone, NOT a remote STOP receipt.
+            # Never wait for network I/O on the timed-out HTTP request.
+            self.cancel(operation_id, generation, wait_for_stop=False)
+            raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed") from None
+        if succeeded:
+            return result
+        raise result
 
     def create(self, operation_id: str, generation: int) -> str:
         if not operation_id or generation < 1:
@@ -254,7 +288,9 @@ class MediaLifecycle:
         self._finish_stop(operation_id, session_id, generation)
         raise RuntimeError("operation revoked during allocation")
 
-    def cancel(self, operation_id: str, generation: int) -> StopReceipt | None:
+    def cancel(
+        self, operation_id: str, generation: int, *, wait_for_stop: bool = True
+    ) -> StopReceipt | None:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
         with self._lock:
@@ -294,6 +330,9 @@ class MediaLifecycle:
                 if self._db.in_transaction:
                     self._db.execute("ROLLBACK")
                 raise
+        if not wait_for_stop:
+            # Reconciler retries STOP; no caller may treat this as confirmed.
+            return None
         return self._finish_stop(operation_id, session_id, generation)
 
     @contextmanager
