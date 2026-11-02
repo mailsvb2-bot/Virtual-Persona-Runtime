@@ -776,7 +776,6 @@ fn provider_failures_map_to_stable_rt0_reason_codes() {
     );
 }
 
-
 /// Deliberately noncompliant provider: returns success after the canonical
 /// turn was interrupted. The runtime must reject the result independently
 /// of provider cooperation (not proof that network dispatch was aborted).
@@ -847,7 +846,9 @@ fn late_llm_success_cannot_escape_cancelled_canonical_turn() {
         user_input: "test".into(),
     };
     let mut sink = vpr_integration::GeneratedTextBuffer::default();
-    let error = turn.execute_llm(&provider, &request, &mut sink).unwrap_err();
+    let error = turn
+        .execute_llm(&provider, &request, &mut sink)
+        .unwrap_err();
     assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
     assert_eq!(turn.state(), TurnState::Cancelled);
 }
