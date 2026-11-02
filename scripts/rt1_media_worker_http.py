@@ -71,33 +71,40 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 if row is None or row[1] != "active" or not row[2]:
                     self._send(410, {"error": "media operation not active"})
                     return
+                # Separate untrusted request parsing from provider execution:
+                # provider-side ValueError can occur AFTER SDP took effect.
+                # Treating it as a harmless bad request would leak live media.
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 1 <= length <= 65536:
                         raise ValueError("invalid SDP size")
                     payload = json.loads(self.rfile.read(length))
-                    if payload.get("type") != "answer" or not isinstance(payload.get("sdp"), str):
+                    if (
+                        not isinstance(payload, dict)
+                        or payload.get("type") != "answer"
+                        or not isinstance(payload.get("sdp"), str)
+                        or not payload["sdp"].strip()
+                    ):
                         raise ValueError("invalid SDP answer")
+                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                    self._send(400, {"error": "invalid SDP answer"})
+                    return
+                try:
                     lifecycle._backend.answer(operation_id, row[2], row[0], payload["sdp"])
                     if lifecycle.status(operation_id) != row:
                         self._send(410, {"error": "operation revoked during answer"})
                         return
                     self._send(200, {"operation_id": operation_id, "accepted": True})
-                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
-                    self._send(400, {"error": "invalid SDP answer"})
                 except Exception:
-                    # An answer can time out after the remote peer accepted SDP.
-                    # Never leave that potentially transmitting sender active
-                    # merely because signaling returned an error. Revoke via
-                    # the canonical durable STOP coordinator, which preserves
-                    # an uncertain ledger state when either RTP sender cannot
-                    # be confirmed stopped. A racing owner revoke is safe:
-                    # cancel() is idempotent and STOP ownership is serialized.
+                    # An answer can fail AFTER the remote peer accepted SDP.
+                    # Revoke via the existing durable STOP coordinator. Its
+                    # uncertain state blocks new allocations until BOTH RTP
+                    # sender shutdown receipts are independently confirmed.
                     try:
                         lifecycle.cancel(operation_id, row[0])
                     except Exception:
-                        # The reconciler owns subsequent STOP retries. Never
-                        # claim shutdown or expose provider error details here.
+                        # The existing reconciler retries unresolved STOP.
+                        # Do not leak provider diagnostics or claim success.
                         pass
                     self._send(409, {"error": "media answer unavailable"})
                 return
