@@ -457,7 +457,11 @@ impl Rt1VisitorConversation {
         if self.remote.is_some() || self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_INTERRUPT_DENIED".into());
         }
-        let stop = self.interrupt.backend_stop.lock().clone()
+        let stop = self
+            .interrupt
+            .backend_stop
+            .lock()
+            .clone()
             .ok_or_else(|| "RT1_VISITOR_INTERRUPT_DENIED".to_owned())?;
         // Never wait for engine.lock(): a blocked STT/LLM must be interruptible.
         if let Some(turn) = self.interrupt.turn.lock().clone() {
@@ -551,32 +555,6 @@ fn finish_close(
     local_stop
 }
 
-#[cfg(test)]
-mod close_outcome_tests {
-    use super::finish_close;
-
-    #[test]
-    fn unconfirmed_remote_stop_overrides_successful_local_cleanup() {
-        assert_eq!(
-            finish_close(Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()), Ok(())),
-            Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into())
-        );
-    }
-
-    #[test]
-    fn local_failure_is_preserved_after_confirmed_remote_stop() {
-        assert_eq!(
-            finish_close(Ok(()), Err("LOCAL_REVOKE_FAILED".into())),
-            Err("LOCAL_REVOKE_FAILED".into())
-        );
-    }
-
-    #[test]
-    fn close_requires_both_remote_and_local_success() {
-        assert!(finish_close(Ok(()), Ok(())).is_ok());
-    }
-}
-
 fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
     // Match the existing RT0 voice input duration and PCM framing limits.
     const MAX_VOICE_BYTES: usize = 16_000 * 2 * 30;
@@ -586,43 +564,10 @@ fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod microphone_staging_tests {
-    use super::validate_microphone_audio;
-
-    #[test]
-    fn canonical_microphone_frame_limits_match_rt0() {
-        assert!(validate_microphone_audio(&[]).is_err());
-        assert!(validate_microphone_audio(&[0_u8]).is_err());
-        assert!(validate_microphone_audio(&[0_u8; 2]).is_ok());
-        assert!(validate_microphone_audio(&vec![0_u8; 16_000 * 2 * 30]).is_ok());
-        assert!(validate_microphone_audio(&vec![0_u8; 16_000 * 2 * 30 + 2]).is_err());
-    }
-}
-
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
     Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
 }
 
 #[cfg(test)]
-mod rt1_voice_egress_tests {
-    use super::*;
-
-    #[test]
-    fn voice_provider_egress_is_denied_without_media_fence() {
-        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
-        assert_eq!(
-            result.unwrap_err(),
-            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
-        );
-    }
-
-    #[test]
-    fn voice_streaming_rejects_before_any_delivery() {
-        let result: Result<LabVoiceResult, String> = unsupported_visitor_voice_egress();
-        assert_eq!(
-            result.unwrap_err(),
-            "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
-        );
-    }
-}
+#[path = "rt1_visitor_conversation_tests.rs"]
+mod tests;
