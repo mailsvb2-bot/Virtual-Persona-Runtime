@@ -492,11 +492,55 @@ MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
         with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
             worker.create("op-mismatch", 1)
         self.assertEqual(
-            worker.status("op-mismatch"), (1, "uncertain", "expected-sender")
+            worker.status("op-mismatch"), (1, "uncertain", "unexpected-sender")
         )
-        self.assertEqual(sender.stopped, 0)
+        self.assertEqual(sender.stopped, 1, "unexpected sender must receive compensating STOP")
+        self.assertEqual(
+            worker._db.execute(
+                "SELECT preassigned_session_id FROM media_operations WHERE id='op-mismatch'"
+            ).fetchone(), ("expected-sender",),
+        )
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        self.assertEqual(
+            restarted.status("op-mismatch"), (1, "uncertain", "unexpected-sender")
+        )
+        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+            restarted.reconcile()
+        self.assertEqual(restarted.status("op-mismatch")[1], "uncertain")
         with self.assertRaises(RuntimeError):
             worker.create("replacement", 1)
+
+    def test_mismatched_sender_stop_failure_is_durable_and_never_admits_replacement(self):
+        # Simulated provider: a returned late ID is known, but remote STOP
+        # fails. Neither the preassigned ID nor the unexpected ID is trusted.
+        class FailedCompensation(Sender):
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return "promised-sender"
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                return "late-sender"
+
+            def stop(self, operation_id, session_id, generation):
+                self.stopped += 1
+                raise TimeoutError("simulated provider STOP timeout")
+
+        sender = FailedCompensation()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+            worker.create("op-late", 1)
+        self.assertEqual(sender.stopped, 1)
+        self.assertEqual(worker.status("op-late"), (1, "uncertain", "late-sender"))
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        with self.assertRaises(TimeoutError):
+            restarted.reconcile()
+        self.assertEqual(sender.stopped, 2)
+        self.assertEqual(restarted.status("op-late"), (1, "uncertain", "late-sender"))
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
 
     def test_legacy_sqlite_ledger_migrates_without_discarding_unresolved_sender(self):
         import sqlite3

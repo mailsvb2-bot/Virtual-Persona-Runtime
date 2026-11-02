@@ -135,10 +135,6 @@ class MediaLifecycle:
             session_id = self._backend.allocate(operation_id, generation)
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
-            if recovery_id is not None and session_id != recovery_id:
-                # A backend claiming an exact preassigned ID must honor it.
-                # Do not publish a different, potentially untracked sender.
-                raise RuntimeError("backend CREATE identity mismatch; STOP unconfirmed")
         except BaseException:
             with self._lock:
                 # A different worker may CANCEL between a read and a write.
@@ -160,6 +156,35 @@ class MediaLifecycle:
                         self._db.execute("ROLLBACK")
                     raise
             raise
+        if recovery_id is not None and session_id != recovery_id:
+            # The backend violated its authoritative identity contract. The
+            # returned sender may already be transmitting: persist its ACTUAL
+            # ID before attempting compensation, including across restart.
+            # Retain the original preassigned ID as a second possible target.
+            with self._lock:
+                self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    row = self._get(operation_id)
+                    if row is None or row[0] != generation or row[1] not in (
+                        "creating", "stopping", "uncertain"
+                    ):
+                        raise RuntimeError("CREATE identity changed during compensation")
+                    self._write(operation_id, generation, "uncertain", session_id)
+                    self._db.execute("COMMIT")
+                except BaseException:
+                    if self._db.in_transaction:
+                        self._db.execute("ROLLBACK")
+                    raise
+            # Best-effort immediate STOP for the newly discovered sender.
+            # Even a valid receipt cannot prove the preassigned ID was inert;
+            # _finish_stop deliberately retains the identity quarantine.
+            try:
+                self._finish_stop(operation_id, session_id, generation)
+            except Exception as error:
+                raise RuntimeError(
+                    "backend CREATE identity mismatch; compensating STOP unconfirmed"
+                ) from error
+            raise RuntimeError("backend CREATE identity mismatch; STOP unconfirmed")
         with self._lock:
             # CREATE completion and CANCEL must have one SQLite linearization
             # point across *processes*. The Python RLock alone is insufficient:
@@ -285,6 +310,17 @@ class MediaLifecycle:
                 if not self._validate(receipt, operation_id, session_id, generation):
                     self._write(operation_id, generation, "uncertain", session_id)
                     raise RuntimeError("remote audio/video STOP not confirmed")
+                preassigned = self._db.execute(
+                    "SELECT preassigned_session_id FROM media_operations WHERE id=? AND generation=?",
+                    (operation_id, generation),
+                ).fetchone()
+                if preassigned and preassigned[0] is not None and preassigned[0] != session_id:
+                    # An unexpected returned ID might coexist with the promised
+                    # preassigned sender. One receipt cannot clear BOTH targets.
+                    self._write(operation_id, generation, "uncertain", session_id)
+                    raise RuntimeError(
+                        "backend CREATE identity mismatch; preassigned STOP unconfirmed"
+                    )
                 self._write(operation_id, generation, "stopped", session_id)
             return receipt
 
