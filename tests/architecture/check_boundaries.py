@@ -930,6 +930,17 @@ for trait_name, source in sealed_sources.items():
                     f"external {trait_name} implementation can bypass canonical delivery: {path.relative_to(ROOT)}"
                 )
 
+# Provider dispatch is now centralized for owner and visitor operations. This
+# guard requires a runtime-owned cancellation preflight AND postflight, not
+# merely the presence of a provider call or a pre/post visitor authorization.
+for required_dispatch_gate in (
+    "pub(crate) fn dispatch<T>",
+    "if self.cancellation.is_cancelled()",
+    "self.finish(operation(&self.cancellation))",
+):
+    if required_dispatch_gate not in provider_source:
+        raise SystemExit(f"runtime provider dispatch gate missing {required_dispatch_gate}")
+
 # Incremental LLM output may be exposed to runtime as a pull stream, but the provider-operation
 # permit and cancellation authority must stay inside the non-forgeable runtime handle.
 for required_llm_stream_boundary in (
@@ -944,7 +955,7 @@ for required_runtime_stream_boundary in (
     "pub struct AuthorizedLlmStream",
     "ProviderExecutionPermit",
     "pub fn open_llm_stream",
-    ".open_stream(request, &permit.cancellation)",
+    ".dispatch(|cancellation| port.open_stream(request, cancellation))",
 ):
     if required_runtime_stream_boundary not in turn_source:
         raise SystemExit(
@@ -966,10 +977,10 @@ for required_stt_stream_boundary in (
 for required_runtime_stt_boundary in (
     "pub struct AuthorizedSttStream",
     "pub fn open_stt_stream",
-    ".open_stream(request, &permit.cancellation)",
-    ".push_audio(pcm, &self.permit.cancellation)",
-    ".finish_input(&self.permit.cancellation)",
-    ".next_event(&self.permit.cancellation)",
+    ".dispatch(|cancellation| port.open_stream(request, cancellation))",
+    ".dispatch(|cancellation| self.stream.push_audio(pcm, cancellation))",
+    ".dispatch(|cancellation| self.stream.finish_input(cancellation))",
+    ".dispatch(|cancellation| self.stream.next_event(cancellation))",
 ):
     if required_runtime_stt_boundary not in turn_source:
         raise SystemExit(
