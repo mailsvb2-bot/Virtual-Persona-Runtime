@@ -17,12 +17,24 @@ type StopCallback = Arc<dyn Fn() + Send + Sync>;
 struct ManagedVisitor {
     authority: Rt1VisitorSession,
     revoked: AtomicBool,
+    stopped: AtomicBool,
+    /// Pure runtime authority cancellation; NEVER provider/network I/O.
+    fast_revoke: StopCallback,
     stop: StopCallback,
 }
 
 impl ManagedVisitor {
-    fn revoke(&self) {
+    fn mark_revoked(&self) {
         if !self.revoked.swap(true, Ordering::AcqRel) {
+            // The caller may hold the canonical publication transaction.
+            // Only invalidate runtime permits/turns; network STOP runs later.
+            (self.fast_revoke)();
+        }
+    }
+
+    fn revoke(&self) {
+        self.mark_revoked();
+        if !self.stopped.swap(true, Ordering::AcqRel) {
             (self.stop)();
         }
     }
@@ -66,6 +78,21 @@ impl VisitorSessionManager {
         visitor_token: String,
         stop: impl Fn() + Send + Sync + 'static,
     ) -> Result<String, String> {
+        self.open_with_fast_revoke(visitor_token, || {}, stop)
+    }
+
+    /// Bind the canonical runtime permit revocation to the same publication
+    /// transaction as owner pause/unpublish. The fast callback MUST NOT
+    /// perform provider I/O or acquire the conversation engine mutex.
+    ///
+    /// # Errors
+    /// Refuses invalid publication, full capacity, or entropy failure.
+    pub(crate) fn open_with_fast_revoke(
+        &self,
+        visitor_token: String,
+        fast_revoke: impl Fn() + Send + Sync + 'static,
+        stop: impl Fn() + Send + Sync + 'static,
+    ) -> Result<String, String> {
         // Admission reads canonical durable state. Never create a local session
         // before the publication is authorized.
         let authority = Rt1VisitorSession::admit(Arc::clone(&self.workspace), visitor_token)?;
@@ -79,6 +106,8 @@ impl VisitorSessionManager {
         let session = Arc::new(ManagedVisitor {
             authority,
             revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(fast_revoke),
             stop: Arc::new(stop),
         });
         let mut sessions = self.sessions.lock();
@@ -193,9 +222,14 @@ impl VisitorSessionManager {
             let mut active = self.sessions.lock();
             std::mem::take(&mut *active)
         };
-        PendingVisitorRevocations {
-            sessions: sessions.into_values().collect(),
+        let sessions: Vec<_> = sessions.into_values().collect();
+        // Called under the canonical publication transaction: invalidate
+        // provider permits BEFORE a concurrent visitor can start egress.
+        // Never run network STOP while this transaction is held.
+        for session in &sessions {
+            session.mark_revoked();
         }
+        PendingVisitorRevocations { sessions }
     }
 
     #[must_use]
@@ -259,6 +293,8 @@ mod tests {
         let session = Arc::new(ManagedVisitor {
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
             stop: Arc::new(move || {
                 // A stop callback may re-enter the registry; no mutex is held.
                 assert_eq!(callback_manager.active_count(), 0);
@@ -272,11 +308,45 @@ mod tests {
 
         let pending = manager.take_for_revocation();
         assert_eq!(manager.active_count(), 0);
-        assert!(!session.revoked.load(Ordering::Acquire));
+        assert!(session.revoked.load(Ordering::Acquire));
+        assert_eq!(stops.load(Ordering::SeqCst), 0);
         pending.revoke();
         assert!(session.revoked.load(Ordering::Acquire));
         session.revoke();
         assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn publication_drain_revokes_runtime_permits_before_remote_stop() {
+        use std::sync::atomic::AtomicUsize;
+        let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+        let fast = Arc::new(AtomicUsize::new(0));
+        let slow = Arc::new(AtomicUsize::new(0));
+        let fast_count = Arc::clone(&fast);
+        let slow_count = Arc::clone(&slow);
+        manager.sessions.lock().insert(
+            "egress".into(),
+            Arc::new(ManagedVisitor {
+                authority: Rt1VisitorSession::inert_for_revocation_test(),
+                revoked: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+                fast_revoke: Arc::new(move || {
+                    fast_count.fetch_add(1, Ordering::SeqCst);
+                }),
+                stop: Arc::new(move || {
+                    slow_count.fetch_add(1, Ordering::SeqCst);
+                }),
+            }),
+        );
+        let pending = manager.take_for_revocation();
+        assert_eq!(fast.load(Ordering::SeqCst), 1);
+        assert_eq!(slow.load(Ordering::SeqCst), 0);
+        assert!(manager.authorize("egress").is_err());
+        pending.revoke();
+        assert_eq!(slow.load(Ordering::SeqCst), 1);
+        manager.revoke_all();
+        assert_eq!(fast.load(Ordering::SeqCst), 1);
+        assert_eq!(slow.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -311,6 +381,8 @@ mod tests {
             Arc::new(ManagedVisitor {
                 authority: Rt1VisitorSession::inert_for_revocation_test(),
                 revoked: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+                fast_revoke: Arc::new(|| {}),
                 stop: Arc::new(move || {
                     stop_count.fetch_add(1, Ordering::SeqCst);
                 }),
@@ -348,6 +420,8 @@ mod tests {
         let old_session = Arc::new(ManagedVisitor {
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
             stop: Arc::new(move || {
                 old_counter.fetch_add(1, Ordering::SeqCst);
             }),
@@ -355,6 +429,8 @@ mod tests {
         let new_session = Arc::new(ManagedVisitor {
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(false),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
             stop: Arc::new(move || {
                 new_counter.fetch_add(1, Ordering::SeqCst);
             }),
@@ -388,6 +464,8 @@ mod tests {
         let session = Arc::new(ManagedVisitor {
             authority: Rt1VisitorSession::inert_for_revocation_test(),
             revoked: AtomicBool::new(true),
+            stopped: AtomicBool::new(false),
+            fast_revoke: Arc::new(|| {}),
             stop: Arc::new(|| {}),
         });
         manager.sessions.lock().insert("revoked".into(), session);
@@ -492,6 +570,8 @@ mod tests {
             Arc::new(ManagedVisitor {
                 authority: Rt1VisitorSession::inert_for_revocation_test(),
                 revoked: AtomicBool::new(false),
+                stopped: AtomicBool::new(false),
+                fast_revoke: Arc::new(|| {}),
                 stop: Arc::new(move || {
                     let _ = callback_remote.revoke_confirmed();
                 }),

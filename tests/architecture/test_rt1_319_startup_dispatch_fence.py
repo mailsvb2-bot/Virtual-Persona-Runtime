@@ -29,21 +29,24 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("register_interrupt(turn.interrupt_handle());", engine)
         self.assertIn("self.start_scoped(request, LabSessionAudience::Visitor, register_interrupt)",
                       session_revocation)
-        self.assertIn("manager.open(visitor_token", canonical)
+        self.assertIn("manager.open_with_fast_revoke(", canonical)
+        self.assertIn("fast_revoke.revoke_authority_only()", canonical)
+        self.assertIn("move || on_revoke.stop()", canonical)
         self.assertIn("manager.authorize_persona(", canonical)
         self.assertGreaterEqual(len(re.findall(r"manager\s*\.\s*authorize_persona\s*\(", canonical)), 2)
         self.assertIn("interrupt.stop()", canonical)
         self.assertIn("engine.stop_visitor_provider_confirmed()", canonical)
         self.assertNotIn("RemoteOperationClient::new(", canonical)
         self.assertNotIn("std::thread::spawn(", canonical)
-        self.assertLess(canonical.index("manager.open("),
+        self.assertLess(canonical.index("manager.open_with_fast_revoke("),
                         canonical.index("engine.start_visitor_with_interrupt("))
 
         self.assertIn("RemoteOperationClient::new(", diagnostic)
         self.assertRegex(diagnostic, r"client\s*\.\s*create\s*\(\s*&operation_id\s*,\s*1\s*\)")
         self.assertRegex(diagnostic, r"client\s*\.\s*offer\s*\(\s*&operation_id\s*,\s*&session_id\s*\)")
         self.assertIn("stop_remote.revoke_confirmed()", diagnostic)
-        self.assertLess(diagnostic.index("manager.open("),
+        self.assertIn("fast_interrupt.revoke_authority_only()", diagnostic)
+        self.assertLess(diagnostic.index("manager.open_with_fast_revoke("),
                         re.search(r"client\s*\.\s*create\s*\(", diagnostic).start())
         self.assertGreaterEqual(diagnostic.count("manager.authorize(&id)"), 2)
         # SDP must never be returned without rechecking the current persona
@@ -71,6 +74,9 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertNotIn("fn provider_dispatch<", manager)
         self.assertNotIn("fn guarded_provider_dispatch<", workspace)
         self.assertNotIn("fn guarded_dispatch_under_transaction<", workspace)
+        self.assertIn("session.mark_revoked();", manager)
+        self.assertLess(manager.index("session.mark_revoked();"),
+                        manager.index("PendingVisitorRevocations { sessions }"))
 
 
     def test_http_registration_rechecks_revocation_and_drops_lock_before_cleanup(self):

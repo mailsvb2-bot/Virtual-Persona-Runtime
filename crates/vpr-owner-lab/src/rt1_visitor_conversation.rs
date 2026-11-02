@@ -50,7 +50,9 @@ struct LiveVisitorInterrupt {
 }
 
 impl LiveVisitorInterrupt {
-    fn stop(&self) {
+    /// Synchronously invalidate runtime provider permits without waiting
+    /// for a stalled provider or the conversation engine mutex.
+    fn revoke_authority_only(&self) {
         self.cancelled.store(true, Ordering::Release);
         if let Some(turn) = self.turn.lock().clone() {
             let _ = turn.interrupt();
@@ -58,6 +60,10 @@ impl LiveVisitorInterrupt {
         if let Some(session) = self.session.lock().clone() {
             let _ = session.revoke_authority();
         }
+    }
+
+    fn stop(&self) {
+        self.revoke_authority_only();
         // Provider STOP can take network time: never block owner pause on it
         // or on the conversation engine mutex. The explicit visitor close
         // still requires a separate confirmed close_session receipt.
@@ -102,8 +108,13 @@ impl Rt1VisitorConversation {
             .ok_or_else(|| "reviewed visitor Persona required".to_owned())?;
         let persona_id = persona_id.to_owned();
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let fast_revoke = Arc::clone(&interrupt);
         let on_revoke = Arc::clone(&interrupt);
-        let id = manager.open(visitor_token, move || on_revoke.stop())?;
+        let id = manager.open_with_fast_revoke(
+            visitor_token,
+            move || fast_revoke.revoke_authority_only(),
+            move || on_revoke.stop(),
+        )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
             let _ = manager.close(&id);
             return Err(error);
@@ -208,12 +219,17 @@ impl Rt1VisitorConversation {
             1,
         )?);
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let fast_interrupt = Arc::clone(&interrupt);
         let stop_interrupt = Arc::clone(&interrupt);
         let stop_remote = Arc::clone(&remote);
-        let id = manager.open(visitor_token, move || {
-            stop_interrupt.stop();
-            let _ = stop_remote.revoke_confirmed();
-        })?;
+        let id = manager.open_with_fast_revoke(
+            visitor_token,
+            move || fast_interrupt.revoke_authority_only(),
+            move || {
+                stop_interrupt.stop();
+                let _ = stop_remote.revoke_confirmed();
+            },
+        )?;
 
         let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
         if let Err(error) = admitted {
