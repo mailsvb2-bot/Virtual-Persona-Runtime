@@ -288,7 +288,7 @@ fn late_provider_create_is_compensated_after_startup_interrupt() {
     let (handle_tx, handle_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent: true }, |handle| {
-            handle_tx.send(handle).unwrap()
+            handle_tx.send(handle).unwrap();
         })
     });
     let handle = handle_rx.recv_timeout(Duration::from_secs(2)).unwrap();
