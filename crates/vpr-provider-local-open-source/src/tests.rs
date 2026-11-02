@@ -548,8 +548,7 @@ fn operation_answer_requires_exact_positive_worker_receipt() {
     ] {
         let (endpoint, captured) = serve(vec![(status, body.to_owned())]);
         let client =
-            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2))
-                .unwrap();
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
         let result = client.answer("rt1-answer", "v=0\r\n");
         assert_eq!(
             result.is_ok(),
