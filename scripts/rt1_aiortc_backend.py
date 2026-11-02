@@ -121,7 +121,7 @@ class AiortcSenderBackend:
         cancel_requested: threading.Event | None = None,
     ) -> str:
         if cancel_requested is not None and cancel_requested.is_set():
-            raise RuntimeError("WebRTC CREATE cancelled before allocation; STOP unconfirmed")
+            raise asyncio.CancelledError("WebRTC CREATE cancelled before allocation")
         from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
         session_id = self.recovery_session_id(operation_id, generation)
         peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
@@ -139,7 +139,10 @@ class AiortcSenderBackend:
                     # Cancellation may be swallowed inside a provider await.
                     # Close both tracks and the peer in the exception handler;
                     # never publish a late sender into the active registry.
-                    raise RuntimeError("WebRTC CREATE completed after cancellation; STOP unconfirmed")
+                    # The concurrent Future is already cancelled. Propagate task
+                    # cancellation, not an unobserved RuntimeError that would
+                    # surface as "Task exception was never retrieved".
+                    raise asyncio.CancelledError("WebRTC CREATE completed after cancellation")
                 if session_id in self._sessions:
                     raise RuntimeError("WebRTC session already allocated")
                 self._sessions[session_id] = _Session(
