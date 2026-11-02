@@ -1,14 +1,19 @@
 """Bounded CREATE and late STOP tests using a simulated backend, not real D-ID RTP."""
+import json
 import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
+from rt1_media_worker_http import handler_for
 
 
 class SlowBackend:
@@ -102,6 +107,45 @@ class BoundedCreateTests(unittest.TestCase):
                 self.lifecycle.create_bounded("bounded", 1, timeout)
         self.assertEqual(self.backend.allocations, 0)
         self.assertIsNone(self.lifecycle.status("bounded"))
+
+
+
+class BoundedHttpCreateTests(unittest.TestCase):
+    def test_authenticated_put_returns_bounded_failure_and_late_stop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            backend = SlowBackend()
+            lifecycle = MediaLifecycle(Path(temp) / "http.sqlite", backend)
+            server = ThreadingHTTPServer(
+                ("127.0.0.1", 0),
+                handler_for(lifecycle, "secret", create_timeout_seconds=0.05),
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            url = f"http://127.0.0.1:{server.server_port}/v1/avatar/operations/slow"
+            request = Request(
+                url,
+                method="PUT",
+                data=json.dumps({"generation": 1}).encode(),
+                headers={"Authorization": "Bearer secret", "Content-Type": "application/json"},
+            )
+            try:
+                started = time.monotonic()
+                with self.assertRaises(HTTPError) as response:
+                    urlopen(request, timeout=2)
+                self.assertEqual(response.exception.code, 409)
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertEqual(lifecycle.status("slow"), (1, "stopping", None))
+                backend.release.set()
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline and lifecycle.status("slow")[1] != "stopped":
+                    time.sleep(0.01)
+                self.assertEqual(lifecycle.status("slow"), (1, "stopped", "real-late-id"))
+                self.assertEqual(backend.stops, 1)
+            finally:
+                backend.release.set()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
 
 
 if __name__ == "__main__":
