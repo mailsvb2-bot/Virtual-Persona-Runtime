@@ -296,33 +296,57 @@ mod tests {
         let worker = std::thread::spawn(move || {
             for attempt in 0..3 {
                 let (mut socket, _) = listener.accept().unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
                 let mut request = Vec::new();
                 let mut buffer = [0_u8; 2048];
                 loop {
                     let n = socket.read(&mut buffer).unwrap();
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     request.extend_from_slice(&buffer[..n]);
-                    if request.windows(4).any(|part| part == b"\r\n\r\n") { break; }
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                        break;
+                    }
                 }
                 let (status, body) = if attempt == 0 {
-                    assert!(request.starts_with(b"POST /v1/avatar/operations/raced-pending/answer "));
+                    assert!(
+                        request.starts_with(b"POST /v1/avatar/operations/raced-pending/answer ")
+                    );
                     accepted_tx.send(()).unwrap();
                     release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-                    ("200 OK", r#"{"operation_id":"raced-pending","accepted":true}"#)
+                    (
+                        "200 OK",
+                        r#"{"operation_id":"raced-pending","accepted":true}"#,
+                    )
                 } else {
                     assert!(request.starts_with(b"DELETE /v1/avatar/operations/raced-pending "));
                     if attempt == 1 {
-                        ("202 Accepted", r#"{"operation_id":"raced-pending","stop_confirmed":false}"#)
+                        (
+                            "202 Accepted",
+                            r#"{"operation_id":"raced-pending","stop_confirmed":false}"#,
+                        )
                     } else {
-                        ("200 OK", r#"{"operation_id":"raced-pending","generation":1,"session_id":"sender","audio_stopped":true,"video_stopped":true}"#)
+                        (
+                            "200 OK",
+                            r#"{"operation_id":"raced-pending","generation":1,"session_id":"sender","audio_stopped":true,"video_stopped":true}"#,
+                        )
                     }
                 };
-                write!(socket, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
             }
         });
-        let client = RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-        let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-pending".into(), 1).unwrap());
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote =
+            Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-pending".into(), 1).unwrap());
         let submitting = Arc::clone(&remote);
         let answer = std::thread::spawn(move || submitting.submit_answer("v=0\r\n"));
         accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -330,7 +354,10 @@ mod tests {
         // request holds the signaling/STOP gate; do not start another runtime.
         remote.revoked.store(true, Ordering::Release);
         release_tx.send(()).unwrap();
-        assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED");
+        assert_eq!(
+            answer.join().unwrap().unwrap_err(),
+            "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
+        );
         assert!(!remote.is_stop_confirmed());
         assert!(remote.is_revoked());
         remote.revoke_confirmed().unwrap();
