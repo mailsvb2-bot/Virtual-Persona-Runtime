@@ -109,7 +109,18 @@ impl Rt1VisitorConversation {
             return Err(error);
         }
 
-        let started = engine.start_visitor(OwnerLabStartRequest { consent });
+        // Register the startup turn BEFORE provider CREATE. A pause during a
+        // slow D-ID/LiveKit allocation can now cancel the canonical transport
+        // without waiting for the engine mutex or a provider-generated ID.
+        let startup_interrupt = Arc::clone(&interrupt);
+        let started =
+            engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
+                *startup_interrupt.turn.lock() = Some(handle.clone());
+                if startup_interrupt.cancelled.load(Ordering::Acquire) {
+                    let _ = handle.interrupt();
+                }
+            });
+        *interrupt.turn.lock() = None;
         let bundle = match started {
             Ok(bundle) => bundle,
             Err(error) => {

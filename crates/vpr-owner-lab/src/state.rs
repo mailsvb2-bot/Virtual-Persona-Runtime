@@ -14,6 +14,7 @@ use vpr_integration::{
 use vpr_policy::{AuthorityLayer, AuthorityScope, ConsentState, EffectiveAuthority};
 use vpr_runtime::{
     ActiveSession, ActiveTurn, ProviderExecutionError, RealtimeAvatarHandle, SessionSecurityConfig,
+    TurnInterruptHandle,
 };
 
 use crate::owner_context::{OwnerContextError, ReviewedOwnerContext};
@@ -265,7 +266,7 @@ impl OwnerLabEngine {
     /// # Errors
     /// Fails closed without both process-level egress enablement and explicit user consent.
     pub fn start(&mut self, request: OwnerLabStartRequest) -> Result<LabSignalBundle, LabError> {
-        self.start_scoped(request, LabSessionAudience::Owner)
+        self.start_scoped(request, LabSessionAudience::Owner, |_| {})
     }
 
     /// Starts a visitor-scoped test session over the same reviewed Persona identity/version.
@@ -280,13 +281,32 @@ impl OwnerLabEngine {
         if self.reviewed_owner_context.is_none() {
             return Err(LabError::InvalidState);
         }
-        self.start_scoped(request, LabSessionAudience::Visitor)
+        self.start_visitor_with_interrupt(request, |_| {})
+    }
+
+    /// Registers the canonical startup turn's interrupt capability BEFORE
+    /// opening a remote avatar. Owner pause can then cancel an in-flight
+    /// CREATE without waiting for the engine mutex or a provider response.
+    /// This is the same engine/transport path as RT0, not another runtime.
+    ///
+    /// # Errors
+    /// Propagates the canonical provider, cancellation and authority errors.
+    pub fn start_visitor_with_interrupt(
+        &mut self,
+        request: OwnerLabStartRequest,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
+    ) -> Result<LabSignalBundle, LabError> {
+        if self.reviewed_owner_context.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.start_scoped(request, LabSessionAudience::Visitor, register_interrupt)
     }
 
     fn start_scoped(
         &mut self,
         request: OwnerLabStartRequest,
         audience: LabSessionAudience,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
     ) -> Result<LabSignalBundle, LabError> {
         if !self.egress_enabled {
             return Err(LabError::EgressDisabled);
@@ -317,6 +337,9 @@ impl OwnerLabEngine {
         );
         session.activate().map_err(LabError::Runtime)?;
         let turn = self.new_turn_for(&session)?;
+        // The narrow handle must exist before provider CREATE: otherwise an
+        // owner revoke racing a hung CREATE cannot reach its cancellation.
+        register_interrupt(turn.interrupt_handle());
         self.begin_avatar_preparation()?;
         let handle = match turn.open_realtime_avatar(self.provider.as_ref()) {
             Ok(handle) => handle,

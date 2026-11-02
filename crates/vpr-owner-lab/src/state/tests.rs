@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vpr_domain::{
     ConstitutionBoundary, DerivationKind, OwnerClaim, OwnerClaimRecord, SourceKind,
@@ -24,6 +24,9 @@ struct Stats {
     stop: AtomicUsize,
     fail_create: AtomicUsize,
     fail_close: AtomicUsize,
+    hold_create: AtomicBool,
+    create_entered: AtomicBool,
+    release_create: AtomicBool,
 }
 
 struct FakeAvatar {
@@ -50,6 +53,14 @@ impl RealtimeAvatarPort for FakeAvatar {
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         assert!(!cancellation.is_cancelled());
         self.stats.create.fetch_add(1, Ordering::SeqCst);
+        self.stats.create_entered.store(true, Ordering::Release);
+        if self.stats.hold_create.load(Ordering::Acquire) {
+            // Deliberately ignore cancellation until released: emulate a
+            // provider returning a late session ID after owner revoke.
+            while !self.stats.release_create.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+        }
         if self.stats.fail_create.load(Ordering::SeqCst) > 0 {
             self.stats.fail_create.fetch_sub(1, Ordering::SeqCst);
             return Err(ProviderError {
@@ -245,6 +256,66 @@ fn visitor_session_requires_a_reviewed_persona() {
         Err(LabError::InvalidState)
     );
     assert_eq!(engine.status().session_audience, None);
+}
+
+#[test]
+fn visitor_startup_interrupt_is_registered_before_remote_create() {
+    let (mut engine, stats) = engine(true);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+    let mut registered = false;
+    let result =
+        engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent: true }, |handle| {
+            registered = true;
+            handle.interrupt().unwrap();
+        });
+    assert!(registered, "canonical startup turn must be interruptible");
+    assert!(result.is_err());
+    assert_eq!(
+        stats.create.load(Ordering::SeqCst),
+        0,
+        "a revoked turn must not dispatch provider CREATE"
+    );
+}
+
+#[test]
+fn late_provider_create_is_compensated_after_startup_interrupt() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let (mut engine, stats) = engine(true);
+    engine.bind_reviewed_profile(reviewed_profile()).unwrap();
+    stats.hold_create.store(true, Ordering::Release);
+    let (handle_tx, handle_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent: true }, |handle| {
+            handle_tx.send(handle).unwrap()
+        })
+    });
+    let handle = handle_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let started = Instant::now();
+    while !stats.create_entered.load(Ordering::Acquire)
+        && started.elapsed() < Duration::from_secs(2)
+    {
+        std::thread::yield_now();
+    }
+    let provider_started = stats.create_entered.load(Ordering::Acquire);
+    let interrupted = handle.interrupt();
+    stats.release_create.store(true, Ordering::Release);
+    let result = worker.join().unwrap();
+    assert!(
+        provider_started,
+        "the test must reach an in-flight provider CREATE"
+    );
+    assert!(interrupted.is_ok());
+    assert!(
+        result.is_err(),
+        "late provider success must not reopen visitor"
+    );
+    assert_eq!(
+        stats.close.load(Ordering::SeqCst),
+        1,
+        "late provider session must receive compensating CLOSE"
+    );
 }
 
 #[test]
