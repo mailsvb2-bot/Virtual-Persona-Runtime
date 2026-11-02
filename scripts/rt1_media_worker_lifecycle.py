@@ -160,6 +160,17 @@ class MediaLifecycle:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
+            # A provider can allocate successfully and lose its CREATE reply.
+            # When the backend supplies an authoritative preassigned identity,
+            # compensate NOW instead of waiting for a worker restart or the
+            # periodic reconciler. Keep the original CREATE error: even a
+            # verified STOP must never turn a failed allocation into admission.
+            # An unsuccessful STOP remains durable and retryable as 'uncertain'.
+            if recovery_id is not None:
+                try:
+                    self._finish_stop(operation_id, recovery_id, generation)
+                except Exception:
+                    pass
             raise
         if recovery_id is not None and session_id != recovery_id:
             # The backend violated its authoritative identity contract. The

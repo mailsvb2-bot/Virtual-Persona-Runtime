@@ -378,18 +378,66 @@ class LifecycleTests(unittest.TestCase):
         worker = mod.MediaLifecycle(self.db, sender)
         with self.assertRaisesRegex(TimeoutError, "lost CREATE reply"):
             worker.create("op-lost", 1)
-        self.assertEqual(worker.status("op-lost"), (1, "uncertain", "rt1-op-lost-1"))
-        self.assertTrue(sender.remote_active)
+        # The known remote sender is compensated immediately, not left live
+        # until a process restart or the periodic reconciler wakes up.
+        self.assertEqual(worker.status("op-lost"), (1, "stopped", "rt1-op-lost-1"))
+        self.assertFalse(sender.remote_active)
+        self.assertEqual(sender.stopped, 1)
         restarted = mod.MediaLifecycle(self.db, sender)
         restarted.quarantine_after_restart()
-        with self.assertRaises(RuntimeError):
-            restarted.create("replacement", 1)
         restarted.reconcile()
         self.assertEqual(restarted.status("op-lost"), (1, "stopped", "rt1-op-lost-1"))
-        self.assertFalse(sender.remote_active)
         self.assertEqual(sender.stopped, 1)
         with self.assertRaises(RuntimeError):
             restarted.create("op-lost", 1)
+
+    def test_lost_create_reply_failed_immediate_stop_remains_durable_and_retryable(self):
+        # The first compensating STOP fails. No false receipt, no replacement
+        # CREATE; a restarted worker retries the SAME known sender identity.
+        class FlakyLostReplySender(Sender):
+            fail_stop = True
+            remote_active = False
+
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return f"rt1-{operation_id}-{generation}"
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                self.remote_active = True
+                raise TimeoutError("CREATE response lost after allocation")
+
+            def stop(self, operation_id, session_id, generation):
+                self.stopped += 1
+                if self.fail_stop:
+                    raise TimeoutError("STOP response unavailable")
+                if not self.remote_active or session_id != self.recovery_session_id(operation_id, generation):
+                    raise RuntimeError("wrong STOP target")
+                self.remote_active = False
+                return mod.StopReceipt(operation_id, session_id, generation, True, True)
+
+        sender = FlakyLostReplySender()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(TimeoutError, "CREATE response lost"):
+            worker.create("op-lost-retry", 1)
+        self.assertEqual(sender.stopped, 1)
+        self.assertEqual(
+            worker.status("op-lost-retry"),
+            (1, "uncertain", "rt1-op-lost-retry-1"),
+        )
+        self.assertTrue(sender.remote_active)
+        with self.assertRaises(RuntimeError):
+            worker.create("replacement", 1)
+        sender.fail_stop = False
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(sender.stopped, 2)
+        self.assertFalse(sender.remote_active)
+        self.assertEqual(
+            restarted.status("op-lost-retry"),
+            (1, "stopped", "rt1-op-lost-retry-1"),
+        )
 
     def test_lost_create_reply_without_authoritative_id_stays_quarantined(self):
         class UnknownIdSender(Sender):
