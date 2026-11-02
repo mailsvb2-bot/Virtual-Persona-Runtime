@@ -23,6 +23,22 @@ class StopReceipt:
     video_stopped: bool
 
 
+class AllocatedSessionError(RuntimeError):
+    """Provider CREATE failed after returning an authoritative remote sender ID.
+
+    Only the adapter that actually received the provider's allocation identity
+    may construct this error. It is not a guessed ID or a STOP receipt.
+    """
+
+    def __init__(self, operation_id: str, generation: int, session_id: str):
+        if not operation_id or generation < 1 or not session_id:
+            raise ValueError("invalid allocated sender identity")
+        super().__init__("provider CREATE failed after remote allocation")
+        self.operation_id = operation_id
+        self.generation = generation
+        self.session_id = session_id
+
+
 class SenderBackend(Protocol):
     def allocate(self, operation_id: str, generation: int) -> str:
         """Create one session; return its opaque id. Can block."""
@@ -140,7 +156,19 @@ class MediaLifecycle:
             session_id = self._backend.allocate(operation_id, generation)
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
-        except BaseException:
+        except BaseException as create_error:
+            # Some adapters receive the actual provider-generated session ID
+            # before a later CREATE validation/transport step fails. Preserve
+            # that *authenticated* ID even when the ordinary CREATE reply was
+            # lost. An unrelated or mismatched exception is never trusted.
+            allocated_id = (
+                create_error.session_id
+                if isinstance(create_error, AllocatedSessionError)
+                and create_error.operation_id == operation_id
+                and create_error.generation == generation
+                else None
+            )
+            cleanup_id = allocated_id or recovery_id
             with self._lock:
                 # A different worker may CANCEL between a read and a write.
                 # Never overwrite its durable tombstone with an old CREATE result.
@@ -154,22 +182,24 @@ class MediaLifecycle:
                         # A lost CREATE reply may still have a known, stable
                         # sender ID; otherwise retain an unknown-id quarantine.
                         # Neither outcome is a verified STOP.
-                        self._write(operation_id, generation, "uncertain", recovery_id)
+                        self._write(operation_id, generation, "uncertain", cleanup_id)
                     self._db.execute("COMMIT")
                 except BaseException:
                     if self._db.in_transaction:
                         self._db.execute("ROLLBACK")
                     raise
             # A provider can allocate successfully and lose its CREATE reply.
-            # When the backend supplies an authoritative preassigned identity,
-            # compensate NOW instead of waiting for a worker restart or the
+            # When the backend supplies an authoritative preassigned identity
+            # OR a verified late allocation ID, compensate NOW instead of
+            # waiting for a worker restart or the
             # periodic reconciler. Keep the original CREATE error: even a
             # verified STOP must never turn a failed allocation into admission.
             # An unsuccessful STOP remains durable and retryable as 'uncertain'.
-            if recovery_id is not None:
+            if cleanup_id is not None:
                 try:
-                    self._finish_stop(operation_id, recovery_id, generation)
+                    self._finish_stop(operation_id, cleanup_id, generation)
                 except Exception:
+                    # The durable uncertain row remains the retry handle.
                     pass
             raise
         if recovery_id is not None and session_id != recovery_id:

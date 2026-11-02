@@ -717,6 +717,94 @@ MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
         with self.assertRaises(RuntimeError):
             migrated.create("replacement", 1)
 
+    def test_late_provider_generated_id_is_stopped_before_create_error_escapes(self):
+        class LateIdentified(Sender):
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                raise mod.AllocatedSessionError(operation_id, generation, "late-did-id")
+
+        sender = LateIdentified()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaises(mod.AllocatedSessionError):
+            worker.create("op-late", 1)
+        self.assertEqual(sender.stopped, 1)
+        self.assertEqual(worker.status("op-late"), (1, "stopped", "late-did-id"))
+        with self.assertRaises(RuntimeError):
+            worker.create("op-late", 1)
+
+    def test_late_provider_generated_id_failed_stop_retries_after_restart(self):
+        class LateIdentified(Sender):
+            def __init__(self):
+                super().__init__()
+                self.fail_stop = True
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                raise mod.AllocatedSessionError(operation_id, generation, "late-did-id")
+
+            def stop(self, operation_id, session_id, generation):
+                if self.fail_stop:
+                    self.stopped += 1
+                    raise TimeoutError("STOP reply lost")
+                return super().stop(operation_id, session_id, generation)
+
+        sender = LateIdentified()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaises(mod.AllocatedSessionError):
+            worker.create("op-late", 1)
+        self.assertEqual(worker.status("op-late"), (1, "uncertain", "late-did-id"))
+        with self.assertRaises(RuntimeError):
+            worker.create("replacement", 1)
+        sender.fail_stop = False
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(restarted.status("op-late"), (1, "stopped", "late-did-id"))
+        self.assertEqual(sender.stopped, 2)
+
+    def test_late_id_mismatch_requires_stop_of_both_possible_senders(self):
+        class TwoIdentities(Sender):
+            def __init__(self):
+                super().__init__()
+                self.targets = []
+
+            def recovery_session_id(self, operation_id, generation):
+                return "promised-id"
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                raise mod.AllocatedSessionError(operation_id, generation, "actual-id")
+
+            def stop(self, operation_id, session_id, generation):
+                self.targets.append(session_id)
+                return mod.StopReceipt(operation_id, session_id, generation, True, True)
+
+        sender = TwoIdentities()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaises(mod.AllocatedSessionError):
+            worker.create("op-late", 1)
+        self.assertEqual(sender.targets, ["actual-id", "promised-id"])
+        self.assertEqual(worker.status("op-late"), (1, "stopped", "actual-id"))
+
+    def test_foreign_late_provider_identity_cannot_authorize_remote_stop(self):
+        class ForeignIdentity(Sender):
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                raise mod.AllocatedSessionError("other-operation", generation, "foreign-id")
+
+        sender = ForeignIdentity()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaises(mod.AllocatedSessionError):
+            worker.create("op-late", 1)
+        self.assertEqual(worker.status("op-late"), (1, "uncertain", None))
+        self.assertEqual(sender.stopped, 0)
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(restarted.status("op-late"), (1, "uncertain", None))
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
+
     def test_unknown_id_after_restart_must_not_reallocate(self):
         self.worker._write("op-a", 1, "uncertain", None)
         restarted = mod.MediaLifecycle(self.db, self.sender)
