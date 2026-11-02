@@ -924,9 +924,11 @@ fn failed_echo_open_keeps_identity_until_both_cleanup_steps_succeed() {
         if fail_first_stop {
             assert!(registry.contains("partial-open").unwrap());
             // A duplicate OPEN must not overwrite the quarantined identity.
-            assert!(registry
-                .open_session(&backend, "partial-open", url, "private-token", &probe)
-                .is_err());
+            assert!(
+                registry
+                    .open_session(&backend, "partial-open", url, "private-token", &probe)
+                    .is_err()
+            );
             assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
             registry.close_session(&backend, "partial-open").unwrap();
             assert_eq!(backend.stops.load(Ordering::SeqCst), 2);
