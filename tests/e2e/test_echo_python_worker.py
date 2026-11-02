@@ -216,7 +216,9 @@ class EchoWorkerTests(unittest.TestCase):
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 0.45, "provider close blocked worker shutdown")
         self.assertEqual(trace["disconnected"], 1)
-        self.assertTrue(any(item["id"] == 2 and item["ok"] for item in receipts))
+        # A timed-out writer close leaves remote playback unverified. Its
+        # subsequent CLOSE must not report a successful STOP.
+        self.assertFalse(any(item["id"] == 2 and item["ok"] for item in receipts))
 
     def test_close_cleanup_is_bounded_and_receipt_requires_completed_drain(self):
         # Executed worker control flow must never emit a successful STOP
@@ -228,7 +230,10 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertIn("pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS", shutdown)
         self.assertIn("if unfinished:", shutdown)
         self.assertIn("cleanup_confirmed = False", shutdown)
-        self.assertIn("emit(close_identifier, cleanup_confirmed and close_control_confirmed)", shutdown)
+        self.assertIn(
+            "emit(close_identifier, cleanup_confirmed and close_control_confirmed and not terminal_failure)",
+            shutdown,
+        )
 
     def test_stalled_livekit_pcm_write_times_out_and_never_claims_delivery(self):
         pcm = bytes([4, 0] * 160)
