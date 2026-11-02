@@ -119,12 +119,19 @@ test("RT1 visitor reuses canonical D-ID provider for create, answer and confirme
   expect(pause.status).toBe(200);
   expect(pause.body.remote_stop_confirmed).toBe(false);
   const stopped = await call("/api/rt1/visitor/close", { session_id });
-  expect(stopped.status, JSON.stringify(stopped.body)).toBe(200);
-  // D-ID legacy DELETE is a provider close acknowledgement, not
-  // independent proof that both remote video and audio sender tracks ended.
-  expect(stopped.body.local_stop_confirmed).toBe(true);
-  expect(stopped.body.remote_stop_confirmed).toBe(false);
-  expect(stopped.body.remote_video_stop_confirmed).toBe(false);
+  // D-ID legacy DELETE is a provider close acknowledgement, NOT independent
+  // proof that both remote RTP senders ended. Never return a successful close
+  // or discard the session's retry handle when remote video is unconfirmed.
+  expect(stopped.status, JSON.stringify(stopped.body)).toBe(502);
+  expect(stopped.body.code).toBe("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+  const quarantined = await call("/api/rt1/visitor/status", { session_id });
+  expect(quarantined.status).toBe(200);
+  expect(quarantined.body.active).toBe(false);
+  const deniedAfterRevoke = await call("/api/rt1/visitor/voice", {
+    session_id,
+    pcm: [0, 0, 0, 0],
+  });
+  expect(deniedAfterRevoke.status).toBe(409);
 
   const state = (await (await request.get(`${provider}/__state`)).json()).requests;
   const deletes = state.filter(
