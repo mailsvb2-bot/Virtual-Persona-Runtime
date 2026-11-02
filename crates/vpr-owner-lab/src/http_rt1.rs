@@ -370,6 +370,13 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     conversation
         .close()
         .map_err(|_| error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"))?;
+    // The legacy D-ID DELETE and private Echo disconnect are not independent
+    // evidence that BOTH remote RTP senders (audio and video) terminated.
+    // Do not erase the retryable session or return HTTP 200 on local-only STOP.
+    // Only the durable remote worker path can supply both sender receipts.
+    if !remote_stop_confirmed {
+        return Err(error_response(502, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
+    }
     state.rt1.conversations.lock().remove(&body.session_id);
     Ok(json_response(
         200,
