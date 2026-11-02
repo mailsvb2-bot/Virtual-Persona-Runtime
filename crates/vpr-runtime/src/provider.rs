@@ -1,4 +1,4 @@
-use vpr_integration::{CancellationProbe, ProviderError};
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind};
 use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::ProviderCancellation;
@@ -23,9 +23,16 @@ impl ProviderExecutionPermit {
         result: Result<T, ProviderError>,
     ) -> Result<T, ProviderExecutionError> {
         if self.cancellation.is_cancelled() {
-            return Err(ProviderExecutionError::Denied(
-                RuntimeDenyReason::TurnCancelled,
-            ));
+            // Preserve the existing typed provider-cancellation contract.
+            // Only a late success (or unrelated late failure) is overridden.
+            return match result {
+                Err(error) if error.kind == ProviderErrorKind::Cancelled => {
+                    Err(ProviderExecutionError::Provider(error))
+                }
+                _ => Err(ProviderExecutionError::Denied(
+                    RuntimeDenyReason::TurnCancelled,
+                )),
+            };
         }
         result.map_err(ProviderExecutionError::from)
     }
