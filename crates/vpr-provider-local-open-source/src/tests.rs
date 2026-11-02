@@ -550,7 +550,7 @@ fn operation_answer_requires_exact_positive_worker_receipt() {
         let client =
             RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2))
                 .unwrap();
-        let result = client.answer("rt1-answer", "v=0\\r\\n");
+        let result = client.answer("rt1-answer", "v=0\r\n");
         assert_eq!(
             result.is_ok(),
             accepted,
@@ -558,6 +558,10 @@ fn operation_answer_requires_exact_positive_worker_receipt() {
         );
         let request = captured.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(request.starts_with("POST /v1/avatar/operations/rt1-answer/answer "));
-        assert!(request.to_ascii_lowercase().contains("authorization: bearer worker-secret"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer worker-secret")
+        );
     }
 }
