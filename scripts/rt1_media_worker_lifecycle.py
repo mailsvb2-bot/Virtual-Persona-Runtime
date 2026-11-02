@@ -43,6 +43,7 @@ class MediaLifecycle:
             id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
             phase TEXT NOT NULL, session_id TEXT,
             preassigned_session_id TEXT,
+            actual_stop_confirmed INTEGER NOT NULL DEFAULT 0,
             CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
         )""")
         # Existing SQLite ledgers predate preassigned identity. Migrate in a
@@ -55,6 +56,10 @@ class MediaLifecycle:
             if "preassigned_session_id" not in columns:
                 self._db.execute(
                     "ALTER TABLE media_operations ADD COLUMN preassigned_session_id TEXT"
+                )
+            if "actual_stop_confirmed" not in columns:
+                self._db.execute(
+                    "ALTER TABLE media_operations ADD COLUMN actual_stop_confirmed INTEGER NOT NULL DEFAULT 0"
                 )
             self._db.execute("COMMIT")
         except BaseException:
@@ -184,7 +189,7 @@ class MediaLifecycle:
                 raise RuntimeError(
                     "backend CREATE identity mismatch; compensating STOP unconfirmed"
                 ) from error
-            raise RuntimeError("backend CREATE identity mismatch; STOP unconfirmed")
+            raise RuntimeError("backend CREATE identity mismatch; both possible sender STOPs confirmed")
         with self._lock:
             # CREATE completion and CANCEL must have one SQLite linearization
             # point across *processes*. The Python RLock alone is insufficient:
@@ -295,33 +300,77 @@ class MediaLifecycle:
                 if row is None or row[0] != generation or row[2] != session_id:
                     raise RuntimeError("STOP target changed; shutdown not confirmed")
                 if row[1] == "stopped":
-                    # Only a prior verified STOP can persist a session id here.
+                    # Only prior verified STOPs can persist a session id here.
                     return StopReceipt(operation_id, session_id, generation, True, True)
                 if row[1] not in ("active", "stopping", "uncertain"):
                     raise RuntimeError("STOP target unresolved; shutdown not confirmed")
                 self._write(operation_id, generation, "stopping", session_id)
-            try:
-                receipt = self._backend.stop(operation_id, session_id, generation)
-            except Exception:
-                with self._lock:
-                    self._write(operation_id, generation, "uncertain", session_id)
-                raise
-            with self._lock:
-                if not self._validate(receipt, operation_id, session_id, generation):
-                    self._write(operation_id, generation, "uncertain", session_id)
-                    raise RuntimeError("remote audio/video STOP not confirmed")
-                preassigned = self._db.execute(
-                    "SELECT preassigned_session_id FROM media_operations WHERE id=? AND generation=?",
+                preassigned, actual_confirmed = self._db.execute(
+                    """SELECT preassigned_session_id,actual_stop_confirmed
+                       FROM media_operations WHERE id=? AND generation=?""",
                     (operation_id, generation),
                 ).fetchone()
-                if preassigned and preassigned[0] is not None and preassigned[0] != session_id:
-                    # An unexpected returned ID might coexist with the promised
-                    # preassigned sender. One receipt cannot clear BOTH targets.
-                    self._write(operation_id, generation, "uncertain", session_id)
-                    raise RuntimeError(
-                        "backend CREATE identity mismatch; preassigned STOP unconfirmed"
+                mismatch = preassigned is not None and preassigned != session_id
+            try:
+                if actual_confirmed:
+                    if not mismatch:
+                        raise RuntimeError("invalid durable STOP confirmation state")
+                    # Reconstruct ONLY the persisted, verified actual sender
+                    # receipt. Never claim the promised sender stopped.
+                    receipt = StopReceipt(operation_id, session_id, generation, True, True)
+                else:
+                    receipt = self._backend.stop(operation_id, session_id, generation)
+                    if not self._validate(receipt, operation_id, session_id, generation):
+                        raise RuntimeError("remote audio/video STOP not confirmed")
+                    if mismatch:
+                        # Persist the actual sender's receipt before attempting
+                        # the promised ID. A restart must retain partial progress.
+                        with self._lock:
+                            self._db.execute("BEGIN IMMEDIATE")
+                            try:
+                                if self._get(operation_id) != (generation, "stopping", session_id):
+                                    raise RuntimeError("STOP target changed during compensation")
+                                self._db.execute(
+                                    """UPDATE media_operations SET actual_stop_confirmed=1
+                                       WHERE id=? AND generation=?""",
+                                    (operation_id, generation),
+                                )
+                                self._db.execute("COMMIT")
+                            except BaseException:
+                                if self._db.in_transaction:
+                                    self._db.execute("ROLLBACK")
+                                raise
+                if mismatch:
+                    promised_receipt = self._backend.stop(
+                        operation_id, preassigned, generation
                     )
-                self._write(operation_id, generation, "stopped", session_id)
+                    if not self._validate(
+                        promised_receipt, operation_id, preassigned, generation
+                    ):
+                        raise RuntimeError("preassigned remote audio/video STOP not confirmed")
+            except Exception:
+                with self._lock:
+                    self._db.execute("BEGIN IMMEDIATE")
+                    try:
+                        if self._get(operation_id) == (generation, "stopping", session_id):
+                            self._write(operation_id, generation, "uncertain", session_id)
+                        self._db.execute("COMMIT")
+                    except BaseException:
+                        if self._db.in_transaction:
+                            self._db.execute("ROLLBACK")
+                        raise
+                raise
+            with self._lock:
+                self._db.execute("BEGIN IMMEDIATE")
+                try:
+                    if self._get(operation_id) != (generation, "stopping", session_id):
+                        raise RuntimeError("STOP target changed before confirmation")
+                    self._write(operation_id, generation, "stopped", session_id)
+                    self._db.execute("COMMIT")
+                except BaseException:
+                    if self._db.in_transaction:
+                        self._db.execute("ROLLBACK")
+                    raise
             return receipt
 
     def quarantine_after_restart(self):

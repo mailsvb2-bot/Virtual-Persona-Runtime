@@ -487,6 +487,11 @@ MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
                 self.created += 1
                 return "unexpected-sender"
 
+            def stop(self, operation_id, session_id, generation):
+                if session_id == "expected-sender":
+                    raise RuntimeError("preassigned STOP unconfirmed")
+                return super().stop(operation_id, session_id, generation)
+
         sender = MismatchedSender()
         worker = mod.MediaLifecycle(self.db, sender)
         with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
@@ -505,9 +510,100 @@ MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
         self.assertEqual(
             restarted.status("op-mismatch"), (1, "uncertain", "unexpected-sender")
         )
-        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+        with self.assertRaisesRegex(RuntimeError, "preassigned STOP unconfirmed"):
             restarted.reconcile()
+        self.assertEqual(sender.stopped, 1, "actual sender STOP must not be repeated")
         self.assertEqual(restarted.status("op-mismatch")[1], "uncertain")
+        with self.assertRaises(RuntimeError):
+            worker.create("replacement", 1)
+
+    def test_mismatched_create_requires_both_distinct_av_stop_receipts(self):
+        # Simulated sender identities, NOT real D-ID remote STOP evidence.
+        class DualSender(Sender):
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return "promised-sender"
+
+            def allocate(self, operation_id, generation):
+                return "actual-sender"
+
+            def stop(self, operation_id, session_id, generation):
+                self.stop_ids.append(session_id)
+                return mod.StopReceipt(operation_id, session_id, generation, True, True)
+
+        sender = DualSender()
+        sender.stop_ids = []
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+            worker.create("dual", 1)
+        self.assertEqual(sender.stop_ids, ["actual-sender", "promised-sender"])
+        self.assertEqual(worker.status("dual"), (1, "stopped", "actual-sender"))
+        self.assertEqual(
+            worker._db.execute(
+                "SELECT actual_stop_confirmed FROM media_operations WHERE id='dual'"
+            ).fetchone(), (1,),
+        )
+
+    def test_mismatched_create_restarts_at_only_unconfirmed_stop_target(self):
+        class RetryPromised(Sender):
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return "promised-sender"
+
+            def allocate(self, operation_id, generation):
+                return "actual-sender"
+
+            def stop(self, operation_id, session_id, generation):
+                self.stop_ids.append(session_id)
+                if session_id == "promised-sender" and self.fail_promised:
+                    raise TimeoutError("promised sender STOP receipt lost")
+                return mod.StopReceipt(operation_id, session_id, generation, True, True)
+
+        sender = RetryPromised()
+        sender.stop_ids = []
+        sender.fail_promised = True
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(RuntimeError, "compensating STOP unconfirmed"):
+            worker.create("dual-retry", 1)
+        self.assertEqual(sender.stop_ids, ["actual-sender", "promised-sender"])
+        self.assertEqual(worker.status("dual-retry")[1], "uncertain")
+        self.assertEqual(
+            worker._db.execute(
+                "SELECT actual_stop_confirmed FROM media_operations WHERE id='dual-retry'"
+            ).fetchone(), (1,),
+        )
+        restarted = mod.MediaLifecycle(self.db, sender)
+        restarted.quarantine_after_restart()
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
+        sender.fail_promised = False
+        restarted.reconcile()
+        self.assertEqual(
+            sender.stop_ids, ["actual-sender", "promised-sender", "promised-sender"],
+        )
+        self.assertEqual(restarted.status("dual-retry")[1], "stopped")
+
+    def test_mismatched_partial_promised_video_stop_never_clears_quarantine(self):
+        class PartialPromised(Sender):
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return "promised-sender"
+
+            def allocate(self, operation_id, generation):
+                return "actual-sender"
+
+            def stop(self, operation_id, session_id, generation):
+                return mod.StopReceipt(
+                    operation_id, session_id, generation, True,
+                    session_id != "promised-sender",
+                )
+
+        worker = mod.MediaLifecycle(self.db, PartialPromised())
+        with self.assertRaisesRegex(RuntimeError, "compensating STOP unconfirmed"):
+            worker.create("dual-partial", 1)
+        self.assertEqual(worker.status("dual-partial")[1], "uncertain")
+        with self.assertRaisesRegex(RuntimeError, "preassigned remote audio/video STOP"):
+            worker.reconcile()
         with self.assertRaises(RuntimeError):
             worker.create("replacement", 1)
 
@@ -564,6 +660,10 @@ MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
         self.assertEqual(migrated.status("old-op"), (1, "uncertain", "old-sender"))
         self.assertIn(
             "preassigned_session_id",
+            [row[1] for row in migrated._db.execute("PRAGMA table_info(media_operations)")],
+        )
+        self.assertIn(
+            "actual_stop_confirmed",
             [row[1] for row in migrated._db.execute("PRAGMA table_info(media_operations)")],
         )
         with self.assertRaises(RuntimeError):
