@@ -194,6 +194,8 @@ enum RegistrationFailure {
 
 /// Publish a registration before its final authority check, but release the
 /// registry lock before that check can trigger a slow authenticated STOP.
+/// A revoked registration remains quarantined until remote STOP is proven:
+/// removing it here would discard the only HTTP retry handle.
 fn register_visitor<T>(
     sessions: &Mutex<HashMap<String, Arc<T>>>,
     session_id: &str,
@@ -212,14 +214,31 @@ fn register_visitor<T>(
         }
     }
     if !active_now(conversation.as_ref()) {
-        let mut active = sessions.lock();
-        if active
-            .get(session_id)
-            .is_some_and(|current| Arc::ptr_eq(current, conversation))
-        {
-            active.remove(session_id);
-        }
         return Err(RegistrationFailure::Revoked);
+    }
+    Ok(())
+}
+
+/// Never discard a quarantined registration on a failed STOP or on a local
+/// transport close that lacks independent remote audio/video sender receipts.
+/// Identity comparison prevents a late STOP from removing a newer session.
+fn finalize_registered_stop<T>(
+    sessions: &Mutex<HashMap<String, Arc<T>>>,
+    session_id: &str,
+    conversation: &Arc<T>,
+    stop: Result<(), String>,
+    remote_video_receipt_path: bool,
+) -> Result<(), String> {
+    stop?;
+    if !remote_video_receipt_path {
+        return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED".into());
+    }
+    let mut active = sessions.lock();
+    if active
+        .get(session_id)
+        .is_some_and(|current| Arc::ptr_eq(current, conversation))
+    {
+        active.remove(session_id);
     }
     Ok(())
 }
@@ -283,8 +302,19 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
             return Err(error_response(409, "RT1_SESSION_COLLISION"));
         }
         Err(RegistrationFailure::Revoked) => {
-            if conversation.close().is_err() {
-                return Err(error_response(409, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
+            // The browser never receives this session ID, but the server must
+            // retain it for STOP reconciliation if the provider is uncertain.
+            let receipt_path = conversation.has_remote_video_stop_receipt_path();
+            if finalize_registered_stop(
+                &state.rt1.conversations,
+                &session_id,
+                &conversation,
+                conversation.close(),
+                receipt_path,
+            )
+            .is_err()
+            {
+                return Err(error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
             }
             return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
         }
@@ -388,17 +418,23 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     // Keep it for a retry if the network is unreachable.
     let conversation = lookup(state, &body.session_id)?;
     let remote_stop_confirmed = conversation.has_remote_video_stop_receipt_path();
-    conversation
-        .close()
-        .map_err(|_| error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"))?;
     // The legacy D-ID DELETE and private Echo disconnect are not independent
     // evidence that BOTH remote RTP senders (audio and video) terminated.
-    // Do not erase the retryable session or return HTTP 200 on local-only STOP.
-    // Only the durable remote worker path can supply both sender receipts.
-    if !remote_stop_confirmed {
-        return Err(error_response(502, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
-    }
-    state.rt1.conversations.lock().remove(&body.session_id);
+    // Preserve the retry handle until the durable worker confirms both.
+    finalize_registered_stop(
+        &state.rt1.conversations,
+        &body.session_id,
+        &conversation,
+        conversation.close(),
+        remote_stop_confirmed,
+    )
+    .map_err(|code| {
+        if code == "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED" {
+            error_response(502, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
+        } else {
+            error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED")
+        }
+    })?;
     Ok(json_response(
         200,
         &serde_json::json!({
@@ -412,12 +448,59 @@ fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
 
 #[cfg(test)]
 mod registration_tests {
-    use super::{RegistrationFailure, register_visitor};
+    use super::{RegistrationFailure, finalize_registered_stop, register_visitor};
     use parking_lot::Mutex;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn revoked_registration_retains_retry_handle_until_remote_receipt() {
+        let sessions = Mutex::new(HashMap::new());
+        let conversation = Arc::new(7_u8);
+        assert_eq!(
+            register_visitor(&sessions, "revoked", &conversation, |_| false),
+            Err(RegistrationFailure::Revoked)
+        );
+        assert!(Arc::ptr_eq(
+            sessions.lock().get("revoked").unwrap(),
+            &conversation
+        ));
+        assert!(
+            finalize_registered_stop(
+                &sessions,
+                "revoked",
+                &conversation,
+                Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()),
+                true,
+            )
+            .is_err()
+        );
+        assert!(sessions.lock().contains_key("revoked"));
+        assert_eq!(
+            finalize_registered_stop(&sessions, "revoked", &conversation, Ok(()), false),
+            Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED".into())
+        );
+        assert!(sessions.lock().contains_key("revoked"));
+        finalize_registered_stop(&sessions, "revoked", &conversation, Ok(()), true).unwrap();
+        assert!(sessions.lock().is_empty());
+    }
+
+    #[test]
+    fn late_stop_cannot_remove_replacement_registration() {
+        let sessions = Mutex::new(HashMap::new());
+        let old = Arc::new(1_u8);
+        let replacement = Arc::new(2_u8);
+        sessions
+            .lock()
+            .insert("reused".into(), Arc::clone(&replacement));
+        finalize_registered_stop(&sessions, "reused", &old, Ok(()), true).unwrap();
+        assert!(Arc::ptr_eq(
+            sessions.lock().get("reused").unwrap(),
+            &replacement
+        ));
+    }
 
     #[test]
     fn stalled_post_registration_authorization_never_holds_http_registry() {
@@ -437,6 +520,10 @@ mod registration_tests {
         release_tx.send(()).unwrap();
         assert!(lock_available, "slow provider STOP held all HTTP sessions");
         assert_eq!(worker.join().unwrap(), Err(RegistrationFailure::Revoked));
+        // The HTTP registration survives until STOP is independently proven.
+        assert!(sessions.lock().contains_key("slow"));
+        let conversation = sessions.lock().get("slow").unwrap().clone();
+        assert!(finalize_registered_stop(&sessions, "slow", &conversation, Ok(()), true).is_ok());
         assert!(sessions.lock().is_empty());
     }
 
