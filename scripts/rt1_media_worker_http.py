@@ -90,10 +90,16 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                     self._send(400, {"error": "invalid SDP answer"})
                     return
                 try:
-                    lifecycle._backend.answer(operation_id, row[2], row[0], payload["sdp"])
-                    if lifecycle.status(operation_id) != row:
-                        self._send(410, {"error": "operation revoked during answer"})
-                        return
+                    # Serialize the provider's SDP side effect with the SAME
+                    # OS-held gate as confirmed audio/video STOP. A provider
+                    # may accept SDP *after* an earlier STOP if we only check
+                    # the ledger before and after the network request.
+                    with lifecycle._exclusive_stop():
+                        if lifecycle.status(operation_id) != row:
+                            raise RuntimeError("operation revoked before answer")
+                        lifecycle._backend.answer(operation_id, row[2], row[0], payload["sdp"])
+                        if lifecycle.status(operation_id) != row:
+                            raise RuntimeError("operation revoked during answer")
                     self._send(200, {"operation_id": operation_id, "accepted": True})
                 except Exception:
                     # An answer can fail AFTER the remote peer accepted SDP.
