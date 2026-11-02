@@ -52,6 +52,12 @@ struct OfferReply {
 }
 
 #[derive(Debug, Deserialize)]
+struct AnswerReply {
+    operation_id: String,
+    accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct CancelReply {
     operation_id: String,
     session_id: String,
@@ -190,7 +196,14 @@ impl RemoteOperationClient {
             .json(&serde_json::json!({"type":"answer", "sdp":sdp}))
             .send()
             .map_err(|_| denied())?;
-        if !response.status().is_success() {
+        // A successful HTTP transport is not proof that the worker accepted
+        // the SDP. Reject 202/204 and a stale or negative operation receipt.
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(denied());
+        }
+        let reply: AnswerReply =
+            super::decode_json_response(response, None).map_err(|_| denied())?;
+        if reply.operation_id != operation_id || !reply.accepted {
             return Err(denied());
         }
         Ok(())
