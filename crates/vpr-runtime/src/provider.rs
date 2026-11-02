@@ -1,6 +1,8 @@
+use vpr_integration::{CancellationProbe, ProviderError};
 use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::ProviderCancellation;
+use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 
 /// Internal linearized capability for one immediate provider operation.
 ///
@@ -9,6 +11,24 @@ use crate::cancellation::ProviderCancellation;
 #[derive(Debug)]
 pub(crate) struct ProviderExecutionPermit {
     pub(crate) cancellation: ProviderCancellation,
+}
+
+impl ProviderExecutionPermit {
+    /// The provider can ignore cancellation and return a late success. Never
+    /// promote that result into a runtime output or a new stream capability.
+    /// This postflight is shared by owner and visitor turns; it is NOT a
+    /// substitute for cancellation-aware transport dispatch or remote STOP.
+    pub(crate) fn finish<T>(
+        &self,
+        result: Result<T, ProviderError>,
+    ) -> Result<T, ProviderExecutionError> {
+        if self.cancellation.is_cancelled() {
+            return Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::TurnCancelled,
+            ));
+        }
+        result.map_err(ProviderExecutionError::from)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
