@@ -42,8 +42,25 @@ class MediaLifecycle:
         self._db.execute("""CREATE TABLE IF NOT EXISTS media_operations (
             id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
             phase TEXT NOT NULL, session_id TEXT,
-            CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
+            CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain')),
+            preassigned_session_id TEXT
         )""")
+        # Existing SQLite ledgers predate preassigned identity. Migrate in a
+        # write transaction so concurrent worker startups cannot race ALTER.
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {
+                row[1] for row in self._db.execute("PRAGMA table_info(media_operations)")
+            }
+            if "preassigned_session_id" not in columns:
+                self._db.execute(
+                    "ALTER TABLE media_operations ADD COLUMN preassigned_session_id TEXT"
+                )
+            self._db.execute("COMMIT")
+        except BaseException:
+            if self._db.in_transaction:
+                self._db.execute("ROLLBACK")
+            raise
         self._lock = threading.RLock()
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
@@ -75,6 +92,17 @@ class MediaLifecycle:
     def create(self, operation_id: str, generation: int) -> str:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
+        # Obtain the backend's *authoritative* preassigned identity before
+        # allocation. Recording it only after a timeout misses process death
+        # during CREATE, especially when CANCEL already committed. This is
+        # metadata, not evidence that a remote sender exists or stopped.
+        recovery_id = None
+        identity = getattr(self._backend, "recovery_session_id", None)
+        if callable(identity):
+            candidate = identity(operation_id, generation)
+            if not isinstance(candidate, str) or not candidate:
+                raise RuntimeError("backend supplied invalid preassigned sender identity")
+            recovery_id = candidate
         with self._lock:
             # The Python lock is per process. BEGIN IMMEDIATE also serializes
             # admission across distinct worker processes sharing this ledger.
@@ -93,6 +121,11 @@ class MediaLifecycle:
                 ).fetchone():
                     raise RuntimeError("worker has unresolved media allocation")
                 self._write(operation_id, generation, "creating", None)
+                if recovery_id is not None:
+                    self._db.execute(
+                        "UPDATE media_operations SET preassigned_session_id=? WHERE id=?",
+                        (recovery_id, operation_id),
+                    )
                 self._db.execute("COMMIT")
             except BaseException:
                 if self._db.in_transaction:
@@ -102,23 +135,11 @@ class MediaLifecycle:
             session_id = self._backend.allocate(operation_id, generation)
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
+            if recovery_id is not None and session_id != recovery_id:
+                # A backend claiming an exact preassigned ID must honor it.
+                # Do not publish a different, potentially untracked sender.
+                raise RuntimeError("backend CREATE identity mismatch; STOP unconfirmed")
         except BaseException:
-            # Some backends can name the exact sender *before* a remote
-            # CREATE response arrives. Preserve that identity when a timeout
-            # or lost response leaves allocation outcome unknown, so a
-            # restarted worker can attempt compensating STOP. This is NOT
-            # evidence that the sender exists or has stopped. Backends with
-            # server-assigned IDs must not guess one.
-            recovery_id = None
-            identity = getattr(self._backend, "recovery_session_id", None)
-            if callable(identity):
-                try:
-                    candidate = identity(operation_id, generation)
-                    if isinstance(candidate, str) and candidate:
-                        recovery_id = candidate
-                except Exception:
-                    # Never hide the original CREATE failure or invent an ID.
-                    pass
             with self._lock:
                 # A different worker may CANCEL between a read and a write.
                 # Never overwrite its durable tombstone with an old CREATE result.
@@ -278,7 +299,9 @@ class MediaLifecycle:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 self._db.execute(
-                    "UPDATE media_operations SET phase='uncertain' WHERE phase != 'stopped'"
+                    """UPDATE media_operations SET phase='uncertain',
+                       session_id=COALESCE(session_id, preassigned_session_id)
+                       WHERE phase != 'stopped'"""
                 )
                 self._db.execute("COMMIT")
             except BaseException:
