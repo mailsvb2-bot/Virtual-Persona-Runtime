@@ -1,7 +1,7 @@
 use super::*;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use vpr_integration::GeneratedTextBuffer;
@@ -276,6 +276,41 @@ fn redirects_fail_closed_without_forwarding_credentials_or_retrying() {
             Err(error) => panic!("unexpected redirect-target accept error: {error}"),
         }
     }
+}
+
+/// Cancellation arrives while preparing a request, before HTTP dispatch.
+/// This checks the actual adapter boundary, not only a runtime mock.
+struct CancelAfterFirstProbe(AtomicUsize);
+
+impl CancellationProbe for CancelAfterFirstProbe {
+    fn is_cancelled(&self) -> bool {
+        self.0.fetch_add(1, Ordering::SeqCst) > 0
+    }
+}
+
+#[test]
+fn cancellation_during_request_preparation_denies_llm_dispatch() {
+    let provider = adapter("http://127.0.0.1:1/v1/chat/completions".to_owned());
+    let request = LlmRequest {
+        locale: "ru-RU".into(),
+        instructions: Some("canonical".into()),
+        user_input: "never transmit".into(),
+    };
+    let probe = CancelAfterFirstProbe(AtomicUsize::new(0));
+    let error = provider
+        .stream(&request, &probe, &mut GeneratedTextBuffer::default())
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!error.retryable);
+    assert!(probe.0.load(Ordering::SeqCst) >= 2);
+
+    let probe = CancelAfterFirstProbe(AtomicUsize::new(0));
+    let error = match provider.open_stream(&request, &probe) {
+        Ok(_) => panic!("cancelled request unexpectedly opened an LLM stream"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!error.retryable);
 }
 
 #[test]
