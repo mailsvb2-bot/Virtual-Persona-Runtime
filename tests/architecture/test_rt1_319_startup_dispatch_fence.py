@@ -91,19 +91,27 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertLess(registration.index("conversation.close().is_err()"),
                         registration.index("Ok(json_response("))
 
-    def test_http_start_failures_preserve_remote_stop_uncertainty(self):
+    def test_http_start_preallocates_retry_id_and_quarantines_late_revoke(self):
         http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
         start = http.split("fn visitor_start(", 1)[1].split("fn lookup(", 1)[0]
-        for failure in (
-            "RT1_VISITOR_REVOKED_DURING_START",
-            "RT1_SESSION_ENTROPY_UNAVAILABLE",
-            "RT1_SESSION_COLLISION",
-        ):
-            window = start.split('"' + failure + '"', 1)[0]
-            self.assertIn("conversation.close().is_err()", window)
-            self.assertIn('"RT1_REMOTE_STOP_UNCONFIRMED"', window)
-            self.assertLess(window.rfind("conversation.close().is_err()"),
-                            window.rfind('"RT1_REMOTE_STOP_UNCONFIRMED"'))
+        # Entropy must be consumed BEFORE any external provider CREATE.
+        self.assertLess(start.index("new_visitor_session_id()?"),
+                        start.index("Rt1VisitorConversation::start("))
+        self.assertNotIn("getrandom::fill(", start)
+        # No pre-registration authority check may drop the only STOP target.
+        self.assertLess(start.index("match register_visitor("),
+                        start.index("let voice_enabled = conversation.supports_private_voice();"))
+        self.assertLess(start.index("match register_visitor("),
+                        start.index("if !conversation.is_active()"))
+        late = start.split("if !conversation.is_active()", 1)[1]
+        self.assertIn("finalize_registered_stop(", late)
+        self.assertIn("conversation.close()", late)
+        self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"', late)
+        self.assertIn('"RT1_VISITOR_REVOKED_DURING_START"', late)
+        # A collision is still denied and attempts STOP, never returns SDP.
+        collision = start.split("Err(RegistrationFailure::Collision)", 1)[1]
+        self.assertIn("conversation.close().is_err()", collision)
+        self.assertIn('"RT1_SESSION_COLLISION"', collision)
 
     def test_failed_diagnostic_start_cannot_hide_unconfirmed_remote_stop(self):
         source = SOURCE.read_text(encoding="utf-8")

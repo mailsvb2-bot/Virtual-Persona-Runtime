@@ -243,11 +243,27 @@ fn finalize_registered_stop<T>(
     Ok(())
 }
 
+/// Allocate the HTTP retry identity before any remote CREATE. Entropy failure
+/// must never strand an already-started provider without a STOP lookup key.
+fn new_visitor_session_id() -> Result<String, HttpResponse> {
+    let mut raw = [0_u8; 32];
+    getrandom::fill(&mut raw)
+        .map_err(|_| error_response(503, "RT1_SESSION_ENTROPY_UNAVAILABLE"))?;
+    let mut session_id = String::with_capacity(64);
+    for byte in raw {
+        session_id.push(char::from(super::HEX[usize::from(byte >> 4)]));
+        session_id.push(char::from(super::HEX[usize::from(byte & 0x0f)]));
+    }
+    Ok(session_id)
+}
+
 fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorStart = parse_json(request)?;
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
+    // Do not call the provider until the retry handle exists.
+    let session_id = new_visitor_session_id()?;
     let providers = ProviderBundle::from_env(false)
         .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
     let mut engine = super::engine_bootstrap::assemble(providers, true)
@@ -263,31 +279,12 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     };
     let (conversation, bundle) =
         started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
-    // A concurrent owner pause may revoke the visitor after the worker
-    // produced an offer but before HTTP publishes the session identifier.
-    // Do not return a usable offer for an already-revoked publication.
-    if !conversation.is_active() {
-        if conversation.close().is_err() {
-            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
-        }
-        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
-    }
-    let mut raw = [0_u8; 32];
-    if getrandom::fill(&mut raw).is_err() {
-        if conversation.close().is_err() {
-            return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
-        }
-        return Err(error_response(503, "RT1_SESSION_ENTROPY_UNAVAILABLE"));
-    }
-    let mut session_id = String::with_capacity(64);
-    for byte in raw {
-        session_id.push(char::from(super::HEX[usize::from(byte >> 4)]));
-        session_id.push(char::from(super::HEX[usize::from(byte & 0x0f)]));
-    }
+    // Register before checking revocation: if STOP is uncertain, the
+    // quarantined server-side handle must survive even though the browser
+    // never received a usable SDP/session ID.
     let conversation = Arc::new(conversation);
     // Capability lookup and the post-registration authority check can invoke
     // remote STOP. Never hold the shared HTTP registry during provider I/O.
-    let voice_enabled = conversation.supports_private_voice();
     match register_visitor(
         &state.rt1.conversations,
         &session_id,
@@ -318,6 +315,24 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
             }
             return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
         }
+    }
+    // Authorization can change after registration or during capability
+    // discovery. Never lose the retry handle when that late check fails.
+    let voice_enabled = conversation.supports_private_voice();
+    if !conversation.is_active() {
+        let receipt_path = conversation.has_remote_video_stop_receipt_path();
+        if finalize_registered_stop(
+            &state.rt1.conversations,
+            &session_id,
+            &conversation,
+            conversation.close(),
+            receipt_path,
+        )
+        .is_err()
+        {
+            return Err(error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
+        }
+        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
     Ok(json_response(
         200,
@@ -490,6 +505,34 @@ mod registration_tests {
         );
         assert!(sessions.lock().contains_key("revoked"));
         finalize_registered_stop(&sessions, "revoked", &conversation, Ok(()), true).unwrap();
+        assert!(sessions.lock().is_empty());
+    }
+
+    #[test]
+    fn revoke_after_successful_registration_preserves_retryable_stop() {
+        let sessions = Mutex::new(HashMap::new());
+        let conversation = Arc::new(17_u8);
+        assert_eq!(
+            register_visitor(&sessions, "late-revoke", &conversation, |_| true),
+            Ok(())
+        );
+        // A pause can win after the registration check and before the HTTP
+        // response. Unconfirmed remote STOP must retain the only retry handle.
+        assert_eq!(
+            finalize_registered_stop(
+                &sessions,
+                "late-revoke",
+                &conversation,
+                Err("remote sender still active".into()),
+                true,
+            ),
+            Err("remote sender still active".into())
+        );
+        assert!(Arc::ptr_eq(
+            sessions.lock().get("late-revoke").unwrap(),
+            &conversation
+        ));
+        finalize_registered_stop(&sessions, "late-revoke", &conversation, Ok(()), true).unwrap();
         assert!(sessions.lock().is_empty());
     }
 
