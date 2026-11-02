@@ -58,6 +58,15 @@ impl Rt1RemoteMediaRevocation {
         if self.confirmed.load(Ordering::Acquire) {
             return Ok(());
         }
+        self.cancel_locked()
+    }
+
+    // Called with stop_gate held. Both owner revoke and failed SDP answer
+    // require the same independent audio/video STOP receipt.
+    fn cancel_locked(&self) -> Result<(), String> {
+        if self.confirmed.load(Ordering::Acquire) {
+            return Ok(());
+        }
         self.worker
             .cancel_confirmed(&self.operation_id, self.generation)
             .map_err(|_| "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())?;
@@ -73,9 +82,14 @@ impl Rt1RemoteMediaRevocation {
         if self.revoked.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        self.worker
-            .answer(&self.operation_id, sdp)
-            .map_err(|_| "RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned())?;
+        if self.worker.answer(&self.operation_id, sdp).is_err() {
+            // A rejected or lost SDP receipt does not prove the provider
+            // never accepted it. Quarantine and compensate under the same
+            // signaling/STOP gate, preventing any second answer.
+            self.revoked.store(true, Ordering::Release);
+            self.cancel_locked()?;
+            return Err("RT1_REMOTE_ANSWER_UNCONFIRMED".to_owned());
+        }
         // Owner revoke marks this flag before acquiring stop_gate. If it
         // arrived during the in-flight HTTP request, a late provider ACK must
         // not be exposed to the visitor as successful authorization.
@@ -312,9 +326,80 @@ mod tests {
             remote.submit_answer("v=0\r\n").unwrap_err(),
             "RT1_REMOTE_ANSWER_UNCONFIRMED"
         );
-        assert!(!remote.is_stop_confirmed());
-        remote.revoke_confirmed().unwrap();
+        // An SDP failure must trigger compensating STOP without a browser
+        // close or a second owner revoke.
         assert!(remote.is_revoked());
+        assert!(remote.is_stop_confirmed());
+        assert_eq!(
+            remote.submit_answer("v=0\r\n").unwrap_err(),
+            "RT1_VISITOR_REVOKED"
+        );
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn failed_answer_with_pending_stop_stays_quarantined_until_retry_receipt() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            for (method, status, body) in [
+                (
+                    "POST",
+                    "200 OK",
+                    r#"{"operation_id":"lost-answer","accepted":false}"#,
+                ),
+                (
+                    "DELETE",
+                    "202 Accepted",
+                    r#"{"operation_id":"lost-answer","generation":8,"session_id":"sender-8","audio_stopped":false,"video_stopped":false}"#,
+                ),
+                (
+                    "DELETE",
+                    "200 OK",
+                    r#"{"operation_id":"lost-answer","generation":8,"session_id":"sender-8","audio_stopped":true,"video_stopped":true}"#,
+                ),
+            ] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                loop {
+                    let read = socket.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                assert!(request.starts_with(
+                    format!("{method} /v1/avatar/operations/lost-answer ").as_bytes()
+                ));
+                write!(
+                    socket,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "lost-answer".into(), 8).unwrap();
+        assert_eq!(
+            remote.submit_answer("v=0\r\n").unwrap_err(),
+            "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
+        );
+        assert!(remote.is_revoked());
+        assert!(!remote.is_stop_confirmed());
+        assert_eq!(
+            remote.submit_answer("v=0\r\n").unwrap_err(),
+            "RT1_VISITOR_REVOKED"
+        );
+        remote.revoke_confirmed().unwrap();
         assert!(remote.is_stop_confirmed());
         worker.join().unwrap();
     }
