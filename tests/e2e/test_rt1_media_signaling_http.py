@@ -212,6 +212,64 @@ class SignalingTests(unittest.TestCase):
         self.assertFalse(self.sender.active)
         self.assertEqual(self.req("GET", "/offer")[0], 410)
 
+    def test_malformed_answer_never_dispatches_or_revokes_live_sender(self):
+        # Bad JSON shape is a client validation error, not provider failure.
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+        for invalid in (["not-an-object"], {"type": "answer", "sdp": ""}):
+            status, _ = self.req("POST", "/answer", invalid)
+            self.assertEqual(status, 400)
+        self.assertEqual(self.coordinator.status("op-1")[1], "active")
+        self.assertTrue(self.sender.active)
+        self.assertEqual(self.sender.answers, 0)
+        self.assertEqual(self.req("DELETE", body={"generation": 1})[0], 200)
+
+    def test_provider_value_error_after_answer_revokes_both_senders(self):
+        # Provider-side ValueError is NOT an invalid-request exemption: SDP
+        # may already have taken effect before the adapter reports failure.
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+
+        def failed_after_accept(operation_id, session_id, generation, sdp):
+            self.sender.answers += 1
+            raise ValueError("simulated post-SDP provider failure")
+
+        self.sender.answer = failed_after_accept
+        status, body = self.req("POST", "/answer", {"type": "answer", "sdp": "v=0"})
+        self.assertEqual(status, 409)
+        self.assertNotIn("simulated", str(body))
+        self.assertEqual(self.sender.answers, 1)
+        self.assertFalse(self.sender.active, "both sender STOPs must run")
+        self.assertEqual(self.coordinator.status("op-1")[1], "stopped")
+        self.assertEqual(self.req("GET", "/offer")[0], 410)
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 409)
+
+    def test_answer_timeout_partial_video_stop_quarantines_across_restart(self):
+        # Simulated provider timeout and incomplete VIDEO stop, not D-ID proof.
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
+        original_stop = self.sender.stop
+
+        def failed_answer(operation_id, session_id, generation, sdp):
+            raise TimeoutError("simulated provider stalled after SDP")
+
+        def partial_stop(operation_id, session_id, generation):
+            return StopReceipt(operation_id, session_id, generation, True, False)
+
+        self.sender.answer = failed_answer
+        self.sender.stop = partial_stop
+        status, _ = self.req("POST", "/answer", {"type": "answer", "sdp": "v=0"})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.coordinator.status("op-1")[1], "uncertain")
+        self.assertEqual(self.req("GET", "/offer")[0], 410)
+        self.assertEqual(self.req("PUT", body={"generation": 1})[0], 409)
+
+        # New process/connection sees the same durable unresolved identity.
+        recovered = MediaLifecycle(Path(self.tmp.name) / "ledger.db", self.sender)
+        recovered.quarantine_after_restart()
+        self.assertEqual(recovered.status("op-1")[1], "uncertain")
+        self.sender.stop = original_stop
+        recovered.reconcile()
+        self.assertEqual(recovered.status("op-1")[1], "stopped")
+        self.assertFalse(self.sender.active)
+
     def test_no_signaling_without_token(self):
         self.assertEqual(self.req("PUT", body={"generation": 1}, token="invalid")[0], 401)
         self.assertEqual(self.req("GET", "/offer", token="invalid")[0], 401)
