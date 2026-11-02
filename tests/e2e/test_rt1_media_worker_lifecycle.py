@@ -409,6 +409,122 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             restarted.create("replacement", 1)
 
+    def test_preassigned_identity_survives_process_crash_during_cancelled_create(self):
+        # Mock sender: this tests durable recovery, not actual remote RTP STOP.
+        # The subprocess dies while allocate() is in progress, after CANCEL.
+        # Its finally/except handlers cannot write a late recovery ID.
+        import subprocess
+        import sys
+
+        child_code = """
+import sys, time
+sys.path.insert(0, sys.argv[2])
+from rt1_media_worker_lifecycle import MediaLifecycle
+
+class PendingSender:
+    @staticmethod
+    def recovery_session_id(operation_id, generation):
+        return f"rt1-{operation_id}-{generation}"
+
+    def allocate(self, operation_id, generation):
+        print("CREATE_ENTERED", flush=True)
+        time.sleep(120)
+
+    def stop(self, operation_id, session_id, generation):
+        raise AssertionError("not reached")
+
+MediaLifecycle(sys.argv[1], PendingSender()).create("op-crash", 1)
+"""
+        child = subprocess.Popen(
+            [sys.executable, "-c", child_code, str(self.db), str(ROOT / "scripts")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "CREATE_ENTERED")
+            self.assertEqual(self.worker.status("op-crash"), (1, "creating", None))
+            self.assertEqual(
+                self.worker._db.execute(
+                    "SELECT preassigned_session_id FROM media_operations WHERE id='op-crash'"
+                ).fetchone(),
+                ("rt1-op-crash-1",),
+            )
+            self.assertIsNone(self.worker.cancel("op-crash", 1))
+            self.assertEqual(self.worker.status("op-crash"), (1, "stopping", None))
+            self.assertEqual(self.sender.stopped, 0)
+        finally:
+            child.kill()
+            child.communicate(timeout=3)
+
+        class RecoverableSender(Sender):
+            def stop(self, operation_id, session_id, generation):
+                if session_id != "rt1-op-crash-1":
+                    raise RuntimeError("unexpected sender identity")
+                return super().stop(operation_id, session_id, generation)
+
+        recovered_sender = RecoverableSender()
+        restarted = mod.MediaLifecycle(self.db, recovered_sender)
+        restarted.quarantine_after_restart()
+        self.assertEqual(
+            restarted.status("op-crash"), (1, "uncertain", "rt1-op-crash-1")
+        )
+        with self.assertRaises(RuntimeError):
+            restarted.create("replacement", 1)
+        restarted.reconcile()
+        self.assertEqual(
+            restarted.status("op-crash"), (1, "stopped", "rt1-op-crash-1")
+        )
+        self.assertEqual(recovered_sender.stopped, 1)
+
+    def test_preassigned_backend_identity_mismatch_stays_quarantined(self):
+        class MismatchedSender(Sender):
+            @staticmethod
+            def recovery_session_id(operation_id, generation):
+                return "expected-sender"
+
+            def allocate(self, operation_id, generation):
+                self.created += 1
+                return "unexpected-sender"
+
+        sender = MismatchedSender()
+        worker = mod.MediaLifecycle(self.db, sender)
+        with self.assertRaisesRegex(RuntimeError, "identity mismatch"):
+            worker.create("op-mismatch", 1)
+        self.assertEqual(
+            worker.status("op-mismatch"), (1, "uncertain", "expected-sender")
+        )
+        self.assertEqual(sender.stopped, 0)
+        with self.assertRaises(RuntimeError):
+            worker.create("replacement", 1)
+
+    def test_legacy_sqlite_ledger_migrates_without_discarding_unresolved_sender(self):
+        import sqlite3
+
+        legacy_path = Path(self.temp.name) / "legacy.sqlite"
+        db = sqlite3.connect(legacy_path)
+        try:
+            db.execute("""CREATE TABLE media_operations (
+                id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
+                phase TEXT NOT NULL, session_id TEXT,
+                CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
+            )""")
+            db.execute(
+                "INSERT INTO media_operations VALUES(?,?,?,?)",
+                ("old-op", 1, "uncertain", "old-sender"),
+            )
+            db.commit()
+        finally:
+            db.close()
+        migrated = mod.MediaLifecycle(legacy_path, self.sender)
+        self.assertEqual(migrated.status("old-op"), (1, "uncertain", "old-sender"))
+        self.assertIn(
+            "preassigned_session_id",
+            [row[1] for row in migrated._db.execute("PRAGMA table_info(media_operations)")],
+        )
+        with self.assertRaises(RuntimeError):
+            migrated.create("replacement", 1)
+
     def test_unknown_id_after_restart_must_not_reallocate(self):
         self.worker._write("op-a", 1, "uncertain", None)
         restarted = mod.MediaLifecycle(self.db, self.sender)
