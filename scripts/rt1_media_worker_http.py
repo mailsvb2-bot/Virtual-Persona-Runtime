@@ -86,6 +86,19 @@ def handler_for(lifecycle: MediaLifecycle, token: str):
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError):
                     self._send(400, {"error": "invalid SDP answer"})
                 except Exception:
+                    # An answer can time out after the remote peer accepted SDP.
+                    # Never leave that potentially transmitting sender active
+                    # merely because signaling returned an error. Revoke via
+                    # the canonical durable STOP coordinator, which preserves
+                    # an uncertain ledger state when either RTP sender cannot
+                    # be confirmed stopped. A racing owner revoke is safe:
+                    # cancel() is idempotent and STOP ownership is serialized.
+                    try:
+                        lifecycle.cancel(operation_id, row[0])
+                    except Exception:
+                        # The reconciler owns subsequent STOP retries. Never
+                        # claim shutdown or expose provider error details here.
+                        pass
                     self._send(409, {"error": "media answer unavailable"})
                 return
             # Only DELETE may revoke an operation. In particular, POST on the
