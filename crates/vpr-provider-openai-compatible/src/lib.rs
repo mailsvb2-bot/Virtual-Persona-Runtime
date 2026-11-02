@@ -208,10 +208,22 @@ impl OpenAiCompatibleLlm {
             };
             builder = builder.header(header, project);
         }
-        builder
-            .json(&body)
+        let request = builder.json(&body);
+        // Payload preparation can race with owner/visitor revocation.
+        // Recheck the canonical runtime cancellation immediately before
+        // dispatch; a blocking HTTP send is not itself an abortable lease.
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        let response = request
             .send()
-            .map_err(|error| map_transport_error(&error))
+            .map_err(|error| map_transport_error(&error))?;
+        // A provider may finish after revoke: never expose its response as
+        // an authorized stream even if the transport ignored cancellation.
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        Ok(response)
     }
 
     fn execute(
