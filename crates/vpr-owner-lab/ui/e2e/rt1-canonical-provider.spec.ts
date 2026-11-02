@@ -8,7 +8,7 @@ const csrfHeaders = (csrf: string) => ({
   origin: base,
 });
 
-test("RT1 visitor reuses canonical D-ID provider for create, answer and confirmed close", async ({ page, request }) => {
+test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirmed remote close", async ({ page, request }) => {
   // Module scripts must execute before we interpret Owner Lab bootstrap status.
   // Keep the real browser/assets/backend path: no mocked bootstrap or retries.
   const browserErrors: string[] = [];
