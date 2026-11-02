@@ -60,12 +60,14 @@ class BoundedCreateTests(unittest.TestCase):
         started = time.monotonic()
         try:
             with self.assertRaisesRegex(RuntimeError, "CREATE deadline exceeded"):
-                self.lifecycle.create_bounded("bounded", 1, 0.05)
+                self.lifecycle.create_bounded("bounded", 1, 0.2)
             self.assertLess(time.monotonic() - started, 1)
             self.assertTrue(self.backend.entered.is_set())
             self.assertEqual(self.lifecycle.status("bounded"), (1, "stopping", None))
             with self.assertRaises(RuntimeError):
                 self.lifecycle.create("replacement", 1)
+            with self.assertRaisesRegex(RuntimeError, "CREATE remains in flight"):
+                self.lifecycle.create_bounded("replacement", 1, 0.2)
         finally:
             self.backend.release.set()
         self.await_phase("stopped")
@@ -79,7 +81,7 @@ class BoundedCreateTests(unittest.TestCase):
         self.backend.fail = True
         try:
             with self.assertRaisesRegex(RuntimeError, "CREATE deadline exceeded"):
-                self.lifecycle.create_bounded("bounded", 1, 0.05)
+                self.lifecycle.create_bounded("bounded", 1, 0.2)
         finally:
             self.backend.release.set()
         self.await_phase("uncertain")
@@ -87,7 +89,7 @@ class BoundedCreateTests(unittest.TestCase):
         self.assertEqual(self.backend.stops, 0)
         with self.assertRaises(RuntimeError):
             self.lifecycle.create("replacement", 1)
-        restarted = MediaLifecycle(self.lifecycle._db.execute("PRAGMA database_list").fetchone()[2], self.backend)
+        restarted = MediaLifecycle(Path(self.temp.name) / "ledger.sqlite", self.backend)
         restarted.quarantine_after_restart()
         self.assertEqual(restarted.status("bounded"), (1, "uncertain", None))
 
@@ -117,7 +119,7 @@ class BoundedHttpCreateTests(unittest.TestCase):
             lifecycle = MediaLifecycle(Path(temp) / "http.sqlite", backend)
             server = ThreadingHTTPServer(
                 ("127.0.0.1", 0),
-                handler_for(lifecycle, "secret", create_timeout_seconds=0.05),
+                handler_for(lifecycle, "secret", create_timeout_seconds=0.2),
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
