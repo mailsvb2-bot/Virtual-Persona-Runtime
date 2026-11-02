@@ -94,6 +94,12 @@ impl Rt1RemoteMediaRevocation {
         // arrived during the in-flight HTTP request, a late provider ACK must
         // not be exposed to the visitor as successful authorization.
         if self.revoked.load(Ordering::Acquire) {
+            // The owner may have revoked authority while the provider was
+            // accepting SDP. Complete the compensating STOP *before* the
+            // signaling caller returns: a delayed owner callback must not be
+            // the only path to shutting down an already accepted answer.
+            // Keep the operation quarantined when either sender is uncertain.
+            self.cancel_locked()?;
             return Err("RT1_VISITOR_REVOKED".into());
         }
         Ok(())
@@ -275,6 +281,59 @@ mod tests {
         release_answer_tx.send(()).unwrap();
         assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_VISITOR_REVOKED");
         stop.join().unwrap().unwrap();
+        assert!(remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn raced_accepted_answer_compensates_stop_before_return_and_preserves_uncertainty() {
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            for attempt in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                loop {
+                    let n = socket.read(&mut buffer).unwrap();
+                    if n == 0 { break; }
+                    request.extend_from_slice(&buffer[..n]);
+                    if request.windows(4).any(|part| part == b"\r\n\r\n") { break; }
+                }
+                let (status, body) = if attempt == 0 {
+                    assert!(request.starts_with(b"POST /v1/avatar/operations/raced-pending/answer "));
+                    accepted_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                    ("200 OK", r#"{"operation_id":"raced-pending","accepted":true}"#)
+                } else {
+                    assert!(request.starts_with(b"DELETE /v1/avatar/operations/raced-pending "));
+                    if attempt == 1 {
+                        ("202 Accepted", r#"{"operation_id":"raced-pending","stop_confirmed":false}"#)
+                    } else {
+                        ("200 OK", r#"{"operation_id":"raced-pending","generation":1,"session_id":"sender","audio_stopped":true,"video_stopped":true}"#)
+                    }
+                };
+                write!(socket, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let client = RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-pending".into(), 1).unwrap());
+        let submitting = Arc::clone(&remote);
+        let answer = std::thread::spawn(move || submitting.submit_answer("v=0\r\n"));
+        accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        // Model the owner's revocation flag becoming visible while the SDP
+        // request holds the signaling/STOP gate; do not start another runtime.
+        remote.revoked.store(true, Ordering::Release);
+        release_tx.send(()).unwrap();
+        assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED");
+        assert!(!remote.is_stop_confirmed());
+        assert!(remote.is_revoked());
+        remote.revoke_confirmed().unwrap();
         assert!(remote.is_stop_confirmed());
         worker.join().unwrap();
     }
