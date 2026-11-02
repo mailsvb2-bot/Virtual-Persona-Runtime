@@ -269,6 +269,16 @@ impl OwnerLabEngine {
         self.start_scoped(request, LabSessionAudience::Owner, |_| {})
     }
 
+    /// Starts a visitor session using the canonical owner engine.
+    /// # Errors
+    /// Denies unreviewed Persona or failed provider startup.
+    pub fn start_visitor(
+        &mut self,
+        request: OwnerLabStartRequest,
+    ) -> Result<LabSignalBundle, LabError> {
+        self.start_visitor_with_interrupt(request, |_| {})
+    }
+
     fn start_scoped(
         &mut self,
         request: OwnerLabStartRequest,

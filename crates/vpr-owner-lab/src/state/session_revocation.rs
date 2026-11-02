@@ -6,21 +6,6 @@ use vpr_domain::RealtimeSessionState;
 use vpr_runtime::{ActiveSession, SessionRevocationHandle, TurnInterruptHandle};
 
 impl OwnerLabEngine {
-    /// Starts a visitor-scoped test session over the same reviewed Persona identity/version.
-    /// Owner-reviewed claim text is not made available to visitor context assembly.
-    ///
-    /// # Errors
-    /// Fails closed unless a reviewed Persona exists and normal session/egress/consent checks pass.
-    pub fn start_visitor(
-        &mut self,
-        request: OwnerLabStartRequest,
-    ) -> Result<LabSignalBundle, LabError> {
-        if self.reviewed_owner_context.is_none() {
-            return Err(LabError::InvalidState);
-        }
-        self.start_visitor_with_interrupt(request, |_| {})
-    }
-
     /// Registers the canonical startup turn's interrupt capability BEFORE
     /// opening a remote avatar. Owner pause can then cancel an in-flight
     /// CREATE without waiting for the engine mutex or a provider response.
