@@ -139,6 +139,20 @@ class SenderTimeoutTests(unittest.TestCase):
             backend.shutdown()
 
 
+    def test_pre_cancelled_create_never_calls_provider(self):
+        # A queued CREATE whose deadline expired before scheduling must not
+        # even import/construct the remote transport.
+        cancel_requested = threading.Event()
+        cancel_requested.set()
+        backend = AiortcSenderBackend(timeout=0.2)
+        try:
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(backend._allocate("never-start", 1, cancel_requested))
+            self.assertEqual(backend._sessions, {})
+        finally:
+            backend.shutdown()
+
+
 
 class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_remote_answer_must_complete_before_confirmed_stop(self):
