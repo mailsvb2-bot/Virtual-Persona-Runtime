@@ -360,11 +360,20 @@ fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1H
     let body: VisitorSession = parse_json(request)?;
     lookup(state, &body.session_id)?
         .interrupt_turn()
-        .map_err(|_| error_response(409, "RT1_VISITOR_INTERRUPT_DENIED"))?;
+        .map_err(|code| {
+            if code == "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED" {
+                error_response(502, "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED")
+            } else {
+                error_response(409, "RT1_VISITOR_INTERRUPT_DENIED")
+            }
+        })?;
     // Audio interrupt is not evidence of remote video shutdown.
-    Ok(json_response(200, &serde_json::json!({
-        "ok": true, "remote_video_stop_confirmed": false
-    })))
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "ok": true, "remote_video_stop_confirmed": false
+        }),
+    ))
 }
 
 fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
