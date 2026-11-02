@@ -80,6 +80,11 @@ class AiortcSenderBackend:
         self._thread = threading.Thread(target=self._run_loop, name="rt1-aiortc", daemon=True)
         self._lock = threading.RLock()
         self._sessions: dict[str, _Session] = {}
+        # A STOP can finish after its synchronous caller times out. Retain
+        # ONLY verified in-process receipts so durable reconciliation can
+        # retry without mistaking an already-closed sender for an unknown one.
+        # A process restart has no such evidence and must remain fail-closed.
+        self._completed_stops: dict[str, StopReceipt] = {}
         self._thread.start()
 
     def _run_loop(self):
@@ -191,6 +196,8 @@ class AiortcSenderBackend:
                     raise asyncio.CancelledError("WebRTC CREATE completed after cancellation")
                 if session_id in self._sessions:
                     raise RuntimeError("WebRTC session already allocated")
+                # Never reuse a receipt from an earlier sender with this ID.
+                self._completed_stops.pop(session_id, None)
                 self._sessions[session_id] = _Session(
                     peer, audio, video, operation_id, generation
                 )
@@ -245,6 +252,11 @@ class AiortcSenderBackend:
     async def _stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         with self._lock:
             entry = self._sessions.get(session_id)
+            verified = self._completed_stops.get(session_id) if entry is None else None
+        if entry is None and verified is not None and (
+            verified.operation_id, verified.generation
+        ) == (operation_id, generation):
+            return verified
         if not entry or (entry.operation_id, entry.generation) != (operation_id, generation):
             # Never fabricate STOP for a session that may live on another worker.
             raise RuntimeError("remote WebRTC sender missing; STOP unconfirmed")
@@ -266,10 +278,15 @@ class AiortcSenderBackend:
                 or entry.peer.connectionState != "closed"
             ):
                 raise RuntimeError("WebRTC sender shutdown not independently confirmed")
+            receipt = StopReceipt(operation_id, session_id, generation, True, True)
             with self._lock:
                 if self._sessions.get(session_id) is entry:
+                    # Publish the receipt atomically with removal. A late
+                    # reconciliation must never observe a missing sender
+                    # before its verified STOP is available.
+                    self._completed_stops[session_id] = receipt
                     self._sessions.pop(session_id)
-            return StopReceipt(operation_id, session_id, generation, True, True)
+            return receipt
 
     def shutdown(self):
         with self._lock:
