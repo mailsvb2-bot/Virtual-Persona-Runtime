@@ -23,9 +23,7 @@ impl ProviderExecutionPermit {
         result: Result<T, ProviderError>,
     ) -> Result<T, ProviderExecutionError> {
         if self.cancellation.is_cancelled() {
-            return Err(ProviderExecutionError::Denied(
-                RuntimeDenyReason::TurnCancelled,
-            ));
+            return Err(ProviderExecutionError::Denied(RuntimeDenyReason::TurnCancelled));
         }
         result.map_err(ProviderExecutionError::from)
     }
