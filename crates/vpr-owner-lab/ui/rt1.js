@@ -292,7 +292,9 @@
         "Вы: " + result.transcript + " · Persona: " + result.reply;
       message("Ответ Persona отправлен действующему аватару.");
     } catch (error) {
-      if (sessionId === capture.id) {
+      // Closing the session wins over any late voice-provider failure.
+      // Do not replace a STOP warning or successful close with a stale error.
+      if (sessionId === capture.id && !stopping && voiceEnabled) {
         message("Голос недоступен для выбранного провайдера или сессии: " +
           String(error.message || error), true);
       }
