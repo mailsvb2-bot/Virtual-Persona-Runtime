@@ -871,6 +871,71 @@ fn failed_echo_stop_retains_identity_for_retry() {
 }
 
 #[test]
+fn failed_echo_open_keeps_identity_until_both_cleanup_steps_succeed() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PartialOpen {
+        stops: AtomicUsize,
+        fail_first_stop: bool,
+    }
+    impl DidEchoBackend for PartialOpen {
+        fn open(
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            // The private publisher may have connected before OPEN failed.
+            Err(super::unavailable())
+        }
+        fn speak(
+            &self,
+            _id: &str,
+            _text: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            panic!("failed OPEN must never publish speech");
+        }
+        fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+            let attempt = self.stops.fetch_add(1, Ordering::SeqCst);
+            if self.fail_first_stop && attempt == 0 {
+                Err(super::unavailable())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let probe = Probe(AtomicBool::new(false));
+    let url = "wss://livekit.example.test/room/agent-echo";
+    for fail_first_stop in [false, true] {
+        let backend = PartialOpen {
+            stops: AtomicUsize::new(0),
+            fail_first_stop,
+        };
+        let registry = DidEchoRegistry::default();
+        let error = registry
+            .open_session(&backend, "partial-open", url, "private-token", &probe)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+
+        if fail_first_stop {
+            assert!(registry.contains("partial-open").unwrap());
+            // A duplicate OPEN must not overwrite the quarantined identity.
+            assert!(registry
+                .open_session(&backend, "partial-open", url, "private-token", &probe)
+                .is_err());
+            assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+            registry.close_session(&backend, "partial-open").unwrap();
+            assert_eq!(backend.stops.load(Ordering::SeqCst), 2);
+        }
+        assert!(!registry.contains("partial-open").unwrap());
+    }
+}
+
+#[test]
 fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     use std::sync::Arc;
 

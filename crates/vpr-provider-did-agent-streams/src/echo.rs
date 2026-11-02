@@ -117,8 +117,11 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
-            // Implementations must undo partial transport setup on failed open.
-            self.remove(id)?;
+            // OPEN can fail after the private sender has connected. Attempt
+            // canonical STOP, but never discard its only known identity when
+            // STOP/forget is unconfirmed. A later close can retry the same ID.
+            // Preserve the original OPEN failure for the caller.
+            let _ = self.close_session(backend, id);
             return Err(error);
         }
         if cancellation.is_cancelled() {
