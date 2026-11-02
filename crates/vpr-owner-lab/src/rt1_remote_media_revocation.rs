@@ -375,9 +375,12 @@ mod tests {
                         break;
                     }
                 }
-                assert!(request.starts_with(
-                    format!("{method} /v1/avatar/operations/lost-answer ").as_bytes()
-                ));
+                let expected_path = if method == "POST" {
+                    "POST /v1/avatar/operations/lost-answer/answer "
+                } else {
+                    "DELETE /v1/avatar/operations/lost-answer "
+                };
+                assert!(request.starts_with(expected_path.as_bytes()));
                 write!(
                     socket,
                     "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
