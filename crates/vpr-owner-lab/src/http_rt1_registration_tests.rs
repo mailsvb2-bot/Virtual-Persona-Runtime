@@ -135,4 +135,3 @@ fn collision_never_invokes_provider_authorization() {
     assert_eq!(result, Err(RegistrationFailure::Collision));
     assert!(Arc::ptr_eq(sessions.lock().get("same").unwrap(), &existing));
 }
-
