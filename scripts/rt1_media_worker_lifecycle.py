@@ -42,8 +42,8 @@ class MediaLifecycle:
         self._db.execute("""CREATE TABLE IF NOT EXISTS media_operations (
             id TEXT PRIMARY KEY, generation INTEGER NOT NULL,
             phase TEXT NOT NULL, session_id TEXT,
-            CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain')),
-            preassigned_session_id TEXT
+            preassigned_session_id TEXT,
+            CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
         )""")
         # Existing SQLite ledgers predate preassigned identity. Migrate in a
         # write transaction so concurrent worker startups cannot race ALTER.
