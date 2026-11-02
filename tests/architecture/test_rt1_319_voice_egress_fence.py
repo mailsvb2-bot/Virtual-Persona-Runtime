@@ -67,6 +67,18 @@ class VisitorVoiceEgressGate(unittest.TestCase):
             'Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())',
         )
 
+    def test_browser_late_voice_failure_cannot_override_stop_state(self):
+        browser = (
+            Path(__file__).resolve().parents[2]
+            / "crates/vpr-owner-lab/ui/rt1.js"
+        ).read_text(encoding="utf-8")
+        start = browser.index("  async function endMicrophone() {")
+        end = browser.index('  el("speak").addEventListener', start)
+        voice = browser[start:end]
+        self.assertIn('await api("/api/rt1/visitor/voice"', voice)
+        self.assertIn('if (sessionId === capture.id && !stopping && voiceEnabled)', voice)
+        self.assertIn('if (sessionId !== capture.id || stopping) return;', voice)
+
     def test_denial_helper_is_error_only(self):
         self.assertRegex(
             self.source,
