@@ -307,8 +307,7 @@ mod tests {
         });
         let client =
             RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-        let remote =
-            Rt1RemoteMediaRevocation::new(client, "negative-answer".into(), 4).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "negative-answer".into(), 4).unwrap();
         assert_eq!(
             remote.submit_answer("v=0\r\n").unwrap_err(),
             "RT1_REMOTE_ANSWER_UNCONFIRMED"
