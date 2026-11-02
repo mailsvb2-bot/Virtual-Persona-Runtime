@@ -266,6 +266,61 @@ mod tests {
     }
 
     #[test]
+    fn negative_answer_receipt_denies_signaling_and_still_allows_verified_revoke() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            for (expected_path, body) in [
+                (
+                    "POST /v1/avatar/operations/negative-answer/answer ",
+                    r#"{"operation_id":"negative-answer","accepted":false}"#,
+                ),
+                (
+                    "DELETE /v1/avatar/operations/negative-answer ",
+                    r#"{"operation_id":"negative-answer","generation":4,"session_id":"sender-4","audio_stopped":true,"video_stopped":true}"#,
+                ),
+            ] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 2048];
+                loop {
+                    let read = socket.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if request.windows(4).any(|part| part == b"\\r\\n\\r\\n") {
+                        break;
+                    }
+                }
+                assert!(request.starts_with(expected_path.as_bytes()));
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote =
+            Rt1RemoteMediaRevocation::new(client, "negative-answer".into(), 4).unwrap();
+        assert_eq!(
+            remote.submit_answer("v=0\\r\\n").unwrap_err(),
+            "RT1_REMOTE_ANSWER_UNCONFIRMED"
+        );
+        assert!(!remote.is_stop_confirmed());
+        remote.revoke_confirmed().unwrap();
+        assert!(remote.is_revoked());
+        assert!(remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
+
+    #[test]
     fn remote_operation_identity_must_be_valid_before_admission() {
         let client = RemoteOperationClient::new(
             "http://127.0.0.1:42119",
