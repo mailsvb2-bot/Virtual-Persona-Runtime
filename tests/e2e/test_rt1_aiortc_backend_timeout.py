@@ -202,6 +202,59 @@ class SenderTimeoutTests(unittest.TestCase):
             backend.shutdown()
 
 
+    def test_stop_timeout_with_late_verified_close_is_reconcilable(self):
+        # A non-cooperative peer may finish close() after the synchronous
+        # STOP deadline. The first caller receives NO receipt, but a later
+        # retry can recover the verified in-process audio/video shutdown.
+        # This is a simulated peer, not remote D-ID evidence.
+        from rt1_aiortc_backend import _Session
+
+        closed = threading.Event()
+
+        class Track:
+            def __init__(self):
+                self.readyState = "live"
+
+            def stop(self):
+                self.readyState = "ended"
+
+        class Peer:
+            connectionState = "connected"
+
+            async def close(self):
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    await asyncio.sleep(0.05)
+                self.connectionState = "closed"
+                closed.set()
+
+        backend = AiortcSenderBackend(timeout=0.15)
+        session_id = backend.recovery_session_id("late-stop", 1)
+        audio, video = Track(), Track()
+        with backend._lock:
+            backend._sessions[session_id] = _Session(
+                Peer(), audio, video, "late-stop", 1
+            )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "timed out; STOP unconfirmed"):
+                backend.stop("late-stop", session_id, 1)
+            self.assertEqual(audio.readyState, "ended")
+            self.assertEqual(video.readyState, "ended")
+            self.assertTrue(closed.wait(2), "late peer close did not complete")
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with backend._lock:
+                    if session_id in backend._completed_stops:
+                        break
+                time.sleep(0.01)
+            receipt = backend.stop("late-stop", session_id, 1)
+            self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
+            self.assertNotIn(session_id, backend._sessions)
+        finally:
+            backend.shutdown()
+
+
     def test_pre_cancelled_create_never_calls_provider(self):
         # A queued CREATE whose deadline expired before scheduling must not
         # even import/construct the remote transport.
