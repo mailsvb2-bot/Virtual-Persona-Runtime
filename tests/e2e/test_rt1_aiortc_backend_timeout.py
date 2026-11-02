@@ -217,6 +217,63 @@ class SenderTimeoutTests(unittest.TestCase):
 
 
 
+class VerifiedStopReconciliationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_late_verified_stop_can_be_replayed_only_in_same_worker(self):
+        # Simulated aiortc peer. A caller may lose the STOP response after
+        # close() succeeds; replay must not leave the durable ledger stuck.
+        # This is NOT evidence of a remote D-ID RTP shutdown.
+        from rt1_aiortc_backend import _Session
+
+        class Track:
+            def __init__(self):
+                self.readyState = "live"
+
+            def stop(self):
+                self.readyState = "ended"
+
+        class Peer:
+            def __init__(self):
+                self.connectionState = "connected"
+                self.closes = 0
+
+            async def close(self):
+                self.closes += 1
+                self.connectionState = "closed"
+
+        backend = AiortcSenderBackend(timeout=2)
+        session_id = backend.recovery_session_id("op", 1)
+        peer = Peer()
+        backend._sessions[session_id] = _Session(
+            peer, Track(), Track(), "op", 1
+        )
+        try:
+            first = await backend._stop("op", session_id, 1)
+            self.assertTrue(first.audio_stopped and first.video_stopped)
+            self.assertNotIn(session_id, backend._sessions)
+            self.assertEqual(
+                await backend._stop("op", session_id, 1), first,
+                "verified STOP must survive a lost response in the same worker",
+            )
+            self.assertEqual(peer.closes, 1)
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                await backend._stop("other", session_id, 1)
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                await backend._stop("op", session_id, 2)
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                await backend._stop("op", "never-allocated", 1)
+        finally:
+            backend.shutdown()
+
+        # The receipt is deliberately NOT recreated in another process:
+        # an absent local peer is not proof of remote sender shutdown.
+        restarted = AiortcSenderBackend(timeout=2)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "STOP unconfirmed"):
+                await restarted._stop("op", session_id, 1)
+        finally:
+            restarted.shutdown()
+
+
 class SenderStopGateTests(unittest.IsolatedAsyncioTestCase):
     async def test_remote_answer_must_complete_before_confirmed_stop(self):
         from types import SimpleNamespace
