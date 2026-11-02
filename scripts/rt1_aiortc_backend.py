@@ -82,17 +82,22 @@ class AiortcSenderBackend:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def _call(self, coroutine):
+    def _call(self, coroutine, cancel_requested: threading.Event | None = None):
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
             return future.result(self._timeout)
         except concurrent.futures.TimeoutError as exc:
-            # Do not let a timed-out CREATE/ANSWER/STOP continue unbounded in
-            # the background. Cancellation is best-effort: even after cancel,
-            # remote outcome remains UNCERTAIN until a real STOP receipt.
+            # Set a thread-safe fence BEFORE requesting task cancellation.
+            # A provider coroutine may swallow CancelledError and return late:
+            # it must not register a newly created sender after the caller
+            # has already recorded CREATE as uncertain.
+            if cancel_requested is not None:
+                cancel_requested.set()
             future.cancel()
             raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
         except concurrent.futures.CancelledError as exc:
+            if cancel_requested is not None:
+                cancel_requested.set()
             raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
     @staticmethod
@@ -105,9 +110,18 @@ class AiortcSenderBackend:
         return f"rt1-{operation_id}-{generation}"
 
     def allocate(self, operation_id: str, generation: int) -> str:
-        return self._call(self._allocate(operation_id, generation))
+        cancel_requested = threading.Event()
+        return self._call(
+            self._allocate(operation_id, generation, cancel_requested),
+            cancel_requested=cancel_requested,
+        )
 
-    async def _allocate(self, operation_id: str, generation: int) -> str:
+    async def _allocate(
+        self, operation_id: str, generation: int,
+        cancel_requested: threading.Event | None = None,
+    ) -> str:
+        if cancel_requested is not None and cancel_requested.is_set():
+            raise RuntimeError("WebRTC CREATE cancelled before allocation; STOP unconfirmed")
         from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
         session_id = self.recovery_session_id(operation_id, generation)
         peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
@@ -121,6 +135,11 @@ class AiortcSenderBackend:
             peer.addTrack(video)
             await peer.setLocalDescription(await peer.createOffer())
             with self._lock:
+                if cancel_requested is not None and cancel_requested.is_set():
+                    # Cancellation may be swallowed inside a provider await.
+                    # Close both tracks and the peer in the exception handler;
+                    # never publish a late sender into the active registry.
+                    raise RuntimeError("WebRTC CREATE completed after cancellation; STOP unconfirmed")
                 if session_id in self._sessions:
                     raise RuntimeError("WebRTC session already allocated")
                 self._sessions[session_id] = _Session(
