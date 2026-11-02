@@ -456,7 +456,12 @@ async def run():
                         )
                         emit(identifier, True)
                     except Exception:
-                        emit(identifier, False)
+                        # A failed remote PCM abort may leave the vendor playing
+                        # buffered audio. End this worker session instead of
+                        # admitting a new utterance after an unverified STOP.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                 elif command == "interrupt":
                     generation += 1
                     if active_pcm is not None:
@@ -469,10 +474,18 @@ async def run():
                     for task in tuple(tasks.values()):
                         task.cancel()
                     # This is a text STOP command, never browser-published audio.
-                    await asyncio.wait_for(
-                        room.local_participant.send_text("{}", topic="did.interrupt"),
-                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
                         )
+                    except Exception:
+                        # Do not allow another SPEAK/PCM if the vendor has not
+                        # acknowledged the interrupt. Drain and disconnect;
+                        # the final receipt must remain negative.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
