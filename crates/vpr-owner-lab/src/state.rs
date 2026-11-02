@@ -269,39 +269,6 @@ impl OwnerLabEngine {
         self.start_scoped(request, LabSessionAudience::Owner, |_| {})
     }
 
-    /// Starts a visitor-scoped test session over the same reviewed Persona identity/version.
-    /// Owner-reviewed claim text is not made available to visitor context assembly.
-    ///
-    /// # Errors
-    /// Fails closed unless a reviewed Persona exists and normal session/egress/consent checks pass.
-    pub fn start_visitor(
-        &mut self,
-        request: OwnerLabStartRequest,
-    ) -> Result<LabSignalBundle, LabError> {
-        if self.reviewed_owner_context.is_none() {
-            return Err(LabError::InvalidState);
-        }
-        self.start_visitor_with_interrupt(request, |_| {})
-    }
-
-    /// Registers the canonical startup turn's interrupt capability BEFORE
-    /// opening a remote avatar. Owner pause can then cancel an in-flight
-    /// CREATE without waiting for the engine mutex or a provider response.
-    /// This is the same engine/transport path as RT0, not another runtime.
-    ///
-    /// # Errors
-    /// Propagates the canonical provider, cancellation and authority errors.
-    pub fn start_visitor_with_interrupt(
-        &mut self,
-        request: OwnerLabStartRequest,
-        register_interrupt: impl FnOnce(TurnInterruptHandle),
-    ) -> Result<LabSignalBundle, LabError> {
-        if self.reviewed_owner_context.is_none() {
-            return Err(LabError::InvalidState);
-        }
-        self.start_scoped(request, LabSessionAudience::Visitor, register_interrupt)
-    }
-
     fn start_scoped(
         &mut self,
         request: OwnerLabStartRequest,

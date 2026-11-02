@@ -1,11 +1,44 @@
 //! Session authority operations are kept separate from the mutable conversation
 //! engine so HTTP teardown can obtain a revoke-only handle without holding
 //! the engine mutex during provider voice generation.
-use super::{LabError, OwnerLabEngine};
+use super::{LabError, LabSessionAudience, LabSignalBundle, OwnerLabEngine, OwnerLabStartRequest};
 use vpr_domain::RealtimeSessionState;
-use vpr_runtime::{ActiveSession, SessionRevocationHandle};
+use vpr_runtime::{ActiveSession, SessionRevocationHandle, TurnInterruptHandle};
 
 impl OwnerLabEngine {
+    /// Starts a visitor-scoped test session over the same reviewed Persona identity/version.
+    /// Owner-reviewed claim text is not made available to visitor context assembly.
+    ///
+    /// # Errors
+    /// Fails closed unless a reviewed Persona exists and normal session/egress/consent checks pass.
+    pub fn start_visitor(
+        &mut self,
+        request: OwnerLabStartRequest,
+    ) -> Result<LabSignalBundle, LabError> {
+        if self.reviewed_owner_context.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.start_visitor_with_interrupt(request, |_| {})
+    }
+
+    /// Registers the canonical startup turn's interrupt capability BEFORE
+    /// opening a remote avatar. Owner pause can then cancel an in-flight
+    /// CREATE without waiting for the engine mutex or a provider response.
+    /// This is the same engine/transport path as RT0, not another runtime.
+    ///
+    /// # Errors
+    /// Propagates the canonical provider, cancellation and authority errors.
+    pub fn start_visitor_with_interrupt(
+        &mut self,
+        request: OwnerLabStartRequest,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
+    ) -> Result<LabSignalBundle, LabError> {
+        if self.reviewed_owner_context.is_none() {
+            return Err(LabError::InvalidState);
+        }
+        self.start_scoped(request, LabSessionAudience::Visitor, register_interrupt)
+    }
+
     /// Returns a revoke-only capability tied to this exact runtime session.
     /// It can invalidate provider permits without waiting for the Owner Lab engine mutex.
     #[must_use]
