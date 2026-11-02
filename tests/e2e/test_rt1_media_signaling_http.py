@@ -85,19 +85,19 @@ class SignalingTests(unittest.TestCase):
         self.assertEqual(self.sender.answers, 1)
 
     def test_concurrent_answer_and_delete_never_acknowledges_revoked_session(self):
-        # Two actual HTTP requests race on ThreadingHTTPServer. An in-flight
-        # backend answer must not be acknowledged after STOP wins, and the
-        # already allocated sender must be terminated with both receipts.
+        # Real HTTP requests race. A provider can activate RTP at the END of
+        # answer, so STOP must not be acknowledged while SDP is still in flight.
         answer_entered = threading.Event()
         release_answer = threading.Event()
-        original_answer = self.sender.answer
 
         def slow_answer(operation_id, session_id, generation, sdp):
             answer_entered.set()
             if not release_answer.wait(3):
                 raise RuntimeError("test answer did not release")
-            # This test sender does not re-open a stopped media session.
-            return original_answer(operation_id, session_id, generation, sdp)
+            # Deliberately (re)activate the sender as a late provider side
+            # effect. The old status-only fence allowed STOP to finish first.
+            self.sender.active = True
+            self.sender.answers += 1
 
         self.sender.answer = slow_answer
         self.assertEqual(self.req("PUT", body={"generation": 1})[0], 200)
@@ -111,25 +111,28 @@ class SignalingTests(unittest.TestCase):
         caller = threading.Thread(target=post_answer)
         caller.start()
         try:
-            self.assertTrue(answer_entered.wait(3), "the answer must reach backend")
-            stopped, receipt = self.req("DELETE", body={"generation": 1})
-            self.assertEqual(stopped, 200)
-            self.assertTrue(receipt["audio_stopped"])
-            self.assertTrue(receipt["video_stopped"])
+            self.assertTrue(answer_entered.wait(3), "answer must reach backend")
+            status, receipt = self.req("DELETE", body={"generation": 1})
+            self.assertEqual(status, 409, "STOP must not race ahead of active SDP")
+            self.assertFalse(receipt["stop_confirmed"])
+            self.assertEqual(self.coordinator.status("op-1")[1], "stopping")
         finally:
             release_answer.set()
             caller.join(timeout=4)
-        self.assertFalse(caller.is_alive(), "answer must not hang after owner STOP")
+        self.assertFalse(caller.is_alive(), "answer must not hang after owner revoke")
         self.assertEqual(len(answers), 1)
         self.assertEqual(answers[0][0], 409, "revoked answer must not receive success")
-        self.assertFalse(self.sender.active)
-        self.assertEqual(self.sender.answers, 0)
+        stopped, receipt = self.req("DELETE", body={"generation": 1})
+        self.assertEqual(stopped, 200, "retry must reconcile the durable STOP")
+        self.assertTrue(receipt["audio_stopped"])
+        self.assertTrue(receipt["video_stopped"])
+        self.assertFalse(self.sender.active, "late SDP must not resurrect RTP after STOP")
+        self.assertEqual(self.sender.answers, 1)
         self.assertEqual(self.req("GET", "/offer")[0], 410)
 
     def test_late_backend_success_cannot_ack_revoked_answer(self):
-        # A worker can finish an already in-flight Answer with a successful
-        # return even after STOP. The HTTP layer must not turn that stale
-        # provider result into an accepted visitor signaling response.
+        # Even a provider reporting success after owner revoke cannot expose
+        # the answer as accepted or overtake the canonical STOP receipt.
         answer_entered = threading.Event()
         release_answer = threading.Event()
         backend_returned_success = threading.Event()
@@ -139,8 +142,6 @@ class SignalingTests(unittest.TestCase):
             if not release_answer.wait(3):
                 raise RuntimeError("test answer did not release")
             backend_returned_success.set()
-            # Simulate an already-in-flight successful provider result. Do not
-            # mutate sender state: STOP has already closed the local sender.
             return None
 
         self.sender.answer = late_successful_answer
@@ -157,17 +158,20 @@ class SignalingTests(unittest.TestCase):
         try:
             self.assertTrue(answer_entered.wait(3), "answer must reach backend")
             stopped, receipt = self.req("DELETE", body={"generation": 1})
-            self.assertEqual(stopped, 200)
-            self.assertTrue(receipt["audio_stopped"])
-            self.assertTrue(receipt["video_stopped"])
+            self.assertEqual(stopped, 409, "STOP cannot confirm before SDP finishes")
+            self.assertFalse(receipt["stop_confirmed"])
         finally:
             release_answer.set()
             caller.join(timeout=4)
 
-        self.assertFalse(caller.is_alive(), "answer must finish after STOP")
+        self.assertFalse(caller.is_alive(), "answer must finish after revoke")
         self.assertTrue(backend_returned_success.is_set(), "exercise late successful return")
         self.assertEqual(len(answers), 1)
-        self.assertEqual(answers[0][0], 410, "stale provider success must not be acknowledged")
+        self.assertEqual(answers[0][0], 409, "stale provider success must not be acknowledged")
+        stopped, receipt = self.req("DELETE", body={"generation": 1})
+        self.assertEqual(stopped, 200)
+        self.assertTrue(receipt["audio_stopped"])
+        self.assertTrue(receipt["video_stopped"])
         self.assertFalse(self.sender.active)
         self.assertEqual(self.sender.answers, 0)
         self.assertEqual(self.req("GET", "/offer")[0], 410)
