@@ -10,11 +10,15 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 import threading
 from dataclasses import dataclass, field
 
 from rt1_media_worker_lifecycle import StopReceipt
+
+
+LOG = logging.getLogger(__name__)
 
 
 def parse_ice_servers(raw: str | None) -> list[dict]:
@@ -82,22 +86,63 @@ class AiortcSenderBackend:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def _call(self, coroutine, cancel_requested: threading.Event | None = None):
+    def _fence_cancelled_create(
+        self,
+        cancel_requested: threading.Event | None,
+        cancel_identity: tuple[str, int] | None,
+    ):
+        """Fence a CREATE timeout even if the provider already registered media.
+
+        The event and registry mutation share the lock used by _allocate.
+        Otherwise a timeout can land *after* _allocate's cancellation check
+        but *before* its registry insertion, leaving live RTP senders behind.
+        Cleanup is best effort: only MediaLifecycle may certify remote STOP.
+        """
+        if cancel_requested is None:
+            return
+        with self._lock:
+            cancel_requested.set()
+            if cancel_identity is None:
+                return
+            operation_id, generation = cancel_identity
+            session_id = self.recovery_session_id(operation_id, generation)
+            entry = self._sessions.get(session_id)
+            if entry is None or (entry.operation_id, entry.generation) != cancel_identity:
+                return
+            # Stop both outgoing tracks synchronously before scheduling peer
+            # closure. No later SDP answer may re-open the revoked session.
+            entry.closed = True
+            entry.audio.stop()
+            entry.video.stop()
+
+        cleanup = asyncio.run_coroutine_threadsafe(
+            self._stop(operation_id, session_id, generation), self._loop
+        )
+
+        def observe(future):
+            try:
+                future.result()
+            except Exception:
+                # Do not leak provider payloads or pretend this is a STOP receipt.
+                LOG.warning("timed-out CREATE peer cleanup unconfirmed")
+
+        cleanup.add_done_callback(observe)
+
+    def _call(
+        self,
+        coroutine,
+        cancel_requested: threading.Event | None = None,
+        cancel_identity: tuple[str, int] | None = None,
+    ):
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
         try:
             return future.result(self._timeout)
         except concurrent.futures.TimeoutError as exc:
-            # Set a thread-safe fence BEFORE requesting task cancellation.
-            # A provider coroutine may swallow CancelledError and return late:
-            # it must not register a newly created sender after the caller
-            # has already recorded CREATE as uncertain.
-            if cancel_requested is not None:
-                cancel_requested.set()
+            self._fence_cancelled_create(cancel_requested, cancel_identity)
             future.cancel()
             raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
         except concurrent.futures.CancelledError as exc:
-            if cancel_requested is not None:
-                cancel_requested.set()
+            self._fence_cancelled_create(cancel_requested, cancel_identity)
             raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
     @staticmethod
@@ -114,6 +159,7 @@ class AiortcSenderBackend:
         return self._call(
             self._allocate(operation_id, generation, cancel_requested),
             cancel_requested=cancel_requested,
+            cancel_identity=(operation_id, generation),
         )
 
     async def _allocate(
