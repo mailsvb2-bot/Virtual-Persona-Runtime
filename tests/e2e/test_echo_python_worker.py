@@ -292,6 +292,52 @@ class EchoWorkerTests(unittest.TestCase):
                          [{"id": 81, "ok": False}])
         self.assertFalse(any(r["id"] in (82, 83) for r in receipts))
 
+    def test_failed_interrupt_is_terminal_and_rejects_later_speech(self):
+        # A failed vendor interrupt must not leave a reusable Echo session.
+        # These are simulated LiveKit responses, not remote D-ID RTP evidence.
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 101, "command": "interrupt"},
+            {"id": 102, "command": "speak", "text": "forbidden after failed STOP"},
+            {"id": 103, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, stop_latency=0.4,
+            media_stop_timeout=0.03, media_close_timeout=0.1,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertEqual(trace["audio"], [])
+        self.assertEqual(trace["stream_options"], [])
+        self.assertEqual([r for r in receipts if r["id"] == 101],
+                         [{"id": 101, "ok": False}])
+        self.assertFalse(any(r["id"] in (102, 103) for r in receipts))
+
+    def test_failed_pcm_abort_is_terminal_and_rejects_later_speech(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 111, "command": "pcm_begin",
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 112, "command": "pcm_abort", "stream_id": 111},
+            {"id": 113, "command": "speak", "text": "forbidden after failed abort"},
+            {"id": 114, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, stop_latency=0.4,
+            media_stop_timeout=0.03, media_close_timeout=0.1,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertEqual(trace["audio"], [])
+        self.assertIn({"id": 111, "ok": True}, receipts)
+        self.assertEqual([r for r in receipts if r["id"] == 112],
+                         [{"id": 112, "ok": False}])
+        self.assertFalse(any(r["id"] in (113, 114) for r in receipts))
+
     def test_close_receipt_waits_for_livekit_disconnect(self):
         records = [
             {"id": 0, "command": "open",
