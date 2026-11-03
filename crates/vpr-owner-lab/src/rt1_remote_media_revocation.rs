@@ -17,6 +17,10 @@ pub struct Rt1RemoteMediaRevocation {
     revoked: AtomicBool,
     confirmed: AtomicBool,
     stop_gate: Mutex<()>,
+    /// CREATE can return after owner revoke/STOP. Correlate both outcomes to
+    /// the exact remote sender, not just the operation/generation envelope.
+    created_session_id: Mutex<Option<String>>,
+    confirmed_session_id: Mutex<Option<String>>,
 }
 
 impl Rt1RemoteMediaRevocation {
@@ -43,7 +47,36 @@ impl Rt1RemoteMediaRevocation {
             revoked: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
             stop_gate: Mutex::new(()),
+            created_session_id: Mutex::new(None),
+            confirmed_session_id: Mutex::new(None),
         })
+    }
+
+    /// Bind a late CREATE reply to the operation before publishing its SDP.
+    /// A STOP receipt for a different sender cannot authorize that CREATE.
+    /// The STOP gate serializes this binding against remote cancellation.
+    ///
+    /// # Errors
+    /// Refuses conflicting identities, including STOP-before-CREATE races.
+    pub fn record_created_session(&self, session_id: &str) -> Result<(), String> {
+        if session_id.trim().is_empty() {
+            return Err("RT1_REMOTE_SESSION_ID_INVALID".into());
+        }
+        let _serial = self.stop_gate.lock();
+        let mut created = self.created_session_id.lock();
+        if created.as_deref().is_some_and(|previous| previous != session_id)
+            || self
+                .confirmed_session_id
+                .lock()
+                .as_deref()
+                .is_some_and(|confirmed| confirmed != session_id)
+        {
+            self.revoked.store(true, Ordering::Release);
+            self.confirmed.store(false, Ordering::Release);
+            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+        }
+        *created = Some(session_id.to_owned());
+        Ok(())
     }
 
     /// Invoked by the existing canonical visitor stop callback, after the
@@ -67,9 +100,21 @@ impl Rt1RemoteMediaRevocation {
         if self.confirmed.load(Ordering::Acquire) {
             return Ok(());
         }
-        self.worker
+        let stopped_session = self
+            .worker
             .cancel_confirmed(&self.operation_id, self.generation)
             .map_err(|_| "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())?;
+        if self
+            .created_session_id
+            .lock()
+            .as_deref()
+            .is_some_and(|created| created != stopped_session)
+        {
+            // The worker acknowledged STOP for a different sender. Preserve
+            // quarantine; never advertise confirmed audio/video termination.
+            return Err("RT1_REMOTE_MEDIA_STOP_IDENTITY_MISMATCH".into());
+        }
+        *self.confirmed_session_id.lock() = Some(stopped_session);
         self.confirmed.store(true, Ordering::Release);
         Ok(())
     }
