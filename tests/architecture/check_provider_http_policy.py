@@ -3,10 +3,13 @@ import re
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / "crates" / "vpr-integration" / "src" / "provider_http.rs"
+ASYNC_POLICY = ROOT / "crates" / "vpr-integration" / "src" / "provider_http_async.rs"
 
-policy = POLICY.read_text(encoding="utf-8")
+policy = POLICY.read_text(encoding="utf-8") + ASYNC_POLICY.read_text(encoding="utf-8")
 for required in (
     "build_provider_http_client",
+    "build_provider_async_http_client",
+    "CancellableProviderHttp",
     ".redirect(reqwest::redirect::Policy::none())",
 ):
     if required not in policy:
@@ -23,7 +26,7 @@ for manifest in sorted((ROOT / "crates").glob("vpr-provider-*/Cargo.toml")):
         for source in sorted((crate_root / "src").rglob("*.rs"))
     )
     reqwest_provider_crates.append(crate_root.name)
-    if "build_provider_http_client" not in sources:
+    if not any(name in sources for name in ("build_provider_http_client", "CancellableProviderHttp")):
         raise SystemExit(
             f"{crate_root.name} uses reqwest without the canonical provider HTTP client policy"
         )
@@ -37,6 +40,13 @@ for manifest in sorted((ROOT / "crates").glob("vpr-provider-*/Cargo.toml")):
             raise SystemExit(
                 f"{crate_root.name} bypasses the canonical provider HTTP client policy: {forbidden}"
             )
+
+# OpenAI-compatible LLM must use the canonical cancellable HTTP owner.
+llm = (ROOT / "crates" / "vpr-provider-openai-compatible" / "src" / "lib.rs").read_text(encoding="utf-8")
+if "CancellableProviderHttp" not in llm or ".http.send(" not in llm:
+    raise SystemExit("LLM bypasses canonical cancellable HTTP dispatch")
+if "tokio::time::timeout(" in llm or ".send().map_err(" in llm:
+    raise SystemExit("LLM duplicates the canonical cancellation transport")
 
 if not reqwest_provider_crates:
     raise SystemExit("expected at least one reqwest-backed provider adapter")

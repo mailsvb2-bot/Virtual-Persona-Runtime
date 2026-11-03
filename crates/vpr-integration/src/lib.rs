@@ -1,12 +1,15 @@
 mod avatar;
 mod provider_http;
+mod provider_http_async;
 mod transport;
 
 pub use provider_http::{
     BoundedProviderLineReader, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_JSON_BODY_BYTES,
-    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_http_client, read_bounded_provider_body,
-    read_bounded_provider_stream,
+    MAX_PROVIDER_STREAM_LINE_BYTES, build_provider_async_http_client, build_provider_http_client,
+    read_bounded_provider_body, read_bounded_provider_stream,
 };
+
+pub use provider_http_async::CancellableProviderHttp;
 
 pub use avatar::{
     RealtimeAvatarCapabilities, RealtimeAvatarCapability, RealtimeAvatarClientCommand,

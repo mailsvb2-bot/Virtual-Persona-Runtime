@@ -65,8 +65,33 @@ for crate_name in streaming_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    if "BoundedProviderLineReader" not in source:
+    if crate_name == "vpr-provider-openai-compatible":
+        # Async SSE reads are framed in the adapter, with hard bounds on
+        # individual lines, retained buffers, and incoming chunks.
+        for required in (
+            "fn next_line(",
+            "self.pending.len().saturating_add(line_bytes) > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "MAX_PROVIDER_BINARY_BODY_BYTES",
+            "self.chunk_offset",
+            "self.response.take()",
+        ):
+            if required not in source:
+                raise SystemExit(f"{crate_name} async SSE bounds/cancel drifted: {required}")
+    elif "BoundedProviderLineReader" not in source:
         raise SystemExit(f"{crate_name} bypasses bounded provider stream framing")
+
+# The shared cancellable reader must cap observed response bytes rather
+# than trusting Content-Length from a provider.
+async_body = (INTEGRATION / "provider_http_async.rs").read_text(encoding="utf-8")
+for required in (
+    "max_chunk_bytes",
+    "bytes.len() > max_chunk_bytes",
+    "remaining.saturating_add(1)",
+    "if chunk.len() > remaining",
+):
+    if required not in async_body:
+        raise SystemExit(f"cancellable provider body bound drifted: {required}")
 
 json_body_crates = {
     "vpr-provider-openai-transcription",
