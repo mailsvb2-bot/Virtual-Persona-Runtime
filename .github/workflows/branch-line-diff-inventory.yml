@@ -1,0 +1,31 @@
+name: Branch line-diff inventory
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - audit/branch-diff-inventory-20261103
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch every remote branch without modifying main
+        run: git fetch --no-tags --prune origin '+refs/heads/*:refs/remotes/origin/*'
+      - name: Generate complete line-by-line branch inventory
+        run: python3 scripts/audit_branch_diffs.py --out branch-audit
+      - name: Upload patch inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: branch-line-diff-inventory
+          path: branch-audit/
+          retention-days: 14
+          if-no-files-found: error
