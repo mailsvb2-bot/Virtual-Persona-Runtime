@@ -37,6 +37,7 @@ impl TcpWriteRevocation {
     }
 
     /// Whether this connection has been locally revoked.
+    #[must_use]
     pub fn is_revoked(&self) -> bool {
         self.connection.revoked.load(Ordering::Acquire)
     }
@@ -53,6 +54,7 @@ impl CancellableTcpWriter {
     ///
     /// The caller must perform the publication admission check before writing.
     /// This API does not duplicate or replace publication authorization.
+    #[must_use]
     pub fn new(stream: TcpStream, max_duration: Duration) -> (Self, TcpWriteRevocation) {
         let connection = Arc::new(Connection {
             stream,
@@ -72,6 +74,10 @@ impl CancellableTcpWriter {
     /// No success is reported after a local revoke. Once a syscall has
     /// entered the kernel it may have sent a prefix; there is no way to
     /// retract bytes already accepted by the peer.
+    ///
+    /// # Errors
+    /// Returns an I/O error if the socket fails, the deadline expires, or
+    /// the session is revoked before the entire buffer can be written.
     pub fn write_all_bounded(&mut self, bytes: &[u8]) -> io::Result<()> {
         let mut remaining = bytes;
         while !remaining.is_empty() {
