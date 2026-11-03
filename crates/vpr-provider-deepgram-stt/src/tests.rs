@@ -235,3 +235,70 @@ fn provider_websocket_authentication_denial_is_not_runtime_egress_denial() {
         assert!(!error.retryable);
     }
 }
+
+/// A stalled Deepgram response must be cancelled at the socket future, not
+/// merely rejected after a 60-second blocking reqwest timeout.
+#[test]
+fn revoke_interrupts_stalled_deepgram_response_headers() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut bytes = [0_u8; 4096];
+        let read = stream.read(&mut bytes).unwrap();
+        assert!(read > 0);
+        accepted_tx.send(()).unwrap();
+        thread::sleep(std::time::Duration::from_millis(500));
+        // Deliberately never send response headers.
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_secs(3)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| provider.transcribe(&request(), &probe));
+        accepted_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let started = std::time::Instant::now();
+        probe.0.store(true, Ordering::SeqCst);
+        let error = pending.join().unwrap().unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(400));
+    });
+    server.join().unwrap();
+}
+
+#[test]
+fn revoke_interrupts_stalled_deepgram_body_after_headers() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let (headers_tx, headers_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut bytes = [0_u8; 4096];
+        let read = stream.read(&mut bytes).unwrap();
+        assert!(read > 0);
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n").unwrap();
+        headers_tx.send(()).unwrap();
+        thread::sleep(std::time::Duration::from_millis(500));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_secs(3)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| provider.transcribe(&request(), &probe));
+        headers_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        thread::sleep(std::time::Duration::from_millis(50));
+        let started = std::time::Instant::now();
+        probe.0.store(true, Ordering::SeqCst);
+        let error = pending.join().unwrap().unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(400));
+    });
+    server.join().unwrap();
+}

@@ -8,6 +8,7 @@ policy = POLICY.read_text(encoding="utf-8")
 for required in (
     "build_provider_http_client",
     "build_provider_async_http_client",
+    "CancellableProviderHttp",
     ".redirect(reqwest::redirect::Policy::none())",
 ):
     if required not in policy:
@@ -26,7 +27,7 @@ for manifest in sorted((ROOT / "crates").glob("vpr-provider-*/Cargo.toml")):
     reqwest_provider_crates.append(crate_root.name)
     if not any(
         name in sources
-        for name in ("build_provider_http_client", "build_provider_async_http_client")
+        for name in ("build_provider_http_client", "build_provider_async_http_client", "CancellableProviderHttp")
     ):
         raise SystemExit(
             f"{crate_root.name} uses reqwest without the canonical provider HTTP client policy"
@@ -44,5 +45,14 @@ for manifest in sorted((ROOT / "crates").glob("vpr-provider-*/Cargo.toml")):
 
 if not reqwest_provider_crates:
     raise SystemExit("expected at least one reqwest-backed provider adapter")
+
+
+# Canonical async cancellation is shared, not reimplemented in each adapter.
+for crate_name in ("vpr-provider-openai-compatible", "vpr-provider-deepgram-stt"):
+    source = (ROOT / "crates" / crate_name / "src" / "lib.rs").read_text(encoding="utf-8")
+    if "CancellableProviderHttp" not in source or ".http.send(" not in source:
+        raise SystemExit(f"{crate_name} bypasses canonical cancellable HTTP dispatch")
+    if "tokio::time::timeout(" in source or ".send().map_err(" in source:
+        raise SystemExit(f"{crate_name} duplicates canonical cancellation transport")
 
 print("provider-http-policy: PASS " + ",".join(reqwest_provider_crates))

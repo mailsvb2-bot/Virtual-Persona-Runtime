@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use reqwest::{Client, Response};
+use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
     MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    UsageEvidence, UsageUnit, build_provider_async_http_client,
+    UsageEvidence, UsageUnit, CancellableProviderHttp,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -146,8 +146,7 @@ impl OpenAiCompatibleConfig {
 }
 
 pub struct OpenAiCompatibleLlm {
-    client: Client,
-    runtime: Arc<tokio::runtime::Runtime>,
+    http: Arc<CancellableProviderHttp>,
     config: OpenAiCompatibleConfig,
 }
 
@@ -158,15 +157,9 @@ impl OpenAiCompatibleLlm {
     /// Returns a typed provider configuration error if the HTTP client cannot be built.
     pub fn new(config: OpenAiCompatibleConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        let client = build_provider_async_http_client(config.timeout)
-            .map_err(|error| map_transport_error(&error))?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| invalid_response())?;
+        let http = CancellableProviderHttp::new(config.timeout)?;
         Ok(Self {
-            client,
-            runtime: Arc::new(runtime),
+            http: Arc::new(http),
             config,
         })
     }
@@ -206,7 +199,7 @@ impl OpenAiCompatibleLlm {
             AuthScheme::ApiKey => "Api-Key",
         };
         let mut builder = self
-            .client
+            .http
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("{prefix} {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json");
@@ -217,30 +210,8 @@ impl OpenAiCompatibleLlm {
             };
             builder = builder.header(header, project);
         }
-        let request = builder.json(&body);
-        // Payload preparation can race with owner/visitor revocation.
-        // Recheck the canonical runtime cancellation immediately before
-        // dispatch; a blocking HTTP send is not itself an abortable lease.
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        // Drop the actual reqwest future on revoke. A blocking .send() cannot
-        // be interrupted and can leave a socket alive for the full timeout.
-        // No detached thread or alternate conversation engine is introduced.
-        let response = self.runtime.block_on(async {
-            let mut send = Box::pin(request.send());
-            loop {
-                match tokio::time::timeout(Duration::from_millis(20), &mut send).await {
-                    Ok(response) => break response.map_err(|error| map_transport_error(&error)),
-                    Err(_) if cancellation.is_cancelled() => return Err(cancelled()),
-                    Err(_) => {}
-                }
-            }
-        });
-        if cancellation.is_cancelled() {
-            return Err(cancelled());
-        }
-        response
+        // The shared RT0/RT1 transport owns abortable HTTP dispatch.
+        self.http.send(builder.json(&body), cancellation)
     }
 
     fn execute(
@@ -259,7 +230,7 @@ impl OpenAiCompatibleLlm {
         cancellation: &dyn CancellationProbe,
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
-        let mut stream = OpenAiTextStream::new(response, Arc::clone(&self.runtime))?;
+        let mut stream = OpenAiTextStream::new(response, Arc::clone(&self.http))?;
         while let Some(chunk) = stream.next_chunk(cancellation)? {
             sink.push_generated_text(&chunk)?;
         }
@@ -280,7 +251,7 @@ impl LlmPort for OpenAiCompatibleLlm {
         let response = self.start_response(request, cancellation)?;
         Ok(Box::new(OpenAiTextStream::new(
             response,
-            Arc::clone(&self.runtime),
+            Arc::clone(&self.http),
         )?))
     }
 
@@ -297,7 +268,7 @@ impl LlmPort for OpenAiCompatibleLlm {
 struct OpenAiTextStream {
     // Response is dropped immediately when a cancellation wins an async read.
     response: Option<Response>,
-    runtime: Arc<tokio::runtime::Runtime>,
+    http: Arc<CancellableProviderHttp>,
     pending: Vec<u8>,
     usage: UsageEvidence,
     completed: bool,
@@ -306,14 +277,14 @@ struct OpenAiTextStream {
 impl OpenAiTextStream {
     fn new(
         response: Response,
-        runtime: Arc<tokio::runtime::Runtime>,
+        http: Arc<CancellableProviderHttp>,
     ) -> Result<Self, ProviderError> {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
         Ok(Self {
             response: Some(response),
-            runtime,
+            http,
             pending: Vec::new(),
             usage: UsageEvidence::default(),
             completed: false,
@@ -346,16 +317,7 @@ impl OpenAiTextStream {
                 return Err(invalid_response());
             }
             let response = self.response.as_mut().ok_or_else(invalid_response)?;
-            let next = self.runtime.block_on(async {
-                let mut chunk = Box::pin(response.chunk());
-                loop {
-                    match tokio::time::timeout(Duration::from_millis(20), &mut chunk).await {
-                        Ok(chunk) => break chunk.map_err(|error| map_transport_error(&error)),
-                        Err(_) if cancellation.is_cancelled() => return Err(cancelled()),
-                        Err(_) => {}
-                    }
-                }
-            });
+            let next = self.http.chunk(response, cancellation);
             if cancellation.is_cancelled() {
                 self.response.take();
                 return Err(cancelled());
@@ -509,19 +471,6 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
         });
     }
     Ok(())
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        return ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        };
-    }
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: true,
-    }
 }
 
 fn map_status(status: u16) -> ProviderError {

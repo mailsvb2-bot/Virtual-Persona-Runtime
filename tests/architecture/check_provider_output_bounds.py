@@ -98,7 +98,11 @@ for crate_name in json_body_crates | binary_body_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    bounded_body = "read_bounded_provider_body" in source
+    bounded_body = "read_bounded_provider_body" in source or (
+        crate_name == "vpr-provider-deepgram-stt"
+        and "CancellableProviderHttp" in source
+        and ".read_bounded_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)" in source
+    )
     bounded_stream = "read_bounded_provider_stream" in source
     # Media adapters may consume bounded chunks instead of waiting for EOF.
     # Both entry points enforce the same maximum observed response body size.
