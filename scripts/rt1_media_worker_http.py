@@ -13,6 +13,36 @@ from urllib.parse import urlsplit
 from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
 
 
+def _validated_offer_payload(operation_id: str, session_id: str, offer: dict) -> dict:
+    """Do not let an adapter overwrite the authoritative sender identity.
+
+    Serialize and bound the untrusted provider offer BEFORE taking the
+    publication transaction. The transaction must cover only a short HTTP
+    write, never arbitrary provider formatting or allocation work.
+    """
+    if (
+        not isinstance(offer, dict)
+        or offer.get("type") != "offer"
+        or not isinstance(offer.get("sdp"), str)
+        or not offer["sdp"].strip()
+        or len(offer["sdp"].encode("utf-8")) > 65536
+    ):
+        raise ValueError("invalid provider offer")
+    ice_servers = offer.get("ice_servers", [])
+    if not isinstance(ice_servers, list) or len(ice_servers) > 8:
+        raise ValueError("invalid provider ICE configuration")
+    payload = {
+        "operation_id": operation_id,
+        "session_id": session_id,
+        "type": "offer",
+        "sdp": offer["sdp"],
+        "ice_servers": ice_servers,
+    }
+    if len(json.dumps(payload, separators=(",", ":")).encode("utf-8")) > 131072:
+        raise ValueError("provider offer too large")
+    return payload
+
+
 def handler_for(
     lifecycle: MediaLifecycle, token: str,
     create_timeout_seconds: float = 4.0,
@@ -34,6 +64,20 @@ def handler_for(
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
             self.wfile.write(raw)
+
+        def _send_fenced(self, status: int, body: dict):
+            """Bound the socket write while the canonical STOP lock is held.
+
+            Offer/answer delivery must linearize with remote sender STOP, not
+            merely check the ledger before returning a buffered HTTP response.
+            A stalled browser cannot hold the remote STOP lock indefinitely.
+            """
+            previous_timeout = self.connection.gettimeout()
+            try:
+                self.connection.settimeout(0.5)
+                self._send(status, body)
+            finally:
+                self.connection.settimeout(previous_timeout)
 
         def _authorized(self) -> bool:
             supplied = self.headers.get("Authorization", "")
@@ -66,12 +110,37 @@ def handler_for(
                     return
                 try:
                     offer = lifecycle._backend.offer(operation_id, row[2], row[0])
-                    # Do not expose an offer if STOP won during backend I/O.
-                    if lifecycle.status(operation_id) != row:
-                        self._send(410, {"error": "operation revoked"})
-                        return
-                    self._send(200, {"operation_id": operation_id, "session_id": row[2], **offer})
+                    payload = _validated_offer_payload(operation_id, row[2], offer)
                 except Exception:
+                    # A provider can allocate both RTP senders and then fail
+                    # while constructing SDP. Never leave that known sender
+                    # active after the only signaling path failed.
+                    try:
+                        lifecycle.cancel_bounded(operation_id, row[0], 0.5)
+                    except Exception:
+                        pass
+                    self._send(409, {"error": "media offer unavailable"})
+                    return
+                # The final ledger check and HTTP delivery MUST share the
+                # exact same OS-held lock as STOP. Otherwise DELETE can
+                # confirm both RTP senders between the check and _send(200),
+                # exposing a revoked SDP offer to a late browser response.
+                try:
+                    with lifecycle._exclusive_stop():
+                        with lifecycle._active_publication_transaction(operation_id, row) as active:
+                            if not active:
+                                self._send_fenced(410, {"error": "operation revoked"})
+                            else:
+                                self._send_fenced(200, payload)
+                except OSError:
+                    # CREATE already allocated real RTP senders, but the
+                    # browser did not receive a usable offer. Persist revoke
+                    # and compensate both tracks, even when STOP is uncertain.
+                    try:
+                        lifecycle.cancel_bounded(operation_id, row[0], 0.5)
+                    except Exception:
+                        pass
+                except RuntimeError:
                     self._send(409, {"error": "media offer unavailable"})
                 return
             if method == "POST" and len(segments) == 5 and segments[4] == "answer":
@@ -97,6 +166,7 @@ def handler_for(
                 except (ValueError, TypeError, KeyError, json.JSONDecodeError):
                     self._send(400, {"error": "invalid SDP answer"})
                     return
+                write_failed = False
                 try:
                     # Serialize the provider's SDP side effect with the SAME
                     # OS-held gate as confirmed audio/video STOP. A provider
@@ -106,9 +176,29 @@ def handler_for(
                         if lifecycle.status(operation_id) != row:
                             raise RuntimeError("operation revoked before answer")
                         lifecycle._backend.answer(operation_id, row[2], row[0], payload["sdp"])
-                        if lifecycle.status(operation_id) != row:
-                            raise RuntimeError("operation revoked during answer")
-                    self._send(200, {"operation_id": operation_id, "accepted": True})
+                        # The provider may have accepted SDP. The final
+                        # browser receipt and durable CANCEL must linearize in
+                        # one SQLite transaction while the physical STOP lock
+                        # excludes sender shutdown. No post-check/send gap.
+                        with lifecycle._active_publication_transaction(operation_id, row) as active:
+                            if not active:
+                                raise RuntimeError("operation revoked during answer")
+                            try:
+                                self._send_fenced(200, {
+                                    "operation_id": operation_id, "accepted": True,
+                                })
+                            except OSError:
+                                # Only an actual HTTP write error belongs here.
+                                # Provider TimeoutError is also an OSError and
+                                # must take the normal failure/409 STOP path.
+                                write_failed = True
+                    if write_failed:
+                        # The SDP side effect may have happened. Do not send a
+                        # second HTTP response after a partially written 200.
+                        try:
+                            lifecycle.cancel_bounded(operation_id, row[0], 0.5)
+                        except Exception:
+                            pass
                 except Exception:
                     # An answer can fail AFTER the remote peer accepted SDP.
                     # Revoke via the existing durable STOP coordinator. Its

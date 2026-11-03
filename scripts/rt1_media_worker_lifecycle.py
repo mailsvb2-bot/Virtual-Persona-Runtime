@@ -410,6 +410,25 @@ class MediaLifecycle:
         return self._finish_stop(operation_id, session_id, generation)
 
     @contextmanager
+    def _active_publication_transaction(self, operation_id: str, expected_row: tuple):
+        """Serialize the final bounded SDP/answer write with durable CANCEL.
+
+        The caller MUST hold _exclusive_stop first: it excludes the physical
+        sender STOP while this short transaction protects the browser write.
+        A pre/post status check alone has a revoke-to-send TOCTOU race.
+        Never run provider I/O or an unbounded client write inside this gate.
+        """
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                yield self._get(operation_id) == expected_row
+                self._db.execute("COMMIT")
+            except BaseException:
+                if self._db.in_transaction:
+                    self._db.execute("ROLLBACK")
+                raise
+
+    @contextmanager
     def _exclusive_stop(self):
         """OS-held STOP ownership; a crashed process releases it automatically.
 
