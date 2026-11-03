@@ -520,7 +520,7 @@ fn cancellation_aborts_inflight_llm_sse_body_read() {
 fn coalesced_short_sse_lines_larger_than_single_line_limit_are_accepted() {
     // Deterministic framing regression: a single network chunk may contain
     // many valid short events even when their combined size exceeds 256 KiB.
-    let event = b"data: {}\\n";
+    let event = b"data: {}\n";
     let count = MAX_PROVIDER_STREAM_LINE_BYTES / event.len() + 128;
     let chunk = event.repeat(count);
     assert!(chunk.len() > MAX_PROVIDER_STREAM_LINE_BYTES);
