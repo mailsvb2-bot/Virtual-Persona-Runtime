@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellableProviderHttp, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
     LlmTextStream, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_STREAM_LINE_BYTES,
-    ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence, UsageUnit,
+    ProviderDescriptor, ProviderError, ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
