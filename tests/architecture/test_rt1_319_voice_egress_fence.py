@@ -14,8 +14,11 @@ SOURCE = (
 )
 
 
+STAGING_SOURCE = SOURCE.with_name("rt1_visitor_voice_stream_staging.rs")
+
+
 def method_body(source: str, method: str) -> str:
-    match = re.search(r"(?m)^\s*pub fn " + re.escape(method) + r"\s*\(", source)
+    match = re.search(r"(?m)^\s*pub(?:\(crate\))? fn " + re.escape(method) + r"\s*\(", source)
     if match is None:
         raise AssertionError(f"Missing public RT1 visitor entrypoint: {method}")
     # A signature can span multiple lines. Find the opening body brace only
@@ -61,6 +64,20 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         self.assertIn("self.backend_stop.lock().take()", source)
         self.assertIn("stop.stop()", source)
         self.assertIn("self.cancelled.store(true, Ordering::Release)", source)
+
+    def test_internal_streaming_reuses_engine_but_only_stages_bounded_local_events(self):
+        body = method_body(STAGING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming_staged")
+        self.assertIn("self.remote.is_some()", body)
+        self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
+        self.assertIn("self.stage_microphone_audio(&input_sender, pcm_s16le_mono_16khz)?", body)
+        self.assertIn("self.manager.begin_provider_egress(&self.id)?", body)
+        self.assertIn(".voice_turn_streaming(", body)
+        self.assertIn(".enqueue_media_fragment(&self.id, sender, segment)", body)
+        self.assertIn("crate::state::LabError::InvalidState", body)
+        self.assertIn("self.manager.authorize(&self.id)?", body)
+        self.assertIn("handle.interrupt()", body)
+        self.assertNotIn("emit_segment(", body)
+        self.assertNotIn("std::thread::spawn(", body)
 
     def test_streaming_voice_entrypoint_cannot_invoke_callback_or_provider(self):
         self.assertEqual(

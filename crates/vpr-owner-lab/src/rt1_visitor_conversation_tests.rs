@@ -60,3 +60,35 @@ mod rt1_voice_egress_tests {
         );
     }
 }
+
+#[test]
+fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    // The configured adapter is real, but this negative test must never
+    // contact it: no independent STOP handle has been established.
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = OwnerLabEngine::new(Box::new(provider), true).unwrap();
+    let manager = Arc::new(VisitorSessionManager::new(Arc::new(
+        crate::rt1_workspace_service::Rt1WorkspaceService::new(),
+    )));
+    let conversation = Rt1VisitorConversation {
+        manager,
+        id: "unadmitted".into(),
+        engine: Mutex::new(engine),
+        interrupt: Arc::new(LiveVisitorInterrupt::default()),
+        remote: None,
+    };
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    assert_eq!(
+        conversation
+            .voice_turn_streaming_staged(vec![0_u8; 320], &sender)
+            .unwrap_err(),
+        "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
+    );
+    assert!(receiver.try_recv().is_err());
+}

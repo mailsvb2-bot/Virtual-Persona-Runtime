@@ -19,6 +19,8 @@ use crate::state::{
 mod helpers;
 #[path = "rt1_visitor_text_egress.rs"]
 mod text_egress;
+#[path = "rt1_visitor_voice_stream_staging.rs"]
+mod voice_stream_staging;
 use helpers::{
     diagnostic_operation_id, finish_close, revoked_diagnostic_offer_error,
     validate_microphone_audio,
