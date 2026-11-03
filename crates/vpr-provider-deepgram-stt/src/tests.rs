@@ -320,6 +320,61 @@ fn live_request() -> SttStreamRequest {
     }
 }
 
+/// A peer that accepts TCP but never answers the WebSocket upgrade must
+/// not keep the visitor's canonical provider turn alive indefinitely.
+#[test]
+fn live_stt_handshake_stall_is_bounded() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        thread::sleep(std::time::Duration::from_millis(650));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_millis(250)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    let started = std::time::Instant::now();
+    let error = provider.open_stream(&live_request(), &probe).err().unwrap();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_millis(550));
+    server.join().unwrap();
+}
+
+/// Owner revoke must abort a pending WebSocket HTTP upgrade without waiting
+/// for the provider's full configured timeout.
+#[test]
+fn live_stt_revoke_aborts_pending_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        accepted_tx.send(()).unwrap();
+        thread::sleep(std::time::Duration::from_millis(650));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_secs(3)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| provider.open_stream(&live_request(), &probe).err().unwrap());
+        accepted_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let started = std::time::Instant::now();
+        probe.0.store(true, Ordering::SeqCst);
+        let error = pending.join().unwrap();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    });
+    server.join().unwrap();
+}
+
 /// A silent WebSocket peer must not hold a canonical STT turn forever.
 #[test]
 fn live_stt_stalled_peer_has_bounded_event_deadline() {

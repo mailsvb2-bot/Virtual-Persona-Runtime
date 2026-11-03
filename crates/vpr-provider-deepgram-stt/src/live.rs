@@ -1,8 +1,10 @@
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use tungstenite::client::{IntoClientRequest, connect_with_config};
+use tungstenite::client::IntoClientRequest;
+use tungstenite::handshake::HandshakeError;
 use tungstenite::protocol::WebSocketConfig;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
@@ -48,7 +50,7 @@ pub(crate) fn open(
     ws_config.max_message_size = Some(MAX_PROVIDER_STREAM_LINE_BYTES);
     ws_config.max_frame_size = Some(MAX_PROVIDER_STREAM_LINE_BYTES);
     let (mut socket, _response) =
-        connect_with_config(websocket_request, Some(ws_config), 0).map_err(map_websocket_error)?;
+        connect_live_bounded(websocket_request, ws_config, config.timeout, cancellation)?;
     set_io_timeouts(socket.get_mut(), config.timeout)?;
     if cancellation.is_cancelled() {
         return Err(cancelled());
@@ -62,6 +64,116 @@ pub(crate) fn open(
         input_finished: false,
         completed: false,
     }))
+}
+
+/// The upstream tungstenite blocking connector has no TCP or WebSocket
+/// handshake deadline. In particular a peer can accept TCP and never send
+/// the HTTP 101 response, preventing owner revoke from completing.
+fn connect_live_bounded(
+    request: tungstenite::handshake::client::Request,
+    ws_config: WebSocketConfig,
+    timeout: Duration,
+    cancellation: &dyn CancellationProbe,
+) -> Result<
+    (
+        WebSocket<MaybeTlsStream<TcpStream>>,
+        tungstenite::handshake::client::Response,
+    ),
+    ProviderError,
+> {
+    if timeout.is_zero() {
+        return Err(invalid_response());
+    }
+    if cancellation.is_cancelled() {
+        return Err(cancelled());
+    }
+    let uri = request.uri();
+    let host = uri.host().ok_or_else(invalid_response)?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        Some("wss") => 443,
+        Some("ws") => 80,
+        _ => return Err(invalid_response()),
+    });
+    let deadline = Instant::now() + timeout;
+    // Resolution is still OS-controlled; TCP and TLS/HTTP handshake are
+    // bounded independently. Do not follow redirects with Authorization.
+    let addresses = (host, port).to_socket_addrs().map_err(|_| unavailable())?;
+    let mut tcp = None;
+    for address in addresses.take(4) {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(provider_timeout());
+        }
+        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining) {
+            tcp = Some(stream);
+            break;
+        }
+    }
+    let tcp = tcp.ok_or_else(|| {
+        if deadline <= Instant::now() {
+            provider_timeout()
+        } else {
+            unavailable()
+        }
+    })?;
+    tcp.set_nodelay(true).map_err(|_| unavailable())?;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(provider_timeout());
+    }
+    tcp.set_read_timeout(Some(remaining))
+        .map_err(|_| unavailable())?;
+    tcp.set_write_timeout(Some(remaining))
+        .map_err(|_| unavailable())?;
+    let watchdog_socket = tcp.try_clone().map_err(|_| unavailable())?;
+    let done = AtomicBool::new(false);
+    // 0 = still active, 1 = cancelled, 2 = timed out.
+    let stopped = AtomicU8::new(0);
+    let outcome = std::thread::scope(|scope| {
+        let watcher = scope.spawn(|| {
+            while !done.load(Ordering::Acquire) {
+                if cancellation.is_cancelled() {
+                    stopped.store(1, Ordering::Release);
+                    let _ = watchdog_socket.shutdown(Shutdown::Both);
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    stopped.store(2, Ordering::Release);
+                    let _ = watchdog_socket.shutdown(Shutdown::Both);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let result = tungstenite::client_tls_with_config(request, tcp, Some(ws_config), None);
+        done.store(true, Ordering::Release);
+        let _ = watcher.join();
+        result
+    });
+    if cancellation.is_cancelled() || stopped.load(Ordering::Acquire) == 1 {
+        return Err(cancelled());
+    }
+    if stopped.load(Ordering::Acquire) == 2 || Instant::now() >= deadline {
+        return Err(provider_timeout());
+    }
+    outcome.map_err(|error| match error {
+        HandshakeError::Failure(error) => map_websocket_error(error),
+        HandshakeError::Interrupted(_) => unavailable(),
+    })
+}
+
+fn provider_timeout() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Timeout,
+        retryable: true,
+    }
 }
 
 struct DeepgramLiveStream {
