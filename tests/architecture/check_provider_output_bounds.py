@@ -65,7 +65,22 @@ for crate_name in streaming_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    if "BoundedProviderLineReader" not in source:
+    if crate_name == "vpr-provider-openai-compatible":
+        # The cancellable async HTTP response has its own bounded SSE
+        # framing. Require explicit checks for each accumulation path,
+        # not just the presence of a symbol in the source.
+        for required in (
+            "fn next_line(",
+            "if newline > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "if bytes.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "self.response.take()",
+        ):
+            if required not in source:
+                raise SystemExit(
+                    f"{crate_name} async SSE cancellation/bound drifted: {required}"
+                )
+    elif "BoundedProviderLineReader" not in source:
         raise SystemExit(f"{crate_name} bypasses bounded provider stream framing")
 
 json_body_crates = {
