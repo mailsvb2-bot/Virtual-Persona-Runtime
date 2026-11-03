@@ -228,16 +228,12 @@ impl OpenAiCompatibleLlm {
         // be interrupted and can leave a socket alive for the full timeout.
         // No detached thread or alternate conversation engine is introduced.
         let response = self.runtime.block_on(async {
-            let send = request.send();
-            tokio::pin!(send);
+            let mut send = Box::pin(request.send());
             loop {
-                tokio::select! {
-                    response = &mut send => break response.map_err(|error| map_transport_error(&error)),
-                    () = tokio::time::sleep(Duration::from_millis(20)) => {
-                        if cancellation.is_cancelled() {
-                            return Err(cancelled());
-                        }
-                    }
+                match tokio::time::timeout(Duration::from_millis(20), &mut send).await {
+                    Ok(response) => break response.map_err(|error| map_transport_error(&error)),
+                    Err(_) if cancellation.is_cancelled() => return Err(cancelled()),
+                    Err(_) => {}
                 }
             }
         });
@@ -348,14 +344,12 @@ impl OpenAiTextStream {
             }
             let response = self.response.as_mut().ok_or_else(invalid_response)?;
             let next = self.runtime.block_on(async {
+                let mut chunk = Box::pin(response.chunk());
                 loop {
-                    tokio::select! {
-                        chunk = response.chunk() => break chunk.map_err(|error| map_transport_error(&error)),
-                        () = tokio::time::sleep(Duration::from_millis(20)) => {
-                            if cancellation.is_cancelled() {
-                                return Err(cancelled());
-                            }
-                        }
+                    match tokio::time::timeout(Duration::from_millis(20), &mut chunk).await {
+                        Ok(chunk) => break chunk.map_err(|error| map_transport_error(&error)),
+                        Err(_) if cancellation.is_cancelled() => return Err(cancelled()),
+                        Err(_) => {}
                     }
                 }
             });
