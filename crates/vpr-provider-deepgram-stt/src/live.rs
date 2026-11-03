@@ -103,7 +103,7 @@ fn connect_live_bounded(
     // bounded independently. Do not follow redirects with Authorization.
     let addresses = (host, port).to_socket_addrs().map_err(|_| unavailable())?;
     let mut tcp = None;
-    for address in addresses.take(4) {
+    for address in addresses {
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
