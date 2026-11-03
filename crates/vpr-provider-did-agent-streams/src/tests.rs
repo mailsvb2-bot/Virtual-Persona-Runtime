@@ -692,6 +692,47 @@ fn malformed_create_session_response_is_rejected() {
 }
 
 #[test]
+fn allocated_webrtc_sender_with_malformed_create_schema_is_compensated() {
+    // The provider allocated a real sender, but omitted the mandatory offer.
+    // Typed decoding must not discard its authenticated DELETE identity.
+    let malformed = r#"{"id":"schema-orphan","session_id":"schema-session"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let delete = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
+    assert!(delete.contains(r#""session_id":"schema-session""#));
+}
+
+#[test]
+fn failed_delete_after_malformed_create_schema_remains_unconfirmed() {
+    // A failed compensating DELETE must dominate a mere JSON schema error.
+    let malformed = r#"{"id":"schema-orphan","session_id":"schema-session","offer":[]}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let delete = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
+    assert!(delete.contains(r#""session_id":"schema-session""#));
+}
+
+#[test]
 fn allocated_webrtc_sender_with_invalid_offer_is_compensated_before_error() {
     // A provider-generated identity remains authoritative even when the SDP
     // cannot be delivered to the browser. The same session must be deleted.
