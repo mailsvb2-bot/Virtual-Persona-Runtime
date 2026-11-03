@@ -6,7 +6,8 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellableProviderHttp, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
-    LlmTextStream, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError,
+    LlmTextStream, MAX_PROVIDER_BINARY_BODY_BYTES, MAX_PROVIDER_STREAM_LINE_BYTES,
+    ProviderDescriptor, ProviderError,
     ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
@@ -269,7 +270,12 @@ struct OpenAiTextStream {
     // Response is dropped immediately when a cancellation wins an async read.
     response: Option<Response>,
     http: Arc<CancellableProviderHttp>,
+    // Only a partial SSE line is retained here (at most 256 KiB).
     pending: Vec<u8>,
+    // A single bounded transport chunk can contain many valid SSE lines.
+    // Process it incrementally instead of applying the line limit to the chunk.
+    chunk: Vec<u8>,
+    chunk_offset: usize,
     usage: UsageEvidence,
     completed: bool,
 }
@@ -283,6 +289,8 @@ impl OpenAiTextStream {
             response: Some(response),
             http,
             pending: Vec::new(),
+            chunk: Vec::new(),
+            chunk_offset: 0,
             usage: UsageEvidence::default(),
             completed: false,
         })
@@ -297,38 +305,49 @@ impl OpenAiTextStream {
                 self.response.take();
                 return Err(cancelled());
             }
-            if let Some(newline) = self.pending.iter().position(|byte| *byte == b'\n') {
-                if newline > MAX_PROVIDER_STREAM_LINE_BYTES {
+
+            if self.chunk_offset < self.chunk.len() {
+                let remaining = &self.chunk[self.chunk_offset..];
+                let newline = remaining.iter().position(|byte| *byte == b'\n');
+                let line_bytes = newline.unwrap_or(remaining.len());
+                // A provider may coalesce thousands of small SSE events into
+                // one network read. Limit only the current unterminated line.
+                if self.pending.len().saturating_add(line_bytes) > MAX_PROVIDER_STREAM_LINE_BYTES {
+                    self.response.take();
                     return Err(invalid_response());
                 }
-                let mut line: Vec<u8> = self.pending.drain(..=newline).collect();
-                line.pop();
-                if line.last() == Some(&b'\r') {
-                    line.pop();
+                self.pending.extend_from_slice(&remaining[..line_bytes]);
+                self.chunk_offset += line_bytes + usize::from(newline.is_some());
+                if newline.is_some() {
+                    let mut line = std::mem::take(&mut self.pending);
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
+                    }
+                    return String::from_utf8(line)
+                        .map(Some)
+                        .map_err(|_| invalid_response());
                 }
-                return String::from_utf8(line)
-                    .map(Some)
-                    .map_err(|_| invalid_response());
+                self.chunk.clear();
+                self.chunk_offset = 0;
+                continue;
             }
-            if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES {
-                return Err(invalid_response());
-            }
+
+            self.chunk.clear();
+            self.chunk_offset = 0;
             let response = self.response.as_mut().ok_or_else(invalid_response)?;
             let next = self
                 .http
-                .chunk(response, cancellation, MAX_PROVIDER_STREAM_LINE_BYTES);
+                .chunk(response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES);
             if cancellation.is_cancelled() {
                 self.response.take();
                 return Err(cancelled());
             }
             match next {
                 Ok(Some(bytes)) => {
-                    // Bounded SSE framing: neither a single chunk nor an
-                    // unterminated line may accumulate unbounded memory.
-                    if bytes.len() > MAX_PROVIDER_STREAM_LINE_BYTES {
-                        return Err(invalid_response());
-                    }
-                    self.pending.extend_from_slice(&bytes);
+                    // A transport chunk has a separate, larger hard cap. It is
+                    // never mistaken for a single SSE event or accumulated
+                    // together with an unbounded number of earlier chunks.
+                    self.chunk = bytes;
                 }
                 Ok(None) => {
                     self.response.take();
