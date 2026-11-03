@@ -92,6 +92,10 @@ class MediaLifecycle:
         # A timed-out CREATE still owns its provider thread until it exits.
         # Bound outstanding allocations instead of spawning one per HTTP PUT.
         self._create_gate = threading.BoundedSemaphore(1)
+        # The HTTP deadline can expire before SQLite accepts a CANCEL write.
+        # Fence that still-running CREATE locally before it can commit active.
+        # This is NOT a substitute for the durable tombstone after a crash.
+        self._expired_create_deadlines: set[tuple[str, int]] = set()
         # A hung STOP owns one worker thread until the backend returns.
         # Repeated HTTP DELETEs must not accumulate unbounded STOP threads.
         self._stop_gate = threading.BoundedSemaphore(1)
@@ -136,6 +140,8 @@ class MediaLifecycle:
         if not self._create_gate.acquire(blocking=False):
             raise RuntimeError("another provider CREATE remains in flight")
         outcome = Queue(maxsize=1)
+        completed = threading.Event()
+        identity = (operation_id, generation)
 
         def allocate():
             try:
@@ -143,6 +149,11 @@ class MediaLifecycle:
             except Exception as error:
                 outcome.put((False, error))
             finally:
+                # Synchronize completion with the deadline marker. A late
+                # marker cannot survive a finished worker and leak memory.
+                with self._lock:
+                    completed.set()
+                    self._expired_create_deadlines.discard(identity)
                 self._create_gate.release()
 
         try:
@@ -155,19 +166,29 @@ class MediaLifecycle:
         try:
             succeeded, result = outcome.get(timeout=timeout)
         except Empty:
-            # CREATE may have completed and committed 'active' immediately
-            # before the response deadline. A tombstone alone would leave
-            # that known remote sender running until the next reconciliation.
-            # Persist cancellation first, then initiate a separately bounded
-            # compensating STOP when its identity is already known. If CREATE
-            # is still in flight, create() owns the late-ID compensation.
-            # Neither outcome turns a timed-out CREATE into admission.
+            # A timed-out CREATE must not commit 'active' even when SQLite
+            # cannot persist CANCEL immediately. Mark it under the same lock
+            # as CREATE finalization, then attempt the durable tombstone.
+            with self._lock:
+                if not completed.is_set():
+                    self._expired_create_deadlines.add(identity)
             try:
                 self.cancel_bounded(operation_id, generation, min(timeout, 0.05))
-            except Exception:
-                # STOP failure remains quarantined in the durable ledger;
-                # preserve the original CREATE deadline error to the caller.
-                pass
+            except Exception as error:
+                # Distinguish a failed STOP (durable quarantine exists) from
+                # a failed CANCEL write (no durable crash-recovery guarantee).
+                try:
+                    row = self.status(operation_id)
+                except Exception:
+                    row = None
+                if row is None or row[1] in ("creating", "active"):
+                    raise RuntimeError(
+                        "CREATE deadline exceeded; cancellation persistence unavailable; "
+                        "remote STOP unconfirmed"
+                    ) from error
+                raise RuntimeError(
+                    "CREATE deadline exceeded; remote STOP unconfirmed"
+                ) from error
             raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed") from None
         if succeeded:
             return result
@@ -305,7 +326,12 @@ class MediaLifecycle:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 row = self._get(operation_id)
-                if row and row[0] == generation and row[1] == "creating":
+                if (
+                    row
+                    and row[0] == generation
+                    and row[1] == "creating"
+                    and (operation_id, generation) not in self._expired_create_deadlines
+                ):
                     self._write(operation_id, generation, "active", session_id)
                     self._db.execute("COMMIT")
                     return session_id
