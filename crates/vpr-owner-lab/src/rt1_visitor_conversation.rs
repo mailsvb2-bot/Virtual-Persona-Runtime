@@ -243,6 +243,10 @@ impl Rt1VisitorConversation {
             let session_id = client
                 .create(&operation_id, 1)
                 .map_err(|_| "RT1_REMOTE_CREATE_UNCONFIRMED".to_owned())?;
+            // CREATE may finish after revoke has already received a STOP
+            // receipt. Correlate the actual returned sender before allowing
+            // any SDP/voice publication or accepting remote shutdown.
+            remote.record_created_session(&session_id)?;
             manager.authorize(&id)?;
             if remote.is_revoked() {
                 return Err("RT1_VISITOR_REVOKED_DURING_CREATE".into());
