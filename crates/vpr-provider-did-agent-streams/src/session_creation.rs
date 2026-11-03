@@ -41,17 +41,16 @@ impl DidAgentStreamsAvatar {
         let body: CreateStreamResponse = if let Ok(body) = serde_json::from_value(raw) {
             body
         } else {
-                if let (Some(id), Some(session_id)) =
-                    (allocated_id.as_deref(), allocated_session_id.as_deref())
-                    && !id.trim().is_empty()
-                    && !session_id.trim().is_empty()
-                    && self.delete_webrtc_identity(id, session_id).is_err()
-                {
-                    // Do not turn a failed cleanup into a harmless parse error.
-                    return Err(unavailable());
-                }
-                return Err(invalid_response());
+            if let (Some(id), Some(session_id)) =
+                (allocated_id.as_deref(), allocated_session_id.as_deref())
+                && !id.trim().is_empty()
+                && !session_id.trim().is_empty()
+                && self.delete_webrtc_identity(id, session_id).is_err()
+            {
+                // Do not turn a failed cleanup into a harmless parse error.
+                return Err(unavailable());
             }
+            return Err(invalid_response());
         };
         let client_interrupt = body.fluent && body.interrupt_enabled;
         // The provider can allocate a real sender and return its authenticated
