@@ -135,8 +135,13 @@ entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
 if (
     'format!("127.0.0.1:{port}")' not in entry
-    or 'if path.starts_with("/api/rt1/")' not in entry
-    or 'if !http_rt1::enabled()' not in entry
+    or 'if method == Method::Post && path.starts_with("/api/rt1/")' not in entry
+    or 'http_rt1::respond_post(request, state)' not in entry
+    # The extracted canonical RT1 HTTP owner must retain the original
+    # loopback-only, opt-in, CSRF and same-origin boundaries.
+    or 'if !enabled()' not in local_lab
+    or 'super::valid_post_headers(&request, &state.csrf_token, state.port)' not in local_lab
+    or '"CSRF_DENIED"' not in local_lab
     or 'http_rt1::static_get_response(path)' not in entry
     or 'std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in local_lab
     or 'if !enabled()' not in local_lab
