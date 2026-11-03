@@ -549,4 +549,94 @@ mod tests {
         assert!(Rt1RemoteMediaRevocation::new(client.clone(), "bad/id".into(), 1).is_err());
         assert!(Rt1RemoteMediaRevocation::new(client, "safe-operation".into(), 0).is_err());
     }
+
+    fn single_stop_receipt(
+        operation_id: &'static str,
+        generation: u64,
+        sender_id: &'static str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..n]);
+                if request.windows(4).any(|part| part == b"\\r\\n\\r\\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(
+                format!("DELETE /v1/avatar/operations/{operation_id} ").as_bytes()
+            ));
+            let body = serde_json::json!({
+                "operation_id": operation_id,
+                "generation": generation,
+                "session_id": sender_id,
+                "audio_stopped": true,
+                "video_stopped": true,
+            })
+            .to_string();
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        (endpoint, worker)
+    }
+
+    #[test]
+    fn wrong_sender_stop_receipt_cannot_confirm_remote_audio_or_video() {
+        let (endpoint, worker) = single_stop_receipt("mismatched-stop", 2, "other-sender");
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "mismatched-stop".into(), 2).unwrap();
+        remote.record_created_session("created-sender").unwrap();
+        assert_eq!(
+            remote.revoke_confirmed().unwrap_err(),
+            "RT1_REMOTE_MEDIA_STOP_IDENTITY_MISMATCH"
+        );
+        assert!(remote.is_revoked());
+        assert!(!remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn late_create_after_early_stop_must_match_confirmed_sender() {
+        let (endpoint, worker) = single_stop_receipt("late-create", 4, "stopped-sender");
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "late-create".into(), 4).unwrap();
+        remote.revoke_confirmed().unwrap();
+        assert!(remote.is_stop_confirmed());
+        assert_eq!(
+            remote.record_created_session("late-different-sender").unwrap_err(),
+            "RT1_REMOTE_SESSION_ID_CONFLICT"
+        );
+        assert!(!remote.is_stop_confirmed());
+        assert!(remote.is_revoked());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
+        let (endpoint, worker) = single_stop_receipt("matching-late", 5, "same-sender");
+        let client =
+            RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+        let remote = Rt1RemoteMediaRevocation::new(client, "matching-late".into(), 5).unwrap();
+        remote.revoke_confirmed().unwrap();
+        remote.record_created_session("same-sender").unwrap();
+        assert!(remote.is_stop_confirmed());
+        worker.join().unwrap();
+    }
 }
