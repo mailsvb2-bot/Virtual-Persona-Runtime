@@ -61,6 +61,7 @@ class MediaLifecycle:
             phase TEXT NOT NULL, session_id TEXT,
             preassigned_session_id TEXT,
             actual_stop_confirmed INTEGER NOT NULL DEFAULT 0,
+            stop_verified INTEGER NOT NULL DEFAULT 0,
             CHECK(phase IN ('creating', 'active', 'stopping', 'stopped', 'uncertain'))
         )""")
         # Existing SQLite ledgers predate preassigned identity. Migrate in a
@@ -77,6 +78,10 @@ class MediaLifecycle:
             if "actual_stop_confirmed" not in columns:
                 self._db.execute(
                     "ALTER TABLE media_operations ADD COLUMN actual_stop_confirmed INTEGER NOT NULL DEFAULT 0"
+                )
+            if "stop_verified" not in columns:
+                self._db.execute(
+                    "ALTER TABLE media_operations ADD COLUMN stop_verified INTEGER NOT NULL DEFAULT 0"
                 )
             self._db.execute("COMMIT")
         except BaseException:
@@ -384,10 +389,20 @@ class MediaLifecycle:
                     raise KeyError("unknown or stale operation")
                 _, phase, session_id = row
                 if phase == "stopped":
-                    self._db.execute("COMMIT")
                     if session_id is None:
+                        self._db.execute("COMMIT")
                         return None
-                    return StopReceipt(operation_id, session_id, generation, True, True)
+                    verified = self._db.execute(
+                        "SELECT stop_verified FROM media_operations WHERE id=?",
+                        (operation_id,),
+                    ).fetchone()[0]
+                    if verified == 1:
+                        self._db.execute("COMMIT")
+                        return StopReceipt(operation_id, session_id, generation, True, True)
+                    # Legacy or interrupted writes may say stopped without
+                    # durable dual-sender evidence. Retry real STOP, not a
+                    # fabricated audio/video receipt.
+                    self._write(operation_id, generation, "uncertain", session_id)
                 if phase == "creating":
                     self._write(operation_id, generation, "stopping", None)
                     # CREATE completion owns compensating STOP. An unresolved
@@ -473,8 +488,15 @@ class MediaLifecycle:
                 if row is None or row[0] != generation or row[2] != session_id:
                     raise RuntimeError("STOP target changed; shutdown not confirmed")
                 if row[1] == "stopped":
-                    # Only prior verified STOPs can persist a session id here.
-                    return StopReceipt(operation_id, session_id, generation, True, True)
+                    verified = self._db.execute(
+                        "SELECT stop_verified FROM media_operations WHERE id=?",
+                        (operation_id,),
+                    ).fetchone()[0]
+                    if verified == 1:
+                        return StopReceipt(operation_id, session_id, generation, True, True)
+                    # A pre-migration stopped row is not a STOP receipt.
+                    self._write(operation_id, generation, "uncertain", session_id)
+                    row = self._get(operation_id)
                 if row[1] not in ("active", "stopping", "uncertain"):
                     raise RuntimeError("STOP target unresolved; shutdown not confirmed")
                 self._write(operation_id, generation, "stopping", session_id)
@@ -539,6 +561,12 @@ class MediaLifecycle:
                     if self._get(operation_id) != (generation, "stopping", session_id):
                         raise RuntimeError("STOP target changed before confirmation")
                     self._write(operation_id, generation, "stopped", session_id)
+                    # Commit the verified BOTH-track receipt atomically with
+                    # stopped; a crash cannot expose an unverified success.
+                    self._db.execute(
+                        "UPDATE media_operations SET stop_verified=1 WHERE id=? AND generation=?",
+                        (operation_id, generation),
+                    )
                     self._db.execute("COMMIT")
                 except BaseException:
                     if self._db.in_transaction:
@@ -559,7 +587,9 @@ class MediaLifecycle:
                 self._db.execute(
                     """UPDATE media_operations SET phase='uncertain',
                        session_id=COALESCE(session_id, preassigned_session_id)
-                       WHERE phase != 'stopped'"""
+                       WHERE phase != 'stopped'
+                          OR (phase='stopped' AND session_id IS NOT NULL
+                              AND stop_verified=0)"""
                 )
                 self._db.execute("COMMIT")
             except BaseException:
