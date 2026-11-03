@@ -205,12 +205,18 @@ def handler_for(
                     # uncertain state blocks new allocations until BOTH RTP
                     # sender shutdown receipts are independently confirmed.
                     try:
-                        lifecycle.cancel(operation_id, row[0])
+                        # The failed SDP may already have activated remote
+                        # RTP. Persist CANCEL immediately, but never hold this
+                        # HTTP worker behind a hung compensating provider STOP.
+                        # The durable reconciler owns any late/failed receipt.
+                        lifecycle.cancel_bounded(
+                            operation_id, row[0], min(stop_timeout_seconds, 0.5)
+                        )
                     except Exception:
-                        # The existing reconciler retries unresolved STOP.
-                        # Do not leak provider diagnostics or claim success.
                         pass
-                    self._send(409, {"error": "media answer unavailable"})
+                    self._send(409, {
+                        "error": "media answer unavailable", "stop_confirmed": False,
+                    })
                 return
             # Only DELETE may revoke an operation. In particular, POST on the
             # operation resource must never fall through to CANCEL; POST is

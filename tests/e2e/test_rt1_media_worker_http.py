@@ -423,6 +423,46 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
         self.assertEqual(self.request("PUT")[0], 409)
 
+    def test_failed_answer_with_hung_remote_stop_returns_bounded_and_recovers(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        entered_stop = threading.Event()
+        release_stop = threading.Event()
+        original_stop = self.backend.stop
+
+        def failed_answer(operation_id, session_id, generation, sdp):
+            raise TimeoutError("provider accepted SDP but response timed out")
+
+        def blocked_stop(operation_id, session_id, generation):
+            entered_stop.set()
+            if not release_stop.wait(4):
+                raise TimeoutError("test STOP never released")
+            return original_stop(operation_id, session_id, generation)
+
+        self.backend.answer = failed_answer
+        self.backend.stop = blocked_stop
+        request = Request(
+            self.url + "/answer", method="POST",
+            data=json.dumps({"type": "answer", "sdp": "v=0 stalled-answer"}).encode(),
+            headers={"Authorization": "Bearer test-secret", "Content-Type": "application/json"},
+        )
+        started = time.monotonic()
+        try:
+            with self.assertRaises(HTTPError) as rejected:
+                urlopen(request, timeout=3)
+            self.assertEqual(rejected.exception.code, 409)
+            self.assertIs(json.load(rejected.exception)["stop_confirmed"], False)
+            self.assertTrue(entered_stop.wait(2))
+            self.assertLess(time.monotonic() - started, 2.5)
+            self.assertEqual(self.lifecycle.status("operation-1")[1], "stopping")
+            self.assertEqual(self.request("PUT")[0], 409)
+        finally:
+            release_stop.set()
+        deadline = time.monotonic() + 3
+        while self.lifecycle.status("operation-1")[1] != "stopped" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(self.backend.stops, 1)
+
     def test_failed_answer_socket_delivery_compensates_both_remote_senders(self):
         self.backend.answer = lambda operation_id, session_id, generation, sdp: None
         self.assertEqual(self.request("PUT")[0], 200)
