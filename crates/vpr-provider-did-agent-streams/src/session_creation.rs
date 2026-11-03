@@ -38,9 +38,9 @@ impl DidAgentStreamsAvatar {
             .get("session_id")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let body: CreateStreamResponse = match serde_json::from_value(raw) {
-            Ok(body) => body,
-            Err(_) => {
+        let body: CreateStreamResponse = if let Ok(body) = serde_json::from_value(raw) {
+            body
+        } else {
                 if let (Some(id), Some(session_id)) =
                     (allocated_id.as_deref(), allocated_session_id.as_deref())
                     && !id.trim().is_empty()
