@@ -149,9 +149,9 @@ impl CancellableTcpWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read as _;
     use std::net::TcpListener;
     use std::thread;
-    use std::io::Read as _;
 
     fn loopback_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
