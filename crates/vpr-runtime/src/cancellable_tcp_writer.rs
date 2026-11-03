@@ -55,18 +55,20 @@ impl CancellableTcpWriter {
     /// The caller must perform the publication admission check before writing.
     /// This API does not duplicate or replace publication authorization.
     #[must_use]
-    pub fn new(stream: TcpStream, max_duration: Duration) -> (Self, TcpWriteRevocation) {
+    pub fn new(stream: TcpStream, max_duration: Duration) -> io::Result<(Self, TcpWriteRevocation)> {
+        // A previously nonblocking socket would otherwise busy-spin on WouldBlock.
+        stream.set_nonblocking(false)?;
         let connection = Arc::new(Connection {
             stream,
             revoked: AtomicBool::new(false),
         });
-        (
+        Ok((
             Self {
                 connection: Arc::clone(&connection),
                 deadline: Instant::now() + max_duration,
             },
             TcpWriteRevocation { connection },
-        )
+        ))
     }
 
     /// Send all bytes in bounded chunks, or abort the TCP connection.
@@ -146,6 +148,14 @@ impl CancellableTcpWriter {
     }
 }
 
+// The response writer owns the lifetime of the socket. Revocation handles
+// must not keep a completed or abandoned response connection alive.
+impl Drop for CancellableTcpWriter {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,7 +173,7 @@ mod tests {
     #[test]
     fn authorized_writer_delivers_bytes() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2));
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
         writer.write_all_bounded(b"persona").unwrap();
         let mut data = [0; 7];
         client.read_exact(&mut data).unwrap();
@@ -174,7 +184,7 @@ mod tests {
     #[test]
     fn revoke_rejects_new_bytes_and_keeps_abort_permanent() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2));
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
         cancel.revoke();
         assert!(cancel.is_revoked());
         assert_eq!(
@@ -191,7 +201,7 @@ mod tests {
     #[test]
     fn expired_writer_aborts_before_network_delivery() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::ZERO);
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::ZERO).unwrap();
         assert_eq!(
             writer.write_all_bounded(b"never send").unwrap_err().kind(),
             ErrorKind::TimedOut
@@ -205,9 +215,29 @@ mod tests {
     }
 
     #[test]
+    fn dropping_writer_closes_socket_even_if_revocation_handle_survives() {
+        let (server, mut client) = loopback_pair();
+        let (mut writer, cancel) =
+            CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+        writer.write_all_bounded(b"done").unwrap();
+        drop(writer);
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut data = [0u8; 4];
+        client.read_exact(&mut data).unwrap();
+        assert_eq!(&data, b"done");
+        let mut extra = [0u8; 1];
+        assert_eq!(client.read(&mut extra).unwrap(), 0);
+        assert!(cancel.is_revoked());
+    }
+
+    #[test]
     fn concurrent_revoke_is_observed_by_writer() {
         let (server, _client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(3));
+        // Adopting an inherited nonblocking descriptor must not busy-spin.
+        server.set_nonblocking(true).unwrap();
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(3)).unwrap();
         let send = thread::spawn(move || writer.write_all_bounded(&vec![17u8; 32 * 1024 * 1024]));
         thread::sleep(Duration::from_millis(25));
         cancel.revoke();
