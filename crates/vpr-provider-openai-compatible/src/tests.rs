@@ -515,7 +515,6 @@ fn cancellation_aborts_inflight_llm_sse_body_read() {
     );
 }
 
-
 #[test]
 fn coalesced_short_sse_lines_larger_than_single_line_limit_are_accepted() {
     // Deterministic framing regression: a single network chunk may contain
@@ -527,9 +526,7 @@ fn coalesced_short_sse_lines_larger_than_single_line_limit_are_accepted() {
     assert!(chunk.len() < MAX_PROVIDER_BINARY_BODY_BYTES);
     let mut stream = OpenAiTextStream {
         response: None,
-        http: std::sync::Arc::new(
-            CancellableProviderHttp::new(Duration::from_secs(1)).unwrap(),
-        ),
+        http: std::sync::Arc::new(CancellableProviderHttp::new(Duration::from_secs(1)).unwrap()),
         pending: Vec::new(),
         chunk,
         chunk_offset: 0,
@@ -538,7 +535,10 @@ fn coalesced_short_sse_lines_larger_than_single_line_limit_are_accepted() {
     };
     let probe = Probe(AtomicBool::new(false));
     for _ in 0..count {
-        assert_eq!(stream.next_line(&probe).unwrap().as_deref(), Some("data: {}"));
+        assert_eq!(
+            stream.next_line(&probe).unwrap().as_deref(),
+            Some("data: {}")
+        );
     }
 }
 
@@ -547,15 +547,15 @@ fn coalesced_chunk_still_rejects_one_oversized_sse_line() {
     let chunk = vec![b'x'; MAX_PROVIDER_STREAM_LINE_BYTES + 1];
     let mut stream = OpenAiTextStream {
         response: None,
-        http: std::sync::Arc::new(
-            CancellableProviderHttp::new(Duration::from_secs(1)).unwrap(),
-        ),
+        http: std::sync::Arc::new(CancellableProviderHttp::new(Duration::from_secs(1)).unwrap()),
         pending: Vec::new(),
         chunk,
         chunk_offset: 0,
         usage: UsageEvidence::default(),
         completed: false,
     };
-    let error = stream.next_line(&Probe(AtomicBool::new(false))).unwrap_err();
+    let error = stream
+        .next_line(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
 }
