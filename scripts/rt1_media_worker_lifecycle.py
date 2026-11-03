@@ -87,6 +87,9 @@ class MediaLifecycle:
         # A timed-out CREATE still owns its provider thread until it exits.
         # Bound outstanding allocations instead of spawning one per HTTP PUT.
         self._create_gate = threading.BoundedSemaphore(1)
+        # A hung STOP owns one worker thread until the backend returns.
+        # Repeated HTTP DELETEs must not accumulate unbounded STOP threads.
+        self._stop_gate = threading.BoundedSemaphore(1)
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
@@ -298,6 +301,56 @@ class MediaLifecycle:
                 raise
         self._finish_stop(operation_id, session_id, generation)
         raise RuntimeError("operation revoked during allocation")
+
+    def cancel_bounded(
+        self, operation_id: str, generation: int, timeout: float
+    ) -> StopReceipt | None:
+        """Persist CANCEL before bounded STOP; late receipts remain durable.
+
+        Returning None is HTTP 202 (unconfirmed), never a fabricated sender
+        receipt. Only one backend STOP thread can be outstanding per worker.
+        A late successful STOP commits to SQLite even after HTTP timed out.
+        """
+        if not 0 < timeout <= 60:
+            raise ValueError("invalid STOP timeout")
+        receipt = self.cancel(operation_id, generation, wait_for_stop=False)
+        if receipt is not None:
+            return receipt
+        with self._lock:
+            row = self._get(operation_id)
+        if (
+            row is None or row[0] != generation
+            or row[1] not in ("stopping", "uncertain") or not row[2]
+        ):
+            return None
+        if not self._stop_gate.acquire(blocking=False):
+            return None
+        outcome = Queue(maxsize=1)
+
+        def stop():
+            try:
+                outcome.put((True, self._finish_stop(operation_id, row[2], generation)))
+            except Exception as error:
+                outcome.put((False, error))
+            finally:
+                self._stop_gate.release()
+
+        try:
+            threading.Thread(
+                target=stop, name="rt1-bounded-stop", daemon=True
+            ).start()
+        except Exception:
+            self._stop_gate.release()
+            raise
+        try:
+            succeeded, result = outcome.get(timeout=timeout)
+        except Empty:
+            # The in-flight STOP retains its durable target and OS lock.
+            # A subsequent DELETE/reconciler may observe the late receipt.
+            return None
+        if succeeded:
+            return result
+        raise result
 
     def cancel(
         self, operation_id: str, generation: int, *, wait_for_stop: bool = True

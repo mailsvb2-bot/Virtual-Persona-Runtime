@@ -13,11 +13,17 @@ from urllib.parse import urlsplit
 from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
 
 
-def handler_for(lifecycle: MediaLifecycle, token: str, create_timeout_seconds: float = 4.0):
+def handler_for(
+    lifecycle: MediaLifecycle, token: str,
+    create_timeout_seconds: float = 4.0,
+    stop_timeout_seconds: float = 4.0,
+):
     if not token:
         raise ValueError("RT1 worker authentication token is required")
     if not 0 < create_timeout_seconds <= 60:
         raise ValueError("invalid CREATE deadline")
+    if not 0 < stop_timeout_seconds <= 60:
+        raise ValueError("invalid STOP deadline")
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: dict):
@@ -155,7 +161,9 @@ def handler_for(lifecycle: MediaLifecycle, token: str, create_timeout_seconds: f
                     session_id = lifecycle.create_bounded(operation_id, generation, create_timeout_seconds)
                     self._send(200, {"operation_id": operation_id, "session_id": session_id})
                 else:
-                    receipt = lifecycle.cancel(operation_id, generation)
+                    receipt = lifecycle.cancel_bounded(
+                        operation_id, generation, stop_timeout_seconds
+                    )
                     if receipt is None:
                         # Unknown allocation / pending CREATE is NOT confirmed STOP.
                         self._send(202, {"operation_id": operation_id, "stop_confirmed": False})

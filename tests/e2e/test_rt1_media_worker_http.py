@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -37,7 +38,10 @@ class HttpLifecycleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = Backend()
         self.lifecycle = MediaLifecycle(Path(self.temp.name) / "ledger.sqlite", self.backend)
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(self.lifecycle, "test-secret"))
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            handler_for(self.lifecycle, "test-secret", stop_timeout_seconds=1.0),
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f"http://127.0.0.1:{self.server.server_port}/v1/avatar/operations/operation-1"
@@ -207,6 +211,88 @@ class HttpLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.request("PUT")[0], 409)
         self.assertEqual(self.backend.stops, 0)
+
+    def test_hung_stop_returns_202_then_late_both_sender_receipt(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        entered = threading.Event()
+        release = threading.Event()
+        original_stop = self.backend.stop
+
+        def blocked_stop(operation_id, session_id, generation):
+            entered.set()
+            if not release.wait(4):
+                raise TimeoutError("simulated hung STOP")
+            return original_stop(operation_id, session_id, generation)
+
+        self.backend.stop = blocked_stop
+        replies = []
+
+        def revoke():
+            replies.append(self.request("DELETE"))
+
+        caller = threading.Thread(target=revoke)
+        caller.start()
+        try:
+            self.assertTrue(entered.wait(2), "DELETE must reach the real STOP boundary")
+            caller.join(timeout=2.5)
+            self.assertFalse(caller.is_alive(), "HTTP DELETE must have a bounded wait")
+            self.assertEqual(replies[0][0], 202)
+            self.assertIs(replies[0][1]["stop_confirmed"], False)
+            self.assertEqual(self.lifecycle.status("operation-1")[1], "stopping")
+            # A second DELETE cannot launch another STOP behind a hung sender.
+            self.assertEqual(self.request("DELETE")[0], 202)
+            self.assertEqual(self.backend.stops, 0)
+            self.assertEqual(self.request("PUT")[0], 409)
+        finally:
+            release.set()
+            caller.join(timeout=2)
+        deadline = time.monotonic() + 3
+        while self.lifecycle.status("operation-1")[1] != "stopped" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(self.backend.stops, 1)
+        status, receipt = self.request("DELETE")
+        self.assertEqual(status, 200)
+        self.assertIs(receipt["audio_stopped"], True)
+        self.assertIs(receipt["video_stopped"], True)
+        self.assertEqual(self.backend.stops, 1)
+
+    def test_late_stop_failure_remains_uncertain_until_restart_reconcile(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        entered = threading.Event()
+        release = threading.Event()
+        original_stop = self.backend.stop
+
+        def failed_stop(operation_id, session_id, generation):
+            entered.set()
+            if not release.wait(4):
+                raise TimeoutError("STOP timed out")
+            raise ConnectionError("STOP receipt lost")
+
+        self.backend.stop = failed_stop
+        replies = []
+        caller = threading.Thread(target=lambda: replies.append(self.request("DELETE")))
+        caller.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            caller.join(timeout=2.5)
+            self.assertFalse(caller.is_alive())
+            self.assertEqual(replies[0][0], 202)
+            self.assertIs(replies[0][1]["stop_confirmed"], False)
+        finally:
+            release.set()
+            caller.join(timeout=2)
+        deadline = time.monotonic() + 3
+        while self.lifecycle.status("operation-1")[1] != "uncertain" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "uncertain", "media-1"))
+        self.assertEqual(self.request("PUT")[0], 409)
+        self.backend.stop = original_stop
+        restarted = MediaLifecycle(Path(self.temp.name) / "ledger.sqlite", self.backend)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(restarted.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(self.backend.stops, 1)
 
     def test_precreate_cancel_is_tombstone_not_fake_stop_receipt(self):
         status, body = self.request("DELETE")
