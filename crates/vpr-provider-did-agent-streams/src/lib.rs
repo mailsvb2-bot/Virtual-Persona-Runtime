@@ -250,19 +250,69 @@ impl DidAgentStreamsAvatar {
         let response = expect_success(response)?;
         let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
         let client_interrupt = body.fluent && body.interrupt_enabled;
-        let session: RealtimeAvatarSession = body.try_into()?;
+        // The provider can allocate a real sender and return its authenticated
+        // identifiers alongside an invalid SDP. Never discard those IDs before
+        // attempting compensation: an invalid browser offer is not a STOP.
+        let allocated_identity = (body.id.clone(), body.session_id.clone());
+        let session: RealtimeAvatarSession = match body.try_into() {
+            Ok(session) => session,
+            Err(error) => {
+                if !allocated_identity.0.trim().is_empty()
+                    && !allocated_identity.1.trim().is_empty()
+                    && self
+                        .delete_webrtc_identity(&allocated_identity.0, &allocated_identity.1)
+                        .is_err()
+                {
+                    // The remote sender may still exist. Never report a
+                    // successful cleanup or allow a retry as if it were safe.
+                    return Err(unavailable());
+                }
+                return Err(error);
+            }
+        };
         // A revoke may arrive while the blocking D-ID CREATE is in flight.
         // Do not publish the resulting viewer offer. Attempt compensating
         // DELETE using the actual returned provider identity; an unsuccessful
         // close is never interpreted as confirmed remote STOP.
         if cancellation.is_cancelled() {
-            let _ = self.close_session(&session);
+            if self.close_session(&session).is_err() {
+                return Err(unavailable());
+            }
             return Err(cancelled());
         }
         if client_interrupt {
-            self.client_control.register_interrupt(&session)?;
+            if let Err(error) = self.client_control.register_interrupt(&session) {
+                if self.close_session(&session).is_err() {
+                    return Err(unavailable());
+                }
+                return Err(error);
+            }
+        }
+        // Registration itself may race a revoke. Do not return a newly
+        // published SDP after the cancellation was committed.
+        if cancellation.is_cancelled() {
+            if self.close_session(&session).is_err() {
+                return Err(unavailable());
+            }
+            return Err(cancelled());
         }
         Ok(session)
+    }
+
+    fn delete_webrtc_identity(
+        &self,
+        resource_id: &str,
+        session_id: &str,
+    ) -> Result<(), ProviderError> {
+        if resource_id.trim().is_empty() || session_id.trim().is_empty() {
+            return Err(invalid_response());
+        }
+        let response = self
+            .authorized(self.client.delete(self.stream_url(resource_id)?))
+            .json(&CloseRequest { session_id })
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        expect_success(response).map(|_| ())
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
@@ -561,17 +611,10 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 Ok(())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
-                let response = self
-                    .authorized(
-                        self.client
-                            .delete(self.stream_url(&session.provider_resource_id)?),
-                    )
-                    .json(&CloseRequest {
-                        session_id: &session.provider_session_id,
-                    })
-                    .send()
-                    .map_err(|error| map_transport_error(&error))?;
-                expect_success(response)?;
+                self.delete_webrtc_identity(
+                    &session.provider_resource_id,
+                    &session.provider_session_id,
+                )?;
                 self.client_control.forget(session)
             }
         }

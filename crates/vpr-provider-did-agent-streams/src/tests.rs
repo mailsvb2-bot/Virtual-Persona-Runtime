@@ -227,6 +227,40 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
 }
 
 #[test]
+fn late_revoked_create_with_failed_delete_reports_unconfirmed_cleanup() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAtFinalCheck(AtomicUsize);
+    impl CancellationProbe for RevokeAtFinalCheck {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 6
+        }
+    }
+
+    let created =
+        r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", created.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&RevokeAtFinalCheck(AtomicUsize::new(0)))
+        .unwrap_err();
+    // A cancellation without a confirmed provider DELETE is NOT a clean STOP.
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let timeout = std::time::Duration::from_secs(3);
+    let _ = captured.recv_timeout(timeout).unwrap();
+    let _ = captured.recv_timeout(timeout).unwrap();
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("DELETE /agents/agent-7/streams/stream-1 ")
+    );
+}
+
+#[test]
 fn full_agents_streams_control_plane_matches_contract() {
     let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}],"fluent":true,"interrupt_enabled":true}"#;
     let (endpoint, captured) = serve(vec![
@@ -655,6 +689,61 @@ fn malformed_create_session_response_is_rejected() {
         .create_session(&Probe(AtomicBool::new(false)))
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+}
+
+#[test]
+fn allocated_webrtc_sender_with_invalid_offer_is_compensated_before_error() {
+    // A provider-generated identity remains authoritative even when the SDP
+    // cannot be delivered to the browser. The same session must be deleted.
+    let malformed =
+        r#"{"id":"stream-orphan","session_id":"session-orphan","offer":{"type":"offer","sdp":""}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/stream-orphan "));
+    assert!(delete.contains(r#""session_id":"session-orphan""#));
+}
+
+#[test]
+fn failed_compensation_of_invalid_offer_is_never_reported_as_clean() {
+    let malformed =
+        r#"{"id":"stream-orphan","session_id":"session-orphan","offer":{"type":"offer","sdp":""}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .starts_with("DELETE /agents/agent-7/streams/stream-orphan ")
+    );
 }
 
 #[test]
