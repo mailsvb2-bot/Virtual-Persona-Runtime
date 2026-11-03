@@ -379,6 +379,42 @@ pub trait RealtimeAvatarPort: Send + Sync {
         })
     }
 
+    /// RT1-only startup with a hard provider-enforced deadline and cooperative
+    /// cancellation. Implementations must not leave an orphaned remote sender
+    /// when creation returns after expiry or revocation. The conservative
+    /// default prevents accidentally upgrading an ordinary blocking provider.
+    ///
+    /// # Errors
+    /// Returns unavailable unless the provider explicitly implements the RT1 contract.
+    fn create_session_bounded(
+        &self,
+        _cancellation: &dyn CancellationProbe,
+        _deadline: std::time::Instant,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
+    /// RT1-only remote STOP acknowledgement, covering both audio and video.
+    /// A successful result must mean the provider has stopped publishing for
+    /// this session; merely sending DELETE or interrupt is insufficient.
+    /// This is independent of turn cancellation, to allow cleanup after revoke.
+    ///
+    /// # Errors
+    /// Returns unavailable until the provider can substantiate a remote STOP.
+    fn stop_session_confirmed(
+        &self,
+        _session: &RealtimeAvatarSession,
+        _deadline: std::time::Instant,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError {
+            kind: ProviderErrorKind::Unavailable,
+            retryable: false,
+        })
+    }
+
     /// Closes an existing provider realtime-avatar session. Cleanup is intentionally independent
     /// of turn cancellation so revoked/cancelled runtime work cannot strand a remote session.
     ///

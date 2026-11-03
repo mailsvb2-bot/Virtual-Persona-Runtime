@@ -7,9 +7,7 @@ use parking_lot::Mutex;
 use vpr_runtime::{SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{
-    LabRealtimeTransport, LabSignalBundle, LabTextResult, OwnerLabEngine, OwnerLabStartRequest,
-};
+use crate::state::{LabSignalBundle, LabTextResult, OwnerLabEngine};
 
 #[derive(Default)]
 struct LiveVisitorInterrupt {
@@ -48,7 +46,7 @@ impl Rt1VisitorConversation {
     pub fn start(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
-        mut engine: OwnerLabEngine,
+        engine: OwnerLabEngine,
         consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
         // The reviewed engine must match the durable Persona admitted by the
@@ -64,45 +62,18 @@ impl Rt1VisitorConversation {
             let _ = manager.close(&id);
             return Err(error);
         }
-        let started = engine.start_visitor(OwnerLabStartRequest { consent });
-        let bundle = match started {
-            Ok(bundle) => bundle,
-            Err(error) => {
-                let _ = manager.close(&id);
-                return Err(error.code().to_owned());
-            }
-        };
-        // WebRTC needs Answer/ICE provider operations. This wrapper does not
-        // yet expose an epoch-fenced signaling path, so never return an offer
-        // that a caller cannot safely complete.
-        if matches!(&bundle.transport, LabRealtimeTransport::WebRtc { .. }) {
-            let _ = manager.close(&id);
-            let _ = engine.revoke();
-            return Err("RT1 WebRTC signaling not yet supported".into());
-        }
-        // A pause can happen during the remote avatar creation. The callback
-        // sets cancelled even before the real runtime handle is available.
-        let revoker = engine.session_revocation_handle();
-        *interrupt.session.lock() = revoker;
-        if interrupt.cancelled.load(Ordering::Acquire)
-            || manager
-                .authorize_persona(&id, &persona_id, persona_version)
-                .is_err()
-        {
-            interrupt.stop();
-            let _ = engine.revoke();
-            let _ = manager.close(&id);
-            return Err("visitor authorization revoked during startup".into());
-        }
-        Ok((
-            Self {
-                manager,
-                id,
-                engine: Mutex::new(engine),
-                interrupt,
-            },
-            bundle,
-        ))
+        // Provider startup currently has no enforceable deadline or remote
+        // sender STOP. Holding the canonical workspace transaction across this
+        // unbounded call prevents owner pause/unpublish from committing. A
+        // detached startup is also unsafe: it can create remote media after a
+        // revoke. Reject before creating any provider resource until the
+        // provider contract supports bounded cancel + confirmed teardown.
+        let _ = consent;
+        let _ = manager.close(&id);
+        // Consume owned handles without initiating remote provider I/O.
+        drop(engine);
+        drop(manager);
+        Err("RT1_PROVIDER_STARTUP_REQUIRES_BOUNDED_CANCEL_AND_STOP".into())
     }
 
     /// # Errors
@@ -135,5 +106,39 @@ impl Drop for Rt1VisitorConversation {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
         let _ = self.engine.lock().revoke();
+    }
+}
+
+#[cfg(test)]
+mod rt1_interrupt_concurrency_tests {
+    use super::*;
+    use std::sync::mpsc::{channel, sync_channel};
+    use std::time::Duration;
+
+    #[test]
+    fn visitor_stop_does_not_wait_for_a_hung_provider_worker() {
+        // A remote provider may be stuck in startup. The revocation callback
+        // must not acquire the engine mutex or wait for that remote request.
+        let interrupt = Arc::new(LiveVisitorInterrupt::default());
+        let (started_tx, started_rx) = sync_channel(1);
+        let (release_tx, release_rx) = channel::<()>();
+        let provider = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let stopped = Arc::clone(&interrupt);
+        let (done_tx, done_rx) = sync_channel(1);
+        let revoker = std::thread::spawn(move || {
+            stopped.stop();
+            done_tx.send(()).unwrap();
+        });
+        let result = done_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        provider.join().unwrap();
+        revoker.join().unwrap();
+        assert!(result.is_ok(), "visitor local STOP waited for provider I/O");
+        assert!(interrupt.cancelled.load(Ordering::Acquire));
     }
 }
