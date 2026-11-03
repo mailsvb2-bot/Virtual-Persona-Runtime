@@ -40,10 +40,12 @@ impl VoiceInputRegistry {
         session_sequence: u64,
         request_sequence: u64,
         input: LabVoiceInput,
-    ) -> Result<(), LabVoiceInput> {
+    ) -> Result<(), Box<LabVoiceInput>> {
         let mut active = self.active.lock();
         if active.is_some() {
-            return Err(input);
+            // Keep the rejected, already-authorized input for explicit
+            // abort/evidence cleanup without a large inline Err payload.
+            return Err(Box::new(input));
         }
         *active = Some(VoiceInputState {
             session_sequence,
@@ -166,7 +168,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
         .voice_inputs
         .begin(session_sequence, request_sequence, input)
     {
-        return fail_voice_upload(state, request_sequence, input, LabError::InvalidState);
+        return fail_voice_upload(state, request_sequence, *input, LabError::InvalidState);
     }
     if state.voice_cancel_requested.load(Ordering::Acquire) {
         cancel_active_input(state, LabError::Runtime(Rt0ReasonCode::TurnCancelled));
