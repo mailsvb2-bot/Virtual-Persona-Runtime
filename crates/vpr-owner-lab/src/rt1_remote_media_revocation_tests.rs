@@ -122,8 +122,7 @@ fn owner_revoke_during_remote_answer_never_returns_stale_success() {
     });
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote =
-        Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-answer".into(), 1).unwrap());
+    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "raced-answer".into(), 1).unwrap());
     let answer_remote = Arc::clone(&remote);
     let answer = std::thread::spawn(move || answer_remote.submit_answer("v=0\r\n"));
     answer_received_rx
@@ -172,9 +171,7 @@ fn raced_accepted_answer_compensates_stop_before_return_and_preserves_uncertaint
                 }
             }
             let (status, body) = if attempt == 0 {
-                assert!(
-                    request.starts_with(b"POST /v1/avatar/operations/raced-pending/answer ")
-                );
+                assert!(request.starts_with(b"POST /v1/avatar/operations/raced-pending/answer "));
                 accepted_tx.send(()).unwrap();
                 release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
                 (
@@ -389,9 +386,9 @@ fn single_stop_receipt(
                 break;
             }
         }
-        assert!(request.starts_with(
-            format!("DELETE /v1/avatar/operations/{operation_id} ").as_bytes()
-        ));
+        assert!(
+            request.starts_with(format!("DELETE /v1/avatar/operations/{operation_id} ").as_bytes())
+        );
         let body = serde_json::json!({
             "operation_id": operation_id,
             "generation": generation,
@@ -435,7 +432,9 @@ fn late_create_after_early_stop_must_match_confirmed_sender() {
     remote.revoke_confirmed().unwrap();
     assert!(remote.is_stop_confirmed());
     assert_eq!(
-        remote.record_created_session("late-different-sender").unwrap_err(),
+        remote
+            .record_created_session("late-different-sender")
+            .unwrap_err(),
         "RT1_REMOTE_SESSION_ID_CONFLICT"
     );
     assert!(!remote.is_stop_confirmed());
