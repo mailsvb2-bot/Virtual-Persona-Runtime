@@ -1,13 +1,16 @@
-use std::net::TcpStream;
-use std::time::Duration;
+use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use tungstenite::client::IntoClientRequest;
+use tungstenite::handshake::HandshakeError;
+use tungstenite::protocol::WebSocketConfig;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
 use vpr_integration::{
-    CancellationProbe, ProviderError, ProviderErrorKind, SttAudioStream, SttStreamEvent,
-    SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
+    CancellationProbe, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderError, ProviderErrorKind,
+    SttAudioStream, SttStreamEvent, SttStreamRequest, Transcript, UsageEvidence, UsageUnit,
 };
 
 use crate::{
@@ -15,6 +18,7 @@ use crate::{
 };
 
 const IO_POLL_TIMEOUT: Duration = Duration::from_millis(100);
+const IO_WRITE_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub(crate) fn open(
     config: &DeepgramSttConfig,
@@ -40,22 +44,142 @@ pub(crate) fn open(
             .map_err(|_| invalid_response())?,
     );
 
+    // A provider handshake is not allowed to redirect the Authorization
+    // header to a different endpoint. Bound frames before allocation too.
+    let mut ws_config = WebSocketConfig::default();
+    ws_config.max_message_size = Some(MAX_PROVIDER_STREAM_LINE_BYTES);
+    ws_config.max_frame_size = Some(MAX_PROVIDER_STREAM_LINE_BYTES);
     let (mut socket, _response) =
-        tungstenite::connect(websocket_request).map_err(map_websocket_error)?;
+        connect_live_bounded(websocket_request, ws_config, config.timeout, cancellation)?;
     set_io_timeouts(socket.get_mut(), config.timeout)?;
+    if cancellation.is_cancelled() {
+        return Err(cancelled());
+    }
 
     Ok(Box::new(DeepgramLiveStream {
         socket,
         request: request.clone(),
+        response_timeout: config.timeout,
         input_bytes: 0,
         input_finished: false,
         completed: false,
     }))
 }
 
+/// The upstream tungstenite blocking connector has no TCP or WebSocket
+/// handshake deadline. In particular a peer can accept TCP and never send
+/// the HTTP 101 response, preventing owner revoke from completing.
+fn connect_live_bounded(
+    request: tungstenite::handshake::client::Request,
+    ws_config: WebSocketConfig,
+    timeout: Duration,
+    cancellation: &dyn CancellationProbe,
+) -> Result<
+    (
+        WebSocket<MaybeTlsStream<TcpStream>>,
+        tungstenite::handshake::client::Response,
+    ),
+    ProviderError,
+> {
+    if timeout.is_zero() {
+        return Err(invalid_response());
+    }
+    if cancellation.is_cancelled() {
+        return Err(cancelled());
+    }
+    let uri = request.uri();
+    let host = uri.host().ok_or_else(invalid_response)?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    let port = uri.port_u16().unwrap_or(match uri.scheme_str() {
+        Some("wss") => 443,
+        Some("ws") => 80,
+        _ => return Err(invalid_response()),
+    });
+    let deadline = Instant::now() + timeout;
+    // Resolution is still OS-controlled; TCP and TLS/HTTP handshake are
+    // bounded independently. Do not follow redirects with Authorization.
+    let addresses = (host, port).to_socket_addrs().map_err(|_| unavailable())?;
+    let mut tcp = None;
+    for address in addresses {
+        if cancellation.is_cancelled() {
+            return Err(cancelled());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(provider_timeout());
+        }
+        if let Ok(stream) = TcpStream::connect_timeout(&address, remaining) {
+            tcp = Some(stream);
+            break;
+        }
+    }
+    let tcp = tcp.ok_or_else(|| {
+        if deadline <= Instant::now() {
+            provider_timeout()
+        } else {
+            unavailable()
+        }
+    })?;
+    tcp.set_nodelay(true).map_err(|_| unavailable())?;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(provider_timeout());
+    }
+    tcp.set_read_timeout(Some(remaining))
+        .map_err(|_| unavailable())?;
+    tcp.set_write_timeout(Some(remaining))
+        .map_err(|_| unavailable())?;
+    let watchdog_socket = tcp.try_clone().map_err(|_| unavailable())?;
+    let done = AtomicBool::new(false);
+    // 0 = still active, 1 = cancelled, 2 = timed out.
+    let stopped = AtomicU8::new(0);
+    let outcome = std::thread::scope(|scope| {
+        let watcher = scope.spawn(|| {
+            while !done.load(Ordering::Acquire) {
+                if cancellation.is_cancelled() {
+                    stopped.store(1, Ordering::Release);
+                    let _ = watchdog_socket.shutdown(Shutdown::Both);
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    stopped.store(2, Ordering::Release);
+                    let _ = watchdog_socket.shutdown(Shutdown::Both);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let result = tungstenite::client_tls_with_config(request, tcp, Some(ws_config), None);
+        done.store(true, Ordering::Release);
+        let _ = watcher.join();
+        result
+    });
+    if cancellation.is_cancelled() || stopped.load(Ordering::Acquire) == 1 {
+        return Err(cancelled());
+    }
+    if stopped.load(Ordering::Acquire) == 2 || Instant::now() >= deadline {
+        return Err(provider_timeout());
+    }
+    outcome.map_err(|error| match error {
+        HandshakeError::Failure(error) => map_websocket_error(error),
+        HandshakeError::Interrupted(_) => unavailable(),
+    })
+}
+
+fn provider_timeout() -> ProviderError {
+    ProviderError {
+        kind: ProviderErrorKind::Timeout,
+        retryable: true,
+    }
+}
+
 struct DeepgramLiveStream {
     socket: WebSocket<MaybeTlsStream<TcpStream>>,
     request: SttStreamRequest,
+    response_timeout: Duration,
     input_bytes: u64,
     input_finished: bool,
     completed: bool,
@@ -74,6 +198,7 @@ impl SttAudioStream for DeepgramLiveStream {
         self.socket
             .send(Message::Binary(pcm.to_vec().into()))
             .map_err(map_websocket_error)?;
+        self.ensure_active(cancellation)?;
         self.input_bytes = self
             .input_bytes
             .checked_add(u64::try_from(pcm.len()).map_err(|_| invalid_response())?)
@@ -89,6 +214,7 @@ impl SttAudioStream for DeepgramLiveStream {
         self.socket
             .send(Message::Text(r#"{"type":"CloseStream"}"#.into()))
             .map_err(map_websocket_error)?;
+        self.ensure_active(cancellation)?;
         self.input_finished = true;
         Ok(())
     }
@@ -97,11 +223,20 @@ impl SttAudioStream for DeepgramLiveStream {
         &mut self,
         cancellation: &dyn CancellationProbe,
     ) -> Result<Option<SttStreamEvent>, ProviderError> {
+        let started = Instant::now();
         loop {
             self.ensure_active(cancellation)?;
+            if started.elapsed() >= self.response_timeout {
+                return Err(ProviderError {
+                    kind: ProviderErrorKind::Timeout,
+                    retryable: true,
+                });
+            }
             match self.socket.read() {
                 Ok(Message::Text(text)) => {
+                    self.ensure_active(cancellation)?;
                     if let Some(event) = parse_event(&text, self.request.locale_hint.as_deref())? {
+                        self.ensure_active(cancellation)?;
                         return Ok(Some(event));
                     }
                 }
@@ -112,6 +247,7 @@ impl SttAudioStream for DeepgramLiveStream {
                 }
                 Ok(Message::Pong(_) | Message::Binary(_) | Message::Frame(_)) => {}
                 Ok(Message::Close(_)) => {
+                    self.ensure_active(cancellation)?;
                     self.completed = true;
                     return Ok(None);
                 }
@@ -263,20 +399,24 @@ fn set_io_timeouts(
     overall_timeout: Duration,
 ) -> Result<(), ProviderError> {
     let poll = IO_POLL_TIMEOUT.min(overall_timeout);
+    let write_timeout = IO_WRITE_TIMEOUT.min(overall_timeout);
+    if poll.is_zero() {
+        return Err(invalid_response());
+    }
     match stream {
         MaybeTlsStream::Plain(stream) => {
             stream
                 .set_read_timeout(Some(poll))
                 .map_err(|_| unavailable())?;
             stream
-                .set_write_timeout(Some(overall_timeout))
+                .set_write_timeout(Some(write_timeout))
                 .map_err(|_| unavailable())?;
         }
         MaybeTlsStream::Rustls(stream) => {
             let tcp = stream.get_mut();
             tcp.set_read_timeout(Some(poll))
                 .map_err(|_| unavailable())?;
-            tcp.set_write_timeout(Some(overall_timeout))
+            tcp.set_write_timeout(Some(write_timeout))
                 .map_err(|_| unavailable())?;
         }
         _ => return Err(unavailable()),
@@ -293,8 +433,18 @@ fn input_duration_millis(request: &SttStreamRequest, bytes: u64) -> Option<u64> 
 
 fn map_websocket_error(error: tungstenite::Error) -> ProviderError {
     match error {
+        tungstenite::Error::Http(response) if response.status().is_redirection() => ProviderError {
+            kind: ProviderErrorKind::PolicyDenied,
+            retryable: false,
+        },
         tungstenite::Error::Http(response) => map_status(response.status().as_u16()),
-        tungstenite::Error::Io(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+        tungstenite::Error::Capacity(_) => invalid_response(),
+        tungstenite::Error::Io(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ) =>
+        {
             ProviderError {
                 kind: ProviderErrorKind::Timeout,
                 retryable: true,
