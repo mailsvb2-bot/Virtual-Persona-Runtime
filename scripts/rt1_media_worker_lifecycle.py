@@ -201,7 +201,10 @@ class MediaLifecycle:
                     raise RuntimeError("operation already exists or has been cancelled")
                 # At most ONE unresolved remote publisher, across processes.
                 if self._db.execute(
-                    "SELECT 1 FROM media_operations WHERE phase != 'stopped' LIMIT 1"
+                    """SELECT 1 FROM media_operations
+                       WHERE phase != 'stopped'
+                          OR (session_id IS NOT NULL AND stop_verified=0)
+                       LIMIT 1"""
                 ).fetchone():
                     raise RuntimeError("worker has unresolved media allocation")
                 self._write(operation_id, generation, "creating", None)
