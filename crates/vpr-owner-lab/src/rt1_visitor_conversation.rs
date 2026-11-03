@@ -11,12 +11,14 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput,
+    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
 };
 
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
+#[path = "rt1_visitor_text_egress.rs"]
+mod text_egress;
 use helpers::{
     diagnostic_operation_id, finish_close, revoked_diagnostic_offer_error,
     validate_microphone_audio,
@@ -372,15 +374,6 @@ impl Rt1VisitorConversation {
         Ok(())
     }
 
-    /// # Errors
-    /// Denies revoked visitor authority or returns the canonical turn error.
-    pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
-        // #319: pre/post checks cannot retract concurrent provider egress.
-        // Deny until the canonical revocation-serialized fence is proven.
-        self.manager.authorize(&self.id)?;
-        Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
-    }
-
     /// Stage a bounded local fragment under canonical publication authority.
     /// This is NOT permission for provider/browser egress. The consumer must
     /// enforce a final revocation-serialized sender/STOP fence.
@@ -442,7 +435,13 @@ impl Rt1VisitorConversation {
         let pcm_s16le_mono_16khz = receiver
             .try_recv()
             .map_err(|_| "RT1_MICROPHONE_QUEUE_UNAVAILABLE".to_owned())?;
-        self.manager.authorize(&self.id)?;
+        // Same revocation-serialized admission as visitor text and the
+        // canonical runtime's provider execution gate. The local queue is
+        // never mistaken for permission to transmit microphone PCM.
+        let _egress = self.manager.begin_provider_egress(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
         let callback = Arc::clone(&self.interrupt);
         let result = self
             .engine
@@ -454,12 +453,13 @@ impl Rt1VisitorConversation {
                 }
             })
             .map_err(|error| error.code().to_owned());
-        // Withdrawing publication wins over a late provider success.
+        *self.interrupt.turn.lock() = None;
+        // Withdrawing publication wins over a late provider success, even
+        // when the provider returned an error before this final check.
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        *self.interrupt.turn.lock() = None;
         result
     }
 
@@ -495,6 +495,9 @@ impl Rt1VisitorConversation {
         if !self
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
+            || !self
+                .manager
+                .await_provider_quiescence(&self.id, Duration::from_millis(250))
         {
             self.interrupt.stop();
             let _ = self.manager.close(&self.id);
