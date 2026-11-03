@@ -76,15 +76,24 @@ impl CancellableTcpWriter {
         let mut remaining = bytes;
         while !remaining.is_empty() {
             if self.connection.revoked.load(Ordering::Acquire) {
-                return Err(io::Error::new(ErrorKind::Interrupted, "TCP response revoked"));
+                return Err(io::Error::new(
+                    ErrorKind::Interrupted,
+                    "TCP response revoked",
+                ));
             }
             let Some(left) = self.deadline.checked_duration_since(Instant::now()) else {
                 self.abort();
-                return Err(io::Error::new(ErrorKind::TimedOut, "TCP response deadline exceeded"));
+                return Err(io::Error::new(
+                    ErrorKind::TimedOut,
+                    "TCP response deadline exceeded",
+                ));
             };
             if left.is_zero() {
                 self.abort();
-                return Err(io::Error::new(ErrorKind::TimedOut, "TCP response deadline exceeded"));
+                return Err(io::Error::new(
+                    ErrorKind::TimedOut,
+                    "TCP response deadline exceeded",
+                ));
             }
             self.connection
                 .stream
@@ -97,12 +106,17 @@ impl CancellableTcpWriter {
                     return Err(io::Error::new(ErrorKind::WriteZero, "TCP response closed"));
                 }
                 Ok(written) => remaining = &remaining[written..],
-                Err(error) if matches!(
-                    error.kind(),
-                    ErrorKind::Interrupted | ErrorKind::TimedOut | ErrorKind::WouldBlock
-                ) => {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::Interrupted | ErrorKind::TimedOut | ErrorKind::WouldBlock
+                    ) =>
+                {
                     if self.connection.revoked.load(Ordering::Acquire) {
-                        return Err(io::Error::new(ErrorKind::Interrupted, "TCP response revoked"));
+                        return Err(io::Error::new(
+                            ErrorKind::Interrupted,
+                            "TCP response revoked",
+                        ));
                     }
                 }
                 Err(error) => {
@@ -112,7 +126,10 @@ impl CancellableTcpWriter {
             }
         }
         if self.connection.revoked.load(Ordering::Acquire) {
-            return Err(io::Error::new(ErrorKind::Interrupted, "TCP response revoked"));
+            return Err(io::Error::new(
+                ErrorKind::Interrupted,
+                "TCP response revoked",
+            ));
         }
         Ok(())
     }
@@ -139,8 +156,7 @@ mod tests {
     #[test]
     fn authorized_writer_delivers_bytes() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) =
-            CancellableTcpWriter::new(server, Duration::from_secs(2));
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2));
         writer.write_all_bounded(b"persona").unwrap();
         let mut data = [0; 7];
         use std::io::Read as _;
@@ -152,8 +168,7 @@ mod tests {
     #[test]
     fn revoke_rejects_new_bytes_and_keeps_abort_permanent() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) =
-            CancellableTcpWriter::new(server, Duration::from_secs(2));
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2));
         cancel.revoke();
         assert!(cancel.is_revoked());
         assert_eq!(
@@ -161,7 +176,9 @@ mod tests {
             ErrorKind::Interrupted
         );
         use std::io::Read as _;
-        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         let mut buf = [0u8; 1];
         assert_eq!(client.read(&mut buf).unwrap(), 0);
     }
@@ -169,15 +186,16 @@ mod tests {
     #[test]
     fn expired_writer_aborts_before_network_delivery() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) =
-            CancellableTcpWriter::new(server, Duration::ZERO);
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::ZERO);
         assert_eq!(
             writer.write_all_bounded(b"never send").unwrap_err().kind(),
             ErrorKind::TimedOut
         );
         assert!(cancel.is_revoked());
         use std::io::Read as _;
-        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         let mut buf = [0u8; 1];
         assert_eq!(client.read(&mut buf).unwrap(), 0);
     }
@@ -185,11 +203,8 @@ mod tests {
     #[test]
     fn concurrent_revoke_is_observed_by_writer() {
         let (server, _client) = loopback_pair();
-        let (mut writer, cancel) =
-            CancellableTcpWriter::new(server, Duration::from_secs(3));
-        let send = thread::spawn(move || {
-            writer.write_all_bounded(&vec![17u8; 32 * 1024 * 1024])
-        });
+        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(3));
+        let send = thread::spawn(move || writer.write_all_bounded(&vec![17u8; 32 * 1024 * 1024]));
         thread::sleep(Duration::from_millis(25));
         cancel.revoke();
         assert!(send.join().unwrap().is_err());
