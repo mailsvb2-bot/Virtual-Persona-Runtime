@@ -75,6 +75,32 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn('"RT1_VISITOR_DELIVERY_DENIED"', http)
         self.assertNotIn("state.engine.lock()", http.split("fn visitor_text(", 1)[1].split("fn visitor_voice(", 1)[0])
 
+    def test_startup_sdp_uses_same_final_browser_egress_fence(self):
+        # A successful start carries a live SDP offer and ICE credentials.
+        # It must not bypass the text/voice browser delivery lease after a
+        # concurrent owner pause. This is source coverage, NOT a live RTP test.
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        dispatch = http.split("pub(super) fn route_post(", 1)[1].split(
+            "type Rt1HttpResult =", 1
+        )[0]
+        self.assertIn('if path == "/api/rt1/visitor/start"', dispatch)
+        self.assertIn("guarded_reply(visitor_start(request, state))", dispatch)
+        self.assertNotIn(
+            '"/api/rt1/visitor/start" => visitor_start(request, state)',
+            dispatch,
+        )
+        start = http.split("fn visitor_start(", 1)[1].split("fn lookup(", 1)[0]
+        self.assertIn(
+            "Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse>",
+            start,
+        )
+        self.assertIn("conversation,", start)
+        writer = http.split("pub(super) fn respond_post(", 1)[1].split(
+            "pub(super) fn route_post(", 1
+        )[0]
+        self.assertIn("conversation.begin_browser_delivery()", writer)
+        self.assertIn("request.respond(routed.response)", writer)
+
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
