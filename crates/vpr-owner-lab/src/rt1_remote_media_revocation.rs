@@ -570,7 +570,7 @@ mod tests {
                     break;
                 }
                 request.extend_from_slice(&buffer[..n]);
-                if request.windows(4).any(|part| part == b"\\r\\n\\r\\n") {
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
                     break;
                 }
             }
@@ -587,7 +587,7 @@ mod tests {
             .to_string();
             write!(
                 socket,
-                "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
             .unwrap();
