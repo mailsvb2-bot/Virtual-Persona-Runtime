@@ -410,7 +410,10 @@ fn cancellation_aborts_inflight_llm_http_headers_without_waiting_for_timeout() {
     use std::time::Instant;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
     let (accepted_tx, accepted_rx) = mpsc::channel();
     thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
@@ -459,14 +462,19 @@ fn cancellation_aborts_inflight_llm_sse_body_read() {
     use std::time::Instant;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+    let endpoint = format!(
+        "http://{}/v1/chat/completions",
+        listener.local_addr().unwrap()
+    );
     let (headers_tx, headers_rx) = mpsc::channel();
     thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         let mut request = [0_u8; 8192];
         let _ = socket.read(&mut request);
         socket
-            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
             .unwrap();
         headers_tx.send(()).unwrap();
         thread::sleep(Duration::from_millis(800));

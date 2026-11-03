@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::{Client, Response};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
     CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
@@ -304,7 +304,10 @@ struct OpenAiTextStream {
 }
 
 impl OpenAiTextStream {
-    fn new(response: Response, runtime: Arc<tokio::runtime::Runtime>) -> Result<Self, ProviderError> {
+    fn new(
+        response: Response,
+        runtime: Arc<tokio::runtime::Runtime>,
+    ) -> Result<Self, ProviderError> {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
