@@ -342,6 +342,67 @@ fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
 }
 
 #[test]
+fn pull_llm_stream_remains_in_flight_between_chunks_until_dropped() {
+    use std::time::Duration;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let turn = turn(&session, "pull-quiescence");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_llm_stream(
+            &PullLlm,
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "Ответ".into(),
+            },
+        )
+        .unwrap();
+    assert!(stream.next_chunk().unwrap().is_some());
+    revoker.revoke_authority().unwrap();
+    assert!(!revoker.await_provider_quiescence(Duration::ZERO));
+    assert_eq!(
+        stream.next_chunk().unwrap_err().reason_code(),
+        Rt0ReasonCode::TurnCancelled
+    );
+    drop(stream);
+    assert!(revoker.await_provider_quiescence(Duration::from_millis(10)));
+}
+
+#[test]
+fn pull_stt_stream_remains_in_flight_after_revoke_until_dropped() {
+    use std::time::Duration;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let turn = turn(&session, "stt-quiescence");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_stt_stream(
+            &PullStt,
+            &SttStreamRequest {
+                sample_rate_hz: 16_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::S16Le,
+                locale_hint: None,
+            },
+        )
+        .unwrap();
+    stream.push_audio(&[0; 320]).unwrap();
+    revoker.revoke_authority().unwrap();
+    assert!(!revoker.await_provider_quiescence(Duration::ZERO));
+    assert_eq!(
+        stream.finish_input().unwrap_err().reason_code(),
+        Rt0ReasonCode::TurnCancelled
+    );
+    drop(stream);
+    assert!(revoker.await_provider_quiescence(Duration::from_millis(10)));
+}
+
+#[test]
 fn cancellation_propagates_to_clones() {
     let cancellation = TurnCancellation::default();
     let provider_view = cancellation.clone();

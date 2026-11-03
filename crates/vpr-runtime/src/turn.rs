@@ -28,6 +28,8 @@ use crate::turn_state::TurnMutableState;
 pub struct AuthorizedLlmStream {
     stream: Box<dyn LlmTextStream>,
     permit: ProviderExecutionPermit,
+    // Field order matters: provider stream drops before the lifetime receipt.
+    _egress_lifetime: crate::execution_gate::ProviderEgressGuard,
 }
 
 impl AuthorizedLlmStream {
@@ -49,6 +51,7 @@ impl AuthorizedLlmStream {
 pub struct AuthorizedSttStream {
     stream: Box<dyn SttAudioStream>,
     permit: ProviderExecutionPermit,
+    _egress_lifetime: crate::execution_gate::ProviderEgressGuard,
 }
 
 impl AuthorizedSttStream {
@@ -280,8 +283,13 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
+        let lifetime = permit.track_stream_lifetime()?;
         let stream = permit.dispatch(|cancellation| port.open_stream(request, cancellation))?;
-        Ok(AuthorizedLlmStream { stream, permit })
+        Ok(AuthorizedLlmStream {
+            stream,
+            permit,
+            _egress_lifetime: lifetime,
+        })
     }
 
     /// Executes one LLM operation through the canonical provider enforcement boundary.
@@ -317,8 +325,13 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
+        let lifetime = permit.track_stream_lifetime()?;
         let stream = permit.dispatch(|cancellation| port.open_stream(request, cancellation))?;
-        Ok(AuthorizedSttStream { stream, permit })
+        Ok(AuthorizedSttStream {
+            stream,
+            permit,
+            _egress_lifetime: lifetime,
+        })
     }
 
     /// Executes one STT operation through the canonical provider enforcement boundary.

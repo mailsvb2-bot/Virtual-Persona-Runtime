@@ -15,31 +15,12 @@ use crate::state::{
     OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
-/// Generate the existing per-operation cancellation identity before admission.
-fn diagnostic_operation_id() -> Result<String, String> {
-    let mut nonce = [0_u8; 16];
-    getrandom::fill(&mut nonce).map_err(|_| "RT1_OPERATION_ENTROPY_UNAVAILABLE".to_owned())?;
-    Ok(nonce
-        .iter()
-        .fold(String::with_capacity(32), |mut result, octet| {
-            use std::fmt::Write;
-            write!(&mut result, "{octet:02x}").expect("hex formatting is infallible");
-            result
-        }))
-}
-
-/// Deny late-revoked diagnostic SDP unless the remote STOP is confirmed.
-fn revoked_diagnostic_offer_error(
-    manager: &VisitorSessionManager,
-    id: &str,
-    remote: &Rt1RemoteMediaRevocation,
-) -> String {
-    let _ = manager.close(id);
-    if remote.revoke_confirmed().is_err() {
-        return "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into();
-    }
-    "RT1_VISITOR_REVOKED_DURING_OFFER".into()
-}
+#[path = "rt1_visitor_conversation_helpers.rs"]
+mod helpers;
+use helpers::{
+    diagnostic_operation_id, finish_close, revoked_diagnostic_offer_error,
+    validate_microphone_audio,
+};
 
 #[derive(Default)]
 struct LiveVisitorInterrupt {
@@ -60,6 +41,13 @@ impl LiveVisitorInterrupt {
         if let Some(session) = self.session.lock().clone() {
             let _ = session.revoke_authority();
         }
+    }
+
+    fn provider_quiescent(&self, timeout: Duration) -> bool {
+        self.session
+            .lock()
+            .as_ref()
+            .is_none_or(|session| session.await_provider_quiescence(timeout))
     }
 
     fn stop(&self) {
@@ -501,6 +489,17 @@ impl Rt1VisitorConversation {
             let _ = self.manager.close(&self.id);
             return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
         }
+        // A successful audio STOP is not proof that an in-flight provider
+        // request has drained. Keep this visitor quarantined if the cancelled
+        // transport refuses to return within the bounded wait.
+        if !self
+            .interrupt
+            .provider_quiescent(Duration::from_millis(250))
+        {
+            self.interrupt.stop();
+            let _ = self.manager.close(&self.id);
+            return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
+        }
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
@@ -543,7 +542,10 @@ impl Rt1VisitorConversation {
             .remote
             .as_ref()
             .map_or(Ok(()), |remote| remote.revoke_confirmed());
-        let local_stop = {
+        let local_stop = if self
+            .interrupt
+            .provider_quiescent(Duration::from_millis(250))
+        {
             let mut engine = self.engine.lock();
             if engine.session_revocation_handle().is_some() {
                 engine
@@ -552,6 +554,11 @@ impl Rt1VisitorConversation {
             } else {
                 Ok(())
             }
+        } else {
+            // Do not wait on an engine mutex held by a stalled provider and
+            // do not claim confirmed close. The HTTP registry retains this
+            // visitor for a subsequent cleanup attempt.
+            Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into())
         };
         finish_close(remote_stop, local_stop)
     }
@@ -570,25 +577,6 @@ impl Drop for Rt1VisitorConversation {
             let _ = engine.stop_visitor_provider_confirmed();
         }
     }
-}
-
-// A remote STOP without both sender receipts must never be reported as a
-// successful close, even when local engine cleanup succeeded.
-fn finish_close(
-    remote_stop: Result<(), String>,
-    local_stop: Result<(), String>,
-) -> Result<(), String> {
-    remote_stop?;
-    local_stop
-}
-
-fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
-    // Match the existing RT0 voice input duration and PCM framing limits.
-    const MAX_VOICE_BYTES: usize = 16_000 * 2 * 30;
-    if pcm.is_empty() || pcm.len() > MAX_VOICE_BYTES || pcm.len() % 2 != 0 {
-        return Err("RT1_INVALID_MICROPHONE_AUDIO".into());
-    }
-    Ok(())
 }
 
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {

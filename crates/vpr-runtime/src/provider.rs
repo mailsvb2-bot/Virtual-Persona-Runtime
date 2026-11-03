@@ -3,6 +3,7 @@ use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::ProviderCancellation;
 use crate::error::{ProviderExecutionError, RuntimeDenyReason};
+use crate::execution_gate::{ProviderEgressGuard, SessionExecutionGate};
 
 /// Internal linearized capability for one immediate provider operation.
 ///
@@ -11,6 +12,7 @@ use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 #[derive(Debug)]
 pub(crate) struct ProviderExecutionPermit {
     pub(crate) cancellation: ProviderCancellation,
+    pub(crate) gate: SessionExecutionGate,
 }
 
 impl ProviderExecutionPermit {
@@ -25,12 +27,25 @@ impl ProviderExecutionPermit {
         &self,
         operation: impl FnOnce(&dyn CancellationProbe) -> Result<T, ProviderError>,
     ) -> Result<T, ProviderExecutionError> {
-        if self.cancellation.is_cancelled() {
-            return Err(ProviderExecutionError::Denied(
-                RuntimeDenyReason::TurnCancelled,
-            ));
-        }
+        let _in_flight = self
+            .gate
+            .begin_provider_egress(&self.cancellation)
+            .map_err(|()| ProviderExecutionError::Denied(RuntimeDenyReason::TurnCancelled))?;
+        // No session/authorization lock is held during external network I/O.
+        // A concurrent revoke cancels this admitted transport; its completion
+        // remains tracked until the provider call and postflight have returned.
         self.finish(operation(&self.cancellation))
+    }
+
+    /// Keep a pull-based LLM/STT stream counted as active even between
+    /// chunks, until its provider transport is dropped. Without this guard a
+    /// paused owner could falsely observe quiescence between stream polls.
+    pub(crate) fn track_stream_lifetime(
+        &self,
+    ) -> Result<ProviderEgressGuard, ProviderExecutionError> {
+        self.gate
+            .begin_provider_egress(&self.cancellation)
+            .map_err(|()| ProviderExecutionError::Denied(RuntimeDenyReason::TurnCancelled))
     }
 
     pub(crate) fn finish<T>(
@@ -92,6 +107,7 @@ mod dispatch_tests {
     fn permit(turn: TurnCancellation) -> ProviderExecutionPermit {
         ProviderExecutionPermit {
             cancellation: ProviderCancellation::new(turn, Arc::new(SystemClock), None),
+            gate: SessionExecutionGate::default(),
         }
     }
 
@@ -151,6 +167,85 @@ mod dispatch_tests {
     }
 
     #[test]
+    fn revoke_linearizes_with_dispatch_admission_without_holding_network_lock() {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let turn = TurnCancellation::default();
+        let gate = SessionExecutionGate::default();
+        let permit = ProviderExecutionPermit {
+            cancellation: ProviderCancellation::new(turn.clone(), Arc::new(SystemClock), None),
+            gate: gate.clone(),
+        };
+        let writer = gate.write().expect("authority transaction");
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            ready_tx.send(()).expect("notify");
+            let called = Cell::new(false);
+            let result: Result<(), _> = permit.dispatch(|_| {
+                called.set(true);
+                Ok(())
+            });
+            (result, called.get())
+        });
+        ready_rx.recv().expect("worker started");
+        // This cancellation is serialized with the dispatch read lock.
+        turn.cancel();
+        drop(writer);
+        let (result, called) = worker.join().expect("dispatch");
+        assert!(!called, "revoked authority must never start provider I/O");
+        assert_eq!(
+            result,
+            Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::TurnCancelled
+            ))
+        );
+        assert!(gate.await_provider_quiescence(std::time::Duration::ZERO));
+    }
+
+    #[test]
+    fn revoke_does_not_wait_for_stalled_provider_but_quiescence_is_bounded() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let turn = TurnCancellation::default();
+        let gate = SessionExecutionGate::default();
+        let permit = ProviderExecutionPermit {
+            cancellation: ProviderCancellation::new(turn.clone(), Arc::new(SystemClock), None),
+            gate: gate.clone(),
+        };
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
+        let worker = thread::spawn(move || {
+            permit.dispatch(|cancellation| {
+                entered_tx.send(()).expect("provider entered");
+                release_rx.recv().expect("provider released");
+                assert!(cancellation.is_cancelled());
+                Ok(42)
+            })
+        });
+        entered_rx.recv().expect("provider started");
+        // Authority revocation can acquire its write lock while the provider
+        // is stalled: the network operation does not hold that lock.
+        let writer = gate.write().expect("revoke must not wait for provider");
+        turn.cancel();
+        drop(writer);
+        assert!(
+            !gate.await_provider_quiescence(Duration::from_millis(10)),
+            "an outstanding provider must not be reported as stopped"
+        );
+        release_tx.send(()).expect("release");
+        assert_eq!(
+            worker.join().expect("provider completion"),
+            Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::TurnCancelled
+            ))
+        );
+        assert!(gate.await_provider_quiescence(Duration::from_millis(10)));
+    }
+
+    #[test]
     fn expired_permit_cannot_dispatch_provider_operation() {
         let permit = ProviderExecutionPermit {
             cancellation: ProviderCancellation::new(
@@ -158,6 +253,7 @@ mod dispatch_tests {
                 Arc::new(SystemClock),
                 Some(0),
             ),
+            gate: SessionExecutionGate::default(),
         };
         let called = Cell::new(false);
         let result: Result<(), _> = permit.dispatch(|_| {

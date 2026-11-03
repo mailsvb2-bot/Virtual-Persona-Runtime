@@ -55,8 +55,11 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("remote.is_revoked()", diagnostic)
         self.assertIn("interrupt.cancelled.load(Ordering::Acquire)", diagnostic)
         self.assertIn("return Err(revoked_diagnostic_offer_error(&manager, &id, &remote));", diagnostic)
-        self.assertIn('"RT1_VISITOR_REVOKED_DURING_OFFER".into()', source)
-        self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()', source)
+        # The exact STOP-before-error contract now lives in the extracted
+        # pure helper, not in the already size-capped conversation module.
+        helpers = (SOURCE.parent / "rt1_visitor_conversation_helpers.rs").read_text(encoding="utf-8")
+        self.assertIn('"RT1_VISITOR_REVOKED_DURING_OFFER".into()', helpers)
+        self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()', helpers)
         self.assertLess(diagnostic.index("let bundle = started.map_err"),
                         diagnostic.rindex(".authorize_persona(&id, &persona_id, persona_version)"))
 

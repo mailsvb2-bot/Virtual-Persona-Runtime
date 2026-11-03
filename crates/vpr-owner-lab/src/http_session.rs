@@ -121,7 +121,10 @@ fn fence_authority(
             return Err(error_response(500, "INTERNAL_ERROR"));
         }
     }
-    Ok(stopped)
+    // A STOP callback alone cannot attest that a cancelled STT/LLM/TTS
+    // transport has actually returned. Never acknowledge the local fence
+    // while an admitted provider request is still in flight.
+    Ok(stopped && revoker.await_provider_quiescence(Duration::ZERO))
 }
 
 /// First phase of user Close: deny new turns and revoke provider authority now.
@@ -187,6 +190,14 @@ fn complete_deferred_session(
     Ok(())
 }
 
+fn provider_egress_quiescent(state: &AppState) -> bool {
+    state
+        .session_revocation
+        .lock()
+        .as_ref()
+        .is_none_or(|revoker| revoker.await_provider_quiescence(Duration::ZERO))
+}
+
 fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u64) {
     // A single request can time out after the canonical authority has already
     // been revoked. Finish only when the voice worker has released its output
@@ -198,7 +209,7 @@ fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u
         {
             return;
         }
-        if state.voice_streams.wait_until_quiescent() {
+        if state.voice_streams.wait_until_quiescent() && provider_egress_quiescent(state) {
             let _ = complete_deferred_session(state, close, expected_generation);
             return;
         }
@@ -214,7 +225,7 @@ fn end_session(
 ) -> Result<HttpResponse, HttpResponse> {
     let _stopped = fence_authority(state, expected_session_sequence)?;
     let expected_generation = state.active_session_sequence.load(Ordering::Acquire);
-    if !state.voice_streams.wait_until_quiescent() {
+    if !state.voice_streams.wait_until_quiescent() || !provider_egress_quiescent(state) {
         let worker_state = Arc::clone(state);
         thread::spawn(move || {
             finish_after_quiescence(&worker_state, close, expected_generation);
