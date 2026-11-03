@@ -3,9 +3,9 @@ use std::time::Duration;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use vpr_integration::{
-    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, SttAudioStream, SttPort, SttRequest, SttStreamRequest, Transcript,
-    UsageEvidence, UsageUnit, CancellableProviderHttp,
+    CancellableProviderHttp, CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, SttAudioStream, SttPort, SttRequest, SttStreamRequest,
+    Transcript, UsageEvidence, UsageUnit,
 };
 
 mod live;

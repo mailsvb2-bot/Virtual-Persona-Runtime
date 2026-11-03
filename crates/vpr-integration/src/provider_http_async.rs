@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::{CancellationProbe, ProviderError, ProviderErrorKind};
 use crate::provider_http::{
     build_provider_async_http_client, cancelled, invalid_response, unavailable,
 };
+use crate::{CancellationProbe, ProviderError, ProviderErrorKind};
 
 /// One canonical cancellable HTTP transport shared by RT0 and RT1 provider
 /// adapters. Cancellation drops the in-flight request/body future; it does
@@ -126,4 +126,3 @@ fn async_transport_error(error: &reqwest::Error) -> ProviderError {
         unavailable()
     }
 }
-

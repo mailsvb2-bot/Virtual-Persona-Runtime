@@ -231,7 +231,8 @@ pub(super) const fn cancelled() -> ProviderError {
 mod tests {
     use std::io::{BufReader, Read, Write};
     use std::net::TcpListener;
-        use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;

@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Response;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest, LlmTextStream,
-    MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    UsageEvidence, UsageUnit, CancellableProviderHttp,
+    CancellableProviderHttp, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
+    LlmTextStream, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -275,10 +275,7 @@ struct OpenAiTextStream {
 }
 
 impl OpenAiTextStream {
-    fn new(
-        response: Response,
-        http: Arc<CancellableProviderHttp>,
-    ) -> Result<Self, ProviderError> {
+    fn new(response: Response, http: Arc<CancellableProviderHttp>) -> Result<Self, ProviderError> {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }

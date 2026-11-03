@@ -260,7 +260,9 @@ fn revoke_interrupts_stalled_deepgram_response_headers() {
     let probe = Probe(AtomicBool::new(false));
     thread::scope(|scope| {
         let pending = scope.spawn(|| provider.transcribe(&request(), &probe));
-        accepted_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        accepted_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
         let started = std::time::Instant::now();
         probe.0.store(true, Ordering::SeqCst);
         let error = pending.join().unwrap().unwrap_err();
@@ -280,7 +282,11 @@ fn revoke_interrupts_stalled_deepgram_body_after_headers() {
         let mut bytes = [0_u8; 4096];
         let read = stream.read(&mut bytes).unwrap();
         assert!(read > 0);
-        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n").unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n",
+            )
+            .unwrap();
         headers_tx.send(()).unwrap();
         thread::sleep(std::time::Duration::from_millis(500));
     });
@@ -292,7 +298,9 @@ fn revoke_interrupts_stalled_deepgram_body_after_headers() {
     let probe = Probe(AtomicBool::new(false));
     thread::scope(|scope| {
         let pending = scope.spawn(|| provider.transcribe(&request(), &probe));
-        headers_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        headers_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
         thread::sleep(std::time::Duration::from_millis(50));
         let started = std::time::Instant::now();
         probe.0.store(true, Ordering::SeqCst);
