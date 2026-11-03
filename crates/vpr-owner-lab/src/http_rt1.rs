@@ -127,6 +127,37 @@ fn guarded_reply(
     }
 }
 
+/// Final RT1 HTTP dispatch is owned by this module, including the actual
+/// response write. Keeping this here avoids a second path around the CSRF
+/// checks and preserves the main server's architectural module-size limit.
+pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState>) {
+    if !super::valid_post_headers(&request, &state.csrf_token, state.port) {
+        let _ = request.respond(error_response(403, "CSRF_DENIED"));
+        return;
+    }
+    if !enabled() {
+        let _ = request.respond(error_response(404, "NOT_FOUND"));
+        return;
+    }
+    let path = request.url().to_owned();
+    let Some(routed) = route_post(&path, &mut request, state) else {
+        let _ = request.respond(error_response(404, "NOT_FOUND"));
+        return;
+    };
+    if let Some(conversation) = routed.delivery {
+        match conversation.begin_browser_delivery() {
+            Ok(_lease) => {
+                let _ = request.respond(routed.response);
+            }
+            Err(_) => {
+                let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
+            }
+        }
+    } else {
+        let _ = request.respond(routed.response);
+    }
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut tiny_http::Request,

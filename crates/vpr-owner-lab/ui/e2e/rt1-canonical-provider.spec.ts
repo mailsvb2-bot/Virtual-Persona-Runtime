@@ -76,6 +76,15 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
 
   // A regular D-ID WebRTC avatar has no independent private Echo STOP.
   // RT1 must never send visitor microphone audio to that unfenced adapter.
+  // The final HTTP delivery handler is a distinct dispatch path: verify it
+  // did not bypass the existing owner-lab CSRF and same-origin policy.
+  const forgedText = await request.post(`${base}/api/rt1/visitor/text`, {
+    headers: { "content-type": "application/json", origin: base },
+    data: { session_id, text: "CSRF bypass attempt" },
+  });
+  expect(forgedText.status()).toBe(403);
+  expect((await forgedText.json()).code).toBe("CSRF_DENIED");
+
   // A D-ID WebRTC-only session has no independent Echo STOP; the shared
   // canonical LLM delivery gate must not turn a text reply into unfenced
   // browser/provider egress merely because a session ID is known.
