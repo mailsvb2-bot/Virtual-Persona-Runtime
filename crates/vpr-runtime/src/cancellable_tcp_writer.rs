@@ -151,6 +151,7 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+    use std::io::Read as _;
 
     fn loopback_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -165,7 +166,6 @@ mod tests {
         let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2));
         writer.write_all_bounded(b"persona").unwrap();
         let mut data = [0; 7];
-        use std::io::Read as _;
         client.read_exact(&mut data).unwrap();
         assert_eq!(&data, b"persona");
         assert!(!cancel.is_revoked());
@@ -181,7 +181,6 @@ mod tests {
             writer.write_all_bounded(b"never send").unwrap_err().kind(),
             ErrorKind::Interrupted
         );
-        use std::io::Read as _;
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -198,7 +197,6 @@ mod tests {
             ErrorKind::TimedOut
         );
         assert!(cancel.is_revoked());
-        use std::io::Read as _;
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
