@@ -70,9 +70,10 @@ for crate_name in streaming_crates:
         # individual lines, retained buffers, and incoming chunks.
         for required in (
             "fn next_line(",
-            "if newline > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "self.pending.len().saturating_add(line_bytes) > MAX_PROVIDER_STREAM_LINE_BYTES",
             "if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
-            "if bytes.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "MAX_PROVIDER_BINARY_BODY_BYTES",
+            "self.chunk_offset",
             "self.response.take()",
         ):
             if required not in source:
