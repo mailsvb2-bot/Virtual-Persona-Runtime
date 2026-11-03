@@ -68,7 +68,9 @@ impl Rt1RemoteMediaRevocation {
         }
         let _serial = self.stop_gate.lock();
         let mut created = self.created_session_id.lock();
-        if created.as_deref().is_some_and(|previous| previous != session_id)
+        if created
+            .as_deref()
+            .is_some_and(|previous| previous != session_id)
             || self
                 .confirmed_session_id
                 .lock()
