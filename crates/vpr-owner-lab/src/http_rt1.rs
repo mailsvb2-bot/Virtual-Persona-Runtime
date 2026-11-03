@@ -165,6 +165,11 @@ pub(super) fn route_post(
 ) -> Option<Rt1RoutedResponse> {
     // Never serialize a visitor LLM or microphone result and then drop its
     // authority before the HTTP writer gets the response.
+    if path == "/api/rt1/visitor/start" {
+        // SDP/ICE credentials are browser egress too: a revoked owner must
+        // not receive a new sender offer after the final admission check.
+        return Some(guarded_reply(visitor_start(request, state)));
+    }
     if path == "/api/rt1/visitor/text" {
         return Some(guarded_reply(visitor_text(request, state)));
     }
@@ -176,7 +181,6 @@ pub(super) fn route_post(
         "/api/rt1/owner/publish" => owner_publish(request, state),
         "/api/rt1/owner/pause" => owner_revoke(request, false),
         "/api/rt1/owner/unpublish" => owner_revoke(request, true),
-        "/api/rt1/visitor/start" => visitor_start(request, state),
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
         "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
@@ -327,7 +331,10 @@ fn new_visitor_session_id() -> Result<String, HttpResponse> {
     Ok(session_id)
 }
 
-fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+fn visitor_start(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
     let body: VisitorStart = parse_json(request)?;
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
@@ -404,14 +411,17 @@ fn visitor_start(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         }
         return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
     }
-    Ok(json_response(
-        200,
-        &serde_json::json!({
-            "session_id": session_id,
-            "signal": bundle,
-            "voice_enabled": voice_enabled,
-            "diagnostic_rtp": std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
-        }),
+    Ok((
+        json_response(
+            200,
+            &serde_json::json!({
+                "session_id": session_id,
+                "signal": bundle,
+                "voice_enabled": voice_enabled,
+                "diagnostic_rtp": std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+            }),
+        ),
+        conversation,
     ))
 }
 
