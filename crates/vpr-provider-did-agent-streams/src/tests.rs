@@ -181,17 +181,82 @@ fn assert_client_interrupt_contract(
 }
 
 #[test]
+fn revoke_during_create_body_read_keeps_remote_id_for_compensating_delete() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Acquire)
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let server_revoke = Arc::clone(&revoked);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, captured) = mpsc::channel();
+    thread::spawn(move || {
+        let responses = [
+            ("200 OK", legacy_agent_body()),
+            (
+                "201 Created",
+                r#"{"id":"allocated-after-revoke","session_id":"real-session","offer":{"type":"offer","sdp":"offer-sdp"}}"#.to_owned(),
+            ),
+            ("200 OK", "{}".to_owned()),
+        ];
+        for (index, (status, body)) in responses.into_iter().enumerate() {
+            let (mut stream, _) = listener.accept().unwrap();
+            tx.send(read_request(&mut stream)).unwrap();
+            let headers = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).unwrap();
+            if index == 1 {
+                // The remote sender has already been allocated. Revoke just
+                // before the CREATE body containing its identity arrives.
+                server_revoke.store(true, Ordering::Release);
+            }
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+
+    let error = adapter(endpoint)
+        .create_session(&SharedProbe(revoked))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    let timeout = Duration::from_secs(3);
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("GET /agents/")
+    );
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("POST /agents/")
+    );
+    let cleanup = captured.recv_timeout(timeout).unwrap();
+    assert!(cleanup.starts_with("DELETE /agents/agent-7/streams/allocated-after-revoke "));
+    assert!(cleanup.contains(r#""session_id":"real-session""#));
+}
+
+#[test]
 fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     use std::sync::atomic::AtomicUsize;
 
     struct RevokeAtFinalCheck(AtomicUsize);
     impl CancellationProbe for RevokeAtFinalCheck {
         fn is_cancelled(&self) -> bool {
-            // Two admission checks plus four body-reader checks (before
-            // and after the body chunk and EOF) precede the post-CREATE
-            // authorization check. Revoke only after the session id is
-            // decoded, so this test actually exercises compensating DELETE.
-            self.0.fetch_add(1, Ordering::SeqCst) >= 6
+            // Two admission checks precede CREATE. Cancellation becomes
+            // true on the first would-be body-reader probe; a reader that
+            // checks it before decoding loses the already allocated sender ID.
+            // The compensation path MUST still send DELETE for that identity.
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
         }
     }
 
@@ -205,7 +270,7 @@ fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
     let probe = RevokeAtFinalCheck(AtomicUsize::new(0));
     let error = provider.create_session(&probe).unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
-    assert!(probe.0.load(Ordering::SeqCst) >= 7);
+    assert!(probe.0.load(Ordering::SeqCst) >= 3);
     // Never hang the entire workspace suite if a future change moves
     // cancellation ahead of the provider-id decode/compensating DELETE.
     let timeout = std::time::Duration::from_secs(3);
@@ -233,7 +298,7 @@ fn late_revoked_create_with_failed_delete_reports_unconfirmed_cleanup() {
     struct RevokeAtFinalCheck(AtomicUsize);
     impl CancellationProbe for RevokeAtFinalCheck {
         fn is_cancelled(&self) -> bool {
-            self.0.fetch_add(1, Ordering::SeqCst) >= 6
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
         }
     }
 

@@ -29,7 +29,13 @@ impl DidAgentStreamsAvatar {
         // fail typed decoding (for example, a missing or malformed offer).
         // Parse the bounded authenticated JSON envelope first so those IDs
         // remain available for compensating DELETE on schema failure.
-        let raw: serde_json::Value = decode_json_response(response, Some(cancellation))?;
+        // Once CREATE has returned an HTTP response, cancellation must not
+        // discard the only authenticated remote sender identity. Read the
+        // bounded body to completion (the configured transport timeout still
+        // applies), then check cancellation AFTER extracting the IDs so a
+        // late revoke can issue compensating DELETE. Interrupting this body
+        // read early can orphan a sender that D-ID already allocated.
+        let raw: serde_json::Value = decode_json_response(response, None)?;
         let allocated_id = raw
             .get("id")
             .and_then(serde_json::Value::as_str)
