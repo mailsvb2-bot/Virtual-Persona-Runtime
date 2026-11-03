@@ -2,7 +2,9 @@
 import importlib.util
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +60,75 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.worker.status("op-a")[1], "stopped")
         with self.assertRaises(RuntimeError):
             self.worker.create("op-a", 1)
+
+    def _expire_create_reply_after_commit(self, operation_id):
+        # Deterministic CREATE deadline race: the backend has already
+        # committed the real sender ID, but the HTTP waiter loses its reply.
+        # This is a fake backend/queue, not a real D-ID RTP test.
+        real_queue = mod.Queue
+        created = threading.Event()
+        queue_count = 0
+
+        class LostCreateReplyQueue(real_queue):
+            def put(self, item, block=True, timeout=None):
+                super().put(item, block=block, timeout=timeout)
+                created.set()
+
+            def get(self, block=True, timeout=None):
+                if not created.wait(2):
+                    raise AssertionError("CREATE did not commit before timeout")
+                raise mod.Empty
+
+        def queue_factory(maxsize=0):
+            nonlocal queue_count
+            queue_count += 1
+            if queue_count == 1:
+                return LostCreateReplyQueue(maxsize=maxsize)
+            return real_queue(maxsize=maxsize)
+
+        with patch.object(mod, "Queue", new=queue_factory):
+            with self.assertRaisesRegex(RuntimeError, "CREATE deadline exceeded"):
+                self.worker.create_bounded(operation_id, 1, 0.2)
+
+    def _wait_for_stop_completion(self, operation_id):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if self.worker.status(operation_id)[1] in ("stopped", "uncertain"):
+                return
+            time.sleep(0.01)
+        self.fail("bounded compensating STOP did not complete")
+
+    def test_create_deadline_race_stops_already_committed_remote_sender(self):
+        self._expire_create_reply_after_commit("deadline-race")
+        self._wait_for_stop_completion("deadline-race")
+        self.assertEqual(
+            self.worker.status("deadline-race"),
+            (1, "stopped", "session-a"),
+        )
+        self.assertEqual(self.sender.stopped, 1)
+        with self.assertRaises(RuntimeError):
+            self.worker.create("replacement", 1)
+
+    def test_create_deadline_race_failed_stop_recovers_after_restart(self):
+        self.sender.partial = True
+        self._expire_create_reply_after_commit("deadline-failed-stop")
+        self._wait_for_stop_completion("deadline-failed-stop")
+        self.assertEqual(
+            self.worker.status("deadline-failed-stop"),
+            (1, "uncertain", "session-a"),
+        )
+        self.assertEqual(self.sender.stopped, 1)
+        with self.assertRaises(RuntimeError):
+            self.worker.create("replacement", 1)
+        self.sender.partial = False
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        restarted.quarantine_after_restart()
+        restarted.reconcile()
+        self.assertEqual(
+            restarted.status("deadline-failed-stop"),
+            (1, "stopped", "session-a"),
+        )
+        self.assertEqual(self.sender.stopped, 2)
 
     def test_atomic_create_admission_across_worker_connections(self):
         # Two worker processes may share the durable ledger but not a Python lock.
