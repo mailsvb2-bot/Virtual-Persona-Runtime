@@ -61,6 +61,77 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.worker.create("op-a", 1)
 
+    def test_dual_sender_stop_receipt_is_durable_across_restart(self):
+        self.worker.create("verified-stop", 1)
+        receipt = self.worker.cancel("verified-stop", 1)
+        self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
+        self.assertEqual(
+            self.worker._db.execute(
+                "SELECT stop_verified FROM media_operations WHERE id=?",
+                ("verified-stop",),
+            ).fetchone(),
+            (1,),
+        )
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        restarted.quarantine_after_restart()
+        self.assertEqual(
+            restarted.cancel("verified-stop", 1),
+            mod.StopReceipt("verified-stop", "session-a", 1, True, True),
+        )
+        # A verified receipt is idempotent: no new remote STOP is invented.
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_legacy_stopped_row_without_receipt_requires_real_stop(self):
+        self.worker.create("legacy-unverified", 1)
+        self.worker.cancel("legacy-unverified", 1)
+        self.worker._db.execute(
+            "UPDATE media_operations SET stop_verified=0 WHERE id=?",
+            ("legacy-unverified",),
+        )
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        restarted.quarantine_after_restart()
+        self.assertEqual(
+            restarted.status("legacy-unverified"),
+            (1, "uncertain", "session-a"),
+        )
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "remote audio/video STOP not confirmed"):
+            restarted.reconcile()
+        self.assertEqual(restarted.status("legacy-unverified")[1], "uncertain")
+        self.assertEqual(
+            restarted._db.execute(
+                "SELECT stop_verified FROM media_operations WHERE id=?",
+                ("legacy-unverified",),
+            ).fetchone(),
+            (0,),
+        )
+        self.sender.partial = False
+        restarted.reconcile()
+        self.assertEqual(restarted.status("legacy-unverified")[1], "stopped")
+        self.assertEqual(
+            restarted._db.execute(
+                "SELECT stop_verified FROM media_operations WHERE id=?",
+                ("legacy-unverified",),
+            ).fetchone(),
+            (1,),
+        )
+
+    def test_unverified_stopped_row_cannot_forge_idempotent_receipt(self):
+        self.worker.create("unverified-cancel", 1)
+        self.worker.cancel("unverified-cancel", 1)
+        self.worker._db.execute(
+            "UPDATE media_operations SET stop_verified=0 WHERE id=?",
+            ("unverified-cancel",),
+        )
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "remote audio/video STOP not confirmed"):
+            self.worker.cancel("unverified-cancel", 1)
+        self.assertEqual(self.worker.status("unverified-cancel")[1], "uncertain")
+        self.sender.partial = False
+        receipt = self.worker.cancel("unverified-cancel", 1)
+        self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
+        self.assertEqual(self.worker.status("unverified-cancel")[1], "stopped")
+
     def _expire_create_reply_after_commit(self, operation_id):
         # Deterministic CREATE deadline race: the backend has already
         # committed the real sender ID, but the HTTP waiter loses its reply.
