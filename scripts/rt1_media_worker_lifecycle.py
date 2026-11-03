@@ -181,6 +181,21 @@ class MediaLifecycle:
                     row = self.status(operation_id)
                 except Exception:
                     row = None
+                if row is not None and row[0] == generation and row[1] == "active" and row[2]:
+                    # CREATE already committed before the HTTP waiter timed
+                    # out. The local deadline marker cannot retroactively
+                    # revoke it. Compensate the known sender immediately using
+                    # the canonical STOP receipt validator and SQLite ledger.
+                    try:
+                        self._finish_stop(operation_id, row[2], generation)
+                    except Exception as stop_error:
+                        raise RuntimeError(
+                            "CREATE deadline exceeded; cancellation persistence unavailable; "
+                            "remote STOP unconfirmed"
+                        ) from stop_error
+                    raise RuntimeError(
+                        "CREATE deadline exceeded; compensating remote STOP confirmed"
+                    ) from error
                 if row is None or row[1] in ("creating", "active"):
                     raise RuntimeError(
                         "CREATE deadline exceeded; cancellation persistence unavailable; "
