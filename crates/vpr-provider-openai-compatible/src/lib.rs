@@ -314,7 +314,9 @@ impl OpenAiTextStream {
                 return Err(invalid_response());
             }
             let response = self.response.as_mut().ok_or_else(invalid_response)?;
-            let next = self.http.chunk(response, cancellation);
+            let next = self
+                .http
+                .chunk(response, cancellation, MAX_PROVIDER_STREAM_LINE_BYTES);
             if cancellation.is_cancelled() {
                 self.response.take();
                 return Err(cancelled());

@@ -83,6 +83,20 @@ for crate_name in streaming_crates:
     elif "BoundedProviderLineReader" not in source:
         raise SystemExit(f"{crate_name} bypasses bounded provider stream framing")
 
+# The shared cancellable async reader must cap bytes before cloning each
+# reqwest chunk; a provider can omit Content-Length or send a huge frame.
+async_body = (
+    ROOT / "crates" / "vpr-integration" / "src" / "provider_http_async.rs"
+).read_text(encoding="utf-8")
+for required in (
+    "max_chunk_bytes",
+    "bytes.len() > max_chunk_bytes",
+    "remaining.saturating_add(1)",
+    "if chunk.len() > remaining",
+):
+    if required not in async_body:
+        raise SystemExit(f"canonical cancellable HTTP body bound drifted: {required}")
+
 json_body_crates = {
     "vpr-provider-openai-transcription",
     "vpr-provider-deepgram-stt",
