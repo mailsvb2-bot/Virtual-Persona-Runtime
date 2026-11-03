@@ -21,6 +21,9 @@ pub struct Rt1RemoteMediaRevocation {
     /// the exact remote sender, not just the operation/generation envelope.
     created_session_id: Mutex<Option<String>>,
     confirmed_session_id: Mutex<Option<String>>,
+    /// A conflicting late CREATE identity requires external reconciliation;
+    /// repeated STOP for the first sender must never clear this quarantine.
+    identity_conflict: AtomicBool,
 }
 
 impl Rt1RemoteMediaRevocation {
@@ -49,6 +52,7 @@ impl Rt1RemoteMediaRevocation {
             stop_gate: Mutex::new(()),
             created_session_id: Mutex::new(None),
             confirmed_session_id: Mutex::new(None),
+            identity_conflict: AtomicBool::new(false),
         })
     }
 
@@ -71,6 +75,7 @@ impl Rt1RemoteMediaRevocation {
                 .as_deref()
                 .is_some_and(|confirmed| confirmed != session_id)
         {
+            self.identity_conflict.store(true, Ordering::Release);
             self.revoked.store(true, Ordering::Release);
             self.confirmed.store(false, Ordering::Release);
             return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
@@ -97,6 +102,9 @@ impl Rt1RemoteMediaRevocation {
     // Called with stop_gate held. Both owner revoke and failed SDP answer
     // require the same independent audio/video STOP receipt.
     fn cancel_locked(&self) -> Result<(), String> {
+        if self.identity_conflict.load(Ordering::Acquire) {
+            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+        }
         if self.confirmed.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -625,6 +633,10 @@ mod tests {
         );
         assert!(!remote.is_stop_confirmed());
         assert!(remote.is_revoked());
+        assert_eq!(
+            remote.revoke_confirmed().unwrap_err(),
+            "RT1_REMOTE_SESSION_ID_CONFLICT"
+        );
         worker.join().unwrap();
     }
 
