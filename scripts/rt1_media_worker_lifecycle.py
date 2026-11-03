@@ -150,9 +150,19 @@ class MediaLifecycle:
         try:
             succeeded, result = outcome.get(timeout=timeout)
         except Empty:
-            # This is an admission tombstone, NOT a remote STOP receipt.
-            # Never wait for network I/O on the timed-out HTTP request.
-            self.cancel(operation_id, generation, wait_for_stop=False)
+            # CREATE may have completed and committed 'active' immediately
+            # before the response deadline. A tombstone alone would leave
+            # that known remote sender running until the next reconciliation.
+            # Persist cancellation first, then initiate a separately bounded
+            # compensating STOP when its identity is already known. If CREATE
+            # is still in flight, create() owns the late-ID compensation.
+            # Neither outcome turns a timed-out CREATE into admission.
+            try:
+                self.cancel_bounded(operation_id, generation, min(timeout, 0.05))
+            except Exception:
+                # STOP failure remains quarantined in the durable ledger;
+                # preserve the original CREATE deadline error to the caller.
+                pass
             raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed") from None
         if succeeded:
             return result
