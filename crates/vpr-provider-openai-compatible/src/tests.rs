@@ -403,3 +403,102 @@ fn descriptor_does_not_expose_secret() {
     assert_eq!(descriptor.model, "model-x");
     assert_eq!(descriptor.representation, None);
 }
+
+#[test]
+fn cancellation_aborts_inflight_llm_http_headers_without_waiting_for_timeout() {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let _ = socket.read(&mut request);
+        accepted_tx.send(()).unwrap();
+        thread::sleep(Duration::from_millis(800));
+        let _ = socket.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\ndata: [DONE]\n\n",
+        );
+    });
+
+    let provider = OpenAiCompatibleLlm::new(
+        OpenAiCompatibleConfig::new(endpoint, "secret", "model")
+            .with_timeout(Duration::from_secs(2)),
+    )
+    .unwrap();
+    let probe = Arc::new(Probe(AtomicBool::new(false)));
+    let worker_probe = Arc::clone(&probe);
+    let worker = thread::spawn(move || {
+        provider.stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "cancel during HTTP".into(),
+            },
+            worker_probe.as_ref(),
+            &mut GeneratedTextBuffer::default(),
+        )
+    });
+    accepted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let started = Instant::now();
+    probe.0.store(true, Ordering::SeqCst);
+    let error = worker.join().unwrap().unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(!error.retryable);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "HTTP cancellation waited for provider timeout"
+    );
+}
+
+#[test]
+fn cancellation_aborts_inflight_llm_sse_body_read() {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/chat/completions", listener.local_addr().unwrap());
+    let (headers_tx, headers_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 8192];
+        let _ = socket.read(&mut request);
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        headers_tx.send(()).unwrap();
+        thread::sleep(Duration::from_millis(800));
+        let _ = socket.write_all(b"data: [DONE]\n\n");
+    });
+
+    let provider = OpenAiCompatibleLlm::new(
+        OpenAiCompatibleConfig::new(endpoint, "secret", "model")
+            .with_timeout(Duration::from_secs(2)),
+    )
+    .unwrap();
+    let probe = Arc::new(Probe(AtomicBool::new(false)));
+    let mut stream = provider
+        .open_stream(
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "cancel streaming read".into(),
+            },
+            probe.as_ref(),
+        )
+        .unwrap();
+    headers_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let worker_probe = Arc::clone(&probe);
+    let worker = thread::spawn(move || stream.next_chunk(worker_probe.as_ref()));
+    thread::sleep(Duration::from_millis(40));
+    let started = Instant::now();
+    probe.0.store(true, Ordering::SeqCst);
+    let error = worker.join().unwrap().unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "SSE cancellation waited for provider timeout"
+    );
+}

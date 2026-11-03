@@ -27,6 +27,21 @@ pub fn build_provider_http_client(timeout: Duration) -> Result<Client, reqwest::
         .build()
 }
 
+/// The async counterpart uses exactly the same endpoint/redirect/timeout policy.
+/// An adapter can cancel an in-flight HTTP future instead of waiting for the
+/// blocking client to time out. This is transport execution, not a voice runtime.
+///
+/// # Errors
+/// Returns the canonical HTTP client construction error.
+pub fn build_provider_async_http_client(
+    timeout: Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build()
+}
+
 /// Reads one provider response body without ever retaining more than `max_bytes`.
 ///
 /// A declared Content-Length above the limit is rejected early, but observed bytes remain the

@@ -7,6 +7,7 @@ POLICY = ROOT / "crates" / "vpr-integration" / "src" / "provider_http.rs"
 policy = POLICY.read_text(encoding="utf-8")
 for required in (
     "build_provider_http_client",
+    "build_provider_async_http_client",
     ".redirect(reqwest::redirect::Policy::none())",
 ):
     if required not in policy:
@@ -23,7 +24,10 @@ for manifest in sorted((ROOT / "crates").glob("vpr-provider-*/Cargo.toml")):
         for source in sorted((crate_root / "src").rglob("*.rs"))
     )
     reqwest_provider_crates.append(crate_root.name)
-    if "build_provider_http_client" not in sources:
+    if not any(
+        name in sources
+        for name in ("build_provider_http_client", "build_provider_async_http_client")
+    ):
         raise SystemExit(
             f"{crate_root.name} uses reqwest without the canonical provider HTTP client policy"
         )
