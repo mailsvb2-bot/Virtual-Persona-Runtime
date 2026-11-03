@@ -25,7 +25,34 @@ impl DidAgentStreamsAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         let response = expect_success(response)?;
-        let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
+        // A successful CREATE can contain the real allocated sender IDs but
+        // fail typed decoding (for example, a missing or malformed offer).
+        // Parse the bounded authenticated JSON envelope first so those IDs
+        // remain available for compensating DELETE on schema failure.
+        let raw: serde_json::Value = decode_json_response(response, Some(cancellation))?;
+        let allocated_id = raw
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let allocated_session_id = raw
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let body: CreateStreamResponse = match serde_json::from_value(raw) {
+            Ok(body) => body,
+            Err(_) => {
+                if let (Some(id), Some(session_id)) =
+                    (allocated_id.as_deref(), allocated_session_id.as_deref())
+                    && !id.trim().is_empty()
+                    && !session_id.trim().is_empty()
+                    && self.delete_webrtc_identity(id, session_id).is_err()
+                {
+                    // Do not turn a failed cleanup into a harmless parse error.
+                    return Err(unavailable());
+                }
+                return Err(invalid_response());
+            }
+        };
         let client_interrupt = body.fluent && body.interrupt_enabled;
         // The provider can allocate a real sender and return its authenticated
         // identifiers alongside an invalid SDP. Never discard those IDs before
