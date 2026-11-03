@@ -26,7 +26,6 @@ impl CancellableProviderHttp {
         Ok(Self { client, runtime })
     }
 
-    #[must_use]
     pub fn post(&self, url: impl reqwest::IntoUrl) -> reqwest::RequestBuilder {
         self.client.post(url)
     }
