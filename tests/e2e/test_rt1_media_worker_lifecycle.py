@@ -106,8 +106,9 @@ class LifecycleTests(unittest.TestCase):
             (1, "stopped", "session-a"),
         )
         self.assertEqual(self.sender.stopped, 1)
-        with self.assertRaises(RuntimeError):
-            self.worker.create("replacement", 1)
+        # A *verified* dual-sender STOP releases the global quarantine.
+        self.assertEqual(self.worker.create("replacement", 1), "session-a")
+        self.assertEqual(self.sender.created, 2)
 
     def test_create_deadline_race_failed_stop_recovers_after_restart(self):
         self.sender.partial = True
