@@ -34,6 +34,27 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertNotIn("compute_buffered(", body)
         self.assertNotIn("std::thread::spawn(", body)
 
+    def test_local_rt1_http_and_browser_reuse_canonical_text_turn(self):
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        browser = (ROOT / "crates/vpr-owner-lab/ui/rt1.js").read_text(encoding="utf-8")
+        html = (ROOT / "crates/vpr-owner-lab/ui/rt1.html").read_text(encoding="utf-8")
+        self.assertIn('"/api/rt1/visitor/text" => visitor_text(request, state)', http)
+        match = re.search(
+            r"fn visitor_text\(.*?\) -> Rt1HttpResult \{(?P<body>.*?)\n\}",
+            http, re.S,
+        )
+        self.assertIsNotNone(match)
+        body = match.group("body")
+        self.assertIn("let conversation = lookup(state, &body.session_id)?;", body)
+        self.assertIn(".text_turn(&body.text)", body)
+        self.assertIn("if !conversation.is_active()", body)
+        self.assertIn('"RT1_VISITOR_TEXT_DENIED"', body)
+        self.assertNotIn("state.engine.lock()", body)
+        self.assertIn('api("/api/rt1/visitor/text", { session_id: id, text })', browser)
+        self.assertIn('if (sessionId !== id || stopping) return;', browser)
+        self.assertIn('id="visitor-text"', html)
+        self.assertIn('id="send-text"', html)
+
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
