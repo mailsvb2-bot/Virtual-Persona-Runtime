@@ -387,11 +387,8 @@ impl Rt1VisitorConversation {
     /// # Errors
     /// Denies revoked visitor authority or returns the canonical turn error.
     pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
-        // Issue #319: compute_buffered authorizes only side-effect-free
-        // computation, never provider egress. A pre/post check cannot retract
-        // an LLM request sent concurrently with owner revocation.
-        // Keep this internal RT1 text path fail-closed until a canonical,
-        // revocation-serialized provider egress fence is implemented.
+        // #319: pre/post checks cannot retract concurrent provider egress.
+        // Deny until the canonical revocation-serialized fence is proven.
         self.manager.authorize(&self.id)?;
         Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
     }
@@ -511,9 +508,8 @@ impl Rt1VisitorConversation {
         Ok(())
     }
 
-    /// Visitor streaming is fail-closed: never call an arbitrary egress
-    /// callback between separate authorization checks. Buffered voice and
-    /// streaming voice share the same unsupported provider-egress boundary.
+    /// Streaming is fail-closed: pre/post checks cannot protect egress callbacks.
+    /// Buffered and streaming voice share the unsupported egress boundary.
     ///
     /// # Errors
     /// Always denies unsupported visitor media delivery.
