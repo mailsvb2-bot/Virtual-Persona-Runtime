@@ -76,6 +76,16 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
 
   // A regular D-ID WebRTC avatar has no independent private Echo STOP.
   // RT1 must never send visitor microphone audio to that unfenced adapter.
+  // A D-ID WebRTC-only session has no independent Echo STOP; the shared
+  // canonical LLM delivery gate must not turn a text reply into unfenced
+  // browser/provider egress merely because a session ID is known.
+  const unsupportedText = await call("/api/rt1/visitor/text", {
+    session_id,
+    text: "Can you answer while the remote sender has no STOP capability?",
+  });
+  expect(unsupportedText.status).toBe(409);
+  expect(unsupportedText.body).not.toHaveProperty("reply");
+
   const unsupportedVoice = await call("/api/rt1/visitor/voice", {
     session_id,
     pcm: [0, 0, 0, 0],
@@ -131,6 +141,13 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
   const quarantined = await call("/api/rt1/visitor/status", { session_id });
   expect(quarantined.status).toBe(200);
   expect(quarantined.body.active).toBe(false);
+  const textAfterRevoke = await call("/api/rt1/visitor/text", {
+    session_id,
+    text: "This must never escape after owner pause",
+  });
+  expect(textAfterRevoke.status).toBe(409);
+  expect(textAfterRevoke.body).not.toHaveProperty("reply");
+
   const deniedAfterRevoke = await call("/api/rt1/visitor/voice", {
     session_id,
     pcm: [0, 0, 0, 0],

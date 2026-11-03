@@ -13,7 +13,8 @@ use crate::rt1_visitor_session::Rt1VisitorSession;
 #[path = "rt1_visitor_egress.rs"]
 mod egress;
 use crate::rt1_workspace_service::Rt1WorkspaceService;
-use egress::{VisitorEgressPermit, VisitorEgressState};
+pub(crate) use egress::VisitorEgressPermit;
+use egress::VisitorEgressState;
 
 const MAX_ACTIVE_VISITORS: usize = 8;
 type StopCallback = Arc<dyn Fn() + Send + Sync>;

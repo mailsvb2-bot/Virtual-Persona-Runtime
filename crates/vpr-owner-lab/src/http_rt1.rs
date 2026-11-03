@@ -105,11 +105,41 @@ struct OwnerPublish {
     expected_persona_version: u64,
 }
 
+/// The visitor text/voice response must retain its canonical egress permit
+/// through the actual HTTP write. Other RT1 routes have no buffered reply.
+pub(super) struct Rt1RoutedResponse {
+    pub response: HttpResponse,
+    pub delivery: Option<Arc<Rt1VisitorConversation>>,
+}
+
+fn guarded_reply(
+    result: Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse>,
+) -> Rt1RoutedResponse {
+    match result {
+        Ok((response, conversation)) => Rt1RoutedResponse {
+            response,
+            delivery: Some(conversation),
+        },
+        Err(response) => Rt1RoutedResponse {
+            response,
+            delivery: None,
+        },
+    }
+}
+
 pub(super) fn route_post(
     path: &str,
     request: &mut tiny_http::Request,
     state: &Arc<AppState>,
-) -> Option<HttpResponse> {
+) -> Option<Rt1RoutedResponse> {
+    // Never serialize a visitor LLM or microphone result and then drop its
+    // authority before the HTTP writer gets the response.
+    if path == "/api/rt1/visitor/text" {
+        return Some(guarded_reply(visitor_text(request, state)));
+    }
+    if path == "/api/rt1/visitor/voice" {
+        return Some(guarded_reply(visitor_voice(request, state)));
+    }
     let result = match path {
         "/api/rt1/owner/provision" => owner_provision(request),
         "/api/rt1/owner/publish" => owner_publish(request, state),
@@ -118,14 +148,15 @@ pub(super) fn route_post(
         "/api/rt1/visitor/start" => visitor_start(request, state),
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
-        "/api/rt1/visitor/text" => visitor_text(request, state),
-        "/api/rt1/visitor/voice" => visitor_voice(request, state),
         "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
         "/api/rt1/visitor/close" => visitor_close(request, state),
         _ => return None,
     };
-    Some(result.unwrap_or_else(|response| response))
+    Some(Rt1RoutedResponse {
+        response: result.unwrap_or_else(|response| response),
+        delivery: None,
+    })
 }
 
 type Rt1HttpResult = Result<HttpResponse, HttpResponse>;
@@ -402,7 +433,10 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
 // Text uses the same canonical visitor engine and publication-scoped
 // interruptible provider permit as microphone turns. This local diagnostic
 // endpoint does not grant authority to the owner engine or public visitors.
-fn visitor_text(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+fn visitor_text(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
     let body: VisitorText = parse_json(request)?;
     if body.text.trim().is_empty() || body.text.len() > 8192 {
         return Err(error_response(400, "RT1_INVALID_VISITOR_TEXT"));
@@ -416,10 +450,13 @@ fn visitor_text(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRe
     if !conversation.is_active() {
         return Err(error_response(409, "RT1_VISITOR_TEXT_DENIED"));
     }
-    Ok(json_response(200, &result))
+    Ok((json_response(200, &result), conversation))
 }
 
-fn visitor_voice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+fn visitor_voice(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
     if !super::is_json(request) {
         return Err(error_response(415, "JSON_REQUIRED"));
     }
@@ -429,10 +466,14 @@ fn visitor_voice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     if body.pcm.is_empty() || body.pcm.len() > MAX_RT1_VOICE_BYTES || body.pcm.len() % 2 != 0 {
         return Err(error_response(400, "RT1_INVALID_MICROPHONE_AUDIO"));
     }
-    let result = lookup(state, &body.session_id)?
+    let conversation = lookup(state, &body.session_id)?;
+    let result = conversation
         .voice_turn(body.pcm)
         .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
-    Ok(json_response(200, &result))
+    if !conversation.is_active() {
+        return Err(error_response(409, "RT1_VISITOR_VOICE_DENIED"));
+    }
+    Ok((json_response(200, &result), conversation))
 }
 
 fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {

@@ -104,3 +104,34 @@ mod tests {
         drop(second);
     }
 }
+
+#[cfg(test)]
+mod browser_delivery_race_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn revoke_during_browser_write_keeps_delivery_non_quiescent_until_writer_exits() {
+        let state = Arc::new(VisitorEgressState::default());
+        let revoked = Arc::new(AtomicBool::new(false));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer_state = Arc::clone(&state);
+        let writer_revoked = Arc::clone(&revoked);
+        let writer = std::thread::spawn(move || {
+            let _delivery = writer_state.admit(&writer_revoked).unwrap();
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        // Owner pause may commit, but cannot claim a drained delivery while
+        // a browser socket is still writing. New provider/HTTP output fails.
+        revoked.store(true, Ordering::Release);
+        assert!(state.admit(&revoked).is_err());
+        assert!(!state.quiescent(Duration::from_millis(5)));
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        assert!(state.quiescent(Duration::ZERO));
+        assert!(state.admit(&revoked).is_err());
+    }
+}

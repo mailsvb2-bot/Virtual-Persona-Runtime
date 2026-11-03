@@ -218,6 +218,36 @@ fn handle_request(mut request: Request, state: &Arc<AppState>) {
     }
     let method = request.method().clone();
     let path = request.url().to_owned();
+    // RT1 buffered provider results require a second, final canonical
+    // delivery lease spanning the HTTP write itself. A response constructed
+    // before owner pause must not be sent after that pause wins admission.
+    if method == Method::Post && path.starts_with("/api/rt1/") {
+        // The specialized final-delivery route must preserve the SAME
+        // CSRF/origin/JSON checks previously enforced by route_request.
+        if !valid_post_headers(&request, &state.csrf_token, state.port) {
+            let _ = request.respond(error_response(403, "CSRF_DENIED"));
+            return;
+        }
+        if !http_rt1::enabled() {
+            let _ = request.respond(error_response(404, "NOT_FOUND"));
+            return;
+        }
+        if let Some(routed) = http_rt1::route_post(&path, &mut request, state) {
+            if let Some(conversation) = routed.delivery {
+                match conversation.begin_browser_delivery() {
+                    Ok(_lease) => {
+                        let _ = request.respond(routed.response);
+                    }
+                    Err(_) => {
+                        let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
+                    }
+                }
+            } else {
+                let _ = request.respond(routed.response);
+            }
+            return;
+        }
+    }
     let response = if method == Method::Get {
         static_get_response(&path)
             .unwrap_or_else(|| route_request(&method, &path, &mut request, state))
@@ -334,14 +364,6 @@ fn route_request(
 }
 
 fn route_post(path: &str, request: &mut Request, state: &Arc<AppState>) -> HttpResponse {
-    if path.starts_with("/api/rt1/") {
-        if !http_rt1::enabled() {
-            return error_response(404, "NOT_FOUND");
-        }
-        if let Some(response) = http_rt1::route_post(path, request, state) {
-            return response;
-        }
-    }
     if let Some(result) = http_owner_capture::route_post(path, request, state) {
         return result.unwrap_or_else(|response| response);
     }

@@ -38,9 +38,10 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
         browser = (ROOT / "crates/vpr-owner-lab/ui/rt1.js").read_text(encoding="utf-8")
         html = (ROOT / "crates/vpr-owner-lab/ui/rt1.html").read_text(encoding="utf-8")
-        self.assertIn('"/api/rt1/visitor/text" => visitor_text(request, state)', http)
+        self.assertIn('if path == "/api/rt1/visitor/text"', http)
+        self.assertIn("guarded_reply(visitor_text(request, state))", http)
         match = re.search(
-            r"fn visitor_text\(.*?\) -> Rt1HttpResult \{(?P<body>.*?)\n\}",
+            r"fn visitor_text\(.*?\) -> Result<.*?\{(?P<body>.*?)\n\}",
             http, re.S,
         )
         self.assertIsNotNone(match)
@@ -54,6 +55,22 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn('if (sessionId !== id || stopping) return;', browser)
         self.assertIn('id="visitor-text"', html)
         self.assertIn('id="send-text"', html)
+
+    def test_buffered_text_and_voice_http_write_retains_final_canonical_lease(self):
+        main = (OWNER / "main.rs").read_text(encoding="utf-8")
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        conversation = (OWNER / "rt1_visitor_conversation.rs").read_text(encoding="utf-8")
+        self.assertIn("guarded_reply(visitor_text(request, state))", http)
+        self.assertIn("guarded_reply(visitor_voice(request, state))", http)
+        self.assertIn("pub fn begin_browser_delivery(&self)", conversation)
+        self.assertIn("self.manager.begin_provider_egress(&self.id)?", conversation)
+        self.assertIn("if !self.is_active()", conversation)
+        self.assertIn("conversation.begin_browser_delivery()", main)
+        self.assertIn("Ok(_lease)", main)
+        self.assertIn("request.respond(routed.response)", main)
+        self.assertIn("valid_post_headers(&request, &state.csrf_token, state.port)", main)
+        self.assertIn('"RT1_VISITOR_DELIVERY_DENIED"', main)
+        self.assertNotIn("state.engine.lock()", http.split("fn visitor_text(", 1)[1].split("fn visitor_voice(", 1)[0])
 
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")

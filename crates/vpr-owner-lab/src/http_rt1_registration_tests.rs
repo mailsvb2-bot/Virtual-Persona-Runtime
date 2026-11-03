@@ -135,3 +135,10 @@ fn collision_never_invokes_provider_authorization() {
     assert_eq!(result, Err(RegistrationFailure::Collision));
     assert!(Arc::ptr_eq(sessions.lock().get("same").unwrap(), &existing));
 }
+
+#[test]
+fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
+    let routed = super::guarded_reply(Err(super::error_response(409, "RT1_VISITOR_TEXT_DENIED")));
+    assert!(routed.delivery.is_none());
+    assert_eq!(routed.response.status_code().0, 409);
+}
