@@ -98,7 +98,10 @@ class Rt1StartupCancellationGate(unittest.TestCase):
         self.assertIn("conversation.close().is_err()", registration)
         self.assertIn('"RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"', registration)
         self.assertLess(registration.index("conversation.close().is_err()"),
-                        registration.index("Ok(json_response("))
+                        registration.index('"session_id": session_id'))
+        # Successful startup SDP now goes through the same final browser
+        # delivery lease as text/voice; never regress to a bare HTTP response.
+        self.assertIn("guarded_reply(visitor_start(request, state))", http)
 
     def test_http_start_preallocates_retry_id_and_quarantines_late_revoke(self):
         http = (SOURCE.parent / "http_rt1.rs").read_text(encoding="utf-8")
