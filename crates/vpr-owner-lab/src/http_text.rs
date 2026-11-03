@@ -6,14 +6,16 @@ use crate::http_json::SpeakBody;
 
 use super::{
     AppState, HttpResponse, error_response, http_evidence, json_response, lab_error_response,
-    parse_json, reject_if_session_ending,
+    parse_json,
 };
 
 pub(super) fn text_turn_response(
     request: &mut Request,
     state: &AppState,
 ) -> Result<HttpResponse, HttpResponse> {
-    reject_if_session_ending(state)?;
+    // The browser already sends the session generation. Bind this text
+    // request to it so an old tab cannot talk in a newly started session.
+    let session_sequence = http_evidence::require_active_voice_session(request, state)?;
     if state
         .voice_busy
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -21,9 +23,9 @@ pub(super) fn text_turn_response(
     {
         return Err(error_response(409, "INVALID_STATE_TRANSITION"));
     }
-    let _busy =
+    let mut busy =
         http_evidence::VoiceBusyGuard::new(&state.voice_busy, &state.voice_cancel_requested);
-    reject_if_session_ending(state)?;
+    http_evidence::require_voice_session_sequence(state, session_sequence)?;
     *state.replay_source.lock() = None;
     let request_sequence = http_evidence::request_sequence(request)
         .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
@@ -34,24 +36,43 @@ pub(super) fn text_turn_response(
         .begin_text_request(request_sequence)
         .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
 
-    let result = {
-        let Ok(mut engine) = state.engine.lock() else {
-            let _ = state
-                .evidence
-                .lock()
-                .fail_text_request(request_sequence, "INTERNAL_ERROR");
-            return Err(error_response(500, "INTERNAL_ERROR"));
-        };
-        let result = engine.text_turn(&body.text, |handle| {
-            *state.active_voice_interrupt.lock() = Some(handle.clone());
-            if state.voice_cancel_requested.load(Ordering::Acquire) {
-                let _ = handle.interrupt();
-            }
-        });
-        *state.active_voice_interrupt.lock() = None;
-        result
+    // Keep the engine mutex until evidence has reached a terminal state.
+    // Otherwise Close can acquire engine.lock(), seal/export the session,
+    // and leave the completed text attempt Pending in its evidence snapshot.
+    let Ok(mut engine) = state.engine.lock() else {
+        let _ = state
+            .evidence
+            .lock()
+            .fail_text_request(request_sequence, "INTERNAL_ERROR");
+        return Err(error_response(500, "INTERNAL_ERROR"));
     };
-    match result {
+    let result = engine.text_turn(&body.text, |handle| {
+        *state.active_voice_interrupt.lock() = Some(handle.clone());
+        if state.voice_cancel_requested.load(Ordering::Acquire) {
+            let _ = handle.interrupt();
+        }
+    });
+    *state.active_voice_interrupt.lock() = None;
+
+    // Serialize the final authority decision with the canonical Close/fence
+    // transition, which also owns session_revocation. The session generation
+    // must still match even when Close already reset session_end_requested.
+    let _revocation = state.session_revocation.lock();
+    let current = http_evidence::require_voice_session_sequence(state, session_sequence);
+    if let Err(response) = current {
+        let terminalized = state
+            .evidence
+            .lock()
+            .fail_text_request(request_sequence, "TURN_CANCELLED");
+        // Release before dropping engine.lock(): an old guard must never
+        // clear a newer turn's busy bit after Close/restart, even if evidence
+        // terminalization unexpectedly fails.
+        busy.release();
+        terminalized
+            .map_err(|error| error_response(http_evidence::error_status(error), error.code()))?;
+        return Err(response);
+    }
+    let outcome = match result {
         Ok(value) => state
             .evidence
             .lock()
@@ -72,5 +93,10 @@ pub(super) fn text_turn_response(
                 Err(lab_error_response(&error))
             }
         }
-    }
+    };
+    // A new turn may acquire the gate only after this attempt is terminal.
+    // Keep the engine and revocation guards held until the old busy owner
+    // has explicitly released its flag.
+    busy.release();
+    outcome
 }

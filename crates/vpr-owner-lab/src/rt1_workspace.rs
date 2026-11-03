@@ -193,6 +193,11 @@ impl OwnerWorkspaceRecord {
             {
                 return Err("stale publication must be revoked".into());
             }
+            if publication.status == PublicationStatus::Published
+                && self.visitor_token_sha256.is_none()
+            {
+                return Err("published visitor authority missing".into());
+            }
         }
         if let Some(hash) = &self.visitor_token_sha256 {
             if !valid_sha256(hash)
@@ -325,5 +330,113 @@ mod tests {
         assert_ne!(renewed, visitor);
         assert!(restored.visitor_permit(&visitor).is_err());
         assert!(restored.visitor_permit(&renewed).is_ok());
+    }
+    #[test]
+    fn independent_visitor_cannot_mutate_owner_publication_and_republish_rotates_authority() {
+        let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor_token = workspace
+            .publish(&owner_token, "persona-rt1", 1, true)
+            .unwrap();
+        let first_permit = workspace.visitor_permit(&visitor_token).unwrap();
+        assert!(workspace.pause(&visitor_token).is_err());
+        assert!(workspace.unpublish(&visitor_token).is_err());
+        workspace
+            .authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 10)
+            .unwrap();
+        workspace.pause(&owner_token).unwrap();
+        assert!(workspace.visitor_permit(&visitor_token).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&visitor_token, &first_permit, "persona-rt1", 1, 11)
+                .is_err()
+        );
+        let new_visitor_token = workspace
+            .publish(&owner_token, "persona-rt1", 1, true)
+            .unwrap();
+        assert_ne!(visitor_token, new_visitor_token);
+        assert!(workspace.visitor_permit(&visitor_token).is_err());
+        let second_permit = workspace.visitor_permit(&new_visitor_token).unwrap();
+        assert!(
+            workspace
+                .authorize_visitor(&new_visitor_token, &first_permit, "persona-rt1", 1, 12)
+                .is_err()
+        );
+        workspace
+            .authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 12)
+            .unwrap();
+        workspace.unpublish(&owner_token).unwrap();
+        assert!(
+            workspace
+                .authorize_visitor(&new_visitor_token, &second_permit, "persona-rt1", 1, 13)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn publication_admission_rejects_unreviewed_owner_and_stale_revision_without_side_effects() {
+        let (mut workspace, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let stranger = "0".repeat(64);
+        assert!(workspace.publish(&stranger, "persona-a", 3, true).is_err());
+        assert!(workspace.publish(&owner, "persona-a", 3, false).is_err());
+        assert_eq!(workspace.status(), None);
+        let initial = workspace.publish(&owner, "persona-a", 3, true).unwrap();
+        let lease = workspace.visitor_permit(&initial).unwrap();
+        assert!(workspace.publish(&owner, "persona-a", 3, true).is_err());
+        workspace
+            .authorize_visitor(&initial, &lease, "persona-a", 3, 1)
+            .unwrap();
+        workspace.on_persona_correction(4).unwrap();
+        assert!(workspace.publish(&owner, "persona-a", 3, true).is_err());
+        assert!(workspace.visitor_permit(&initial).is_err());
+        assert!(
+            workspace
+                .authorize_visitor(&initial, &lease, "persona-a", 4, 2)
+                .is_err()
+        );
+        let renewed = workspace.publish(&owner, "persona-a", 4, true).unwrap();
+        assert_ne!(renewed, initial);
+        let new_lease = workspace.visitor_permit(&renewed).unwrap();
+        workspace
+            .authorize_visitor(&renewed, &new_lease, "persona-a", 4, 3)
+            .unwrap();
+    }
+
+    #[test]
+    fn durable_workspace_rejects_orphaned_and_stale_visitor_authority() {
+        let (mut workspace, owner_token) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = workspace
+            .publish(&owner_token, "persona-a", 5, true)
+            .unwrap();
+        assert!(workspace.visitor_permit(&visitor).is_ok());
+        assert!(workspace.validate("persona-a", 5).is_ok());
+        assert!(workspace.validate("persona-b", 5).is_err());
+        assert!(workspace.validate("persona-a", 6).is_err());
+
+        let mut raw = serde_json::to_value(&workspace).unwrap();
+        raw["publication"] = serde_json::Value::Null;
+        let orphan: OwnerWorkspaceRecord = serde_json::from_value(raw).unwrap();
+        assert!(orphan.validate("persona-a", 5).is_err());
+
+        let mut raw = serde_json::to_value(&workspace).unwrap();
+        raw["visitor_token_sha256"] = serde_json::Value::String("bad".into());
+        let corrupt: OwnerWorkspaceRecord = serde_json::from_value(raw).unwrap();
+        assert!(corrupt.validate("persona-a", 5).is_err());
+
+        workspace.pause(&owner_token).unwrap();
+        assert!(workspace.validate("persona-a", 5).is_ok());
+        assert!(workspace.visitor_permit(&visitor).is_err());
+    }
+
+    #[test]
+    fn published_without_visitor_bearer_is_rejected_during_restore() {
+        let (mut record, owner) = OwnerWorkspaceRecord::provision().unwrap();
+        let visitor = record.publish(&owner, "persona-a", 3, true).unwrap();
+        let mut json = serde_json::to_value(&record).unwrap();
+        json["visitor_token_sha256"] = serde_json::Value::Null;
+        let orphan: OwnerWorkspaceRecord = serde_json::from_value(json).unwrap();
+        assert!(orphan.validate("persona-a", 3).is_err());
+        assert!(record.visitor_permit(&visitor).is_ok());
+        record.pause(&owner).unwrap();
+        assert!(record.validate("persona-a", 3).is_ok());
     }
 }

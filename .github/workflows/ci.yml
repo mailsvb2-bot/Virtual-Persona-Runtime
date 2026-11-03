@@ -54,6 +54,8 @@ jobs:
         run: python3 tests/architecture/check_provider_output_bounds.py
       - name: RT1 owner acceptance and entry readiness regression
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_entry_readiness.py -v
+      - name: RT1 visitor text provider egress fail-closed regression
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_text_egress_fence.py -v
       - name: RT1 offline reviewed Persona migration preflight
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_offline_persona_inventory.py -v
       - name: RT1 publication pre-entry spike

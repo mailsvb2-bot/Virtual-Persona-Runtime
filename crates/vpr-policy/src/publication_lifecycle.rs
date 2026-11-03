@@ -54,6 +54,14 @@ pub struct VisitorPermit {
     snapshot: AuthorizationSnapshot,
 }
 
+impl VisitorPermit {
+    /// A visitor permit is valid only for the exact reviewed Persona revision.
+    #[must_use]
+    pub fn matches_persona(&self, persona_id: &str, persona_version: u64) -> bool {
+        self.persona_id == persona_id && self.persona_version == persona_version
+    }
+}
+
 /// The owner and Persona identifiers MUST originate in a verified canonical
 /// workspace transaction, never a URL, form field or unauthenticated token.
 #[derive(Debug)]
@@ -336,6 +344,17 @@ impl CanonicalPublication {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visitor_permit_binds_exact_reviewed_persona_revision() {
+        let mut publication =
+            CanonicalPublication::new("owner", "persona", "publication", 1).unwrap();
+        publication.publish("owner", 1, true).unwrap();
+        let permit = publication.visitor_lease(true).unwrap();
+        assert!(permit.matches_persona("persona", 1));
+        assert!(!permit.matches_persona("persona", 2));
+        assert!(!permit.matches_persona("different-persona", 1));
+    }
 
     #[test]
     fn owner_to_visitor_to_pause_to_republish_rejects_stale_lease() {

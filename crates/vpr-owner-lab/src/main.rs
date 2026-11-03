@@ -14,6 +14,7 @@ mod http_text;
 mod http_tts;
 mod http_voice;
 mod launch;
+mod rt1_startup;
 
 use std::env;
 use std::error::Error;
@@ -148,6 +149,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
+    rt1_startup::recover_before_listener()?;
     let voice_playback = engine.voice_playback_registry();
     let mut evidence_recorder = LabSessionEvidenceRecorder::default();
     if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {

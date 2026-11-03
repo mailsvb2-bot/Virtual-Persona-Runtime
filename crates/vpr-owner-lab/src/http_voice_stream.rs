@@ -152,3 +152,26 @@ pub(super) struct VoiceEventsResponse {
     pub(super) events: Vec<VoiceStreamEvent>,
     pub(super) terminal: bool,
 }
+
+pub(super) fn voice_events_for_session(
+    response: VoiceEventsResponse,
+    observed: u64,
+    active: u64,
+    ending: bool,
+) -> VoiceEventsResponse {
+    if observed == 0 || observed != active || ending {
+        revoked_voice_events()
+    } else {
+        response
+    }
+}
+
+fn revoked_voice_events() -> VoiceEventsResponse {
+    VoiceEventsResponse {
+        events: vec![VoiceStreamEvent::Failed {
+            code: "TURN_CANCELLED".to_owned(),
+            diagnostic: None,
+        }],
+        terminal: true,
+    }
+}

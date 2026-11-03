@@ -525,6 +525,16 @@ pub(super) fn events_response(
         .voice_streams
         .wait_events(body.session_sequence, body.request_sequence)
         .ok_or_else(|| error_response(404, "INVALID_STATE_TRANSITION"))?;
+    // Old polls may finish while Close revokes authority. Check the same
+    // canonical fence used by Close, after waiting but before serializing.
+    // Do not hold this lock during the long poll.
+    let _revocation = state.session_revocation.lock();
+    let response = voice_stream::voice_events_for_session(
+        response,
+        body.session_sequence,
+        state.active_session_sequence.load(Ordering::Acquire),
+        state.session_end_requested.load(Ordering::Acquire),
+    );
     Ok(json_response(200, &response))
 }
 
