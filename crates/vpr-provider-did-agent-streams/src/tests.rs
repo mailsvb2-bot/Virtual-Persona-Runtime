@@ -705,9 +705,15 @@ fn allocated_webrtc_sender_with_malformed_create_schema_is_compensated() {
         .create_session(&Probe(AtomicBool::new(false)))
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let delete = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
     assert!(delete.contains(r#""session_id":"schema-session""#));
 }
@@ -725,9 +731,15 @@ fn failed_delete_after_malformed_create_schema_remains_unconfirmed() {
         .create_session(&Probe(AtomicBool::new(false)))
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let delete = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
     assert!(delete.contains(r#""session_id":"schema-session""#));
 }
