@@ -132,6 +132,22 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(receipt.audio_stopped and receipt.video_stopped)
         self.assertEqual(self.worker.status("unverified-cancel")[1], "stopped")
 
+    def test_unverified_legacy_stop_blocks_replacement_before_recovery(self):
+        self.worker.create("legacy-blocker", 1)
+        self.worker.cancel("legacy-blocker", 1)
+        self.worker._db.execute(
+            "UPDATE media_operations SET stop_verified=0 WHERE id=?",
+            ("legacy-blocker",),
+        )
+        # A newly opened worker must not admit a second publisher even if
+        # startup quarantine/reconciliation has not run yet.
+        restarted = mod.MediaLifecycle(self.db, self.sender)
+        with self.assertRaisesRegex(RuntimeError, "unresolved media allocation"):
+            restarted.create("replacement", 1)
+        self.assertEqual(self.sender.created, 1)
+        restarted.cancel("legacy-blocker", 1)
+        self.assertEqual(restarted.create("replacement", 1), "session-a")
+
     def _expire_create_reply_after_commit(self, operation_id):
         # Deterministic CREATE deadline race: the backend has already
         # committed the real sender ID, but the HTTP waiter loses its reply.
