@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const EXPECTED_VERSION = "2.22.3";
+const EXPECTED_VERSION = "2.23.0";
 const packageJsonPath = resolve(UI_ROOT, "node_modules/livekit-client/package.json");
 const sourcePath = resolve(
   UI_ROOT,
