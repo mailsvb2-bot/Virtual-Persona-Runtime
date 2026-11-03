@@ -54,7 +54,10 @@ impl CancellableTcpWriter {
     ///
     /// The caller must perform the publication admission check before writing.
     /// This API does not duplicate or replace publication authorization.
-    #[must_use]
+    ///
+    /// # Errors
+    /// Returns a socket I/O error if the adopted stream cannot be switched
+    /// into blocking mode for deadline-bounded writes.
     pub fn new(stream: TcpStream, max_duration: Duration) -> io::Result<(Self, TcpWriteRevocation)> {
         // A previously nonblocking socket would otherwise busy-spin on WouldBlock.
         stream.set_nonblocking(false)?;
