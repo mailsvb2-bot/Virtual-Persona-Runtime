@@ -235,3 +235,160 @@ fn provider_websocket_authentication_denial_is_not_runtime_egress_denial() {
         assert!(!error.retryable);
     }
 }
+
+fn live_request() -> SttStreamRequest {
+    SttStreamRequest {
+        sample_rate_hz: 16_000,
+        channels: 1,
+        sample_format: PcmSampleFormat::S16Le,
+        locale_hint: Some("ru-RU".to_owned()),
+    }
+}
+
+/// A peer that accepts TCP but never answers the WebSocket upgrade must
+/// not keep the visitor's canonical provider turn alive indefinitely.
+#[test]
+fn live_stt_handshake_stall_is_bounded() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        thread::sleep(std::time::Duration::from_millis(650));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_millis(250)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    let started = std::time::Instant::now();
+    let error = provider.open_stream(&live_request(), &probe).err().unwrap();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_millis(550));
+    server.join().unwrap();
+}
+
+/// Owner revoke must abort a pending WebSocket HTTP upgrade without waiting
+/// for the provider's full configured timeout.
+#[test]
+fn live_stt_revoke_aborts_pending_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (_stream, _) = listener.accept().unwrap();
+        accepted_tx.send(()).unwrap();
+        thread::sleep(std::time::Duration::from_millis(650));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_secs(3)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| provider.open_stream(&live_request(), &probe).err().unwrap());
+        accepted_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        let started = std::time::Instant::now();
+        probe.0.store(true, Ordering::SeqCst);
+        let error = pending.join().unwrap();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    });
+    server.join().unwrap();
+}
+
+/// A silent WebSocket peer must not hold a canonical STT turn forever.
+#[test]
+fn live_stt_stalled_peer_has_bounded_event_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let _socket = accept(stream).unwrap();
+        thread::sleep(std::time::Duration::from_millis(650));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_millis(250)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    let mut stream = provider.open_stream(&live_request(), &probe).unwrap();
+    let started = std::time::Instant::now();
+    let error = stream.next_event(&probe).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(started.elapsed() < std::time::Duration::from_millis(550));
+    server.join().unwrap();
+}
+
+/// Revoke must win while the socket is waiting for a Deepgram transcript.
+#[test]
+fn live_stt_revocation_interrupts_silent_websocket() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let _socket = accept(stream).unwrap();
+        thread::sleep(std::time::Duration::from_millis(600));
+    });
+    let provider = DeepgramStt::new(
+        DeepgramSttConfig::new(endpoint, "secret", "nova-test")
+            .with_timeout(std::time::Duration::from_secs(3)),
+    )
+    .unwrap();
+    let probe = Probe(AtomicBool::new(false));
+    let mut stream = provider.open_stream(&live_request(), &probe).unwrap();
+    thread::scope(|scope| {
+        let pending = scope.spawn(|| stream.next_event(&probe));
+        thread::sleep(std::time::Duration::from_millis(120));
+        let started = std::time::Instant::now();
+        probe.0.store(true, Ordering::SeqCst);
+        let error = pending.join().unwrap().unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(350));
+    });
+    server.join().unwrap();
+}
+
+/// Provider-controlled websocket payloads are capped before buffering/JSON parsing.
+#[test]
+fn live_stt_rejects_oversized_websocket_transcript() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut socket = accept(stream).unwrap();
+        let oversized = "x".repeat(vpr_integration::MAX_PROVIDER_STREAM_LINE_BYTES + 1);
+        let _ = socket.send(Message::Text(oversized.into()));
+    });
+    let provider = adapter(endpoint);
+    let probe = Probe(AtomicBool::new(false));
+    let mut stream = provider.open_stream(&live_request(), &probe).unwrap();
+    let error = stream.next_event(&probe).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    server.join().unwrap();
+}
+
+/// A 302 must not send the Deepgram Authorization header to another host.
+#[test]
+fn live_stt_websocket_redirect_is_not_followed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/v1/listen", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 4096];
+        assert!(stream.read(&mut request).unwrap() > 0);
+        stream.write_all(
+            b"HTTP/1.1 302 Found\r\nLocation: ws://127.0.0.1:1/leak\r\nContent-Length: 0\r\n\r\n",
+        ).unwrap();
+    });
+    let provider = adapter(endpoint);
+    let probe = Probe(AtomicBool::new(false));
+    let error = provider.open_stream(&live_request(), &probe).err().unwrap();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
+    assert!(!error.retryable);
+    server.join().unwrap();
+}
