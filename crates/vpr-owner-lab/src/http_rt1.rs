@@ -70,6 +70,13 @@ struct VisitorVoice {
     pcm: Vec<u8>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VisitorText {
+    session_id: String,
+    text: String,
+}
+
 // S16LE mono/16 kHz, 30s maximum. JSON arrays require up to four ASCII
 // bytes per PCM byte. Only the explicitly local, authenticated RT1 route
 // accepts this larger request; ordinary owner endpoints keep 128 KiB.
@@ -111,6 +118,7 @@ pub(super) fn route_post(
         "/api/rt1/visitor/start" => visitor_start(request, state),
         "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
+        "/api/rt1/visitor/text" => visitor_text(request, state),
         "/api/rt1/visitor/voice" => visitor_voice(request, state),
         "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
@@ -389,6 +397,26 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
         })
         .map_err(|_| error_response(409, "RT1_VISITOR_ICE_DENIED"))?;
     Ok(json_response(200, &serde_json::json!({"ok": true})))
+}
+
+// Text uses the same canonical visitor engine and publication-scoped
+// interruptible provider permit as microphone turns. This local diagnostic
+// endpoint does not grant authority to the owner engine or public visitors.
+fn visitor_text(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+    let body: VisitorText = parse_json(request)?;
+    if body.text.trim().is_empty() || body.text.len() > 8192 {
+        return Err(error_response(400, "RT1_INVALID_VISITOR_TEXT"));
+    }
+    let conversation = lookup(state, &body.session_id)?;
+    let result = conversation
+        .text_turn(&body.text)
+        .map_err(|_| error_response(409, "RT1_VISITOR_TEXT_DENIED"))?;
+    // A revoked session may not receive a buffered LLM result even when
+    // the provider returns after authority was withdrawn.
+    if !conversation.is_active() {
+        return Err(error_response(409, "RT1_VISITOR_TEXT_DENIED"));
+    }
+    Ok(json_response(200, &result))
 }
 
 fn visitor_voice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
