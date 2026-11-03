@@ -3,7 +3,7 @@
 (() => {
   const el = (id) => document.getElementById(id);
   const status = el("status");
-  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt"];
+  const buttons = ["provision", "publish", "pause", "unpublish", "join", "leave", "speak", "interrupt", "send-text"];
   let csrf = "";
   let peer = null;
   let liveKitRoom = null;
@@ -15,6 +15,7 @@
   let microphone = null;
   let voiceEnabled = false;
   let voiceInFlight = false;
+  let textInFlight = false;
   let microphonePending = false;
   let microphoneRequest = 0;
   let voiceRequestEpoch = 0;
@@ -56,6 +57,7 @@
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
       el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
       el("interrupt").disabled = !sessionId || stopping || !voiceEnabled || microphonePending;
+      el("send-text").disabled = !sessionId || stopping || textInFlight;
     }
   }
 
@@ -333,6 +335,27 @@
     else void beginMicrophone().catch((error) => message(String(error.message || error), true));
   });
 
+  el("send-text").addEventListener("click", () => busy(async () => {
+    if (!sessionId || stopping || textInFlight) return;
+    const text = el("visitor-text").value.trim();
+    if (!text || text.length > 8192) throw new Error("Введите вопрос до 8192 символов.");
+    const id = sessionId;
+    textInFlight = true;
+    el("send-text").disabled = true;
+    try {
+      const result = await api("/api/rt1/visitor/text", { session_id: id, text });
+      if (sessionId !== id || stopping) return;
+      el("speech-result").textContent = "Вы: " + text + " · Persona: " + result.reply;
+      el("visitor-text").value = "";
+      message("Persona ответила на текстовый вопрос.");
+    } catch (error) {
+      if (sessionId === id && !stopping) throw error;
+    } finally {
+      textInFlight = false;
+      el("send-text").disabled = !sessionId || stopping;
+    }
+  }));
+
   function cleanupLocal() {
     // Invalidate pending browser permission prompts even if STOP is unconfirmed.
     microphoneRequest += 1;
@@ -367,6 +390,7 @@
     voiceEnabled = false;
     el("interrupt").disabled = true;
     const id = sessionId;
+    el("send-text").disabled = true;
     cleanupLocal();
     try {
       const receipt = await api("/api/rt1/visitor/close", { session_id: id });
@@ -422,6 +446,7 @@
     message("Устанавливается защищённое медиасоединение…");
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
     sessionId = start.session_id;
+    el("send-text").disabled = false;
     voiceEnabled = start.voice_enabled === true;
     el("speak").disabled = !voiceEnabled || voiceInFlight;
     el("interrupt").disabled = !voiceEnabled;
