@@ -117,16 +117,19 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
-            // Implementations must undo partial transport setup on failed open.
-            self.remove(id)?;
+            // OPEN can fail after the private sender has connected. Attempt
+            // canonical STOP, but never discard its only known identity when
+            // STOP/forget is unconfirmed. A later close can retry the same ID.
+            // Preserve the original OPEN failure for the caller.
+            let _ = self.close_session(backend, id);
             return Err(error);
         }
         if cancellation.is_cancelled() {
-            let cleanup = backend.stop(id);
-            let forgotten = backend.forget(id);
-            self.remove(id)?;
-            // Report failed teardown, never successful revocation.
-            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
+            // Use the same canonical STOP finalizer as normal close. On a
+            // failed STOP/forget, retain the provider identity for retry:
+            // dropping it here would discard the only cleanup capability.
+            self.close_session(backend, id)?;
+            return Err(super::cancelled());
         }
         Ok(())
     }
@@ -168,12 +171,12 @@ impl DidEchoRegistry {
         if !self.contains(id)? {
             return Ok(());
         }
-        let stopped = backend.stop(id);
-        let forgotten = backend.forget(id);
-        if forgotten.is_ok() {
-            self.remove(id)?;
-        }
-        stopped.and(forgotten)
+        // A failed STOP has no receipt. Keep the sender registered so the
+        // canonical caller can retry against the same provider identity.
+        // Forgetting on failure destroys the only remaining stop capability.
+        backend.stop(id)?;
+        backend.forget(id)?;
+        self.remove(id)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {

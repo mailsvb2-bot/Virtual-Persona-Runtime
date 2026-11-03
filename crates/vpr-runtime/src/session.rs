@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use vpr_domain::{PersonaId, RealtimeSession, RealtimeSessionState, Rt0ReasonCode, SessionId};
 use vpr_policy::{ConsentState, EffectiveAuthority};
@@ -42,6 +43,7 @@ impl SessionSecurityConfig {
 #[derive(Debug, Clone)]
 pub struct SessionRevocationHandle {
     authorization: AuthorizationController,
+    gate: SessionExecutionGate,
 }
 
 impl SessionRevocationHandle {
@@ -53,6 +55,13 @@ impl SessionRevocationHandle {
         self.authorization
             .revoke()
             .map_err(RuntimeDenyReason::reason_code)
+    }
+
+    /// Bounded proof that locally admitted provider calls have returned.
+    /// This does NOT attest remote RTP sender shutdown.
+    #[must_use]
+    pub fn await_provider_quiescence(&self, timeout: Duration) -> bool {
+        self.gate.await_provider_quiescence(timeout)
     }
 }
 
@@ -73,6 +82,7 @@ impl ActiveSession {
     pub fn revocation_handle(&self) -> SessionRevocationHandle {
         SessionRevocationHandle {
             authorization: self.authorization.clone(),
+            gate: self.gate.clone(),
         }
     }
 

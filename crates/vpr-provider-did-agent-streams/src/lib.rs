@@ -29,8 +29,8 @@ pub use echo::DidEchoBackend;
 use echo::DidEchoRegistry;
 pub use echo_python::{EchoPythonBackend, EchoPythonConfig};
 use protocol::{
-    AgentResponse, CloseRequest, CreateStreamRequest, CreateStreamResponse, IceRequest, SdpRequest,
-    SessionDescriptionRef, SpeakRequest, SpeakScript, parse_livekit_event,
+    AgentResponse, IceRequest, SdpRequest, SessionDescriptionRef, SpeakRequest, SpeakScript,
+    parse_livekit_event,
 };
 pub use provider_error::DidRuntimeAccessFailure;
 use provider_error::{
@@ -233,28 +233,6 @@ impl DidAgentStreamsAvatar {
             }
             PresenterLookupError::Provider(provider) => provider,
         })
-    }
-
-    fn create_webrtc_session(
-        &self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<RealtimeAvatarSession, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        let response = self
-            .authorized(self.client.post(self.streams_url()?))
-            .json(&CreateStreamRequest {
-                fluent: self.config.fluent,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
-        let client_interrupt = body.fluent && body.interrupt_enabled;
-        let session: RealtimeAvatarSession = body.try_into()?;
-        if client_interrupt {
-            self.client_control.register_interrupt(&session)?;
-        }
-        Ok(session)
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
@@ -543,6 +521,9 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 if let Some(backend) = &self.echo_backend {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
+                    // This confirms closing the private Echo sender only.
+                    // It does not certify remote D-ID LiveKit video shutdown;
+                    // RT1 must not label it as a remote video STOP receipt.
                     return Ok(());
                 }
                 // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
@@ -550,17 +531,10 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 Ok(())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
-                let response = self
-                    .authorized(
-                        self.client
-                            .delete(self.stream_url(&session.provider_resource_id)?),
-                    )
-                    .json(&CloseRequest {
-                        session_id: &session.provider_session_id,
-                    })
-                    .send()
-                    .map_err(|error| map_transport_error(&error))?;
-                expect_success(response)?;
+                self.delete_webrtc_identity(
+                    &session.provider_resource_id,
+                    &session.provider_session_id,
+                )?;
                 self.client_control.forget(session)
             }
         }

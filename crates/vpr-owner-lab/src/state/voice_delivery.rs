@@ -23,15 +23,18 @@ pub(super) fn deliver_phrase(
     ),
     LabError,
 > {
+    crate::voice_diagnostic::record("avatar_delivery", "started");
     if let Some(tts) = tts {
         let (delivery, timings) = turn
             .synthesize_and_deliver_realtime_avatar_audio_with_timings(
                 tts, provider, handle, phrase,
             )
             .map_err(|error| {
+                crate::voice_diagnostic::record("avatar_delivery", "failed");
                 eprintln!("VPR audio_delivery path=server_tts failed");
                 terminalize_avatar_output_error(turn, error)
             })?;
+        crate::voice_diagnostic::record("avatar_delivery", "completed");
         return Ok((delivery, None, Some(timings)));
     }
     let client_text = handle

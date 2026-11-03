@@ -1,13 +1,13 @@
-use std::io::BufReader;
+use std::sync::Arc;
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use vpr_integration::{
-    BoundedProviderLineReader, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
+    CancellableProviderHttp, CancellationProbe, GeneratedTextSink, LlmPort, LlmRequest,
     LlmTextStream, MAX_PROVIDER_STREAM_LINE_BYTES, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, UsageEvidence, UsageUnit, build_provider_http_client,
+    ProviderErrorKind, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -146,7 +146,7 @@ impl OpenAiCompatibleConfig {
 }
 
 pub struct OpenAiCompatibleLlm {
-    client: Client,
+    http: Arc<CancellableProviderHttp>,
     config: OpenAiCompatibleConfig,
 }
 
@@ -157,9 +157,11 @@ impl OpenAiCompatibleLlm {
     /// Returns a typed provider configuration error if the HTTP client cannot be built.
     pub fn new(config: OpenAiCompatibleConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        let client = build_provider_http_client(config.timeout)
-            .map_err(|error| map_transport_error(&error))?;
-        Ok(Self { client, config })
+        let http = CancellableProviderHttp::new(config.timeout)?;
+        Ok(Self {
+            http: Arc::new(http),
+            config,
+        })
     }
 
     fn start_response(
@@ -197,7 +199,7 @@ impl OpenAiCompatibleLlm {
             AuthScheme::ApiKey => "Api-Key",
         };
         let mut builder = self
-            .client
+            .http
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("{prefix} {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json");
@@ -208,10 +210,8 @@ impl OpenAiCompatibleLlm {
             };
             builder = builder.header(header, project);
         }
-        builder
-            .json(&body)
-            .send()
-            .map_err(|error| map_transport_error(&error))
+        // The shared RT0/RT1 transport owns abortable HTTP dispatch.
+        self.http.send(builder.json(&body), cancellation)
     }
 
     fn execute(
@@ -221,15 +221,16 @@ impl OpenAiCompatibleLlm {
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
         let response = self.start_response(request, cancellation)?;
-        Self::consume_response(response, cancellation, sink)
+        self.consume_response(response, cancellation, sink)
     }
 
     fn consume_response(
+        &self,
         response: Response,
         cancellation: &dyn CancellationProbe,
         sink: &mut dyn GeneratedTextSink,
     ) -> Result<UsageEvidence, ProviderError> {
-        let mut stream = OpenAiTextStream::new(response)?;
+        let mut stream = OpenAiTextStream::new(response, Arc::clone(&self.http))?;
         while let Some(chunk) = stream.next_chunk(cancellation)? {
             sink.push_generated_text(&chunk)?;
         }
@@ -248,7 +249,10 @@ impl LlmPort for OpenAiCompatibleLlm {
         cancellation: &dyn CancellationProbe,
     ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
         let response = self.start_response(request, cancellation)?;
-        Ok(Box::new(OpenAiTextStream::new(response)?))
+        Ok(Box::new(OpenAiTextStream::new(
+            response,
+            Arc::clone(&self.http),
+        )?))
     }
 
     fn stream(
@@ -262,24 +266,92 @@ impl LlmPort for OpenAiCompatibleLlm {
 }
 
 struct OpenAiTextStream {
-    lines: BoundedProviderLineReader<BufReader<Response>>,
+    // Response is dropped immediately when a cancellation wins an async read.
+    response: Option<Response>,
+    http: Arc<CancellableProviderHttp>,
+    pending: Vec<u8>,
     usage: UsageEvidence,
     completed: bool,
 }
 
 impl OpenAiTextStream {
-    fn new(response: Response) -> Result<Self, ProviderError> {
+    fn new(response: Response, http: Arc<CancellableProviderHttp>) -> Result<Self, ProviderError> {
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
         Ok(Self {
-            lines: BoundedProviderLineReader::new(
-                BufReader::new(response),
-                MAX_PROVIDER_STREAM_LINE_BYTES,
-            ),
+            response: Some(response),
+            http,
+            pending: Vec::new(),
             usage: UsageEvidence::default(),
             completed: false,
         })
+    }
+
+    fn next_line(
+        &mut self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        loop {
+            if cancellation.is_cancelled() {
+                self.response.take();
+                return Err(cancelled());
+            }
+            if let Some(newline) = self.pending.iter().position(|byte| *byte == b'\n') {
+                if newline > MAX_PROVIDER_STREAM_LINE_BYTES {
+                    return Err(invalid_response());
+                }
+                let mut line: Vec<u8> = self.pending.drain(..=newline).collect();
+                line.pop();
+                if line.last() == Some(&b'\r') {
+                    line.pop();
+                }
+                return String::from_utf8(line)
+                    .map(Some)
+                    .map_err(|_| invalid_response());
+            }
+            if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES {
+                return Err(invalid_response());
+            }
+            let response = self.response.as_mut().ok_or_else(invalid_response)?;
+            let next = self
+                .http
+                .chunk(response, cancellation, MAX_PROVIDER_STREAM_LINE_BYTES);
+            if cancellation.is_cancelled() {
+                self.response.take();
+                return Err(cancelled());
+            }
+            match next {
+                Ok(Some(bytes)) => {
+                    // Bounded SSE framing: neither a single chunk nor an
+                    // unterminated line may accumulate unbounded memory.
+                    if bytes.len() > MAX_PROVIDER_STREAM_LINE_BYTES {
+                        return Err(invalid_response());
+                    }
+                    self.pending.extend_from_slice(&bytes);
+                }
+                Ok(None) => {
+                    self.response.take();
+                    if self.pending.is_empty() {
+                        return Ok(None);
+                    }
+                    if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES {
+                        return Err(invalid_response());
+                    }
+                    let mut line = std::mem::take(&mut self.pending);
+                    if line.last() == Some(&b'\r') {
+                        line.pop();
+                    }
+                    return String::from_utf8(line)
+                        .map(Some)
+                        .map_err(|_| invalid_response());
+                }
+                Err(error) => {
+                    self.response.take();
+                    return Err(error);
+                }
+            }
+        }
     }
 }
 
@@ -295,7 +367,7 @@ impl LlmTextStream for OpenAiTextStream {
             if cancellation.is_cancelled() {
                 return Err(cancelled());
             }
-            let Some(line) = self.lines.next_line(cancellation)? else {
+            let Some(line) = self.next_line(cancellation)? else {
                 return Err(invalid_response());
             };
             let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
@@ -398,19 +470,6 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
         });
     }
     Ok(())
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        return ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        };
-    }
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: true,
-    }
 }
 
 fn map_status(status: u16) -> ProviderError {

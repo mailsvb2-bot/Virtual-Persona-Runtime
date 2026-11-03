@@ -181,6 +181,151 @@ fn assert_client_interrupt_contract(
 }
 
 #[test]
+fn revoke_during_create_body_read_keeps_remote_id_for_compensating_delete() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    struct SharedProbe(Arc<AtomicBool>);
+    impl CancellationProbe for SharedProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Acquire)
+        }
+    }
+
+    let revoked = Arc::new(AtomicBool::new(false));
+    let server_revoke = Arc::clone(&revoked);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, captured) = mpsc::channel();
+    thread::spawn(move || {
+        let responses = [
+            ("200 OK", legacy_agent_body()),
+            (
+                "201 Created",
+                r#"{"id":"allocated-after-revoke","session_id":"real-session","offer":{"type":"offer","sdp":"offer-sdp"}}"#.to_owned(),
+            ),
+            ("200 OK", "{}".to_owned()),
+        ];
+        for (index, (status, body)) in responses.into_iter().enumerate() {
+            let (mut stream, _) = listener.accept().unwrap();
+            tx.send(read_request(&mut stream)).unwrap();
+            let headers = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).unwrap();
+            if index == 1 {
+                // The remote sender has already been allocated. Revoke just
+                // before the CREATE body containing its identity arrives.
+                server_revoke.store(true, Ordering::Release);
+            }
+            stream.write_all(body.as_bytes()).unwrap();
+        }
+    });
+
+    let error = adapter(endpoint)
+        .create_session(&SharedProbe(revoked))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    let timeout = Duration::from_secs(3);
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("GET /agents/")
+    );
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("POST /agents/")
+    );
+    let cleanup = captured.recv_timeout(timeout).unwrap();
+    assert!(cleanup.starts_with("DELETE /agents/agent-7/streams/allocated-after-revoke "));
+    assert!(cleanup.contains(r#""session_id":"real-session""#));
+}
+
+#[test]
+fn late_legacy_create_after_revoke_attempts_provider_delete_before_offer() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAtFinalCheck(AtomicUsize);
+    impl CancellationProbe for RevokeAtFinalCheck {
+        fn is_cancelled(&self) -> bool {
+            // Two admission checks precede CREATE. Cancellation becomes
+            // true on the first would-be body-reader probe; a reader that
+            // checks it before decoding loses the already allocated sender ID.
+            // The compensation path MUST still send DELETE for that identity.
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let created = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[],"fluent":false,"interrupt_enabled":false}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("200 OK", created.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let provider = adapter(endpoint);
+    let probe = RevokeAtFinalCheck(AtomicUsize::new(0));
+    let error = provider.create_session(&probe).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(probe.0.load(Ordering::SeqCst) >= 3);
+    // Never hang the entire workspace suite if a future change moves
+    // cancellation ahead of the provider-id decode/compensating DELETE.
+    let timeout = std::time::Duration::from_secs(3);
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("GET /agents/agent-7 ")
+    );
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("POST /agents/agent-7/streams ")
+    );
+    let stop_request = captured.recv_timeout(timeout).unwrap();
+    assert!(stop_request.starts_with("DELETE /agents/agent-7/streams/stream-1 "));
+    assert!(stop_request.contains("session-1"));
+}
+
+#[test]
+fn late_revoked_create_with_failed_delete_reports_unconfirmed_cleanup() {
+    use std::sync::atomic::AtomicUsize;
+
+    struct RevokeAtFinalCheck(AtomicUsize);
+    impl CancellationProbe for RevokeAtFinalCheck {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let created =
+        r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", created.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&RevokeAtFinalCheck(AtomicUsize::new(0)))
+        .unwrap_err();
+    // A cancellation without a confirmed provider DELETE is NOT a clean STOP.
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let timeout = std::time::Duration::from_secs(3);
+    let _ = captured.recv_timeout(timeout).unwrap();
+    let _ = captured.recv_timeout(timeout).unwrap();
+    assert!(
+        captured
+            .recv_timeout(timeout)
+            .unwrap()
+            .starts_with("DELETE /agents/agent-7/streams/stream-1 ")
+    );
+}
+
+#[test]
 fn full_agents_streams_control_plane_matches_contract() {
     let create_body = r#"{"id":"stream-1","session_id":"session-1","offer":{"type":"offer","sdp":"offer-sdp"},"ice_servers":[{"urls":["stun:one","turn:two"],"username":"u","credential":"c"}],"fluent":true,"interrupt_enabled":true}"#;
     let (endpoint, captured) = serve(vec![
@@ -612,6 +757,114 @@ fn malformed_create_session_response_is_rejected() {
 }
 
 #[test]
+fn allocated_webrtc_sender_with_malformed_create_schema_is_compensated() {
+    // The provider allocated a real sender, but omitted the mandatory offer.
+    // Typed decoding must not discard its authenticated DELETE identity.
+    let malformed = r#"{"id":"schema-orphan","session_id":"schema-session"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
+    assert!(delete.contains(r#""session_id":"schema-session""#));
+}
+
+#[test]
+fn failed_delete_after_malformed_create_schema_remains_unconfirmed() {
+    // A failed compensating DELETE must dominate a mere JSON schema error.
+    let malformed = r#"{"id":"schema-orphan","session_id":"schema-session","offer":[]}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/schema-orphan "));
+    assert!(delete.contains(r#""session_id":"schema-session""#));
+}
+
+#[test]
+fn allocated_webrtc_sender_with_invalid_offer_is_compensated_before_error() {
+    // A provider-generated identity remains authoritative even when the SDP
+    // cannot be delivered to the browser. The same session must be deleted.
+    let malformed =
+        r#"{"id":"stream-orphan","session_id":"session-orphan","offer":{"type":"offer","sdp":""}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("200 OK", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let delete = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(delete.starts_with("DELETE /agents/agent-7/streams/stream-orphan "));
+    assert!(delete.contains(r#""session_id":"session-orphan""#));
+}
+
+#[test]
+fn failed_compensation_of_invalid_offer_is_never_reported_as_clean() {
+    let malformed =
+        r#"{"id":"stream-orphan","session_id":"session-orphan","offer":{"type":"offer","sdp":""}}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", legacy_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let error = adapter(endpoint)
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    assert!(
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .starts_with("DELETE /agents/agent-7/streams/stream-orphan ")
+    );
+}
+
+#[test]
 fn descriptor_and_capabilities_do_not_expose_secret() {
     let provider = DidAgentStreamsAvatar::new(DidAgentStreamsConfig::new(
         "https://api.d-id.com",
@@ -748,6 +1001,150 @@ impl DidEchoBackend for MockEchoBackend {
 }
 
 #[test]
+fn failed_echo_stop_retains_identity_for_retry() {
+    use std::sync::atomic::AtomicUsize;
+    struct FailOnce<'a> {
+        attempts: AtomicUsize,
+        revoke_after_open: Option<&'a Probe>,
+    }
+    impl DidEchoBackend for FailOnce<'_> {
+        fn open(
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            if let Some(probe) = self.revoke_after_open {
+                probe.0.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+        fn speak(
+            &self,
+            _id: &str,
+            _text: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(super::unavailable())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let backend = FailOnce {
+        attempts: AtomicUsize::new(0),
+        revoke_after_open: None,
+    };
+    let registry = DidEchoRegistry::default();
+    registry.insert("retry-sender").unwrap();
+    assert!(registry.close_session(&backend, "retry-sender").is_err());
+    assert!(registry.contains("retry-sender").unwrap());
+    registry.close_session(&backend, "retry-sender").unwrap();
+    assert!(!registry.contains("retry-sender").unwrap());
+    assert_eq!(backend.attempts.load(Ordering::SeqCst), 2);
+
+    // A revoke arriving immediately after Echo OPEN must not erase the
+    // only sender identity when the compensating STOP fails. A later
+    // canonical close must still be able to retry that same STOP.
+    let revoked = Probe(AtomicBool::new(false));
+    let revoked_backend = FailOnce {
+        attempts: AtomicUsize::new(0),
+        revoke_after_open: Some(&revoked),
+    };
+    let revoked_registry = DidEchoRegistry::default();
+    assert!(
+        revoked_registry
+            .open_session(
+                &revoked_backend,
+                "revoked-sender",
+                "wss://livekit.example.test/room/agent-echo",
+                "server-only-token",
+                &revoked,
+            )
+            .is_err()
+    );
+    assert!(revoked_registry.contains("revoked-sender").unwrap());
+    revoked_registry
+        .close_session(&revoked_backend, "revoked-sender")
+        .unwrap();
+    assert!(!revoked_registry.contains("revoked-sender").unwrap());
+    assert!(revoked.is_cancelled());
+    assert_eq!(revoked_backend.attempts.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn failed_echo_open_keeps_identity_until_both_cleanup_steps_succeed() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct PartialOpen {
+        stops: AtomicUsize,
+        fail_first_stop: bool,
+    }
+    impl DidEchoBackend for PartialOpen {
+        fn open(
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            // The private publisher may have connected before OPEN failed.
+            Err(super::unavailable())
+        }
+        fn speak(
+            &self,
+            _id: &str,
+            _text: &str,
+            _probe: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            panic!("failed OPEN must never publish speech");
+        }
+        fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+            let attempt = self.stops.fetch_add(1, Ordering::SeqCst);
+            if self.fail_first_stop && attempt == 0 {
+                Err(super::unavailable())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    let probe = Probe(AtomicBool::new(false));
+    let url = "wss://livekit.example.test/room/agent-echo";
+    for fail_first_stop in [false, true] {
+        let backend = PartialOpen {
+            stops: AtomicUsize::new(0),
+            fail_first_stop,
+        };
+        let registry = DidEchoRegistry::default();
+        let error = registry
+            .open_session(&backend, "partial-open", url, "private-token", &probe)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+
+        if fail_first_stop {
+            assert!(registry.contains("partial-open").unwrap());
+            // A duplicate OPEN must not overwrite the quarantined identity.
+            assert!(
+                registry
+                    .open_session(&backend, "partial-open", url, "private-token", &probe)
+                    .is_err()
+            );
+            assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+            registry.close_session(&backend, "partial-open").unwrap();
+            assert_eq!(backend.stops.load(Ordering::SeqCst), 2);
+        }
+        assert!(!registry.contains("partial-open").unwrap());
+    }
+}
+
+#[test]
 fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     use std::sync::Arc;
 
@@ -803,6 +1200,8 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // An Echo STOP is server-owned and contains no browser did.interrupt
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
+    // Local Echo STOP succeeds, but remote D-ID LiveKit video STOP has no
+    // independently verified provider receipt. Fail closed at RT1 boundary.
     provider.close_session(&session).unwrap();
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(

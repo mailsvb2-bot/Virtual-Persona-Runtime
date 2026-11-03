@@ -57,6 +57,16 @@ impl Rt1VisitorSession {
         self.authorize()
     }
 
+    /// Register a cancellable provider operation while owner publication
+    /// mutation is excluded. The callback must be pure local bookkeeping.
+    pub(crate) fn admit_provider_egress<T>(
+        &self,
+        register: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.workspace
+            .admit_visitor_provider_egress(&self.bearer_token, &self.permit, register)
+    }
+
     /// Pure computation, not permission for external output or media.
     /// # Errors
     /// Denies failed computation or authority changed during processing.

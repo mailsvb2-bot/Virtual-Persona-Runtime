@@ -125,6 +125,30 @@ impl LocalOpenSourceAvatar {
         Ok(id)
     }
 
+    fn finalize_created_session(
+        &self,
+        session: RealtimeAvatarSession,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        if cancellation.is_cancelled() {
+            // Never report a revoked allocation as active. Even if the worker
+            // supplies a STOP receipt, this particular create operation failed.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            return match self.stop_session_confirmed(&session, deadline) {
+                Ok(()) => Err(cancelled()),
+                // No confirmed remote STOP: never reduce an uncertain live
+                // publisher to an ordinary successful local cancellation.
+                // Do not mark retryable: re-issuing CREATE could allocate a
+                // second sender while the first still exists.
+                Err(_) => Err(ProviderError {
+                    kind: ProviderErrorKind::Unavailable,
+                    retryable: false,
+                }),
+            };
+        }
+        Ok(session)
+    }
+
     fn ensure_active(cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
         if cancellation.is_cancelled() {
             Err(cancelled())
@@ -167,10 +191,34 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .authorized(self.client.post(self.sessions_url()?))
             .json(&CreateSessionRequest {})
             .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateSessionResponse = decode_json_response(response, Some(cancellation))?;
-        body.try_into()
+            .map_err(|error| {
+                let mut failure = map_transport_error(&error);
+                // CREATE may have reached the worker before transport failure.
+                // Without a session id, retrying risks a second live publisher.
+                failure.retryable = false;
+                failure
+            })?;
+        // The CREATE request has already reached the remote worker.
+        // Even an HTTP 5xx can follow a successful allocation, so automatic
+        // retry could create an orphaned second audio/video publisher.
+        let response = expect_success(response).map_err(|mut failure| {
+            failure.retryable = false;
+            failure
+        })?;
+        // After the remote allocation response arrives, retain its session id even
+        // when authority was revoked while the provider was responding.
+        // Cancelling JSON extraction here would orphan an allocated sender:
+        // without the id we cannot issue the required compensating STOP.
+        // The body reader enforces MAX_PROVIDER_JSON_BODY_BYTES and client
+        // transport timeouts; finalize_created_session denies admission and
+        // attempts confirmed teardown if cancellation occurred.
+        let body: CreateSessionResponse = decode_json_response(response, None)?;
+        let session: RealtimeAvatarSession = body.try_into()?;
+        // Cancellation can race with a successful remote allocation. Never
+        // return a newly created session once the caller has revoked access.
+        // Best-effort cleanup is deliberately NOT treated as proof of STOP:
+        // the caller receives Cancelled even when the remote DELETE succeeds.
+        self.finalize_created_session(session, cancellation)
     }
 
     fn submit_answer(
@@ -259,14 +307,56 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
         expect_success(response).map(|_| ())
     }
 
-    fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
+    fn stop_session_confirmed(
+        &self,
+        session: &RealtimeAvatarSession,
+        deadline: std::time::Instant,
+    ) -> Result<(), ProviderError> {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
         let id = Self::validate_session(session)?;
+        // This is a stronger worker contract than the legacy DELETE:
+        // plain 2xx/204 is NOT proof that audio and video have stopped.
         let response = self
             .authorized(self.client.delete(self.session_url(id)?))
+            .timeout(remaining)
             .send()
             .map_err(|error| map_transport_error(&error))?;
-        expect_success(response).map(|_| ())
+        let response = expect_success(response)?;
+        let receipt: RemoteMediaStopReceipt = decode_json_response(response, None)?;
+        if std::time::Instant::now() > deadline {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
+        // Reject stale or ambiguous confirmations. Only the exact current
+        // session and explicit positive receipts for *both* media senders
+        // satisfy the worker contract; a generic successful DELETE does not.
+        if receipt.session_id != id || !receipt.audio_stopped || !receipt.video_stopped {
+            return Err(invalid_response());
+        }
+        Ok(())
     }
+
+    fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
+        // Closing the local lifecycle must not silently downgrade the RT1
+        // teardown contract to a generic HTTP 2xx acknowledgement.
+        self.stop_session_confirmed(session, std::time::Instant::now() + Duration::from_secs(2))
+    }
+}
+
+/// Worker-attested remote sender teardown; a generic HTTP success is insufficient.
+#[derive(Deserialize)]
+struct RemoteMediaStopReceipt {
+    session_id: String,
+    audio_stopped: bool,
+    video_stopped: bool,
 }
 
 #[derive(Serialize)]
@@ -453,6 +543,8 @@ const fn cancelled() -> ProviderError {
         retryable: false,
     }
 }
+
+pub mod operation_client;
 
 #[cfg(test)]
 mod tests;

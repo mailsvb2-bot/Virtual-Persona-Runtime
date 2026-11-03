@@ -120,7 +120,24 @@ The worker must stop queued/current TTS and rendering quickly enough for VPR bar
 
 `DELETE /v1/avatar/sessions/{id}`
 
-Must release GPU/session resources idempotently.
+Must release GPU/session resources idempotently. For the current VPR adapter,
+a plain HTTP 2xx/204 is **not** a confirmed close. The worker must send a
+JSON receipt only after its remote audio and video publishers have both ceased:
+
+```json
+{"session_id":"session-id","audio_stopped":true,"video_stopped":true}
+```
+
+The receipt must identify the exact session being closed. Missing, false,
+malformed, or stale acknowledgements keep VPR in an uncertain teardown state;
+they must never be treated as permission to create another publisher.
+
+**RT1 is not enabled by this RT0 contract.** The worker must additionally
+implement and demonstrate durable operation-id-based cancellation of a pending
+CREATE, idempotent allocation, and confirmed sender shutdown even if the
+original CREATE response is lost or the connection stalls. No such worker
+implementation or real external WebRTC sender test is currently supplied
+in this repository.
 
 ## Security boundary
 

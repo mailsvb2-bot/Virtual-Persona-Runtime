@@ -21,6 +21,9 @@ MAX_STREAMED_PCM_QUEUE = 8
 PCM_QUEUE_BACKPRESSURE_SECONDS = 0.15
 MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
+MEDIA_CLOSE_TIMEOUT_SECONDS = 2
+MEDIA_IO_TIMEOUT_SECONDS = 5
+MEDIA_STOP_TIMEOUT_SECONDS = 2
 
 
 def emit(identifier, ok, stage=None):
@@ -149,7 +152,7 @@ async def run():
         await asyncio.wait_for(ready.wait(), timeout=25)
     except Exception:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     agents = [
         participant.identity
@@ -159,7 +162,7 @@ async def run():
     ]
     if not agents:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     emit(initial.get("id", 0), True)
 
@@ -167,6 +170,35 @@ async def run():
     tasks = {}
     generation = 0
     active_pcm = None
+    close_identifier = None
+    close_control_confirmed = True
+    terminal_failure = False
+    room_disconnected = False
+    disconnect_gate = asyncio.Lock()
+
+    async def fail_closed_media_error():
+        """Fence all publication after a background vendor stream failure.
+
+        Neither interrupt delivery nor local disconnect proves remote RTP STOP.
+        """
+        nonlocal terminal_failure, close_control_confirmed, room_disconnected
+        terminal_failure = True
+        close_control_confirmed = False
+        for task in tuple(tasks.values()):
+            if task is not asyncio.current_task():
+                task.cancel()
+        if active_pcm is not None and active_pcm["task"] is not asyncio.current_task():
+            active_pcm["task"].cancel()
+        async with disconnect_gate:
+            if not room_disconnected:
+                try:
+                    await asyncio.wait_for(
+                        room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
+                    )
+                    room_disconnected = True
+                except Exception:
+                    # Final cleanup may retry; never manufacture a STOP receipt.
+                    pass
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -177,7 +209,7 @@ async def run():
             async with utterance_lock:
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
-                writer = await room.local_participant.stream_bytes(
+                writer = await asyncio.wait_for(room.local_participant.stream_bytes(
                     name=f'rt0-pcm-stream-{state["stream_id"]}',
                     topic="did.audio-stream",
                     attributes={
@@ -186,7 +218,7 @@ async def run():
                         "channels": str(state["channels"]),
                     },
                     destination_identities=agents,
-                )
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while True:
                     chunk = await state["queue"].get()
                     if state["generation"] != generation:
@@ -194,10 +226,10 @@ async def run():
                     if chunk is None:
                         break
                     failure_stage = "pcm_stream_write"
-                    await writer.write(chunk)
+                    await asyncio.wait_for(writer.write(chunk), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                     published = True
                 failure_stage = "pcm_stream_close"
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
@@ -214,16 +246,20 @@ async def run():
                 generation += 1
                 if published:
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     except Exception:
                         pass
+            await fail_closed_media_error()
             if state["end_id"] is not None:
                 emit(state["end_id"], False)
                 state["end_id"] = None
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if active_pcm is state:
@@ -262,21 +298,21 @@ async def run():
                     raise asyncio.CancelledError()
                 if not chunk:
                     raise ValueError("empty TTS stream")
-                writer = await room.local_participant.stream_bytes(
+                writer = await asyncio.wait_for(room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
                     attributes=attributes,
                     destination_identities=agents,
-                )
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while chunk is not None:
                     if generation_at_start != generation:
                         raise asyncio.CancelledError()
-                    await writer.write(chunk)
+                    await asyncio.wait_for(writer.write(chunk), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                     published = True
                     chunk = await next_chunk()
                 if generation_at_start != generation:
                     raise asyncio.CancelledError()
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 # A closed byte stream is only provider delivery, never verified
                 # RTP playout, audio hearing, or lip synchronisation.
@@ -297,14 +333,18 @@ async def run():
                         task.cancel()
                 if published:
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                     except Exception:
                         pass
+            await fail_closed_media_error()
             emit(identifier, False)
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if tasks.get(identifier) is asyncio.current_task():
@@ -312,6 +352,9 @@ async def run():
 
     try:
         while raw := await asyncio.to_thread(sys.stdin.readline):
+            if terminal_failure:
+                # Never accept queued SPEAK/PCM/CLOSE after a stream failure.
+                break
             try:
                 request = json.loads(raw)
                 identifier = request["id"]
@@ -439,10 +482,18 @@ async def run():
                         emit(state["end_id"], False)
                         state["end_id"] = None
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(
+                        room.local_participant.send_text("{}", topic="did.interrupt"),
+                        timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
                         emit(identifier, True)
                     except Exception:
-                        emit(identifier, False)
+                        # A failed remote PCM abort may leave the vendor playing
+                        # buffered audio. End this worker session instead of
+                        # admitting a new utterance after an unverified STOP.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                 elif command == "interrupt":
                     generation += 1
                     if active_pcm is not None:
@@ -455,7 +506,18 @@ async def run():
                     for task in tuple(tasks.values()):
                         task.cancel()
                     # This is a text STOP command, never browser-published audio.
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
+                    except Exception:
+                        # Do not allow another SPEAK/PCM if the vendor has not
+                        # acknowledged the interrupt. Drain and disconnect;
+                        # the final receipt must remain negative.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
@@ -468,8 +530,20 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
-                    emit(identifier, True)
+                    # CLOSE is terminal even if the provider refuses or
+                    # times out the interrupt. Continuing to read stdin would
+                    # permit a new SPEAK after owner revoke. The final receipt
+                    # must also remember that remote STOP control failed.
+                    close_identifier = identifier
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=MEDIA_STOP_TIMEOUT_SECONDS,
+                        )
+                    except Exception:
+                        close_control_confirmed = False
+                    # A sent interrupt is not verified remote RTP shutdown.
+                    # Await task drain and room.disconnect before any receipt.
                     break
                 else:
                     emit(identifier, False)
@@ -480,14 +554,30 @@ async def run():
                 except Exception:
                     pass
     finally:
+        pending = set(tasks.values())
         if active_pcm is not None:
-            active_pcm["task"].cancel()
-            await asyncio.gather(active_pcm["task"], return_exceptions=True)
-        for task in tuple(tasks.values()):
+            pending.add(active_pcm["task"])
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
-        await room.disconnect()
+        cleanup_confirmed = True
+        if pending:
+            # wait() returns at the deadline even if a third-party task
+            # suppresses CancelledError; wait_for(gather()) would not.
+            _, unfinished = await asyncio.wait(
+                pending, timeout=MEDIA_CLOSE_TIMEOUT_SECONDS,
+            )
+            if unfinished:
+                cleanup_confirmed = False
+        if not room_disconnected:
+            try:
+                await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
+            except Exception:
+                if close_identifier is not None:
+                    emit(close_identifier, False)
+                raise
+        if close_identifier is not None:
+            # Local teardown receipt only; remote playback remains unproven.
+            emit(close_identifier, cleanup_confirmed and close_control_confirmed and not terminal_failure)
 
 
 if __name__ == "__main__":

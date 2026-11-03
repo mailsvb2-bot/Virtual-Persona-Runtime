@@ -47,7 +47,43 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Playwright APIRequestContext connection pool. Both browser loading and
   // response integrity remain mandatory (no mocks and no timeout suppression).
   await installTransportFakes(page);
-  await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
+  // Record requests before navigation: module fetches may start immediately
+  // after the response headers, before Playwright's "commit" milestone.
+  // Attaching listeners later silently loses stalled/failed bootstrap assets.
+  const pending = new Set<string>();
+  const failed: string[] = [];
+  page.on("request", (outgoing) => pending.add(outgoing.url()));
+  page.on("requestfinished", (outgoing) => pending.delete(outgoing.url()));
+  page.on("requestfailed", (outgoing) => {
+    pending.delete(outgoing.url());
+    failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
+  });
+  // Do not start a separate APIRequestContext bootstrap request while the
+  // browser is still fetching and evaluating its first application modules.
+  // The actual browser bootstrap is the acceptance condition below.
+  await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
+  try {
+    // "load" waits for EVERY static script and subresource. On an overloaded CI
+    // runner an otherwise usable Owner Lab can remain stuck at that browser
+    // milestone even while its bootstrap and canonical API path are healthy.
+    // Check that the real app executes and finishes bootstrap instead.
+    await expect(
+      page.locator("#status"),
+      "Owner Lab must run its JavaScript and finish backend bootstrap",
+    ).not.toHaveText("Загрузка…", { timeout: 45_000 });
+  } catch (error) {
+    throw new Error(
+      `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
+      `failed=${JSON.stringify(failed)}; readiness=${String(error)}`,
+    );
+  }
+
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+
+  // Audit assets only after the actual application bootstrap has completed;
+  // parallel no-store fetches must not compete with initial module execution.
   const appAssets = [
     "/", "/styles.css", "/app.js", "/tts-selector.js",
     "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
@@ -64,34 +100,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
     expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
   }
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
-
-  const pending = new Set<string>();
-  const failed: string[] = [];
-  page.on("request", (outgoing) => pending.add(outgoing.url()));
-  page.on("requestfinished", (outgoing) => pending.delete(outgoing.url()));
-  page.on("requestfailed", (outgoing) => {
-    pending.delete(outgoing.url());
-    failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
-  });
-  try {
-    // "load" waits for EVERY static script and subresource. On an overloaded CI
-    // runner an otherwise usable Owner Lab can remain stuck at that browser
-    // milestone even while its bootstrap and canonical API path are healthy.
-    // Check that the real app executes and finishes bootstrap instead.
-    await expect(
-      page.locator("#status"),
-      "Owner Lab must run its JavaScript and finish backend bootstrap",
-    ).not.toHaveText("Загрузка…", { timeout: 20_000 });
-  } catch (error) {
-    throw new Error(
-      `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
-      `failed=${JSON.stringify(failed)}; readiness=${String(error)}`,
-    );
-  }
-
   await expect(page.locator("#owner-workflow")).toBeVisible();
   await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");

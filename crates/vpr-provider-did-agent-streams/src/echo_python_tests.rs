@@ -12,9 +12,9 @@ impl CancellationProbe for NeverCancelled {
 }
 
 #[test]
-fn unresponsive_echo_interrupt_is_fenced_and_child_killed_without_five_second_wait() {
+fn unresponsive_echo_close_is_fenced_and_child_killed_without_five_second_wait() {
     // A real child OS process, not a mocked DidEchoBackend. The fake
-    // interpreter acknowledges open, but indefinitely stalls on did.interrupt.
+    // interpreter acknowledges open, but indefinitely stalls on final close.
     // No LiveKit account, paid TTS call or real network access is needed.
     let script = std::env::temp_dir().join(format!(
         "vpr-echo-hung-{}-{}.sh",
@@ -27,7 +27,7 @@ fn unresponsive_echo_interrupt_is_fenced_and_child_killed_without_five_second_wa
 while IFS= read -r line; do
   case "$line" in
 *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
-*'"command":"interrupt"'*) while :; do :; done ;;
+*'"command":"close"'*) while :; do :; done ;;
   esac
 done
 "#,
@@ -84,7 +84,7 @@ fn acknowledged_echo_stop_is_reusable_for_canonical_close_without_replaying_cont
 while IFS= read -r line; do
   case "$line" in
 *'"command":"open"'*) printf '{"id":0,"ok":true}\n' ;;
-*'"command":"interrupt"'*) printf '{"id":1,"ok":true}\n' ;;
+*'"command":"close"'*) printf '{"id":1,"ok":true}\n' ;;
   esac
 done
 "#,

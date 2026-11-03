@@ -1,12 +1,129 @@
-//! D-ID Echo `LiveKit` session creation: private speaker opens before browser receives viewer grant.
-use crate::protocol::CreateV2SessionResponse;
+//! Canonical D-ID WebRTC and Echo/LiveKit session allocation and compensation.
+use crate::protocol::{
+    CloseRequest, CreateStreamRequest, CreateStreamResponse, CreateV2SessionResponse,
+};
 use crate::response_json::decode_json_response;
 use crate::{
-    DidAgentStreamsAvatar, expect_success, invalid_response, map_transport_error, policy_denied,
+    DidAgentStreamsAvatar, cancelled, expect_success, invalid_response, map_transport_error,
+    policy_denied, unavailable,
 };
-use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarSession};
+use vpr_integration::{
+    CancellationProbe, ProviderError, RealtimeAvatarPort, RealtimeAvatarSession,
+};
 
 impl DidAgentStreamsAvatar {
+    pub(super) fn create_webrtc_session(
+        &self,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<RealtimeAvatarSession, ProviderError> {
+        Self::ensure_active(cancellation)?;
+        let response = self
+            .authorized(self.client.post(self.streams_url()?))
+            .json(&CreateStreamRequest {
+                fluent: self.config.fluent,
+            })
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = expect_success(response)?;
+        // A successful CREATE can contain the real allocated sender IDs but
+        // fail typed decoding (for example, a missing or malformed offer).
+        // Parse the bounded authenticated JSON envelope first so those IDs
+        // remain available for compensating DELETE on schema failure.
+        // Once CREATE has returned an HTTP response, cancellation must not
+        // discard the only authenticated remote sender identity. Read the
+        // bounded body to completion (the configured transport timeout still
+        // applies), then check cancellation AFTER extracting the IDs so a
+        // late revoke can issue compensating DELETE. Interrupting this body
+        // read early can orphan a sender that D-ID already allocated.
+        let raw: serde_json::Value = decode_json_response(response, None)?;
+        let allocated_id = raw
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let allocated_session_id = raw
+            .get("session_id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let body: CreateStreamResponse = if let Ok(body) = serde_json::from_value(raw) {
+            body
+        } else {
+            if let (Some(id), Some(session_id)) =
+                (allocated_id.as_deref(), allocated_session_id.as_deref())
+                && !id.trim().is_empty()
+                && !session_id.trim().is_empty()
+                && self.delete_webrtc_identity(id, session_id).is_err()
+            {
+                // Do not turn a failed cleanup into a harmless parse error.
+                return Err(unavailable());
+            }
+            return Err(invalid_response());
+        };
+        let client_interrupt = body.fluent && body.interrupt_enabled;
+        // The provider can allocate a real sender and return its authenticated
+        // identifiers alongside an invalid SDP. Never discard those IDs before
+        // attempting compensation: an invalid browser offer is not a STOP.
+        let allocated_identity = (body.id.clone(), body.session_id.clone());
+        let session: RealtimeAvatarSession = match body.try_into() {
+            Ok(session) => session,
+            Err(error) => {
+                if !allocated_identity.0.trim().is_empty()
+                    && !allocated_identity.1.trim().is_empty()
+                    && self
+                        .delete_webrtc_identity(&allocated_identity.0, &allocated_identity.1)
+                        .is_err()
+                {
+                    // The remote sender may still exist. Never report a
+                    // successful cleanup or allow a retry as if it were safe.
+                    return Err(unavailable());
+                }
+                return Err(error);
+            }
+        };
+        // A revoke may arrive while the blocking D-ID CREATE is in flight.
+        // Do not publish the resulting viewer offer. Attempt compensating
+        // DELETE using the actual returned provider identity; an unsuccessful
+        // close is never interpreted as confirmed remote STOP.
+        if cancellation.is_cancelled() {
+            if self.close_session(&session).is_err() {
+                return Err(unavailable());
+            }
+            return Err(cancelled());
+        }
+        if client_interrupt {
+            if let Err(error) = self.client_control.register_interrupt(&session) {
+                if self.close_session(&session).is_err() {
+                    return Err(unavailable());
+                }
+                return Err(error);
+            }
+        }
+        // Registration itself may race a revoke. Do not return a newly
+        // published SDP after the cancellation was committed.
+        if cancellation.is_cancelled() {
+            if self.close_session(&session).is_err() {
+                return Err(unavailable());
+            }
+            return Err(cancelled());
+        }
+        Ok(session)
+    }
+
+    pub(super) fn delete_webrtc_identity(
+        &self,
+        resource_id: &str,
+        session_id: &str,
+    ) -> Result<(), ProviderError> {
+        if resource_id.trim().is_empty() || session_id.trim().is_empty() {
+            return Err(invalid_response());
+        }
+        let response = self
+            .authorized(self.client.delete(self.stream_url(resource_id)?))
+            .json(&CloseRequest { session_id })
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        expect_success(response).map(|_| ())
+    }
+
     pub(super) fn create_livekit_session(
         &self,
         cancellation: &dyn CancellationProbe,

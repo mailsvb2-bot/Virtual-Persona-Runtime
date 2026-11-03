@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const files = new Map([
   ["/", "index.html"],
+  ["/rt1", "rt1.html"],
+  ["/rt1.js", "rt1.js"],
+  ["/rt1.css", "rt1.css"],
   ["/styles.css", "styles.css"],
   ["/app.js", "dist/app.js"],
   ["/interrupted-answer.js", "dist/interrupted-answer.js"],

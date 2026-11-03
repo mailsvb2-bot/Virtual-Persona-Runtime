@@ -342,6 +342,67 @@ fn authorized_llm_stream_is_cancelled_by_turn_interrupt() {
 }
 
 #[test]
+fn pull_llm_stream_remains_in_flight_between_chunks_until_dropped() {
+    use std::time::Duration;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let turn = turn(&session, "pull-quiescence");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_llm_stream(
+            &PullLlm,
+            &LlmRequest {
+                locale: "ru-RU".into(),
+                instructions: None,
+                user_input: "Ответ".into(),
+            },
+        )
+        .unwrap();
+    assert!(stream.next_chunk().unwrap().is_some());
+    revoker.revoke_authority().unwrap();
+    assert!(!revoker.await_provider_quiescence(Duration::ZERO));
+    assert_eq!(
+        stream.next_chunk().unwrap_err().reason_code(),
+        Rt0ReasonCode::TurnCancelled
+    );
+    drop(stream);
+    assert!(revoker.await_provider_quiescence(Duration::from_millis(10)));
+}
+
+#[test]
+fn pull_stt_stream_remains_in_flight_after_revoke_until_dropped() {
+    use std::time::Duration;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let turn = turn(&session, "stt-quiescence");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let mut stream = turn
+        .open_stt_stream(
+            &PullStt,
+            &SttStreamRequest {
+                sample_rate_hz: 16_000,
+                channels: 1,
+                sample_format: PcmSampleFormat::S16Le,
+                locale_hint: None,
+            },
+        )
+        .unwrap();
+    stream.push_audio(&[0; 320]).unwrap();
+    revoker.revoke_authority().unwrap();
+    assert!(!revoker.await_provider_quiescence(Duration::ZERO));
+    assert_eq!(
+        stream.finish_input().unwrap_err().reason_code(),
+        Rt0ReasonCode::TurnCancelled
+    );
+    drop(stream);
+    assert!(revoker.await_provider_quiescence(Duration::from_millis(10)));
+}
+
+#[test]
 fn cancellation_propagates_to_clones() {
     let cancellation = TurnCancellation::default();
     let provider_view = cancellation.clone();
@@ -774,4 +835,101 @@ fn provider_failures_map_to_stable_rt0_reason_codes() {
         provider_reason_code(ProviderErrorKind::InsufficientCredits),
         Rt0ReasonCode::BudgetExhausted
     );
+}
+
+/// Deliberately noncompliant provider: returns success after the canonical
+/// turn was interrupted. The runtime must reject the result independently
+/// of provider cooperation (not proof that network dispatch was aborted).
+struct LateIgnoringLlm {
+    interrupt: TurnInterruptHandle,
+}
+
+struct LateIgnoringStream {
+    interrupt: TurnInterruptHandle,
+}
+
+impl LlmTextStream for LateIgnoringStream {
+    fn next_chunk(
+        &mut self,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<Option<String>, ProviderError> {
+        let _ = self.interrupt.interrupt();
+        Ok(Some("late provider content".into()))
+    }
+
+    fn usage(&self) -> UsageEvidence {
+        UsageEvidence::default()
+    }
+}
+
+impl LlmPort for LateIgnoringLlm {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "late-ignoring-provider".into(),
+            model: "contract".into(),
+            representation: None,
+        }
+    }
+
+    fn open_stream(
+        &self,
+        _request: &LlmRequest,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<Box<dyn LlmTextStream>, ProviderError> {
+        Ok(Box::new(LateIgnoringStream {
+            interrupt: self.interrupt.clone(),
+        }))
+    }
+
+    fn stream(
+        &self,
+        _request: &LlmRequest,
+        _cancellation: &dyn CancellationProbe,
+        _sink: &mut dyn GeneratedTextSink,
+    ) -> Result<UsageEvidence, ProviderError> {
+        let _ = self.interrupt.interrupt();
+        Ok(UsageEvidence::default())
+    }
+}
+
+#[test]
+fn late_llm_success_cannot_escape_cancelled_canonical_turn() {
+    let session = active_session();
+    let turn = turn(&session, "late-llm-success");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let provider = LateIgnoringLlm {
+        interrupt: turn.interrupt_handle(),
+    };
+    let request = LlmRequest {
+        locale: "ru-RU".into(),
+        instructions: None,
+        user_input: "test".into(),
+    };
+    let mut sink = vpr_integration::GeneratedTextBuffer::default();
+    let error = turn
+        .execute_llm(&provider, &request, &mut sink)
+        .unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
+    assert_eq!(turn.state(), TurnState::Cancelled);
+}
+
+#[test]
+fn late_llm_stream_chunk_cannot_escape_cancelled_canonical_turn() {
+    let session = active_session();
+    let turn = turn(&session, "late-llm-chunk");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let provider = LateIgnoringLlm {
+        interrupt: turn.interrupt_handle(),
+    };
+    let request = LlmRequest {
+        locale: "ru-RU".into(),
+        instructions: None,
+        user_input: "test".into(),
+    };
+    let mut stream = turn.open_llm_stream(&provider, &request).unwrap();
+    let error = stream.next_chunk().unwrap_err();
+    assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
+    assert_eq!(turn.state(), TurnState::Cancelled);
 }

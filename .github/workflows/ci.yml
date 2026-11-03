@@ -24,8 +24,24 @@ jobs:
           rustc --version
           cargo --version
           rustc --version | grep '^rustc 1\.88\.0 '
+      - name: RT1 worker durable lifecycle and revoke/STOP races
+        run: python3 tests/e2e/test_rt1_media_worker_lifecycle.py
+      - name: RT1 bounded CREATE deadline and late STOP compensation
+        run: python3 tests/e2e/test_rt1_bounded_create.py -v
       - name: Echo private LiveKit sender and STOP contract
         run: python3 tests/e2e/test_echo_python_worker.py
+      - name: RT1 worker operation and remote media STOP lifecycle
+        run: python3 -m unittest discover -s crates/vpr-provider-local-open-source -p test_worker_lifecycle.py -v
+      - name: RT1 durable operation HTTP create and cancel contract
+        run: python3 tests/e2e/test_rt1_media_worker_http.py -v
+      - name: RT1 media SDP authorization and revoke fence
+        run: python3 tests/e2e/test_rt1_media_signaling_http.py -v
+      - name: RT1 durable STOP retry after interrupted network
+        run: python3 tests/e2e/test_rt1_stop_reconciler.py -v
+      - name: RT1 aiortc timeout cancellation regression
+        run: python3 tests/e2e/test_rt1_aiortc_backend_timeout.py -v
+      - name: D-ID V2 remote STOP observation privacy and non-promotion regression
+        run: python3 tests/e2e/test_rt1_did_v2_remote_stop_observe.py -v
       - name: MetroTrance speech bridge loopback contract
         run: python3 tests/e2e/test_metrotrance_tts_bridge.py
       - name: Piper speech bridge PCM and authorization contract
@@ -56,6 +72,10 @@ jobs:
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_entry_readiness.py -v
       - name: RT1 visitor text provider egress fail-closed regression
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_text_egress_fence.py -v
+      - name: RT1 visitor voice provider egress fail-closed regression
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_voice_egress_fence.py -v
+      - name: RT1 visitor provider startup revoke fence regression
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_startup_dispatch_fence.py -v
       - name: RT1 offline reviewed Persona migration preflight
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_offline_persona_inventory.py -v
       - name: RT1 publication pre-entry spike
@@ -174,6 +194,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Real Windows Owner Lab canary E2E failed' }
       - name: Compile Windows credential path
         run: cargo check --locked -p vpr-owner-lab --all-targets
+      - name: Windows Expressive Echo credential setup and readiness regression
+        run: cargo test --locked -p vpr-owner-lab --bin vpr-provider-credentials
       - name: Windows clippy parity gate
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Windows live-proof credential isolation tests
@@ -254,6 +276,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Backend-integrated browser E2E
         run: npm run test:e2e:backend
+      - name: Canonical RT1 visitor/provider create-answer-stop E2E
+        run: npm run test:e2e:rt1:canonical
 
   owner-lab-ui-voice-e2e:
     runs-on: ubuntu-24.04

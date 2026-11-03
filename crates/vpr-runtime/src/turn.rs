@@ -28,6 +28,8 @@ use crate::turn_state::TurnMutableState;
 pub struct AuthorizedLlmStream {
     stream: Box<dyn LlmTextStream>,
     permit: ProviderExecutionPermit,
+    // Field order matters: provider stream drops before the lifetime receipt.
+    _egress_lifetime: crate::execution_gate::ProviderEgressGuard,
 }
 
 impl AuthorizedLlmStream {
@@ -36,9 +38,8 @@ impl AuthorizedLlmStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn next_chunk(&mut self) -> Result<Option<String>, ProviderExecutionError> {
-        self.stream
-            .next_chunk(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .dispatch(|cancellation| self.stream.next_chunk(cancellation))
     }
 
     #[must_use]
@@ -50,6 +51,7 @@ impl AuthorizedLlmStream {
 pub struct AuthorizedSttStream {
     stream: Box<dyn SttAudioStream>,
     permit: ProviderExecutionPermit,
+    _egress_lifetime: crate::execution_gate::ProviderEgressGuard,
 }
 
 impl AuthorizedSttStream {
@@ -58,9 +60,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn push_audio(&mut self, pcm: &[u8]) -> Result<(), ProviderExecutionError> {
-        self.stream
-            .push_audio(pcm, &self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .dispatch(|cancellation| self.stream.push_audio(pcm, cancellation))
     }
 
     /// Closes provider input without releasing the runtime-owned STT permit.
@@ -68,9 +69,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn finish_input(&mut self) -> Result<(), ProviderExecutionError> {
-        self.stream
-            .finish_input(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .dispatch(|cancellation| self.stream.finish_input(cancellation))
     }
 
     /// Pulls the next normalized recognition event under the same STT permit.
@@ -78,9 +78,8 @@ impl AuthorizedSttStream {
     /// # Errors
     /// Returns a typed provider failure or cancellation observed by the runtime permit.
     pub fn next_event(&mut self) -> Result<Option<SttStreamEvent>, ProviderExecutionError> {
-        self.stream
-            .next_event(&self.permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        self.permit
+            .dispatch(|cancellation| self.stream.next_event(cancellation))
     }
 
     #[must_use]
@@ -284,10 +283,13 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
-        let stream = port
-            .open_stream(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)?;
-        Ok(AuthorizedLlmStream { stream, permit })
+        let lifetime = permit.track_stream_lifetime()?;
+        let stream = permit.dispatch(|cancellation| port.open_stream(request, cancellation))?;
+        Ok(AuthorizedLlmStream {
+            stream,
+            permit,
+            _egress_lifetime: lifetime,
+        })
     }
 
     /// Executes one LLM operation through the canonical provider enforcement boundary.
@@ -304,8 +306,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Llm)
             .map_err(ProviderExecutionError::from)?;
-        port.stream(request, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.dispatch(|cancellation| port.stream(request, cancellation, sink))
     }
 
     /// Opens one full-duplex STT stream through the canonical provider enforcement boundary.
@@ -324,10 +325,13 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
-        let stream = port
-            .open_stream(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)?;
-        Ok(AuthorizedSttStream { stream, permit })
+        let lifetime = permit.track_stream_lifetime()?;
+        let stream = permit.dispatch(|cancellation| port.open_stream(request, cancellation))?;
+        Ok(AuthorizedSttStream {
+            stream,
+            permit,
+            _egress_lifetime: lifetime,
+        })
     }
 
     /// Executes one STT operation through the canonical provider enforcement boundary.
@@ -343,8 +347,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Stt)
             .map_err(ProviderExecutionError::from)?;
-        port.transcribe(request, &permit.cancellation)
-            .map_err(ProviderExecutionError::from)
+        permit.dispatch(|cancellation| port.transcribe(request, cancellation))
     }
 
     /// Executes one TTS operation through the canonical provider enforcement boundary.
@@ -361,8 +364,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Tts)
             .map_err(ProviderExecutionError::from)?;
-        port.synthesize(request, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.dispatch(|cancellation| port.synthesize(request, cancellation, sink))
     }
 
     /// Executes one avatar-render operation through the canonical provider enforcement boundary.
@@ -379,8 +381,7 @@ impl ActiveTurn {
         let permit = self
             .issue_provider_operation(ProviderOperation::Avatar)
             .map_err(ProviderExecutionError::from)?;
-        port.render(audio, &permit.cancellation, sink)
-            .map_err(ProviderExecutionError::from)
+        permit.dispatch(|cancellation| port.render(audio, cancellation, sink))
     }
 
     /// Moves an authorized turn into processing.

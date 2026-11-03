@@ -65,8 +65,37 @@ for crate_name in streaming_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    if "BoundedProviderLineReader" not in source:
+    if crate_name == "vpr-provider-openai-compatible":
+        # The cancellable async HTTP response has its own bounded SSE
+        # framing. Require explicit checks for each accumulation path,
+        # not just the presence of a symbol in the source.
+        for required in (
+            "fn next_line(",
+            "if newline > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "if self.pending.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "if bytes.len() > MAX_PROVIDER_STREAM_LINE_BYTES",
+            "self.response.take()",
+        ):
+            if required not in source:
+                raise SystemExit(
+                    f"{crate_name} async SSE cancellation/bound drifted: {required}"
+                )
+    elif "BoundedProviderLineReader" not in source:
         raise SystemExit(f"{crate_name} bypasses bounded provider stream framing")
+
+# The shared cancellable async reader must cap bytes before cloning each
+# reqwest chunk; a provider can omit Content-Length or send a huge frame.
+async_body = (
+    ROOT / "crates" / "vpr-integration" / "src" / "provider_http_async.rs"
+).read_text(encoding="utf-8")
+for required in (
+    "max_chunk_bytes",
+    "bytes.len() > max_chunk_bytes",
+    "remaining.saturating_add(1)",
+    "if chunk.len() > remaining",
+):
+    if required not in async_body:
+        raise SystemExit(f"canonical cancellable HTTP body bound drifted: {required}")
 
 json_body_crates = {
     "vpr-provider-openai-transcription",
@@ -83,7 +112,11 @@ for crate_name in json_body_crates | binary_body_crates:
         path.read_text(encoding="utf-8")
         for path in sorted((ROOT / "crates" / crate_name / "src").rglob("*.rs"))
     )
-    bounded_body = "read_bounded_provider_body" in source
+    bounded_body = "read_bounded_provider_body" in source or (
+        crate_name == "vpr-provider-deepgram-stt"
+        and "CancellableProviderHttp" in source
+        and ".read_bounded_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)" in source
+    )
     bounded_stream = "read_bounded_provider_stream" in source
     # Media adapters may consume bounded chunks instead of waiting for EOF.
     # Both entry points enforce the same maximum observed response body size.

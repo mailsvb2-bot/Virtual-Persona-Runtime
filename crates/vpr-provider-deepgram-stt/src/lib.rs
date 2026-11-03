@@ -1,12 +1,11 @@
 use std::time::Duration;
 
-use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use vpr_integration::{
-    CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor, ProviderError,
-    ProviderErrorKind, SttAudioStream, SttPort, SttRequest, SttStreamRequest, Transcript,
-    UsageEvidence, UsageUnit, build_provider_http_client, read_bounded_provider_body,
+    CancellableProviderHttp, CancellationProbe, MAX_PROVIDER_JSON_BODY_BYTES, ProviderDescriptor,
+    ProviderError, ProviderErrorKind, SttAudioStream, SttPort, SttRequest, SttStreamRequest,
+    Transcript, UsageEvidence, UsageUnit,
 };
 
 mod live;
@@ -60,7 +59,7 @@ impl DeepgramSttConfig {
 }
 
 pub struct DeepgramStt {
-    client: Client,
+    http: CancellableProviderHttp,
     config: DeepgramSttConfig,
 }
 
@@ -71,9 +70,8 @@ impl DeepgramStt {
     /// Returns a typed provider error when endpoint policy or client construction fails.
     pub fn new(config: DeepgramSttConfig) -> Result<Self, ProviderError> {
         validate_endpoint(&config.endpoint)?;
-        let client = build_provider_http_client(config.timeout)
-            .map_err(|error| map_transport_error(&error))?;
-        Ok(Self { client, config })
+        let http = CancellableProviderHttp::new(config.timeout)?;
+        Ok(Self { http, config })
     }
 }
 
@@ -129,14 +127,14 @@ impl SttPort for DeepgramStt {
                 query.append_pair("language", locale);
             }
         }
-        let response = self
-            .client
-            .post(url)
-            .header(AUTHORIZATION, format!("Token {}", self.config.api_key))
-            .header(CONTENT_TYPE, "application/octet-stream")
-            .body(request.audio.pcm.clone())
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
+        let response = self.http.send(
+            self.http
+                .post(url)
+                .header(AUTHORIZATION, format!("Token {}", self.config.api_key))
+                .header(CONTENT_TYPE, "application/octet-stream")
+                .body(request.audio.pcm.clone()),
+            cancellation,
+        )?;
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
@@ -144,7 +142,8 @@ impl SttPort for DeepgramStt {
             return Err(map_status(response.status().as_u16()));
         }
         let body =
-            read_bounded_provider_body(response, MAX_PROVIDER_JSON_BODY_BYTES, Some(cancellation))?;
+            self.http
+                .read_bounded_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)?;
         let payload: DeepgramResponse =
             serde_json::from_slice(&body).map_err(|_| invalid_response())?;
         let alternative = payload
@@ -221,19 +220,6 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
         });
     }
     Ok(())
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        return ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        };
-    }
-    ProviderError {
-        kind: ProviderErrorKind::Unavailable,
-        retryable: true,
-    }
 }
 
 fn map_status(status: u16) -> ProviderError {
