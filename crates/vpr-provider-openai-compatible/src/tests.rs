@@ -490,12 +490,16 @@ fn cancellation_aborts_inflight_llm_sse_body_read() {
         )
         .unwrap();
     headers_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    let worker_probe = Arc::clone(&probe);
-    let worker = thread::spawn(move || stream.next_chunk(worker_probe.as_ref()));
-    thread::sleep(Duration::from_millis(40));
+    // The public pull-stream trait is deliberately !Send. Keep it on its
+    // owner thread while a separate thread revokes the shared probe.
+    let cancel_probe = Arc::clone(&probe);
+    let canceller = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(40));
+        cancel_probe.0.store(true, Ordering::SeqCst);
+    });
     let started = Instant::now();
-    probe.0.store(true, Ordering::SeqCst);
-    let error = worker.join().unwrap().unwrap_err();
+    let error = stream.next_chunk(probe.as_ref()).unwrap_err();
+    canceller.join().unwrap();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert!(
         started.elapsed() < Duration::from_millis(500),
