@@ -58,7 +58,10 @@ impl CancellableTcpWriter {
     /// # Errors
     /// Returns a socket I/O error if the adopted stream cannot be switched
     /// into blocking mode for deadline-bounded writes.
-    pub fn new(stream: TcpStream, max_duration: Duration) -> io::Result<(Self, TcpWriteRevocation)> {
+    pub fn new(
+        stream: TcpStream,
+        max_duration: Duration,
+    ) -> io::Result<(Self, TcpWriteRevocation)> {
         // A previously nonblocking socket would otherwise busy-spin on WouldBlock.
         stream.set_nonblocking(false)?;
         let connection = Arc::new(Connection {
@@ -176,7 +179,8 @@ mod tests {
     #[test]
     fn authorized_writer_delivers_bytes() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+        let (mut writer, cancel) =
+            CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
         writer.write_all_bounded(b"persona").unwrap();
         let mut data = [0; 7];
         client.read_exact(&mut data).unwrap();
@@ -187,7 +191,8 @@ mod tests {
     #[test]
     fn revoke_rejects_new_bytes_and_keeps_abort_permanent() {
         let (server, mut client) = loopback_pair();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+        let (mut writer, cancel) =
+            CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
         cancel.revoke();
         assert!(cancel.is_revoked());
         assert_eq!(
@@ -240,7 +245,8 @@ mod tests {
         let (server, _client) = loopback_pair();
         // Adopting an inherited nonblocking descriptor must not busy-spin.
         server.set_nonblocking(true).unwrap();
-        let (mut writer, cancel) = CancellableTcpWriter::new(server, Duration::from_secs(3)).unwrap();
+        let (mut writer, cancel) =
+            CancellableTcpWriter::new(server, Duration::from_secs(3)).unwrap();
         let send = thread::spawn(move || writer.write_all_bounded(&vec![17u8; 32 * 1024 * 1024]));
         thread::sleep(Duration::from_millis(25));
         cancel.revoke();
