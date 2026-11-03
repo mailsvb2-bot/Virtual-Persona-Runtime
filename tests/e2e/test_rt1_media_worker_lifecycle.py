@@ -51,6 +51,38 @@ class LifecycleTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_expired_create_without_durable_cancel_still_stops_late_sender(self):
+        # Simulate an unavailable SQLite CANCEL write after the HTTP deadline.
+        # The in-process CREATE must never commit active and orphan a sender,
+        # even when the durable tombstone could not be written immediately.
+        # This is a controlled backend, NOT evidence of real D-ID RTP STOP.
+        self.sender.wait_on_create = True
+        try:
+            with patch.object(
+                self.worker,
+                "cancel_bounded",
+                side_effect=RuntimeError("ledger temporarily unavailable"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "cancellation persistence unavailable"
+                ):
+                    self.worker.create_bounded("deadline-ledger-error", 1, 0.03)
+        finally:
+            self.sender.release.set()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            phase = self.worker.status("deadline-ledger-error")
+            if phase is not None and phase[1] == "stopped":
+                break
+            time.sleep(0.01)
+        self.assertEqual(
+            self.worker.status("deadline-ledger-error"),
+            (1, "stopped", "session-a"),
+        )
+        self.assertEqual(self.sender.stopped, 1)
+        # A failed CANCEL write cannot grant a new active sender.
+        self.assertEqual(self.worker.create("replacement", 1), "session-a")
+
     def test_idempotent_create_and_strict_stop(self):
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
