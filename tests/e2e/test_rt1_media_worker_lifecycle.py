@@ -217,6 +217,22 @@ class LifecycleTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail("bounded compensating STOP did not complete")
 
+    def test_deadline_after_create_commit_compensates_when_cancel_write_fails(self):
+        # CREATE committed 'active' just before its reply was lost. Even if
+        # CANCEL persistence fails, the known sender must be STOPped rather
+        # than silently remaining active behind a deadline error.
+        with patch.object(
+            self.worker,
+            "cancel_bounded",
+            side_effect=RuntimeError("ledger temporarily unavailable"),
+        ):
+            self._expire_create_reply_after_commit("deadline-committed-ledger-error")
+        self.assertEqual(
+            self.worker.status("deadline-committed-ledger-error"),
+            (1, "stopped", "session-a"),
+        )
+        self.assertEqual(self.sender.stopped, 1)
+
     def test_create_deadline_race_stops_already_committed_remote_sender(self):
         self._expire_create_reply_after_commit("deadline-race")
         self._wait_for_stop_completion("deadline-race")
