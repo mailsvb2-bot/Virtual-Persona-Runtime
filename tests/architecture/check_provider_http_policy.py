@@ -4,7 +4,9 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = ROOT / "crates" / "vpr-integration" / "src" / "provider_http.rs"
 
-policy = POLICY.read_text(encoding="utf-8")
+policy = POLICY.read_text(encoding="utf-8") + (
+    ROOT / "crates" / "vpr-integration" / "src" / "provider_http_async.rs"
+).read_text(encoding="utf-8")
 for required in (
     "build_provider_http_client",
     "build_provider_async_http_client",
