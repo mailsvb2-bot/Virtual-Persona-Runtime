@@ -431,13 +431,15 @@ mod tests {
             "old-deepgram".into(),
             "deepseek-secret".into(),
         );
-        profile.set_tts(StoredTtsCredential {
-            provider: "piper".into(),
-            endpoint: "http://127.0.0.1:8000".into(),
-            api_key: "local-token".into(),
-            model: "ru_RU".into(),
-            voice: "female".into(),
-        }).unwrap();
+        profile
+            .set_tts(StoredTtsCredential {
+                provider: "piper".into(),
+                endpoint: "http://127.0.0.1:8000".into(),
+                api_key: "local-token".into(),
+                model: "ru_RU".into(),
+                voice: "female".into(),
+            })
+            .unwrap();
         let mut expected = profile.clone();
         expected.stt_api_key = "new-deepgram".into();
         profile.replace_stt_key("new-deepgram".into()).unwrap();
