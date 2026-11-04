@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -102,6 +103,35 @@ class BoundedCreateTests(unittest.TestCase):
         self.lifecycle.reconcile()
         self.assertEqual(self.lifecycle.status("bounded")[1], "stopped")
         self.assertEqual(self.backend.stops, 1)
+
+    def test_failed_cancel_persistence_never_waits_for_hung_compensating_stop(self):
+        # Force the exact lost-CANCEL/known-active fallback without assuming
+        # a real provider will honor a STOP timeout. This is a hermetic race.
+        self.backend.release.set()
+        self.lifecycle.create("bounded", 1)
+        stop_entered = threading.Event()
+        stop_release = threading.Event()
+        original_stop = self.backend.stop
+
+        def blocked_stop(*args):
+            stop_entered.set()
+            stop_release.wait(2)
+            return original_stop(*args)
+
+        try:
+            with patch.object(self.lifecycle, "cancel_bounded", side_effect=OSError("disk unavailable")), \
+                 patch.object(self.lifecycle, "status", return_value=(1, "active", "real-late-id")), \
+                 patch.object(self.backend, "stop", side_effect=blocked_stop):
+                # The worker can be delayed beyond the HTTP deadline.
+                # The error must not claim a verified remote STOP.
+                with patch.object(self.lifecycle, "create", side_effect=lambda *_: time.sleep(0.2)):
+                    started = time.monotonic()
+                    with self.assertRaisesRegex(RuntimeError, "remote STOP unconfirmed"):
+                        self.lifecycle.create_bounded("bounded", 1, 0.02)
+                    self.assertLess(time.monotonic() - started, 0.15)
+                self.assertTrue(stop_entered.wait(1))
+        finally:
+            stop_release.set()
 
     def test_invalid_deadline_never_dispatches_provider(self):
         for timeout in (0, -1, 61):
