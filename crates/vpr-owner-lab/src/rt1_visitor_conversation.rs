@@ -11,7 +11,7 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
     OwnerLabTurnInput,
 };
 
@@ -416,7 +416,7 @@ impl Rt1VisitorConversation {
 
     /// # Errors
     /// Denies RT1 visitor provider text dispatch until #319 is proven.
-    pub fn text_turn(&self, _text: &str) -> Result<crate::state::LabTextResult, String> {
+    pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
         // The local WebRTC diagnostic worker has no voice/LLM authority.
         // Reusing RT0 provider dispatch without a proven revocation fence
         // would allow an untracked LLM request after owner pause.
