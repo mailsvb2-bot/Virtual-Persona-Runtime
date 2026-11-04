@@ -7,8 +7,7 @@ use std::io::{self, Write};
 use vpr_integration::ProviderErrorKind;
 #[cfg(windows)]
 use vpr_owner_lab::{
-    ProviderCredentialProfile, StoredTtsCredential, load_provider_profile,
-    save_provider_profile,
+    ProviderCredentialProfile, StoredTtsCredential, load_provider_profile, save_provider_profile,
 };
 #[cfg(windows)]
 use vpr_provider_did_agent_streams::{
