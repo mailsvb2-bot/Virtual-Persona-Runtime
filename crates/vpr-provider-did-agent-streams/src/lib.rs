@@ -545,9 +545,13 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
                     return Ok(());
                 }
-                // D-ID V2 LiveKit sessions have no explicit delete endpoint. The browser disconnects
-                // from the room and D-ID closes the unused session after its inactivity timeout.
-                Ok(())
+                // D-ID V2 LiveKit does not provide an authenticated remote
+                // video STOP receipt here. Browser disconnect and inactivity
+                // timeout are not provider-side termination evidence.
+                Err(ProviderError {
+                    kind: ProviderErrorKind::Unavailable,
+                    retryable: false,
+                })
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
