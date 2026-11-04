@@ -135,6 +135,26 @@ impl ProviderCredentialProfile {
         self.validate()
     }
 
+    /// Replace only the Deepgram credential without changing avatar, LLM or TTS.
+    /// The change is atomic in memory: a rejected key never modifies the profile.
+    ///
+    /// # Errors
+    /// Rejects unsupported STT providers and malformed keys.
+    pub fn replace_stt_key(&mut self, api_key: String) -> Result<(), String> {
+        if self.stt_provider != "deepgram"
+            || api_key.is_empty()
+            || api_key.trim() != api_key
+            || api_key.chars().any(char::is_control)
+        {
+            return Err("unsupported STT provider or invalid Deepgram key".into());
+        }
+        let mut updated = self.clone();
+        updated.stt_api_key = api_key;
+        updated.validate()?;
+        *self = updated;
+        Ok(())
+    }
+
     /// Atomically replace the active LLM route while retaining avatar, STT, and TTS.
     ///
     /// # Errors
@@ -365,6 +385,65 @@ mod tests {
         assert_eq!(profile.llm_model, "deepseek-flash");
         assert!(!profile.did_fluent);
         assert!(profile.validate().is_ok());
+    }
+
+    #[test]
+    fn replacing_only_stt_key_preserves_avatar_llm_and_tts() {
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "did-secret",
+            "did-agent",
+            "old-deepgram".into(),
+            "deepseek-secret".into(),
+        );
+        let before = profile.clone();
+        profile.replace_stt_key("new-deepgram".into()).unwrap();
+        assert_eq!(profile.stt_api_key, "new-deepgram");
+        let mut expected = before;
+        expected.stt_api_key = "new-deepgram".into();
+        assert!(profile == expected);
+    }
+
+    #[test]
+    fn invalid_stt_replacement_is_atomic_and_cannot_change_provider() {
+        let mut profile = ProviderCredentialProfile::canonical_rt0(
+            "did-secret",
+            "did-agent",
+            "deepgram-secret".into(),
+            "deepseek-secret".into(),
+        );
+        for invalid in ["", " leading", "trailing ", "line\nfeed", "nul\0byte"] {
+            let before = profile.clone();
+            assert!(profile.replace_stt_key(invalid.into()).is_err());
+            assert!(profile == before);
+        }
+        profile.stt_provider = "unsupported".into();
+        let before = profile.clone();
+        assert!(profile.replace_stt_key("new-key".into()).is_err());
+        assert!(profile == before);
+    }
+
+    #[test]
+    fn stt_replacement_preserves_local_avatar_and_optional_tts() {
+        use super::StoredTtsCredential;
+        let mut profile = ProviderCredentialProfile::local_rt0(
+            "https://avatar.example.test",
+            "local-secret",
+            "old-deepgram".into(),
+            "deepseek-secret".into(),
+        );
+        profile
+            .set_tts(StoredTtsCredential {
+                provider: "piper".into(),
+                endpoint: "http://127.0.0.1:8000".into(),
+                api_key: "local-token".into(),
+                model: "ru_RU".into(),
+                voice: "female".into(),
+            })
+            .unwrap();
+        let mut expected = profile.clone();
+        expected.stt_api_key = "new-deepgram".into();
+        profile.replace_stt_key("new-deepgram".into()).unwrap();
+        assert!(profile == expected);
     }
 
     #[test]
