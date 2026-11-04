@@ -13,8 +13,8 @@ mod rt1_visitor_session_manager;
 mod rt1_workspace;
 mod rt1_workspace_service;
 mod state;
-mod voice_profile;
 mod voice_diagnostic;
+mod voice_profile;
 #[cfg(windows)]
 mod windows_secure_store;
 
@@ -57,8 +57,8 @@ pub use state::{
 };
 
 pub use providers::{ProviderBundle, ProviderDescriptor};
-pub use voice_profile::{VoiceProfile, VoiceProfileStatus};
 pub use voice_diagnostic::event as voice_trace_event;
+pub use voice_profile::{VoiceProfile, VoiceProfileStatus};
 
 #[cfg(all(test, windows))]
 mod windows_restart_script_tests {
