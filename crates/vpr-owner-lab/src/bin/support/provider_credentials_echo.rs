@@ -152,11 +152,35 @@ mod tests {
     fn launch_authorizes_both_canonical_and_existing_legacy_private_echo_routes() {
         let cases = [
             (DidProbePurpose::LaunchReadiness, true, false, None, false),
-            (DidProbePurpose::LaunchReadiness, false, true, Some("true"), false),
+            (
+                DidProbePurpose::LaunchReadiness,
+                false,
+                true,
+                Some("true"),
+                false,
+            ),
             (DidProbePurpose::LaunchReadiness, false, true, None, true),
-            (DidProbePurpose::LaunchReadiness, true, false, Some("false"), true),
-            (DidProbePurpose::LaunchReadiness, false, false, Some("true"), true),
-            (DidProbePurpose::CredentialSetup, false, false, Some("false"), false),
+            (
+                DidProbePurpose::LaunchReadiness,
+                true,
+                false,
+                Some("false"),
+                true,
+            ),
+            (
+                DidProbePurpose::LaunchReadiness,
+                false,
+                false,
+                Some("true"),
+                true,
+            ),
+            (
+                DidProbePurpose::CredentialSetup,
+                false,
+                false,
+                Some("false"),
+                false,
+            ),
         ];
         for (purpose, canonical, legacy, explicit, denied) in cases {
             assert_eq!(
