@@ -251,6 +251,7 @@ impl OwnerLabEngine {
         let pre_llm_millis = elapsed_millis(total_started);
         let llm = self.llm.as_ref().ok_or(LabError::InvalidState)?;
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
+        crate::voice_diagnostic::record("llm_generation", "started");
         let generation = self.streaming_generation(
             &turn,
             llm.as_ref(),
@@ -259,6 +260,7 @@ impl OwnerLabEngine {
             evidence_turn_sequence,
             &mut emit_segment,
         )?;
+        crate::voice_diagnostic::record("llm_generation", "completed");
         let evidence_output_sequence = generation
             .output_sequences
             .first()
