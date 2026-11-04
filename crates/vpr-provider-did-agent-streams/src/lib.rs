@@ -548,10 +548,7 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
                 // D-ID V2 LiveKit does not provide an authenticated remote
                 // video STOP receipt here. Browser disconnect and inactivity
                 // timeout are not provider-side termination evidence.
-                Err(ProviderError {
-                    kind: ProviderErrorKind::Unavailable,
-                    retryable: false,
-                })
+                Err(unavailable())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
