@@ -227,6 +227,10 @@ class LifecycleTests(unittest.TestCase):
             side_effect=RuntimeError("ledger temporarily unavailable"),
         ):
             self._expire_create_reply_after_commit("deadline-committed-ledger-error")
+        # Compensation is deliberately asynchronous: the HTTP deadline must
+        # not wait for a hung remote STOP. Await its durable receipt instead
+        # of racing the background worker immediately after the deadline.
+        self._wait_for_stop_completion("deadline-committed-ledger-error")
         self.assertEqual(
             self.worker.status("deadline-committed-ledger-error"),
             (1, "stopped", "session-a"),
