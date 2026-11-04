@@ -38,8 +38,13 @@ fn legacy_private_echo_route_ready() -> bool {
         "VPR_DID_ECHO_TTS_MODEL",
         "VPR_DID_ECHO_TTS_VOICE",
     ];
-    let [Some(python), Some(endpoint), Some(api_key), Some(model), Some(voice)] =
-        values.map(|name| env::var(name).ok())
+    let [
+        Some(python),
+        Some(endpoint),
+        Some(api_key),
+        Some(model),
+        Some(voice),
+    ] = values.map(|name| env::var(name).ok())
     else {
         return false;
     };
@@ -53,11 +58,11 @@ fn launch_echo_denied(
     legacy_ready: bool,
     explicit_enabled: Option<&str>,
 ) -> bool {
-    if purpose == DidProbePurpose::CredentialSetup || !presenter.eq_ignore_ascii_case("expressive") {
+    if purpose == DidProbePurpose::CredentialSetup || !presenter.eq_ignore_ascii_case("expressive")
+    {
         return false;
     }
-    let echo_enabled = explicit_enabled
-        .or(if canonical_ready { Some("true") } else { None });
+    let echo_enabled = explicit_enabled.or(if canonical_ready { Some("true") } else { None });
     !(canonical_ready || legacy_ready) || expressive_echo_preflight_denied(presenter, echo_enabled)
 }
 
@@ -145,12 +150,20 @@ mod tests {
 
     #[test]
     fn launch_authorizes_both_canonical_and_existing_legacy_private_echo_routes() {
-        assert!(!launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, true, false, None));
-        assert!(!launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, true, Some("true")));
-        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, true, None));
-        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, true, false, Some("false")));
-        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, false, Some("true")));
-        assert!(!launch_echo_denied("expressive", DidProbePurpose::CredentialSetup, false, false, Some("false")));
+        let cases = [
+            (DidProbePurpose::LaunchReadiness, true, false, None, false),
+            (DidProbePurpose::LaunchReadiness, false, true, Some("true"), false),
+            (DidProbePurpose::LaunchReadiness, false, true, None, true),
+            (DidProbePurpose::LaunchReadiness, true, false, Some("false"), true),
+            (DidProbePurpose::LaunchReadiness, false, false, Some("true"), true),
+            (DidProbePurpose::CredentialSetup, false, false, Some("false"), false),
+        ];
+        for (purpose, canonical, legacy, explicit, denied) in cases {
+            assert_eq!(
+                launch_echo_denied("expressive", purpose, canonical, legacy, explicit),
+                denied
+            );
+        }
     }
 
     #[test]
