@@ -46,3 +46,30 @@ pub(super) fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
     }
     Ok(())
 }
+
+/** Preserve the exact worker OFFER signaling and ICE credentials without
+ * introducing a second signaling path or advertising voice capabilities. */
+pub(super) fn diagnostic_signal_bundle(
+    offer: vpr_provider_local_open_source::operation_client::RemoteOffer,
+) -> crate::state::LabSignalBundle {
+    crate::state::LabSignalBundle {
+        evidence_session_sequence: 1,
+        transport: crate::state::LabRealtimeTransport::WebRtc {
+            offer: crate::state::LabSessionDescription {
+                kind: offer.kind,
+                sdp: offer.sdp,
+            },
+            ice_servers: offer
+                .ice_servers
+                .into_iter()
+                .map(|server| crate::state::LabIceServer {
+                    urls: server.urls,
+                    username: server.username,
+                    credential: server.credential,
+                })
+                .collect(),
+        },
+        capabilities: Vec::new(),
+        client_control: None,
+    }
+}
