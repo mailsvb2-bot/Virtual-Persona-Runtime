@@ -217,7 +217,7 @@ impl AuthorizationController {
                     Arc::clone(context.clock),
                     authorization_state.authorization.expires_at_millis(),
                 ),
-                _active: None,
+                active_egress: None,
             }),
             EgressDecision::LocalOnly(_) => Err(RuntimeDenyReason::LocalOnlyRequired),
             EgressDecision::Deny(EgressReason::ConsentRequired) => {

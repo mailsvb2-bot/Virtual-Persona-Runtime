@@ -12,7 +12,8 @@ pub(crate) struct ProviderExecutionPermit {
     pub(crate) cancellation: ProviderCancellation,
     // Owns the lifetime of one canonical provider dispatch, including streams.
     // Drop means local I/O returned; it is not a remote audio/video STOP receipt.
-    pub(crate) _active: Option<ProviderEgressGuard>,
+    #[allow(dead_code)] // Held for its Drop side effect, never read as a value.
+    pub(crate) active_egress: Option<ProviderEgressGuard>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
