@@ -3,6 +3,7 @@
 //! The actual launch/probe remains fail-closed without private Echo.
 use std::env;
 use vpr_owner_lab::{ProviderCredentialProfile, StoredTtsCredential};
+use vpr_provider_did_agent_streams::EchoPythonConfig;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DidProbePurpose {
@@ -27,6 +28,40 @@ fn private_voice_route_ready(profile: &ProviderCredentialProfile) -> bool {
     stored_voice_route_ready(profile.tts.as_ref()) || env_ready
 }
 
+fn legacy_private_echo_route_ready() -> bool {
+    // Kept for the existing server-owned EchoPythonConfig::new path. Do not
+    // conflate this legacy backend with canonical PCM-only TTS synthesis.
+    let values = [
+        "VPR_DID_ECHO_PYTHON",
+        "VPR_DID_ECHO_TTS_ENDPOINT",
+        "VPR_DID_ECHO_TTS_API_KEY",
+        "VPR_DID_ECHO_TTS_MODEL",
+        "VPR_DID_ECHO_TTS_VOICE",
+    ];
+    let Some([python, endpoint, api_key, model, voice]) =
+        values.map(|name| env::var(name).ok()).into_iter().collect::<Option<Vec<_>>>()
+            .and_then(|values| values.try_into().ok())
+    else {
+        return false;
+    };
+    EchoPythonConfig::new(python, endpoint, api_key, model, voice).is_ok()
+}
+
+fn launch_echo_denied(
+    presenter: &str,
+    purpose: DidProbePurpose,
+    canonical_ready: bool,
+    legacy_ready: bool,
+    explicit_enabled: Option<&str>,
+) -> bool {
+    if purpose == DidProbePurpose::CredentialSetup || !presenter.eq_ignore_ascii_case("expressive") {
+        return false;
+    }
+    let echo_enabled = explicit_enabled
+        .or(if canonical_ready { Some("true") } else { None });
+    !(canonical_ready || legacy_ready) || expressive_echo_preflight_denied(presenter, echo_enabled)
+}
+
 fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
     presenter.eq_ignore_ascii_case("expressive")
         && !echo_enabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
@@ -37,20 +72,16 @@ pub(super) fn echo_preflight_denied(
     presenter: &str,
     purpose: DidProbePurpose,
 ) -> bool {
-    if purpose == DidProbePurpose::CredentialSetup {
-        return false;
-    }
-    if !presenter.eq_ignore_ascii_case("expressive") {
-        return false;
-    }
-    let route_ready = private_voice_route_ready(profile);
-    // An explicit disable always wins, and a naked enabled flag must not
-    // substitute for a usable private TTS route.
-    let explicit = env::var("VPR_DID_ECHO_ENABLED").ok();
-    let echo = explicit
-        .as_deref()
-        .or(if route_ready { Some("true") } else { None });
-    !route_ready || expressive_echo_preflight_denied(presenter, echo)
+    let canonical_ready = private_voice_route_ready(profile);
+    let legacy_ready = legacy_private_echo_route_ready();
+    let override_value = env::var("VPR_DID_ECHO_ENABLED").ok();
+    launch_echo_denied(
+        presenter,
+        purpose,
+        canonical_ready,
+        legacy_ready,
+        override_value.as_deref(),
+    )
 }
 
 #[cfg(test)]
@@ -111,6 +142,16 @@ mod tests {
             "legacy",
             DidProbePurpose::LaunchReadiness
         ));
+    }
+
+    #[test]
+    fn launch_authorizes_both_canonical_and_existing_legacy_private_echo_routes() {
+        assert!(!launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, true, false, None));
+        assert!(!launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, true, Some("true")));
+        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, true, None));
+        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, true, false, Some("false")));
+        assert!(launch_echo_denied("expressive", DidProbePurpose::LaunchReadiness, false, false, Some("true")));
+        assert!(!launch_echo_denied("expressive", DidProbePurpose::CredentialSetup, false, false, Some("false")));
     }
 
     #[test]
