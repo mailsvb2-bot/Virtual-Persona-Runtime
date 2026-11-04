@@ -38,9 +38,8 @@ fn legacy_private_echo_route_ready() -> bool {
         "VPR_DID_ECHO_TTS_MODEL",
         "VPR_DID_ECHO_TTS_VOICE",
     ];
-    let Some([python, endpoint, api_key, model, voice]) =
-        values.map(|name| env::var(name).ok()).into_iter().collect::<Option<Vec<_>>>()
-            .and_then(|values| values.try_into().ok())
+    let [Some(python), Some(endpoint), Some(api_key), Some(model), Some(voice)] =
+        values.map(|name| env::var(name).ok())
     else {
         return false;
     };
