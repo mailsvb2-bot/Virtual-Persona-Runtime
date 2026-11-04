@@ -321,50 +321,69 @@ impl Rt1VisitorConversation {
     /// # Errors
     /// A revoked publication or failed remote SDP operation is denied.
     pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
-        self.manager.authorize(&self.id)?;
+        // Registration linearizes with the durable owner publication transaction.
+        // Provider I/O starts only after the transaction releases its lock.
+        let _egress = self.manager.begin_provider_egress(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        if let Some(remote) = &self.remote {
-            remote.submit_answer(sdp)?;
+        let result = if let Some(remote) = &self.remote {
+            // The durable worker serializes SDP with its authenticated STOP gate.
+            remote.submit_answer(sdp)
         } else {
-            self.engine
-                .lock()
-                .apply(OwnerLabTurnInput::Answer(
-                    vpr_integration::WebRtcSessionDescription {
-                        kind: "answer".into(),
-                        sdp: sdp.to_owned(),
-                    },
-                ))
-                .map_err(|error| error.code().to_owned())?;
-        }
+            self.apply_visitor_signaling(OwnerLabTurnInput::Answer(
+                vpr_integration::WebRtcSessionDescription {
+                    kind: "answer".into(),
+                    sdp: sdp.to_owned(),
+                },
+            ))
+        };
+        // Even a provider error cannot bypass revoke and retain stale success.
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        Ok(())
+        result
     }
 
-    /// Forward ICE exclusively through the existing avatar provider and
-    /// the admitted visitor's canonical runtime turn. Diagnostic worker
-    /// sessions do not expose this separate signaling channel.
+    /// Forward ICE exclusively through a cancellation-registered canonical
+    /// provider turn. Diagnostic worker sessions deny separate ICE egress.
     ///
     /// # Errors
-    /// Rejects revoked authority, diagnostic sessions and provider failure.
+    /// Rejects stale authority, diagnostic ICE and provider failures.
     pub fn submit_ice(&self, candidate: vpr_integration::WebRtcIceCandidate) -> Result<(), String> {
-        self.manager.authorize(&self.id)?;
-        if self.interrupt.cancelled.load(Ordering::Acquire) || self.remote.is_some() {
+        if self.remote.is_some() {
             return Err("RT1_VISITOR_ICE_DENIED".into());
         }
-        self.engine
-            .lock()
-            .apply(OwnerLabTurnInput::Ice(candidate))
-            .map_err(|error| error.code().to_owned())?;
+        let _egress = self.manager.begin_provider_egress(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        let result = self.apply_visitor_signaling(OwnerLabTurnInput::Ice(candidate));
         self.manager.authorize(&self.id)?;
         if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_REVOKED".into());
         }
-        Ok(())
+        result
+    }
+
+    /// Register the canonical turn before provider signaling, without a second
+    /// engine or independent authority. Revoke can interrupt this turn while
+    /// another thread holds the conversation engine mutex.
+    fn apply_visitor_signaling(&self, input: OwnerLabTurnInput) -> Result<(), String> {
+        let callback = Arc::clone(&self.interrupt);
+        let result = self
+            .engine
+            .lock()
+            .apply_with_interrupt(input, move |handle| {
+                *callback.turn.lock() = Some(handle.clone());
+                if callback.cancelled.load(Ordering::Acquire) {
+                    let _ = handle.interrupt();
+                }
+            })
+            .map_err(|error| error.code().to_owned());
+        *self.interrupt.turn.lock() = None;
+        result
     }
 
     /// Stage a bounded local fragment under canonical publication authority.

@@ -357,6 +357,20 @@ impl OwnerLabEngine {
     /// # Errors
     /// Returns a stable fail-closed reason if session/authority/provider state is not current.
     pub fn apply(&mut self, input: OwnerLabTurnInput) -> Result<(), LabError> {
+        self.apply_with_interrupt(input, |_| {})
+    }
+
+    /// Dispatch visitor-scoped signaling through the existing canonical runtime
+    /// turn while registering its cancellation capability BEFORE provider I/O.
+    /// The owner revoke callback can reach this handle without the engine lock.
+    ///
+    /// # Errors
+    /// Denies stale sessions and returns canonical provider failures.
+    pub fn apply_with_interrupt(
+        &mut self,
+        input: OwnerLabTurnInput,
+        register_interrupt: impl FnOnce(TurnInterruptHandle),
+    ) -> Result<(), LabError> {
         if self.session_audience == Some(LabSessionAudience::Visitor)
             && matches!(
                 input,
@@ -366,6 +380,7 @@ impl OwnerLabEngine {
             return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
         }
         let turn = self.new_turn()?;
+        register_interrupt(turn.interrupt_handle());
         let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
         match input {
             OwnerLabTurnInput::Answer(answer) => {
