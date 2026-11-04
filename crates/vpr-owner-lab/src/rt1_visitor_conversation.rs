@@ -11,18 +11,18 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput,
+    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
 };
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
-#[path = "rt1_visitor_voice_stream_staging.rs"]
-mod voice_stream_staging;
 #[path = "rt1_visitor_text_egress.rs"]
 mod text_egress;
+#[path = "rt1_visitor_voice_stream_staging.rs"]
+mod voice_stream_staging;
 use helpers::{
     diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
     revoked_diagnostic_offer_error, validate_microphone_audio,
