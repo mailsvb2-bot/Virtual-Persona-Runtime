@@ -400,7 +400,7 @@ mod tests {
         assert_eq!(profile.stt_api_key, "new-deepgram");
         let mut expected = before;
         expected.stt_api_key = "new-deepgram".into();
-        assert_eq!(profile, expected);
+        assert!(profile == expected);
     }
 
     #[test]
@@ -414,12 +414,12 @@ mod tests {
         for invalid in ["", " leading", "trailing ", "line\nfeed", "nul\0byte"] {
             let before = profile.clone();
             assert!(profile.replace_stt_key(invalid.into()).is_err());
-            assert_eq!(profile, before);
+            assert!(profile == before);
         }
         profile.stt_provider = "unsupported".into();
         let before = profile.clone();
         assert!(profile.replace_stt_key("new-key".into()).is_err());
-        assert_eq!(profile, before);
+        assert!(profile == before);
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         let mut expected = profile.clone();
         expected.stt_api_key = "new-deepgram".into();
         profile.replace_stt_key("new-deepgram".into()).unwrap();
-        assert_eq!(profile, expected);
+        assert!(profile == expected);
     }
 
     #[test]
