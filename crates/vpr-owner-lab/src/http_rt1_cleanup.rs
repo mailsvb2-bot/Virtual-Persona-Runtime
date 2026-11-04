@@ -46,7 +46,7 @@ impl Rt1HttpState {
 
 /// A single bounded cleanup worker for the lifetime of the local owner lab.
 /// Unknown STOP outcomes retain their retry handles and cannot claim success.
-pub(super) fn spawn_cleanup_reconciler(state: &Arc<AppState>) {
+pub(crate) fn spawn_cleanup_reconciler(state: &Arc<AppState>) {
     let state = Arc::downgrade(state);
     std::thread::spawn(move || {
         loop {
