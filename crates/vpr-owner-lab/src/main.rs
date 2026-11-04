@@ -191,6 +191,9 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
     let address = format!("127.0.0.1:{port}");
     let server = Arc::new(Server::http(&address)?);
     println!("VPR Owner Lab: http://{address}");
+    if http_rt1::enabled() {
+        http_rt1::spawn_cleanup_reconciler(&state);
+    }
     if !egress_enabled {
         println!("External provider egress is disabled until VPR_OWNER_LAB_ALLOW_EGRESS=true");
     }

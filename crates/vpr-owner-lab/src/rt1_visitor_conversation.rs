@@ -186,6 +186,7 @@ impl Rt1VisitorConversation {
         visitor_token: String,
         engine: OwnerLabEngine,
         consent: bool,
+        register_cleanup: impl FnOnce(Arc<Rt1RemoteMediaRevocation>) -> Result<(), String>,
     ) -> Result<(Self, LabSignalBundle), String> {
         if !consent {
             return Err("CONSENT_REQUIRED".into());
@@ -225,6 +226,14 @@ impl Rt1VisitorConversation {
 
         let admitted = manager.authorize_persona(&id, &persona_id, persona_version);
         if let Err(error) = admitted {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
+
+        // Register the operation with the HTTP-owned cleanup reconciler BEFORE
+        // remote CREATE. A failed OFFER or unreachable STOP must not lose its
+        // last retry handle when the visitor never received a session ID.
+        if let Err(error) = register_cleanup(Arc::clone(&remote)) {
             let _ = manager.close(&id);
             return Err(error);
         }

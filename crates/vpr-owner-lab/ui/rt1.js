@@ -16,6 +16,7 @@
   let voiceEnabled = false;
   let voiceInFlight = false;
   let textInFlight = false;
+  let textController = null;
   let microphonePending = false;
   let microphoneRequest = 0;
   let voiceRequestEpoch = 0;
@@ -25,7 +26,7 @@
     status.dataset.error = String(problem);
   }
 
-  async function api(path, data) {
+  async function api(path, data, signal) {
     if (!csrf) {
       const boot = await fetch("/api/bootstrap", { cache: "no-store" });
       if (!boot.ok) throw new Error("Не удалось получить защиту сессии.");
@@ -37,7 +38,8 @@
       cache: "no-store",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrf },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
+      signal
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.code || "Ошибка сервера");
@@ -87,6 +89,7 @@
   }));
 
   async function ownerRevoke(path) {
+    if (textController) textController.abort();
     await api(path, { owner_token: ownerToken() });
     message("Публикация отозвана. Удалённая остановка должна подтверждаться отдельно.");
   }
@@ -313,7 +316,12 @@
   }
 
   el("interrupt").addEventListener("click", () => busy(async () => {
-    if (!sessionId || stopping || !voiceEnabled) return;
+    if (!sessionId || stopping || (!voiceEnabled && !textInFlight)) return;
+    if (textController) textController.abort();
+    if (!voiceEnabled) {
+      message("Текстовый запрос прерван.");
+      return;
+    }
     const id = sessionId;
     voiceRequestEpoch += 1;
     disconnectMicrophone();
@@ -335,26 +343,35 @@
     else void beginMicrophone().catch((error) => message(String(error.message || error), true));
   });
 
-  el("send-text").addEventListener("click", () => busy(async () => {
+  el("send-text").addEventListener("click", async () => {
     if (!sessionId || stopping || textInFlight) return;
     const text = el("visitor-text").value.trim();
     if (!text || text.length > 8192) throw new Error("Введите вопрос до 8192 символов.");
     const id = sessionId;
     textInFlight = true;
+    const controller = new AbortController();
+    textController = controller;
+    const timeout = setTimeout(() => controller.abort(), 20000);
     el("send-text").disabled = true;
+    el("interrupt").disabled = !sessionId || stopping || microphonePending;
     try {
-      const result = await api("/api/rt1/visitor/text", { session_id: id, text });
+      const result = await api("/api/rt1/visitor/text", { session_id: id, text }, controller.signal);
       if (sessionId !== id || stopping) return;
       el("speech-result").textContent = "Вы: " + text + " · Persona: " + result.reply;
       el("visitor-text").value = "";
       message("Persona ответила на текстовый вопрос.");
     } catch (error) {
-      if (sessionId === id && !stopping) throw error;
+      if (sessionId === id && !stopping) {
+        message(error.name === "AbortError" ? "Текстовый запрос прерван." : String(error.message || error), error.name !== "AbortError");
+      }
     } finally {
+      clearTimeout(timeout);
+      if (textController === controller) textController = null;
       textInFlight = false;
       el("send-text").disabled = !sessionId || stopping;
+      el("interrupt").disabled = !sessionId || stopping || !voiceEnabled || microphonePending;
     }
-  }));
+  });
 
   function cleanupLocal() {
     // Invalidate pending browser permission prompts even if STOP is unconfirmed.
@@ -385,6 +402,7 @@
 
   async function leave() {
     if (!sessionId || stopping) return;
+    if (textController) textController.abort();
     stopping = true;
     // A failed remote STOP must remain retryable, but cannot authorize new speech.
     voiceEnabled = false;
