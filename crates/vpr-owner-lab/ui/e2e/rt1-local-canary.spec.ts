@@ -5,6 +5,15 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
   const visitorContext = await browser.newContext();
   const owner = await ownerContext.newPage();
   const visitor = await visitorContext.newPage();
+  // Observe the actual receiving RTCPeerConnection without mocking the
+  // constructor, tracks, receiver, signaling, or underlying RTP transport.
+  await visitor.addInitScript(() => {
+    const original = RTCPeerConnection.prototype.setRemoteDescription;
+    RTCPeerConnection.prototype.setRemoteDescription = function (description) {
+      (window as Window & { __rt1ReceivingPeer?: RTCPeerConnection }).__rt1ReceivingPeer = this;
+      return original.call(this, description);
+    };
+  });
   let visitorSessionId: string | undefined;
   let originalAnswerSdp: string | undefined;
   visitor.on("request", (request) => {
@@ -98,6 +107,21 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     });
     expect(streams.videoTracks).toBeGreaterThan(0);
     expect(streams.audioTracks).toBeGreaterThan(0);
+
+    // Negotiated audio tracks are insufficient: require actual Chromium
+    // inbound RTP audio packets from the live aiortc sender before STOP.
+    await expect.poll(async () => visitor.evaluate(async () => {
+      const receivingPeer = (window as Window & { __rt1ReceivingPeer?: RTCPeerConnection }).__rt1ReceivingPeer;
+      if (!receivingPeer) return 0;
+      const stats = await receivingPeer.getStats();
+      let packets = 0;
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp" && report.kind === "audio") {
+          packets += Number(report.packetsReceived ?? 0);
+        }
+      });
+      return packets;
+    }), { timeout: 30_000, message: "Chromium must receive actual inbound audio RTP packets" }).toBeGreaterThan(0);
 
     await owner.locator("#pause").click();
     await expect(owner.locator("#status")).toContainText("Публикация отозвана");
