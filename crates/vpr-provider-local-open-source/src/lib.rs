@@ -1,3 +1,5 @@
+pub mod operation_client;
+
 use std::time::Duration;
 
 use reqwest::blocking::{Client, RequestBuilder, Response};
