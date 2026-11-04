@@ -9,6 +9,7 @@ RT1_SPEC = ROOT / "docs" / "releases" / "RT1_RELEASE_SPEC.md"
 POLICY = ROOT / "crates" / "vpr-policy" / "src" / "lib.rs"
 DOMAIN_IDS = ROOT / "crates" / "vpr-domain" / "src" / "ids.rs"
 OWNER_LAB_STATE = ROOT / "crates" / "vpr-owner-lab" / "src" / "state.rs"
+OWNER_LAB_SIGNALING = ROOT / "crates" / "vpr-owner-lab" / "src" / "state" / "signaling.rs"
 PUBLICATION = ROOT / "contracts" / "rt1-publication-boundary-0.1.json"
 
 contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
@@ -16,6 +17,9 @@ spec = RT1_SPEC.read_text(encoding="utf-8")
 policy = POLICY.read_text(encoding="utf-8")
 domain_ids = DOMAIN_IDS.read_text(encoding="utf-8")
 owner_lab = OWNER_LAB_STATE.read_text(encoding="utf-8")
+owner_signaling = OWNER_LAB_SIGNALING.read_text(encoding="utf-8")
+if "mod signaling;" not in owner_lab:
+    raise SystemExit("Canonical owner/visitor signaling module must remain connected")
 publication = json.loads(PUBLICATION.read_text(encoding="utf-8"))
 
 if contract.get("schema") != "rt1-workspace-authority-spike-0.1":
@@ -136,14 +140,11 @@ if "canonical_id!(WorkspaceId);" in domain_ids or "canonical_id!(TenantId);" in 
         "workspace/tenant production identity appeared while RT1 workspace contract is still research-only"
     )
 
-for required_owner_lab_marker in (
-    "pub enum LabSessionAudience",
-    "Owner",
-    "Visitor",
-    "AuthScopeDenied",
-):
+for required_owner_lab_marker in ("pub enum LabSessionAudience", "Owner", "Visitor"):
     if required_owner_lab_marker not in owner_lab:
         raise SystemExit(f"RT0 owner/visitor scope boundary changed: {required_owner_lab_marker}")
+if "Rt0ReasonCode::AuthScopeDenied" not in owner_signaling:
+    raise SystemExit("RT0 owner/visitor scope boundary changed: AuthScopeDenied")
 
 public_bootstrap = publication.get("bootstrap", {}).get("public_visitor", {})
 preview_bootstrap = publication.get("bootstrap", {}).get("preview", {})
