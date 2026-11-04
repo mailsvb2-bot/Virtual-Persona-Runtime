@@ -47,7 +47,9 @@ pub(super) fn echo_preflight_denied(
     // An explicit disable always wins, and a naked enabled flag must not
     // substitute for a usable private TTS route.
     let explicit = env::var("VPR_DID_ECHO_ENABLED").ok();
-    let echo = explicit.as_deref().or(if route_ready { Some("true") } else { None });
+    let echo = explicit
+        .as_deref()
+        .or(if route_ready { Some("true") } else { None });
     !route_ready || expressive_echo_preflight_denied(presenter, echo)
 }
 
@@ -116,7 +118,13 @@ mod tests {
         // No environment mutation: this tests the conservative predicate
         // independently of process-global settings and CI concurrency.
         assert!(expressive_echo_preflight_denied("Expressive", None));
-        assert!(expressive_echo_preflight_denied("expressive", Some("false")));
-        assert!(!expressive_echo_preflight_denied("expressive", Some(" True ")));
+        assert!(expressive_echo_preflight_denied(
+            "expressive",
+            Some("false")
+        ));
+        assert!(!expressive_echo_preflight_denied(
+            "expressive",
+            Some(" True ")
+        ));
     }
 }
