@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use vpr_integration::ProviderErrorKind;
 #[cfg(windows)]
 use vpr_owner_lab::{
-    ProviderCredentialProfile, StoredTtsCredential, delete_provider_profile, load_provider_profile,
+    ProviderCredentialProfile, StoredTtsCredential, load_provider_profile,
     save_provider_profile,
 };
 #[cfg(windows)]
@@ -16,6 +16,10 @@ use vpr_provider_did_agent_streams::{
 };
 #[cfg(windows)]
 use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+#[cfg(windows)]
+#[path = "support/provider_credentials_stt.rs"]
+mod provider_credentials_stt;
 
 fn main() {
     if let Err(error) = run() {
@@ -42,7 +46,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "set" => set_profile(),
         "set-did" => set_did_profile(),
         "set-tts" => set_tts_profile(),
-        "set-stt" => set_stt_profile(),
+        "set-stt" => provider_credentials_stt::set_stt_profile(),
         "set-llm" => set_llm_profile(env::args().nth(2).as_deref()),
         "set-local-avatar" => set_local_avatar(),
         "use-did-avatar" => use_did_avatar(),
@@ -50,7 +54,7 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         "status" => status(),
         "probe-did" => probe_did(),
         "probe-avatar" => probe_avatar(),
-        "clear" => clear(),
+        "clear" => provider_credentials_stt::clear(),
         _ => Err(
             "usage: vpr-provider-credentials <set|set-did|set-tts|set-stt|set-llm|set-local-avatar|use-did-avatar|import-env|status|probe-did|probe-avatar|clear>"
                 .into(),
@@ -109,22 +113,6 @@ fn set_tts_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     profile.set_tts(stored)?;
     save_provider_profile(&profile)?;
     println!("TTS credential route saved securely.");
-    print_safe_profile(&profile);
-    Ok(())
-}
-
-#[cfg(windows)]
-fn set_stt_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
-    let mut profile = load_provider_profile()?
-        .ok_or("secure VPR profile is missing; configure providers first")?;
-    if profile.stt_provider != "deepgram" {
-        return Err("set-stt supports only the existing Deepgram profile".into());
-    }
-    println!("Replace ONLY the Deepgram key. Avatar, LLM and TTS are preserved.");
-    let key = prompt_secret("New Deepgram API key (hidden): ")?;
-    profile.replace_stt_key(key)?;
-    save_provider_profile(&profile)?;
-    println!("Deepgram credential replaced in Windows Credential Manager.");
     print_safe_profile(&profile);
     Ok(())
 }
@@ -499,13 +487,6 @@ fn probe_profile_did(
             Err(message.into())
         }
     }
-}
-
-#[cfg(windows)]
-fn clear() -> Result<(), Box<dyn Error + Send + Sync>> {
-    delete_provider_profile()?;
-    println!("Secure VPR provider profile cleared.");
-    Ok(())
 }
 
 #[cfg(windows)]
