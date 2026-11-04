@@ -163,7 +163,7 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
                     break;
                 }
                 request.extend_from_slice(&buffer[..count]);
-                if request.windows(4).any(|chunk| chunk == b"\\r\\n\\r\\n") {
+                if request.windows(4).any(|chunk| chunk == b"\r\n\r\n") {
                     break;
                 }
             }
@@ -175,7 +175,7 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
             };
             write!(
                 socket,
-                "HTTP/1.1 {status}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             )
             .unwrap();
