@@ -317,10 +317,9 @@ impl Rt1VisitorConversation {
     /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
     #[must_use]
     pub fn supports_private_voice(&self) -> bool {
-        self.remote.is_none()
-            && !self.interrupt.cancelled.load(Ordering::Acquire)
-            && self.interrupt.backend_stop.lock().is_some()
-            && self.manager.authorize(&self.id).is_ok()
+        // The visitor microphone's external STT/LLM/TTS path is still
+        // fail-closed; never advertise a voice control that cannot execute.
+        false
     }
 
     /// Whether this visitor retains the current canonical publication permit.

@@ -366,7 +366,8 @@ fn visitor_start(
             |remote| state.rt1.register_remote(retry_id, remote),
         )
     } else {
-        Rt1VisitorConversation::start(manager, body.visitor_token, engine, true)
+        // Canonical D-ID remote video STOP has no authoritative receipt yet.
+        return Err(error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
     };
     let (conversation, bundle) =
         started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
