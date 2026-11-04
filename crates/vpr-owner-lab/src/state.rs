@@ -359,13 +359,9 @@ impl OwnerLabEngine {
     pub fn apply(&mut self, input: OwnerLabTurnInput) -> Result<(), LabError> {
         self.apply_with_interrupt(input, |_| {})
     }
-
-    /// Dispatch visitor-scoped signaling through the existing canonical runtime
-    /// turn while registering its cancellation capability BEFORE provider I/O.
-    /// The owner revoke callback can reach this handle without the engine lock.
-    ///
+    /// Register a cancellable canonical signaling turn before provider I/O.
     /// # Errors
-    /// Denies stale sessions and returns canonical provider failures.
+    /// Denies stale sessions or provider failures.
     pub fn apply_with_interrupt(
         &mut self,
         input: OwnerLabTurnInput,
