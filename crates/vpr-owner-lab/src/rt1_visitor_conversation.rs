@@ -11,8 +11,8 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
+    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
+    OwnerLabStartRequest, OwnerLabTurnInput,
 };
 
 #[path = "rt1_visitor_browser_delivery.rs"]
