@@ -22,8 +22,8 @@ mod helpers;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
 mod voice_stream_staging;
 use helpers::{
-    diagnostic_operation_id, diagnostic_signal_bundle, finish_close, revoked_diagnostic_offer_error,
-    validate_microphone_audio,
+    diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
+    revoked_diagnostic_offer_error, validate_microphone_audio,
 };
 
 #[derive(Default)]
