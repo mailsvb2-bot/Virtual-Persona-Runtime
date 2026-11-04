@@ -205,6 +205,38 @@ fn revoked_visitor_never_stages_audio() {
 }
 
 #[test]
+fn stale_provider_admission_revokes_existing_transport_exactly_once() {
+    use std::sync::atomic::AtomicUsize;
+
+    let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
+    let stopped = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&stopped);
+    let session = Arc::new(ManagedVisitor {
+        egress: Arc::new(VisitorEgressState::default()),
+        authority: Rt1VisitorSession::inert_for_revocation_test(),
+        revoked: AtomicBool::new(false),
+        stopped: AtomicBool::new(false),
+        fast_revoke: Arc::new(|| {}),
+        stop: Arc::new(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+        }),
+    });
+    manager
+        .sessions
+        .lock()
+        .insert("stale-publication".into(), Arc::clone(&session));
+
+    // No live durable owner publication can authorize the inert visitor.
+    // Admission failure must still run the already registered STOP callback.
+    assert!(manager.begin_provider_egress("stale-publication").is_err());
+    assert!(session.revoked.load(Ordering::Acquire));
+    assert!(session.stopped.load(Ordering::Acquire));
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+    assert!(manager.begin_provider_egress("stale-publication").is_err());
+    assert_eq!(stopped.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn no_visitor_session_without_canonical_publication() {
     let manager = VisitorSessionManager::new(Arc::new(Rt1WorkspaceService::new()));
     assert!(manager.open("0".repeat(64), || {}).is_err());

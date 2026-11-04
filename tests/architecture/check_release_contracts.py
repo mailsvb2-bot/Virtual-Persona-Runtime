@@ -160,6 +160,9 @@ OWNER_LAB_UI = ROOT / "crates" / "vpr-owner-lab" / "ui" / "src" / "owner-capture
 OWNER_LAB_APP = ROOT / "crates" / "vpr-owner-lab" / "ui" / "src" / "app.ts"
 owner_capture_http = (OWNER_LAB_SRC / "http_owner_capture.rs").read_text(encoding="utf-8")
 owner_lab_state = (OWNER_LAB_SRC / "state.rs").read_text(encoding="utf-8")
+if "mod signaling;" not in owner_lab_state:
+    raise SystemExit("Owner Lab canonical signaling module must be registered")
+owner_lab_signaling = (OWNER_LAB_SRC / "state" / "signaling.rs").read_text(encoding="utf-8")
 owner_context_source = (OWNER_LAB_SRC / "owner_context.rs").read_text(encoding="utf-8")
 owner_capture_ui = OWNER_LAB_UI.read_text(encoding="utf-8")
 for required_post_review_boundary in (
@@ -192,10 +195,11 @@ owner_lab_app = OWNER_LAB_APP.read_text(encoding="utf-8")
 for required_visitor_boundary in (
     "LabSessionAudience::Visitor",
     "start_visitor",
-    "Rt0ReasonCode::AuthScopeDenied",
 ):
     if required_visitor_boundary not in owner_lab_state:
         raise SystemExit(f"Owner Lab visitor scope missing runtime boundary {required_visitor_boundary}")
+if "Rt0ReasonCode::AuthScopeDenied" not in owner_lab_signaling:
+    raise SystemExit("Visitor signaling must retain canonical runtime AuthScopeDenied")
 if "VISITOR_INSTRUCTIONS" not in owner_lab_state or "conversation_instructions" not in owner_lab_state:
     raise SystemExit("Owner Lab text/voice turns must share a visitor-specific LLM instruction boundary")
 if "VISITOR_PROMPT_PREFIX" in owner_lab_state or "conversation_context" in owner_lab_state:

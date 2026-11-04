@@ -352,59 +352,6 @@ impl OwnerLabEngine {
         Ok(bundle)
     }
 
-    /// Applies one browser signaling/content operation through a fresh canonical turn.
-    ///
-    /// # Errors
-    /// Returns a stable fail-closed reason if session/authority/provider state is not current.
-    pub fn apply(&mut self, input: OwnerLabTurnInput) -> Result<(), LabError> {
-        if self.session_audience == Some(LabSessionAudience::Visitor)
-            && matches!(
-                input,
-                OwnerLabTurnInput::Text(_) | OwnerLabTurnInput::AudioUrl(_)
-            )
-        {
-            return Err(LabError::Runtime(Rt0ReasonCode::AuthScopeDenied));
-        }
-        let turn = self.new_turn()?;
-        let handle = self.avatar.as_ref().ok_or(LabError::InvalidState)?;
-        match input {
-            OwnerLabTurnInput::Answer(answer) => {
-                if answer.kind != "answer" || answer.sdp.trim().is_empty() {
-                    return Err(LabError::InvalidInput);
-                }
-                turn.submit_realtime_avatar_answer(self.provider.as_ref(), handle, &answer)
-            }
-            OwnerLabTurnInput::Ice(candidate) => {
-                turn.submit_realtime_avatar_ice(self.provider.as_ref(), handle, &candidate)
-            }
-            OwnerLabTurnInput::Text(text) => {
-                if text.trim().is_empty() {
-                    return Err(LabError::InvalidInput);
-                }
-                if let Some(tts) = self.tts.as_deref() {
-                    turn.speak_realtime_avatar_text_with_tts(
-                        tts,
-                        self.provider.as_ref(),
-                        handle,
-                        &text,
-                    )
-                } else {
-                    turn.speak_realtime_avatar_text(self.provider.as_ref(), handle, &text)
-                }
-            }
-            OwnerLabTurnInput::AudioUrl(url) => {
-                if url.trim().is_empty() {
-                    return Err(LabError::InvalidInput);
-                }
-                turn.speak_realtime_avatar_audio_url(self.provider.as_ref(), handle, &url)
-            }
-            OwnerLabTurnInput::Interrupt => {
-                turn.interrupt_realtime_avatar(self.provider.as_ref(), handle)
-            }
-        }
-        .map_err(map_provider_execution)
-    }
-
     /// Revokes canonical authority first, then best-effort closes the remote avatar resource.
     ///
     /// # Errors
@@ -571,6 +518,7 @@ mod client_control;
 mod persistence;
 mod readiness;
 mod session_revocation;
+mod signaling;
 mod status;
 mod text;
 mod voice;

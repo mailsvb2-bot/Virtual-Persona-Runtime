@@ -12,13 +12,14 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
     LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
-    OwnerLabTurnInput,
 };
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
+#[path = "rt1_visitor_signaling.rs"]
+mod signaling;
 #[path = "rt1_visitor_text_egress.rs"]
 mod text_egress;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
@@ -320,53 +321,6 @@ impl Rt1VisitorConversation {
     /// Submit an answer only for the current canonical visitor session.
     /// # Errors
     /// A revoked publication or failed remote SDP operation is denied.
-    pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
-        self.manager.authorize(&self.id)?;
-        if self.interrupt.cancelled.load(Ordering::Acquire) {
-            return Err("RT1_VISITOR_REVOKED".into());
-        }
-        if let Some(remote) = &self.remote {
-            remote.submit_answer(sdp)?;
-        } else {
-            self.engine
-                .lock()
-                .apply(OwnerLabTurnInput::Answer(
-                    vpr_integration::WebRtcSessionDescription {
-                        kind: "answer".into(),
-                        sdp: sdp.to_owned(),
-                    },
-                ))
-                .map_err(|error| error.code().to_owned())?;
-        }
-        self.manager.authorize(&self.id)?;
-        if self.interrupt.cancelled.load(Ordering::Acquire) {
-            return Err("RT1_VISITOR_REVOKED".into());
-        }
-        Ok(())
-    }
-
-    /// Forward ICE exclusively through the existing avatar provider and
-    /// the admitted visitor's canonical runtime turn. Diagnostic worker
-    /// sessions do not expose this separate signaling channel.
-    ///
-    /// # Errors
-    /// Rejects revoked authority, diagnostic sessions and provider failure.
-    pub fn submit_ice(&self, candidate: vpr_integration::WebRtcIceCandidate) -> Result<(), String> {
-        self.manager.authorize(&self.id)?;
-        if self.interrupt.cancelled.load(Ordering::Acquire) || self.remote.is_some() {
-            return Err("RT1_VISITOR_ICE_DENIED".into());
-        }
-        self.engine
-            .lock()
-            .apply(OwnerLabTurnInput::Ice(candidate))
-            .map_err(|error| error.code().to_owned())?;
-        self.manager.authorize(&self.id)?;
-        if self.interrupt.cancelled.load(Ordering::Acquire) {
-            return Err("RT1_VISITOR_REVOKED".into());
-        }
-        Ok(())
-    }
-
     /// Stage a bounded local fragment under canonical publication authority.
     /// This is NOT permission for provider/browser egress. The consumer must
     /// enforce a final revocation-serialized sender/STOP fence.

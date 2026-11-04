@@ -191,9 +191,16 @@ impl VisitorSessionManager {
         session_id: &str,
     ) -> Result<VisitorEgressPermit, String> {
         let session = self.lookup(session_id)?;
-        session
+        let admission = session
             .authority
-            .admit_provider_egress(|| session.egress.admit(&session.revoked))
+            .admit_provider_egress(|| session.egress.admit(&session.revoked));
+        if admission.is_err() {
+            // The publication transaction is released before this check.
+            // A stale Persona must revoke and STOP the existing transport,
+            // not merely reject a new SDP/ICE/LLM request.
+            let _ = session.authorize();
+        }
+        admission
     }
 
     /// Wait for the visitor-scoped publication-to-provider lease to drain.
