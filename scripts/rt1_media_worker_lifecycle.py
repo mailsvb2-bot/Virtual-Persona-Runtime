@@ -186,15 +186,31 @@ class MediaLifecycle:
                     # out. The local deadline marker cannot retroactively
                     # revoke it. Compensate the known sender immediately using
                     # the canonical STOP receipt validator and SQLite ledger.
-                    try:
-                        self._finish_stop(operation_id, row[2], generation)
-                    except Exception as stop_error:
-                        raise RuntimeError(
-                            "CREATE deadline exceeded; cancellation persistence unavailable; "
-                            "remote STOP unconfirmed"
-                        ) from stop_error
+                    # Never run provider STOP on the HTTP CREATE thread:
+                    # the backend may hang indefinitely. A single bounded
+                    # background slot owns compensation and the existing
+                    # durable ledger retains the unresolved identity.
+                    if self._stop_gate.acquire(blocking=False):
+                        def compensate():
+                            try:
+                                self._finish_stop(operation_id, row[2], generation)
+                            except Exception:
+                                # Unverified STOP stays retryable in the ledger.
+                                pass
+                            finally:
+                                self._stop_gate.release()
+
+                        try:
+                            threading.Thread(
+                                target=compensate,
+                                name="rt1-create-compensating-stop",
+                                daemon=True,
+                            ).start()
+                        except Exception:
+                            self._stop_gate.release()
                     raise RuntimeError(
-                        "CREATE deadline exceeded; compensating remote STOP confirmed"
+                        "CREATE deadline exceeded; cancellation persistence unavailable; "
+                        "remote STOP unconfirmed"
                     ) from error
                 if row is None or row[1] in ("creating", "active"):
                     raise RuntimeError(
