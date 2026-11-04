@@ -11,14 +11,16 @@ use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterru
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 use crate::state::{
-    LabSignalBundle, LabTextResult, LabVoiceResult, LabVoiceSegment, OwnerLabEngine,
-    OwnerLabStartRequest, OwnerLabTurnInput,
+    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
+    OwnerLabTurnInput,
 };
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
+#[path = "rt1_visitor_text_egress.rs"]
+mod text_egress;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
 mod voice_stream_staging;
 use helpers::{
@@ -404,14 +406,6 @@ impl Rt1VisitorConversation {
 
     /// # Errors
     /// Denies RT1 visitor provider text dispatch until #319 is proven.
-    pub fn text_turn(&self, _text: &str) -> Result<LabTextResult, String> {
-        // The local WebRTC diagnostic worker has no voice/LLM authority.
-        // Reusing RT0 provider dispatch without a proven revocation fence
-        // would allow an untracked LLM request after owner pause.
-        self.manager.authorize(&self.id)?;
-        Err("RT1 visitor text provider egress disabled pending revocation fence (#319)".into())
-    }
-
     /// RT1 voice provider egress is deliberately denied until the canonical
     /// workspace owns a revocation-serialized final media delivery/STOP gate.
     /// A pre/post authorization check around external provider I/O is unsafe:
