@@ -2146,6 +2146,13 @@ const finishMicrophoneTurn = async () => {
         const scheduleSegmentDelivery = (segment) => {
             if (deliveryGeneration !== voiceDeliveryGeneration)
                 return;
+            const command = segment.client_command;
+            if (!command) {
+                if (deliveryGeneration === voiceDeliveryGeneration)
+                    setLocalAudioMuted(false);
+                serverDeliveredSpeechObserved = true;
+                return;
+            }
             const voiceForSegment = activeVoiceEvidence;
             if (voiceForSegment?.requestSequence === requestSequence) {
                 voiceForSegment.providerPlaybackExpectedCount += 1;
@@ -2153,13 +2160,8 @@ const finishMicrophoneTurn = async () => {
                 syncRt0PlaybackPending(voiceForSegment);
                 updateControls();
             }
-            const command = segment.client_command;
             if (deliveryGeneration === voiceDeliveryGeneration)
                 setLocalAudioMuted(false);
-            if (!command) {
-                serverDeliveredSpeechObserved = true;
-                return;
-            }
             let commandSent = false;
             const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
             const dispatch = nativeLiveKitQueue
