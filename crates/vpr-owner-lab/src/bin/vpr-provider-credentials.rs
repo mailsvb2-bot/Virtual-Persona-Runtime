@@ -17,11 +17,11 @@ use vpr_provider_did_agent_streams::{
 use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
 #[cfg(windows)]
-#[path = "support/provider_credentials_stt.rs"]
-mod provider_credentials_stt;
-#[cfg(windows)]
 #[path = "support/provider_credentials_echo.rs"]
 mod provider_credentials_echo;
+#[cfg(windows)]
+#[path = "support/provider_credentials_stt.rs"]
+mod provider_credentials_stt;
 #[cfg(windows)]
 use provider_credentials_echo::{DidProbePurpose, echo_preflight_denied};
 
@@ -548,4 +548,3 @@ fn redact_identifier(value: &str) -> String {
     let suffix: String = chars.iter().rev().take(4).rev().collect();
     format!("{prefix}…{suffix}")
 }
-
