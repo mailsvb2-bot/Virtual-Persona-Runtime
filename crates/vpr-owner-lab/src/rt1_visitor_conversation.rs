@@ -22,7 +22,7 @@ mod helpers;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
 mod voice_stream_staging;
 use helpers::{
-    diagnostic_operation_id, finish_close, revoked_diagnostic_offer_error,
+    diagnostic_operation_id, diagnostic_signal_bundle, finish_close, revoked_diagnostic_offer_error,
     validate_microphone_audio,
 };
 
@@ -259,26 +259,7 @@ impl Rt1VisitorConversation {
             if remote.is_revoked() {
                 return Err("RT1_VISITOR_REVOKED_DURING_OFFER".into());
             }
-            Ok(LabSignalBundle {
-                evidence_session_sequence: 1,
-                transport: crate::state::LabRealtimeTransport::WebRtc {
-                    offer: crate::state::LabSessionDescription {
-                        kind: offer.kind,
-                        sdp: offer.sdp,
-                    },
-                    ice_servers: offer
-                        .ice_servers
-                        .into_iter()
-                        .map(|server| crate::state::LabIceServer {
-                            urls: server.urls,
-                            username: server.username,
-                            credential: server.credential,
-                        })
-                        .collect(),
-                },
-                capabilities: Vec::new(),
-                client_control: None,
-            })
+            Ok(diagnostic_signal_bundle(offer))
         })();
         // CREATE/OFFER failure may leave a remote sender running. Treat an
         // unconfirmed compensating STOP as the dominant error.
