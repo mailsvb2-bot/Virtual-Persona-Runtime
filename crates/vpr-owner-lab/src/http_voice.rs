@@ -142,7 +142,7 @@ pub(super) fn start_input_response(request: &mut Request, state: &Arc<AppState>)
             Ok(input) => {
                 voice_trace::stt_accepted(session_sequence, request_sequence);
                 input
-            },
+            }
             Err(error) => {
                 // The browser evidence contains only a public reason code.
                 // Preserve a stage-specific server diagnostic without exposing audio
