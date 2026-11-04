@@ -79,7 +79,13 @@ fn build_did_avatar(
         DidAgentStreamsConfig::new(endpoint.clone(), api_key, agent_id.clone()).with_fluent(fluent),
     )
     .map_err(|_| "D-ID provider configuration rejected".to_string())?;
-    let pcm_tts_enabled = optional_env("VPR_OWNER_LAB_TTS_PROVIDER").is_some();
+    // The canonical TTS route may be configured through the secure Windows
+    // profile rather than the process environment. ProviderBundle resolves
+    // the same stored route; Echo must use that exact effective selection.
+    let pcm_tts_enabled = optional_env("VPR_OWNER_LAB_TTS_PROVIDER").is_some()
+        || profile
+            .and_then(|profile| profile.tts.as_ref())
+            .is_some_and(|tts| tts.validate().is_ok());
     let echo_enabled = resolved_bool("VPR_DID_ECHO_ENABLED", None, pcm_tts_enabled)?;
     if pcm_tts_enabled && !echo_enabled {
         return Err("canonical TTS requires server-owned D-ID Echo; do not disable Echo".into());

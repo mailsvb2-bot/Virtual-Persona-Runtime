@@ -17,8 +17,13 @@ use vpr_provider_did_agent_streams::{
 use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
 #[cfg(windows)]
+#[path = "support/provider_credentials_echo.rs"]
+mod provider_credentials_echo;
+#[cfg(windows)]
 #[path = "support/provider_credentials_stt.rs"]
 mod provider_credentials_stt;
+#[cfg(windows)]
+use provider_credentials_echo::{DidProbePurpose, echo_preflight_denied};
 
 fn main() {
     if let Err(error) = run() {
@@ -87,7 +92,7 @@ fn set_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
         _ => return Err("avatar provider must be did or local-open-source".into()),
     };
 
-    probe_selected_avatar(&profile)?;
+    probe_selected_avatar(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Saved securely for the current Windows user.");
     print_safe_profile(&profile);
@@ -184,7 +189,7 @@ fn set_did_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
     let did_api_key = prompt_secret("D-ID API key: ")?;
     let did_agent_id = prompt_line("D-ID agent ID: ")?;
     profile.replace_did_credentials(&did_api_key, &did_agent_id);
-    probe_profile_did(&profile)?;
+    probe_profile_did(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Updated D-ID credentials securely for the current Windows user.");
     print_safe_profile(&profile);
@@ -211,7 +216,7 @@ fn use_did_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
     profile.select_did_avatar();
-    probe_profile_did(&profile)?;
+    probe_profile_did(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Selected D-ID avatar for the current Windows user.");
     print_safe_profile(&profile);
@@ -240,7 +245,7 @@ fn import_env_profile() -> Result<(), Box<dyn Error + Send + Sync>> {
         ),
         _ => unreachable!("avatar provider resolver returns canonical names only"),
     };
-    probe_selected_avatar(&profile)?;
+    probe_selected_avatar(&profile, DidProbePurpose::CredentialSetup)?;
     save_provider_profile(&profile)?;
     println!("Imported current CMD provider credentials into Windows Credential Manager.");
     print_safe_profile(&profile);
@@ -324,15 +329,16 @@ fn status() -> Result<(), Box<dyn Error + Send + Sync>> {
 fn probe_avatar() -> Result<(), Box<dyn Error + Send + Sync>> {
     let profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    probe_selected_avatar(&profile)
+    probe_selected_avatar(&profile, DidProbePurpose::LaunchReadiness)
 }
 
 #[cfg(windows)]
 fn probe_selected_avatar(
     profile: &ProviderCredentialProfile,
+    purpose: DidProbePurpose,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     match profile.avatar_provider.as_str() {
-        "did" | "d-id" | "did-agent-streams" => probe_profile_did(profile),
+        "did" | "d-id" | "did-agent-streams" => probe_profile_did(profile, purpose),
         "local" | "local-open-source" => probe_profile_local_avatar(profile),
         _ => Err("secure VPR provider profile selects an unsupported avatar provider".into()),
     }
@@ -374,12 +380,13 @@ fn probe_profile_local_avatar(
 fn probe_did() -> Result<(), Box<dyn Error + Send + Sync>> {
     let profile = load_provider_profile()?
         .ok_or("secure VPR provider profile is not configured; run vpr-provider-credentials set")?;
-    probe_profile_did(&profile)
+    probe_profile_did(&profile, DidProbePurpose::LaunchReadiness)
 }
 
 #[cfg(windows)]
 fn probe_profile_did(
     profile: &ProviderCredentialProfile,
+    purpose: DidProbePurpose,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let provider = DidAgentStreamsAvatar::new(
         DidAgentStreamsConfig::new(
@@ -432,25 +439,10 @@ fn probe_profile_did(
             // A credential probe is not a realtime-session readiness probe.
             // Expressive V2 requires a private, server-owned Echo sender.
             // Do not let the launcher report READY then show a black avatar.
-            let tts_ready = [
-                "VPR_OWNER_LAB_TTS_PROVIDER",
-                "VPR_OWNER_LAB_TTS_ENDPOINT",
-                "VPR_OWNER_LAB_TTS_API_KEY",
-                "VPR_OWNER_LAB_TTS_MODEL",
-                "VPR_OWNER_LAB_TTS_VOICE",
-            ]
-            .iter()
-            .all(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
-            let explicitly_set = env::var("VPR_DID_ECHO_ENABLED").ok();
-            let echo_enabled = explicitly_set.as_deref().or(if tts_ready {
-                Some("true")
-            } else {
-                None
-            });
-            if expressive_echo_preflight_denied(&presenter, echo_enabled)
+            if echo_preflight_denied(profile, &presenter, purpose)
             {
                 return Err(
-                    "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID credentials are valid, but this Expressive presenter cannot open a secure session without server-owned Echo. The current credential profile contains only D-ID/Deepgram/DeepSeek, not a voice provider. The launcher must not claim avatar readiness. Configure server-owned Echo with a voice service; do not disable the revocation guard."
+                    "RT0_EXPRESSIVE_ECHO_REQUIRED: D-ID credentials are valid, but this Expressive presenter cannot open a secure session without server-owned Echo. A configured private TTS voice route and enabled Echo are required for launch. The launcher must not claim avatar readiness. Configure server-owned Echo with a voice service; do not disable the revocation guard."
                         .into(),
                 );
             }
@@ -555,42 +547,4 @@ fn redact_identifier(value: &str) -> String {
     let prefix: String = chars.iter().take(4).collect();
     let suffix: String = chars.iter().rev().take(4).rev().collect();
     format!("{prefix}…{suffix}")
-}
-
-#[cfg(windows)]
-fn expressive_echo_preflight_denied(presenter: &str, echo_enabled: Option<&str>) -> bool {
-    presenter.eq_ignore_ascii_case("expressive")
-        && !echo_enabled.is_some_and(|value| value.trim().eq_ignore_ascii_case("true"))
-}
-
-#[cfg(all(test, windows))]
-mod expressive_echo_preflight_tests {
-    use super::expressive_echo_preflight_denied;
-
-    #[test]
-    fn expressive_without_private_echo_is_rejected_before_ui_launch() {
-        assert!(expressive_echo_preflight_denied("expressive", None));
-        assert!(expressive_echo_preflight_denied(
-            "Expressive",
-            Some("false")
-        ));
-        assert!(!expressive_echo_preflight_denied(
-            "expressive",
-            Some("true")
-        ));
-        assert!(!expressive_echo_preflight_denied(
-            "Expressive",
-            Some(" True ")
-        ));
-        assert!(expressive_echo_preflight_denied(
-            "Expressive",
-            Some(" false ")
-        ));
-    }
-
-    #[test]
-    fn legacy_presenters_remain_compatible_without_echo() {
-        assert!(!expressive_echo_preflight_denied("legacy", None));
-        assert!(!expressive_echo_preflight_denied("talk", None));
-    }
 }
