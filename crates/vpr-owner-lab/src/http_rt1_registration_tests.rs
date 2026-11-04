@@ -142,3 +142,63 @@ fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
     assert!(routed.delivery.is_none());
     assert_eq!(routed.response.status_code().0, 409);
 }
+
+#[test]
+fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let worker = std::thread::spawn(move || {
+        for attempt in 0..2 {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            let mut buffer = [0_u8; 2048];
+            let mut request = Vec::new();
+            loop {
+                let count = socket.read(&mut buffer).unwrap();
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if request.windows(4).any(|chunk| chunk == b"\\r\\n\\r\\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(b"DELETE /v1/avatar/operations/lost-offer "));
+            let (status, body) = if attempt == 0 {
+                ("202 Accepted", r#"{"operation_id":"lost-offer","stop_confirmed":false}"#)
+            } else {
+                ("200 OK", r#"{"operation_id":"lost-offer","generation":1,"session_id":"real-worker-sender","audio_stopped":true,"video_stopped":true}"#)
+            };
+            write!(
+                socket,
+                "HTTP/1.1 {status}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let worker_client =
+        RemoteOperationClient::new(&endpoint, "secret", Duration::from_secs(3)).unwrap();
+    let remote = Arc::new(
+        super::Rt1RemoteMediaRevocation::new(worker_client, "lost-offer".into(), 1).unwrap(),
+    );
+    let weak = Arc::downgrade(&remote);
+    let state = super::Rt1HttpState::default();
+    state
+        .register_remote("never-delivered-to-browser".into(), Arc::clone(&remote))
+        .unwrap();
+    drop(remote);
+    // Only the HTTP-owned cleanup registry retains this operation after the
+    // failed startup discards the visitor conversation and its session ID.
+    let retained = weak.upgrade().expect("lost cleanup handle");
+    assert!(retained.revoke_confirmed().is_err(), "HTTP 202 is not STOP");
+    drop(retained);
+    assert!(weak.upgrade().is_some(), "uncertain STOP lost retry handle");
+    state.reconcile_remote_stops();
+    assert!(weak.upgrade().is_none(), "confirmed STOP retained stale handle");
+    worker.join().unwrap();
+}
