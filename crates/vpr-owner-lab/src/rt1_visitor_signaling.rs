@@ -1,9 +1,13 @@
 //! Canonical RT1 visitor SDP/ICE egress through the existing publication lease.
-//! Provider turn cancellation reuses the single OwnerLabEngine.
+//! Provider turn cancellation reuses the single `OwnerLabEngine`.
 use super::{Arc, Ordering, Rt1VisitorConversation};
 use crate::state::OwnerLabTurnInput;
 
 impl Rt1VisitorConversation {
+    /// Submit one SDP answer under canonical visitor publication authority.
+    ///
+    /// # Errors
+    /// Denies stale publication, failed remote STOP or provider signaling.
     pub fn submit_answer(&self, sdp: &str) -> Result<(), String> {
         // Registration linearizes with the durable owner publication transaction.
         // Provider I/O starts only after the transaction releases its lock.

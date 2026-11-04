@@ -1,6 +1,9 @@
 //! Canonical RT0/RT1 avatar signaling using the existing runtime turn.
 //! Visitor revoke registers cancellation before provider I/O.
-use super::*;
+use super::{
+    LabError, LabSessionAudience, OwnerLabEngine, OwnerLabTurnInput, Rt0ReasonCode,
+    TurnInterruptHandle, map_provider_execution,
+};
 
 impl OwnerLabEngine {
     /// Applies one browser signaling/content operation through a fresh canonical turn.
