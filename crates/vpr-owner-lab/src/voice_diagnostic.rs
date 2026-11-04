@@ -1,12 +1,28 @@
 //! Bounded, secret-free operational trace for the canonical Owner Lab voice journey.
-//! All labels are fixed in source, never constructed from provider responses.
+//! Only fixed source-defined labels may enter the trace. Emission NEVER blocks
+//! voice ingress, the engine lock, provider STOP or worker completion.
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
+use std::sync::mpsc::{SyncSender, sync_channel};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const MAX_TRACE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_QUEUED_EVENTS: usize = 256;
+
+#[derive(Clone, Copy)]
+struct TraceEvent {
+    at_ms: u128,
+    stage: &'static str,
+    outcome: &'static str,
+    session: Option<u64>,
+    request: Option<u64>,
+}
+
+// The only trace writer is deliberately outside the canonical media path.
+// When disk I/O stalls, try_send drops telemetry instead of delaying speech.
+static WRITER: OnceLock<Option<SyncSender<TraceEvent>>> = OnceLock::new();
 
 pub(crate) fn record(stage: &'static str, reason: &'static str) {
     event(stage, reason, None, None);
@@ -18,8 +34,6 @@ pub fn event(
     session: Option<u64>,
     request: Option<u64>,
 ) {
-    // This function is exported to the HTTP binary crate. Do not allow arbitrary
-    // provider text or caller-supplied labels to enter the diagnostic file.
     if !allowed_event(stage, outcome) {
         return;
     }
@@ -29,36 +43,63 @@ pub fn event(
     if path.is_empty() {
         return;
     }
-    let Ok(_lock) = WRITE_LOCK.get_or_init(|| Mutex::new(())).lock() else {
+    let sender = WRITER.get_or_init(|| {
+        let (sender, receiver) = sync_channel::<TraceEvent>(MAX_QUEUED_EVENTS);
+        // Startup is only attempted when diagnostics are explicitly enabled.
+        // The diagnostic worker owns its file exclusively within this process.
+        if thread::Builder::new()
+            .name("vpr-voice-diagnostic".to_owned())
+            .spawn(move || {
+                for entry in receiver {
+                    write_event(&path, entry);
+                }
+            })
+            .is_err()
+        {
+            return None;
+        }
+        Some(sender)
+    });
+    if let Some(sender) = sender {
+        let at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |time| time.as_millis());
+        // No send(), mutex, open(), flush(), rotation, or file metadata calls
+        // are permitted on this latency-critical producer path.
+        let _ = sender.try_send(TraceEvent {
+            at_ms,
+            stage,
+            outcome,
+            session,
+            request,
+        });
+    }
+}
+
+fn write_event(path: &str, entry: TraceEvent) {
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) else {
-        return;
-    };
-    // Bound disk usage. The previous segment remains for incident inspection.
     if file.metadata().is_ok_and(|m| m.len() >= MAX_TRACE_BYTES) {
         drop(file);
         let rotated = format!("{path}.previous");
         let _ = std::fs::remove_file(&rotated);
-        if std::fs::rename(&path, &rotated).is_err() {
+        if std::fs::rename(path, &rotated).is_err() {
             return;
         }
-        let Ok(new_file) = OpenOptions::new().create_new(true).append(true).open(&path) else {
+        let Ok(new_file) = OpenOptions::new().create_new(true).append(true).open(path) else {
             return;
         };
         file = new_file;
     }
-    let at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |time| time.as_millis());
     let line = serde_json::json!({
         "schema": "vpr-voice-trace-1",
-        "timestamp_unix_ms": at_ms,
+        "timestamp_unix_ms": entry.at_ms,
         "process_id": std::process::id(),
-        "stage": stage,
-        "outcome": outcome,
-        "session_sequence": session,
-        "request_sequence": request,
+        "stage": entry.stage,
+        "outcome": entry.outcome,
+        "session_sequence": entry.session,
+        "request_sequence": entry.request,
     });
     let _ = writeln!(file, "{line}");
 }
