@@ -413,12 +413,49 @@ impl Rt1VisitorConversation {
     ///
     /// # Errors
     /// Always denies unsupported visitor microphone provider egress.
-    pub fn voice_turn(&self, _pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
-        // Diagnostic RTP and canonical vendor voice are not authorized for
-        // external STT/LLM/TTS until remote revoke and final delivery are
-        // independently verified. Never equate local staging to permission.
+    pub fn voice_turn(&self, pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
+        // Never enable arbitrary provider egress. Only the canonical
+        // server-owned Echo sender exposes an independent bounded STOP that
+        // does not require the engine mutex held during this voice turn.
+        if self.remote.is_some()
+            || self.interrupt.cancelled.load(Ordering::Acquire)
+            || self.interrupt.backend_stop.lock().is_none()
+        {
+            return unsupported_visitor_voice_egress();
+        }
+        // Stage the exact PCM under the canonical publication transaction.
+        // This is a bounded in-process handoff, not an external sender.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.stage_microphone_audio(&sender, pcm_s16le_mono_16khz)?;
+        let pcm_s16le_mono_16khz = receiver
+            .try_recv()
+            .map_err(|_| "RT1_MICROPHONE_QUEUE_UNAVAILABLE".to_owned())?;
+        // Same revocation-serialized admission as visitor text and the
+        // canonical runtime's provider execution gate. The local queue is
+        // never mistaken for permission to transmit microphone PCM.
+        let _egress = self.manager.begin_provider_egress(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        let callback = Arc::clone(&self.interrupt);
+        let result = self
+            .engine
+            .lock()
+            .voice_turn(pcm_s16le_mono_16khz, move |handle| {
+                *callback.turn.lock() = Some(handle.clone());
+                if callback.cancelled.load(Ordering::Acquire) {
+                    let _ = handle.interrupt();
+                }
+            })
+            .map_err(|error| error.code().to_owned());
+        *self.interrupt.turn.lock() = None;
+        // Withdrawing publication wins over a late provider success, even
+        // when the provider returned an error before this final check.
         self.manager.authorize(&self.id)?;
-        unsupported_visitor_voice_egress()
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        result
     }
 
     /// Interrupt the canonical visitor turn and its independent private Echo
