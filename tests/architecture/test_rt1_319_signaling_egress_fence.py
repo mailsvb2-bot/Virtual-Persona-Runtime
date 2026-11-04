@@ -4,7 +4,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 OWNER = ROOT / "crates/vpr-owner-lab/src"
-BRIDGE = (OWNER / "rt1_visitor_conversation.rs").read_text(encoding="utf-8")
+BRIDGE = (OWNER / "rt1_visitor_signaling.rs").read_text(encoding="utf-8")
 ENGINE = (OWNER / "state" / "signaling.rs").read_text(encoding="utf-8")
 REMOTE = (OWNER / "rt1_remote_media_revocation.rs").read_text(encoding="utf-8")
 
