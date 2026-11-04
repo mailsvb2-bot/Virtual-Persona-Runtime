@@ -154,7 +154,9 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
     let worker = std::thread::spawn(move || {
         for attempt in 0..2 {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut buffer = [0_u8; 2048];
             let mut request = Vec::new();
             loop {
@@ -169,9 +171,15 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
             }
             assert!(request.starts_with(b"DELETE /v1/avatar/operations/lost-offer "));
             let (status, body) = if attempt == 0 {
-                ("202 Accepted", r#"{"operation_id":"lost-offer","stop_confirmed":false}"#)
+                (
+                    "202 Accepted",
+                    r#"{"operation_id":"lost-offer","stop_confirmed":false}"#,
+                )
             } else {
-                ("200 OK", r#"{"operation_id":"lost-offer","generation":1,"session_id":"real-worker-sender","audio_stopped":true,"video_stopped":true}"#)
+                (
+                    "200 OK",
+                    r#"{"operation_id":"lost-offer","generation":1,"session_id":"real-worker-sender","audio_stopped":true,"video_stopped":true}"#,
+                )
             };
             write!(
                 socket,
@@ -199,6 +207,9 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
     drop(retained);
     assert!(weak.upgrade().is_some(), "uncertain STOP lost retry handle");
     state.reconcile_remote_stops();
-    assert!(weak.upgrade().is_none(), "confirmed STOP retained stale handle");
+    assert!(
+        weak.upgrade().is_none(),
+        "confirmed STOP retained stale handle"
+    );
     worker.join().unwrap();
 }
