@@ -246,7 +246,7 @@ impl ActiveTurn {
             .clock
             .now_millis()
             .ok_or(RuntimeDenyReason::InternalError)?;
-        self.authorization.issue_provider_permit(
+        let mut permit = self.authorization.issue_provider_permit(
             self.authorization_snapshot,
             now_millis,
             &ProviderCallContext {
@@ -257,7 +257,16 @@ impl ActiveTurn {
                 required_scope,
                 data_class,
             },
-        )
+        )?;
+        // Do not hold the first read lock across a second acquisition. The
+        // canonical gate rechecks cancellation under a fresh admission lock,
+        // serialized with owner revoke before provider network egress begins.
+        drop(_execution);
+        permit._active = Some(
+            gate.begin_provider_egress(&permit.cancellation)
+                .map_err(|()| RuntimeDenyReason::TurnCancelled)?,
+        );
+        Ok(permit)
     }
 
     pub(crate) fn issue_provider_operation(

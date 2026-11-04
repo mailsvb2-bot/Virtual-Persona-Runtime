@@ -19,7 +19,6 @@ use crate::state::{
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
-pub use browser_delivery::Rt1BrowserDeliveryPermit;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
 mod voice_stream_staging;
 use helpers::{
