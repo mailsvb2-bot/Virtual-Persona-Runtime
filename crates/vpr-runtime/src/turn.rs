@@ -238,7 +238,7 @@ impl ActiveTurn {
         data_class: DataClass,
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
         let gate = self.gate.clone();
-        let _execution = gate.read().map_err(|()| RuntimeDenyReason::InternalError)?;
+        let execution = gate.read().map_err(|()| RuntimeDenyReason::InternalError)?;
         if !self.state.lock().provider_execution_allowed() {
             return Err(RuntimeDenyReason::InvalidTurnState);
         }
@@ -261,7 +261,7 @@ impl ActiveTurn {
         // Do not hold the first read lock across a second acquisition. The
         // canonical gate rechecks cancellation under a fresh admission lock,
         // serialized with owner revoke before provider network egress begins.
-        drop(_execution);
+        drop(execution);
         permit.active_egress = Some(
             gate.begin_provider_egress(&permit.cancellation)
                 .map_err(|()| RuntimeDenyReason::TurnCancelled)?,
