@@ -268,6 +268,32 @@ impl Rt1WorkspaceService {
         )
     }
 
+    /// Atomically admit a locally tracked provider operation under the same
+    /// publication transaction as owner pause/unpublish. The callback may
+    /// ONLY register an in-process cancellation/drain lease; it MUST NOT
+    /// perform network I/O, block on a provider or acquire the engine mutex.
+    ///
+    /// # Errors
+    /// Denies stale publication or failed local registration.
+    pub(crate) fn admit_visitor_provider_egress<T>(
+        &self,
+        bearer_token: &str,
+        permit: &VisitorPermit,
+        register: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let _transaction = self.transaction.lock();
+        let record = required_persona()?;
+        let workspace = record.workspace.as_ref().ok_or("owner workspace missing")?;
+        workspace.authorize_visitor(
+            bearer_token,
+            permit,
+            &record.snapshot.persona_id,
+            record.snapshot.persona_version,
+            server_now_millis()?,
+        )?;
+        register()
+    }
+
     /// Invalidate all pre-crash visitor session permits on process restart.
     /// This must durably commit BEFORE exposing an RT1 visitor listener.
     ///

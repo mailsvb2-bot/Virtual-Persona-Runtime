@@ -1,6 +1,7 @@
 use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::ProviderCancellation;
+use crate::execution_gate::ProviderEgressGuard;
 
 /// Internal linearized capability for one immediate provider operation.
 ///
@@ -9,6 +10,10 @@ use crate::cancellation::ProviderCancellation;
 #[derive(Debug)]
 pub(crate) struct ProviderExecutionPermit {
     pub(crate) cancellation: ProviderCancellation,
+    // Owns the lifetime of one canonical provider dispatch, including streams.
+    // Drop means local I/O returned; it is not a remote audio/video STOP receipt.
+    #[allow(dead_code)] // Held for its Drop side effect, never read as a value.
+    pub(crate) active_egress: Option<ProviderEgressGuard>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
