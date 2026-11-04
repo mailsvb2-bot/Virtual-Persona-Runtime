@@ -7,7 +7,7 @@ use super::{AppState, Rt1HttpState, Rt1RemoteMediaRevocation};
 const MAX_TRACKED_REMOTE_OPERATIONS: usize = 64;
 
 impl Rt1HttpState {
-    fn register_remote(
+    pub(super) fn register_remote(
         &self,
         retry_id: String,
         remote: Arc<Rt1RemoteMediaRevocation>,
@@ -20,7 +20,7 @@ impl Rt1HttpState {
         Ok(())
     }
 
-    fn reconcile_remote_stops(&self) {
+    pub(super) fn reconcile_remote_stops(&self) {
         // Only revoked operations are eligible. Never stop an active
         // visitor merely because its handle is present in this registry.
         let pending: Vec<_> = self
