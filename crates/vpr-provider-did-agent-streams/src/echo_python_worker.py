@@ -167,6 +167,8 @@ async def run():
     tasks = {}
     generation = 0
     active_pcm = None
+    close_identifier = None
+    close_control_confirmed = True
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -468,8 +470,16 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
-                    emit(identifier, True)
+                    # Terminal even if the vendor interrupt fails. Never permit
+                    # another SPEAK while local teardown is unresolved.
+                    close_identifier = identifier
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=0.35,
+                        )
+                    except Exception:
+                        close_control_confirmed = False
                     break
                 else:
                     emit(identifier, False)
@@ -480,14 +490,24 @@ async def run():
                 except Exception:
                     pass
     finally:
+        pending = set(tasks.values())
         if active_pcm is not None:
-            active_pcm["task"].cancel()
-            await asyncio.gather(active_pcm["task"], return_exceptions=True)
-        for task in tuple(tasks.values()):
+            pending.add(active_pcm["task"])
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
-        await room.disconnect()
+        cleanup_confirmed = True
+        if pending:
+            # A vendor task may suppress cancellation; do not await forever.
+            _, unfinished = await asyncio.wait(pending, timeout=0.45)
+            if unfinished:
+                cleanup_confirmed = False
+        try:
+            await asyncio.wait_for(room.disconnect(), timeout=0.45)
+        except Exception:
+            cleanup_confirmed = False
+        if close_identifier is not None:
+            # Only local private-publisher teardown, never remote D-ID video STOP.
+            emit(close_identifier, cleanup_confirmed and close_control_confirmed)
 
 
 if __name__ == "__main__":
