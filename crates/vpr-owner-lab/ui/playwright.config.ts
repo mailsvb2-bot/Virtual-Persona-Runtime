@@ -9,6 +9,7 @@ export default defineConfig({
     "rt1-local-canary.spec.ts",
     "rt1-late-microphone-revoke.spec.ts",
     "rt1-late-livekit-connect.spec.ts",
+    "rt1-voice-inflight-stop.spec.ts",
   ],
   timeout: 30_000,
   fullyParallel: false,
