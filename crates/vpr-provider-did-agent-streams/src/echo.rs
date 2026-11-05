@@ -117,16 +117,17 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
-            // Implementations must undo partial transport setup on failed open.
-            self.remove(id)?;
+            // OPEN may fail after the private sender connected. Reuse the
+            // canonical close path and retain its identity on unconfirmed STOP.
+            // Return the original OPEN error; the registry preserves any
+            // pending cleanup target for a later retry.
+            let _ = self.close_session(backend, id);
             return Err(error);
         }
         if cancellation.is_cancelled() {
-            let cleanup = backend.stop(id);
-            let forgotten = backend.forget(id);
-            self.remove(id)?;
-            // Report failed teardown, never successful revocation.
-            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
+            // Revocation after OPEN must never discard an unconfirmed sender.
+            self.close_session(backend, id)?;
+            return Err(super::cancelled());
         }
         Ok(())
     }
@@ -168,12 +169,11 @@ impl DidEchoRegistry {
         if !self.contains(id)? {
             return Ok(());
         }
-        let stopped = backend.stop(id);
-        let forgotten = backend.forget(id);
-        if forgotten.is_ok() {
-            self.remove(id)?;
-        }
-        stopped.and(forgotten)
+        // If STOP is unconfirmed, retain the only known sender identity:
+        // forgetting it would make follow-up cleanup impossible.
+        backend.stop(id)?;
+        backend.forget(id)?;
+        self.remove(id)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {
