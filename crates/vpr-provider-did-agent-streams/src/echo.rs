@@ -87,6 +87,9 @@ pub trait DidEchoBackend: Send + Sync {
     /// True only if this backend can prove the sender is not registered.
     /// Unknown backends conservatively retain identities after failed OPEN.
     /// This checks the existing private worker map, not a new authority path.
+    ///
+    /// # Errors
+    /// Rejects an unavailable or poisoned backend worker registry.
     fn sender_definitely_absent(&self, _session_id: &str) -> Result<bool, ProviderError> {
         Ok(false)
     }
