@@ -132,6 +132,7 @@ local_lab_files = {
     Path("crates/vpr-owner-lab/ui/e2e/rt1-local-canary.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-late-microphone-revoke.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-late-livekit-connect.spec.ts"),
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-voice-inflight-stop.spec.ts"),
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
