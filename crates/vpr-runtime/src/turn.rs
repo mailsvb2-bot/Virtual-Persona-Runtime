@@ -238,7 +238,7 @@ impl ActiveTurn {
         data_class: DataClass,
     ) -> Result<ProviderExecutionPermit, RuntimeDenyReason> {
         let gate = self.gate.clone();
-        let _execution = gate.read().map_err(|()| RuntimeDenyReason::InternalError)?;
+        let execution = gate.read().map_err(|()| RuntimeDenyReason::InternalError)?;
         if !self.state.lock().provider_execution_allowed() {
             return Err(RuntimeDenyReason::InvalidTurnState);
         }
@@ -246,7 +246,7 @@ impl ActiveTurn {
             .clock
             .now_millis()
             .ok_or(RuntimeDenyReason::InternalError)?;
-        self.authorization.issue_provider_permit(
+        let mut permit = self.authorization.issue_provider_permit(
             self.authorization_snapshot,
             now_millis,
             &ProviderCallContext {
@@ -257,7 +257,16 @@ impl ActiveTurn {
                 required_scope,
                 data_class,
             },
-        )
+        )?;
+        // Do not hold the first read lock across a second acquisition. The
+        // canonical gate rechecks cancellation under a fresh admission lock,
+        // serialized with owner revoke before provider network egress begins.
+        drop(execution);
+        permit.active_egress = Some(
+            gate.begin_provider_egress(&permit.cancellation)
+                .map_err(|()| RuntimeDenyReason::TurnCancelled)?,
+        );
+        Ok(permit)
     }
 
     pub(crate) fn issue_provider_operation(
@@ -393,7 +402,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().transition(TurnState::Processing)
     }
 
@@ -407,7 +416,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().transition(TurnState::Outputting)
     }
 
@@ -421,7 +430,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().transition(TurnState::Completed)
     }
 
@@ -463,7 +472,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().begin_output_segment()
     }
 
@@ -479,7 +488,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().mark_output_sent(id)
     }
 
@@ -495,7 +504,7 @@ impl ActiveTurn {
             .read()
             .map_err(|()| RuntimeDenyReason::InternalError)
             .map_err(RuntimeDenyReason::reason_code)?;
-        self.require_execution_active()?;
+        self.require_executionactive_egress()?;
         self.state.lock().mark_output_played(id)
     }
 
@@ -517,7 +526,7 @@ impl ActiveTurn {
         self.interrupt_handle().interrupt()
     }
 
-    fn require_execution_active(&self) -> Result<(), Rt0ReasonCode> {
+    fn require_executionactive_egress(&self) -> Result<(), Rt0ReasonCode> {
         self.require_not_cancelled()?;
         let now_millis = self
             .clock

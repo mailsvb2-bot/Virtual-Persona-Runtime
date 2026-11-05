@@ -48,6 +48,8 @@ class FakeLocalParticipant:
 
     async def send_text(self, text, *, topic):
         self.trace["stops"].append((text, topic))
+        if self.trace["interrupt_fails"]:
+            raise RuntimeError("synthetic private vendor interrupt refusal")
 
 
 class FakeRoom:
@@ -55,6 +57,7 @@ class FakeRoom:
     close_latency = 0
     write_latency = 0
     stream_open_fails = False
+    interrupt_fails = False
 
     def __init__(self):
         self.trace = {
@@ -63,6 +66,7 @@ class FakeRoom:
             "close_latency": self.__class__.close_latency,
             "write_latency": self.__class__.write_latency,
             "stream_open_fails": self.__class__.stream_open_fails,
+            "interrupt_fails": self.__class__.interrupt_fails,
         }
         self.local_participant = FakeLocalParticipant(self.trace)
         self.remote_participants = {
@@ -101,7 +105,8 @@ class DelayedInput:
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
                close_latency=0, tts_chunks=None, write_latency=0,
-               stream_open_fails=False):
+               stream_open_fails=False, interrupt_fails=False,
+               media_io_timeout=None):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -116,6 +121,8 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
             yield b"RIFF" + text.encode("utf-8")
 
     module.synthesize_chunks = synthesize_chunks
+    if media_io_timeout is not None:
+        module.MEDIA_IO_TIMEOUT_SECONDS = media_io_timeout
     mock_livekit = types.ModuleType("livekit")
     mock_livekit.rtc = types.SimpleNamespace(
         Room=FakeRoom,
@@ -137,6 +144,7 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     FakeRoom.close_latency = close_latency
     FakeRoom.write_latency = write_latency
     FakeRoom.stream_open_fails = stream_open_fails
+    FakeRoom.interrupt_fails = interrupt_fails
     try:
         sys.stdin = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
@@ -189,6 +197,43 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertEqual(trace["stream_options"][0]["attributes"], {
             "format": "pcm16", "sample_rate": "16000", "channels": "1",
         })
+
+    def test_close_receipt_waits_for_active_pcm_writer_cleanup(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 12, "command": "pcm_chunk", "stream_id": 11,
+             "pcm_hex": bytes([1, 0] * 160).hex()},
+            {"id": 13, "command": "close"},
+        ]
+        started = time.monotonic()
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.10,
+            close_latency=0.30,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(trace["closed"], 1, "PCM writer cleanup must finish")
+        self.assertTrue(any(r["id"] == 13 and r["ok"] for r in receipts))
+        self.assertGreaterEqual(elapsed, 0.30, "close was acknowledged before PCM teardown")
+
+    def test_close_with_stalled_pcm_writer_reports_unconfirmed_local_stop(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 12, "command": "pcm_chunk", "stream_id": 11,
+             "pcm_hex": bytes([1, 0] * 160).hex()},
+            {"id": 13, "command": "close"},
+        ]
+        _, receipts = run_worker(
+            True, records=records, delay_before_close=0.10,
+            close_latency=0.80,
+        )
+        self.assertTrue(any(r["id"] == 13 and not r["ok"] for r in receipts),
+                        "writer teardown exceeded deadline: STOP must not be confirmed")
 
     def test_canonical_pcm16_stream_begin_chunk_finish_is_progressive_and_private(self):
         pcm1, pcm2 = bytes([1, 0] * 160), bytes([2, 0] * 160)
@@ -352,6 +397,57 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertNotIn("Вторая фраза".encode("utf-8"), audio)
         self.assertTrue(any(r["id"] == 12 and r["ok"] for r in receipts))
         self.assertFalse(any(r["id"] == 11 and r["ok"] for r in receipts))
+
+    def test_stalled_livekit_write_fences_future_voice_publication(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 71, "command": "speak", "text": "First stream"},
+            {"id": 72, "command": "interrupt"},
+            {"id": 73, "command": "speak", "text": "FORBIDDEN-LATE-AUDIO"},
+            {"id": 74, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, tts_latency=lambda _: 0,
+            write_latency=0.35, media_io_timeout=0.05,
+        )
+        self.assertEqual(trace["audio"], [])
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertFalse(any(r["id"] == 71 and r["ok"] for r in receipts))
+        self.assertFalse(any(r["id"] == 73 and r["ok"] for r in receipts))
+
+    def test_failed_pcm_abort_terminates_without_admitting_late_speech(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 81, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 82, "command": "pcm_abort", "stream_id": 81},
+            {"id": 83, "command": "speak", "text": "FORBIDDEN-LATE-AUDIO"},
+            {"id": 84, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, interrupt_fails=True)
+        self.assertEqual(trace["audio"], [])
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertTrue(any(r["id"] == 82 and not r["ok"] for r in receipts))
+        self.assertFalse(any(r["id"] == 83 and r["ok"] for r in receipts))
+
+    def test_failed_private_interrupt_terminates_worker_before_late_speech(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 21, "command": "interrupt"},
+            {"id": 22, "command": "speak", "text": "FORBIDDEN-LATE-SPEECH"},
+            {"id": 23, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, interrupt_fails=True)
+        self.assertEqual(trace["audio"], [], "late speech must never publish after failed STOP")
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertTrue(any(r["id"] == 21 and not r["ok"] for r in receipts))
+        self.assertFalse(any(r["id"] == 22 and r["ok"] for r in receipts))
+        self.assertFalse(any(r["id"] == 23 and r["ok"] for r in receipts))
 
     def test_interrupt_during_livekit_stream_close_is_not_acked_as_success(self):
         records = [

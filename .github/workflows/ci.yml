@@ -58,6 +58,10 @@ jobs:
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_entry_readiness.py -v
       - name: RT1 visitor text provider egress fail-closed regression
         run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_text_egress_fence.py -v
+      - name: RT1 visitor voice STOP-only egress fence
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_voice_egress_fence.py -v
+      - name: RT1 answer and ICE revocation-serialized egress
+        run: python3 -m unittest discover -s tests/architecture -p test_rt1_319_signaling_egress_fence.py -v
       - name: RT1 D-ID V2 remote STOP read-only observer (non-promoting)
         run: python3 -m unittest discover -s tests/e2e -p test_rt1_did_v2_remote_stop_observe.py -v
       - name: RT1 offline reviewed Persona migration preflight

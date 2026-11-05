@@ -21,6 +21,8 @@ MAX_STREAMED_PCM_QUEUE = 8
 PCM_QUEUE_BACKPRESSURE_SECONDS = 0.15
 MAX_PCM_COMMAND_HEX = 32 * 1024
 TTS_TIMEOUT_SECONDS = 35
+MEDIA_IO_TIMEOUT_SECONDS = 5
+MEDIA_CLOSE_TIMEOUT_SECONDS = 2
 
 
 def emit(identifier, ok, stage=None):
@@ -149,7 +151,7 @@ async def run():
         await asyncio.wait_for(ready.wait(), timeout=25)
     except Exception:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     agents = [
         participant.identity
@@ -159,7 +161,7 @@ async def run():
     ]
     if not agents:
         emit(initial.get("id", 0), False)
-        await room.disconnect()
+        await asyncio.wait_for(room.disconnect(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
         return
     emit(initial.get("id", 0), True)
 
@@ -167,9 +169,13 @@ async def run():
     tasks = {}
     generation = 0
     active_pcm = None
+    close_identifier = None
+    close_control_confirmed = True
+    close_pcm_task = None
+    terminal_media_failure = False
 
     async def pump_pcm(state):
-        nonlocal generation, active_pcm
+        nonlocal generation, active_pcm, terminal_media_failure
         writer = None
         published = False
         failure_stage = "pcm_stream_open"
@@ -177,7 +183,7 @@ async def run():
             async with utterance_lock:
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
-                writer = await room.local_participant.stream_bytes(
+                writer = await asyncio.wait_for(room.local_participant.stream_bytes(
                     name=f'rt0-pcm-stream-{state["stream_id"]}',
                     topic="did.audio-stream",
                     attributes={
@@ -186,7 +192,7 @@ async def run():
                         "channels": str(state["channels"]),
                     },
                     destination_identities=agents,
-                )
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while True:
                     chunk = await state["queue"].get()
                     if state["generation"] != generation:
@@ -194,10 +200,10 @@ async def run():
                     if chunk is None:
                         break
                     failure_stage = "pcm_stream_write"
-                    await writer.write(chunk)
+                    await asyncio.wait_for(writer.write(chunk), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                     published = True
                 failure_stage = "pcm_stream_close"
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
@@ -209,12 +215,13 @@ async def run():
                 emit(state["end_id"], False)
                 state["end_id"] = None
         except Exception:
+            terminal_media_failure = True
             emit(state["stream_id"], False, failure_stage)
             if state["generation"] == generation:
                 generation += 1
                 if published:
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
                     except Exception:
                         pass
             if state["end_id"] is not None:
@@ -223,14 +230,14 @@ async def run():
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if active_pcm is state:
                 active_pcm = None
 
     async def speak(identifier, phrase, generation_at_start, preauthorized_pcm=None):
-        nonlocal generation
+        nonlocal generation, terminal_media_failure
         writer = None
         published = False
         try:
@@ -262,21 +269,21 @@ async def run():
                     raise asyncio.CancelledError()
                 if not chunk:
                     raise ValueError("empty TTS stream")
-                writer = await room.local_participant.stream_bytes(
+                writer = await asyncio.wait_for(room.local_participant.stream_bytes(
                     name=f"rt0-utterance-{identifier}",
                     topic="did.audio-stream",
                     attributes=attributes,
                     destination_identities=agents,
-                )
+                ), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                 while chunk is not None:
                     if generation_at_start != generation:
                         raise asyncio.CancelledError()
-                    await writer.write(chunk)
+                    await asyncio.wait_for(writer.write(chunk), timeout=MEDIA_IO_TIMEOUT_SECONDS)
                     published = True
                     chunk = await next_chunk()
                 if generation_at_start != generation:
                     raise asyncio.CancelledError()
-                await writer.aclose()
+                await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 writer = None
                 # A closed byte stream is only provider delivery, never verified
                 # RTP playout, audio hearing, or lip synchronisation.
@@ -286,6 +293,7 @@ async def run():
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
+            terminal_media_failure = True
             # A failed stream is terminal for this publisher generation.
             # An incomplete WAV may already be in D-ID's playback queue.
             # Fence every queued utterance before sending the remote interrupt;
@@ -297,14 +305,14 @@ async def run():
                         task.cancel()
                 if published:
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
                     except Exception:
                         pass
             emit(identifier, False)
         finally:
             if writer is not None:
                 try:
-                    await writer.aclose()
+                    await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
                 except Exception:
                     pass
             if tasks.get(identifier) is asyncio.current_task():
@@ -312,6 +320,9 @@ async def run():
 
     try:
         while raw := await asyncio.to_thread(sys.stdin.readline):
+            if terminal_media_failure:
+                # Never admit another publisher command after a vendor media fault.
+                break
             try:
                 request = json.loads(raw)
                 identifier = request["id"]
@@ -439,10 +450,13 @@ async def run():
                         emit(state["end_id"], False)
                         state["end_id"] = None
                     try:
-                        await room.local_participant.send_text("{}", topic="did.interrupt")
+                        await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
                         emit(identifier, True)
                     except Exception:
-                        emit(identifier, False)
+                        # A failed PCM abort cannot be followed by another SPEAK.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                 elif command == "interrupt":
                     generation += 1
                     if active_pcm is not None:
@@ -454,22 +468,42 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    # This is a text STOP command, never browser-published audio.
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
+                    # A failed vendor interrupt is terminal. Continuing the
+                    # command loop would allow fresh SPEAK after failed STOP.
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=0.35,
+                        )
+                    except Exception:
+                        # No successful STOP receipt can be manufactured when
+                        # the vendor refuses or stalls the interrupt.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
                     if active_pcm is not None:
                         state = active_pcm
+                        close_pcm_task = state["task"]
                         active_pcm = None
-                        state["task"].cancel()
+                        close_pcm_task.cancel()
                         if state["end_id"] is not None:
                             emit(state["end_id"], False)
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
-                    emit(identifier, True)
+                    # Terminal even if the vendor interrupt fails. Never permit
+                    # another SPEAK while local teardown is unresolved.
+                    close_identifier = identifier
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=0.35,
+                        )
+                    except Exception:
+                        close_control_confirmed = False
                     break
                 else:
                     emit(identifier, False)
@@ -480,14 +514,28 @@ async def run():
                 except Exception:
                     pass
     finally:
+        pending = set(tasks.values())
         if active_pcm is not None:
-            active_pcm["task"].cancel()
-            await asyncio.gather(active_pcm["task"], return_exceptions=True)
-        for task in tuple(tasks.values()):
+            pending.add(active_pcm["task"])
+        if close_pcm_task is not None:
+            # close cleared active_pcm, but its writer cleanup must finish
+            # before we can acknowledge this local STOP.
+            pending.add(close_pcm_task)
+        for task in pending:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tuple(tasks.values()), return_exceptions=True)
-        await room.disconnect()
+        cleanup_confirmed = True
+        if pending:
+            # A vendor task may suppress cancellation; do not await forever.
+            _, unfinished = await asyncio.wait(pending, timeout=0.45)
+            if unfinished:
+                cleanup_confirmed = False
+        try:
+            await asyncio.wait_for(room.disconnect(), timeout=0.45)
+        except Exception:
+            cleanup_confirmed = False
+        if close_identifier is not None:
+            # Only local private-publisher teardown, never remote D-ID video STOP.
+            emit(close_identifier, cleanup_confirmed and close_control_confirmed and not terminal_media_failure)
 
 
 if __name__ == "__main__":
