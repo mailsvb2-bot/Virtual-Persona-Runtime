@@ -84,6 +84,13 @@ pub trait DidEchoBackend: Send + Sync {
     /// Rejects failures to stop the sender; cleanup must never be assumed.
     fn stop(&self, session_id: &str) -> Result<(), ProviderError>;
 
+    /// True only if this backend can prove the sender is not registered.
+    /// Unknown backends conservatively retain identities after failed OPEN.
+    /// This checks the existing private worker map, not a new authority path.
+    fn sender_definitely_absent(&self, _session_id: &str) -> Result<bool, ProviderError> {
+        Ok(false)
+    }
+
     /// Release the private, already-fenced sender after canonical close.
     /// STOP can be issued earlier than close; it must remain idempotent until
     /// the final teardown has consumed its original acknowledgement.
@@ -117,11 +124,14 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
-            // OPEN may fail after the private sender connected. Reuse the
-            // canonical close path and retain its identity on unconfirmed STOP.
-            // Return the original OPEN error; the registry preserves any
-            // pending cleanup target for a later retry.
-            let _ = self.close_session(backend, id);
+            // Concrete workers may fail before a sender is ever registered.
+            // Release that reservation only when the existing worker map
+            // proves absence; otherwise retain the STOP identity on failure.
+            if backend.sender_definitely_absent(id)? {
+                self.remove(id)?;
+            } else {
+                let _ = self.close_session(backend, id);
+            }
             return Err(error);
         }
         if cancellation.is_cancelled() {
