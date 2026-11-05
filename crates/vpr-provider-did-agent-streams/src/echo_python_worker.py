@@ -169,6 +169,7 @@ async def run():
     active_pcm = None
     close_identifier = None
     close_control_confirmed = True
+    close_pcm_task = None
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm
@@ -463,8 +464,9 @@ async def run():
                     generation += 1
                     if active_pcm is not None:
                         state = active_pcm
+                        close_pcm_task = state["task"]
                         active_pcm = None
-                        state["task"].cancel()
+                        close_pcm_task.cancel()
                         if state["end_id"] is not None:
                             emit(state["end_id"], False)
                             state["end_id"] = None
@@ -493,6 +495,10 @@ async def run():
         pending = set(tasks.values())
         if active_pcm is not None:
             pending.add(active_pcm["task"])
+        if close_pcm_task is not None:
+            # close cleared active_pcm, but its writer cleanup must finish
+            # before we can acknowledge this local STOP.
+            pending.add(close_pcm_task)
         for task in pending:
             task.cancel()
         cleanup_confirmed = True
