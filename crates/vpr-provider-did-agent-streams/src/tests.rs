@@ -507,6 +507,29 @@ fn expressive_without_server_echo_fails_closed_before_session_creation() {
 }
 
 #[test]
+fn did_v2_livekit_close_without_echo_never_claims_remote_stop() {
+    // A stale LiveKit session can still be reachable at D-ID after the
+    // viewer disconnects. No backend STOP exists to acknowledge here.
+    let provider = adapter("http://127.0.0.1:1".to_owned());
+    let stale = RealtimeAvatarSession {
+        provider_resource_id: "old-livekit".to_owned(),
+        provider_session_id: "old-livekit".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token".to_owned(),
+        },
+    };
+    let result = provider.close_session(&stale).unwrap_err();
+    assert_eq!(result.kind, ProviderErrorKind::Unavailable);
+    assert!(!result.retryable);
+    // Repeat cannot silently convert an unconfirmed remote STOP to success.
+    assert_eq!(
+        provider.close_session(&stale).unwrap_err().kind,
+        ProviderErrorKind::Unavailable
+    );
+}
+
+#[test]
 fn stale_expressive_session_rejects_speech_without_reopening_legacy_transport() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
     let stale = RealtimeAvatarSession {
@@ -745,6 +768,167 @@ impl DidEchoBackend for MockEchoBackend {
         self.calls.lock().unwrap().push("stop".to_owned());
         Ok(())
     }
+}
+
+struct RetryableEchoStop {
+    calls: std::sync::Mutex<Vec<&'static str>>,
+    fail_stop_once: AtomicBool,
+}
+
+impl DidEchoBackend for RetryableEchoStop {
+    fn open(
+        &self,
+        _id: &str,
+        _url: &str,
+        _token: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("open");
+        Ok(())
+    }
+
+    fn speak(
+        &self,
+        _id: &str,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("stop");
+        if self.fail_stop_once.swap(false, Ordering::SeqCst) {
+            Err(unavailable())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn forget(&self, _id: &str) -> Result<(), ProviderError> {
+        self.calls.lock().unwrap().push("forget");
+        Ok(())
+    }
+}
+
+struct AbsentEchoSender;
+
+impl DidEchoBackend for AbsentEchoSender {
+    fn open(
+        &self,
+        _id: &str,
+        _url: &str,
+        _token: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn speak(
+        &self,
+        _id: &str,
+        _text: &str,
+        _cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        Err(unavailable())
+    }
+
+    fn stop(&self, _id: &str) -> Result<(), ProviderError> {
+        panic!("absent sender must not receive STOP")
+    }
+
+    fn sender_definitely_absent(&self, _id: &str) -> Result<bool, ProviderError> {
+        Ok(true)
+    }
+}
+
+#[test]
+fn failed_echo_open_without_worker_releases_reservation_after_each_attempt() {
+    let registry = DidEchoRegistry::default();
+    let backend = AbsentEchoSender;
+    let probe = Probe(AtomicBool::new(false));
+    for i in 0..300 {
+        let id = format!("missing-sender-{i}");
+        assert!(
+            registry
+                .open_session(&backend, &id, "wss://unused", "private", &probe)
+                .is_err()
+        );
+        assert!(!registry.contains(&id).unwrap());
+    }
+    registry.insert("later-real-sender").unwrap();
+    assert!(registry.contains("later-real-sender").unwrap());
+}
+
+#[test]
+fn echo_unconfirmed_stop_preserves_sender_identity_until_confirmed_retry() {
+    let registry = DidEchoRegistry::default();
+    let backend = RetryableEchoStop {
+        calls: std::sync::Mutex::new(Vec::new()),
+        fail_stop_once: AtomicBool::new(true),
+    };
+    registry.insert("echo-retry").unwrap();
+    assert!(registry.close_session(&backend, "echo-retry").is_err());
+    assert!(registry.contains("echo-retry").unwrap());
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop"]);
+    registry.close_session(&backend, "echo-retry").unwrap();
+    assert!(!registry.contains("echo-retry").unwrap());
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["stop", "stop", "forget"]
+    );
+}
+
+#[test]
+fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
+    struct CancelOnOpen<'a> {
+        cancelled: &'a AtomicBool,
+        transport: RetryableEchoStop,
+    }
+    impl DidEchoBackend for CancelOnOpen<'_> {
+        fn open(
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
+            _cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.cancelled.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn speak(
+            &self,
+            id: &str,
+            text: &str,
+            cancellation: &dyn CancellationProbe,
+        ) -> Result<(), ProviderError> {
+            self.transport.speak(id, text, cancellation)
+        }
+        fn stop(&self, id: &str) -> Result<(), ProviderError> {
+            self.transport.stop(id)
+        }
+        fn forget(&self, id: &str) -> Result<(), ProviderError> {
+            self.transport.forget(id)
+        }
+    }
+    let probe = Probe(AtomicBool::new(false));
+    let backend = CancelOnOpen {
+        cancelled: &probe.0,
+        transport: RetryableEchoStop {
+            calls: std::sync::Mutex::new(Vec::new()),
+            fail_stop_once: AtomicBool::new(true),
+        },
+    };
+    let registry = DidEchoRegistry::default();
+    assert!(
+        registry
+            .open_session(&backend, "echo-cancel", "wss://unused", "private", &probe)
+            .is_err()
+    );
+    assert!(registry.contains("echo-cancel").unwrap());
+    assert_eq!(*backend.transport.calls.lock().unwrap(), vec!["stop"]);
+    registry.close_session(&backend, "echo-cancel").unwrap();
+    assert!(!registry.contains("echo-cancel").unwrap());
 }
 
 #[test]
