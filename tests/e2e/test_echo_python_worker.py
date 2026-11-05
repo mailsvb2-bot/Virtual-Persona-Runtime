@@ -190,6 +190,43 @@ class EchoWorkerTests(unittest.TestCase):
             "format": "pcm16", "sample_rate": "16000", "channels": "1",
         })
 
+    def test_close_receipt_waits_for_active_pcm_writer_cleanup(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 12, "command": "pcm_chunk", "stream_id": 11,
+             "pcm_hex": bytes([1, 0] * 160).hex()},
+            {"id": 13, "command": "close"},
+        ]
+        started = time.monotonic()
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.10,
+            close_latency=0.30,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(trace["closed"], 1, "PCM writer cleanup must finish")
+        self.assertTrue(any(r["id"] == 13 and r["ok"] for r in receipts))
+        self.assertGreaterEqual(elapsed, 0.30, "close was acknowledged before PCM teardown")
+
+    def test_close_with_stalled_pcm_writer_reports_unconfirmed_local_stop(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 11, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 12, "command": "pcm_chunk", "stream_id": 11,
+             "pcm_hex": bytes([1, 0] * 160).hex()},
+            {"id": 13, "command": "close"},
+        ]
+        _, receipts = run_worker(
+            True, records=records, delay_before_close=0.10,
+            close_latency=0.80,
+        )
+        self.assertTrue(any(r["id"] == 13 and not r["ok"] for r in receipts),
+                        "writer teardown exceeded deadline: STOP must not be confirmed")
+
     def test_canonical_pcm16_stream_begin_chunk_finish_is_progressive_and_private(self):
         pcm1, pcm2 = bytes([1, 0] * 160), bytes([2, 0] * 160)
         records = [
