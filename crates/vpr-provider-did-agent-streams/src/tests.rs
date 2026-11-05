@@ -824,7 +824,10 @@ fn echo_unconfirmed_stop_preserves_sender_identity_until_confirmed_retry() {
     assert_eq!(*backend.calls.lock().unwrap(), vec!["stop"]);
     registry.close_session(&backend, "echo-retry").unwrap();
     assert!(!registry.contains("echo-retry").unwrap());
-    assert_eq!(*backend.calls.lock().unwrap(), vec!["stop", "stop", "forget"]);
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["stop", "stop", "forget"]
+    );
 }
 
 #[test]
@@ -835,14 +838,20 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
     }
     impl DidEchoBackend for CancelOnOpen<'_> {
         fn open(
-            &self, _id: &str, _url: &str, _token: &str,
+            &self,
+            _id: &str,
+            _url: &str,
+            _token: &str,
             _cancellation: &dyn CancellationProbe,
         ) -> Result<(), ProviderError> {
             self.cancelled.store(true, Ordering::SeqCst);
             Ok(())
         }
         fn speak(
-            &self, id: &str, text: &str, cancellation: &dyn CancellationProbe,
+            &self,
+            id: &str,
+            text: &str,
+            cancellation: &dyn CancellationProbe,
         ) -> Result<(), ProviderError> {
             self.transport.speak(id, text, cancellation)
         }
@@ -862,7 +871,11 @@ fn cancelled_echo_open_retains_identity_when_stop_is_unconfirmed() {
         },
     };
     let registry = DidEchoRegistry::default();
-    assert!(registry.open_session(&backend, "echo-cancel", "wss://unused", "private", &probe).is_err());
+    assert!(
+        registry
+            .open_session(&backend, "echo-cancel", "wss://unused", "private", &probe)
+            .is_err()
+    );
     assert!(registry.contains("echo-cancel").unwrap());
     assert_eq!(*backend.transport.calls.lock().unwrap(), vec!["stop"]);
     registry.close_session(&backend, "echo-cancel").unwrap();
