@@ -84,6 +84,16 @@ pub trait DidEchoBackend: Send + Sync {
     /// Rejects failures to stop the sender; cleanup must never be assumed.
     fn stop(&self, session_id: &str) -> Result<(), ProviderError>;
 
+    /// True only if this backend can prove the sender is not registered.
+    /// Unknown backends conservatively retain identities after failed OPEN.
+    /// This checks the existing private worker map, not a new authority path.
+    ///
+    /// # Errors
+    /// Rejects an unavailable or poisoned backend worker registry.
+    fn sender_definitely_absent(&self, _session_id: &str) -> Result<bool, ProviderError> {
+        Ok(false)
+    }
+
     /// Release the private, already-fenced sender after canonical close.
     /// STOP can be issued earlier than close; it must remain idempotent until
     /// the final teardown has consumed its original acknowledgement.
@@ -117,16 +127,20 @@ impl DidEchoRegistry {
     ) -> Result<(), ProviderError> {
         self.insert(id)?;
         if let Err(error) = backend.open(id, url, echo_token, cancellation) {
-            // Implementations must undo partial transport setup on failed open.
-            self.remove(id)?;
+            // Concrete workers may fail before a sender is ever registered.
+            // Release that reservation only when the existing worker map
+            // proves absence; otherwise retain the STOP identity on failure.
+            if backend.sender_definitely_absent(id)? {
+                self.remove(id)?;
+            } else {
+                let _ = self.close_session(backend, id);
+            }
             return Err(error);
         }
         if cancellation.is_cancelled() {
-            let cleanup = backend.stop(id);
-            let forgotten = backend.forget(id);
-            self.remove(id)?;
-            // Report failed teardown, never successful revocation.
-            return Err(cleanup.and(forgotten).err().unwrap_or(super::cancelled()));
+            // Revocation after OPEN must never discard an unconfirmed sender.
+            self.close_session(backend, id)?;
+            return Err(super::cancelled());
         }
         Ok(())
     }
@@ -168,12 +182,11 @@ impl DidEchoRegistry {
         if !self.contains(id)? {
             return Ok(());
         }
-        let stopped = backend.stop(id);
-        let forgotten = backend.forget(id);
-        if forgotten.is_ok() {
-            self.remove(id)?;
-        }
-        stopped.and(forgotten)
+        // If STOP is unconfirmed, retain the only known sender identity:
+        // forgetting it would make follow-up cleanup impossible.
+        backend.stop(id)?;
+        backend.forget(id)?;
+        self.remove(id)
     }
 
     pub(crate) fn contains(&self, id: &str) -> Result<bool, ProviderError> {
