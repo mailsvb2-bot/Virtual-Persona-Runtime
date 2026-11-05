@@ -457,3 +457,35 @@ fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
+
+#[test]
+fn concurrent_owner_revokes_share_one_confirmed_remote_stop() {
+    use std::sync::Barrier;
+
+    // The worker accepts exactly one STOP. A second HTTP cancellation would
+    // block until timeout and fail this test; both owner callbacks must see
+    // the same confirmed audio/video receipt through the canonical stop gate.
+    let (endpoint, worker) = single_stop_receipt("parallel-revoke", 9, "sender-9");
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(2)).unwrap();
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client, "parallel-revoke".into(), 9).unwrap());
+    remote.record_created_session("sender-9").unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let mut callbacks = Vec::new();
+    for _ in 0..2 {
+        let remote = Arc::clone(&remote);
+        let barrier = Arc::clone(&barrier);
+        callbacks.push(std::thread::spawn(move || {
+            barrier.wait();
+            remote.revoke_confirmed()
+        }));
+    }
+    barrier.wait();
+    for callback in callbacks {
+        callback.join().unwrap().unwrap();
+    }
+    assert!(remote.is_revoked());
+    assert!(remote.is_stop_confirmed());
+    worker.join().unwrap();
+}
