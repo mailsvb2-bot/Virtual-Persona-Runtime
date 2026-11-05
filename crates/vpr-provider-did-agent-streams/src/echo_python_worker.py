@@ -457,8 +457,19 @@ async def run():
                             state["end_id"] = None
                     for task in tuple(tasks.values()):
                         task.cancel()
-                    # This is a text STOP command, never browser-published audio.
-                    await room.local_participant.send_text("{}", topic="did.interrupt")
+                    # A failed vendor interrupt is terminal. Continuing the
+                    # command loop would allow fresh SPEAK after failed STOP.
+                    try:
+                        await asyncio.wait_for(
+                            room.local_participant.send_text("{}", topic="did.interrupt"),
+                            timeout=0.35,
+                        )
+                    except Exception:
+                        # No successful STOP receipt can be manufactured when
+                        # the vendor refuses or stalls the interrupt.
+                        close_identifier = identifier
+                        close_control_confirmed = False
+                        break
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
