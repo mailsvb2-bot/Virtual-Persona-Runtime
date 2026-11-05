@@ -333,6 +333,14 @@ impl EchoPythonBackend {
     }
 }
 impl DidEchoBackend for EchoPythonBackend {
+    fn sender_definitely_absent(&self, session_id: &str) -> Result<bool, ProviderError> {
+        Ok(!self
+            .sessions
+            .lock()
+            .map_err(|_| unavailable())?
+            .contains_key(session_id))
+    }
+
     fn supports_pcm_stream(&self) -> bool {
         true
     }
