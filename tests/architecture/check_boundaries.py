@@ -944,7 +944,8 @@ for required_runtime_stream_boundary in (
     "pub struct AuthorizedLlmStream",
     "ProviderExecutionPermit",
     "pub fn open_llm_stream",
-    ".open_stream(request, &permit.cancellation)",
+    "permit.dispatch(|cancellation| port.open_stream(request, cancellation))",
+    ".dispatch(|cancellation| self.stream.next_chunk(cancellation))",
 ):
     if required_runtime_stream_boundary not in turn_source:
         raise SystemExit(
@@ -966,15 +967,28 @@ for required_stt_stream_boundary in (
 for required_runtime_stt_boundary in (
     "pub struct AuthorizedSttStream",
     "pub fn open_stt_stream",
-    ".open_stream(request, &permit.cancellation)",
-    ".push_audio(pcm, &self.permit.cancellation)",
-    ".finish_input(&self.permit.cancellation)",
-    ".next_event(&self.permit.cancellation)",
+    "permit.dispatch(|cancellation| port.open_stream(request, cancellation))",
+    ".dispatch(|cancellation| self.stream.push_audio(pcm, cancellation))",
+    ".dispatch(|cancellation| self.stream.finish_input(cancellation))",
+    ".dispatch(|cancellation| self.stream.next_event(cancellation))",
 ):
     if required_runtime_stt_boundary not in turn_source:
         raise SystemExit(
             f"runtime-owned STT streaming boundary missing {required_runtime_stt_boundary}"
         )
+
+# The single canonical dispatch checks cancellation both before and after I/O.
+# A late provider success must be denied, not merely mapped from a provider error.
+for required_postflight in (
+    "pub(crate) fn dispatch<T>",
+    "let result = operation(&self.cancellation);",
+    "ProviderExecutionError::Denied(",
+    "RuntimeDenyReason::TurnCancelled",
+):
+    if required_postflight not in provider_source:
+        raise SystemExit(f"runtime provider cancellation postflight missing {required_postflight}")
+if provider_source.count("if self.cancellation.is_cancelled()") < 2:
+    raise SystemExit("runtime provider dispatch must check cancellation before and after I/O")
 
 # Prevent production God Files from reappearing. Tests are allowed to be larger evidence bundles.
 MAX_PRODUCTION_RUST_LINES = 600
