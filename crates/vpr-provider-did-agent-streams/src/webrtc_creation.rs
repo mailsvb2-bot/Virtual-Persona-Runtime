@@ -112,5 +112,4 @@ impl DidAgentStreamsAvatar {
             .map_err(|error| map_transport_error(&error))?;
         expect_success(response).map(|_| ())
     }
-
 }
