@@ -465,7 +465,7 @@ fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
     let remote = Rt1RemoteMediaRevocation::new(client, "matching-late".into(), 5).unwrap();
     remote.revoke_confirmed().unwrap();
-    remote.record_created_session("same-sender").unwrap();
+    assert_eq!(remote.record_created_session("same-sender").unwrap_err(), "RT1_VISITOR_REVOKED");
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
@@ -600,7 +600,7 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
     // No second revoke call: the late CREATE callback must compensate itself.
-    remote.record_created_session("sender-12").unwrap();
+    assert_eq!(remote.record_created_session("sender-12").unwrap_err(), "RT1_VISITOR_REVOKED");
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
