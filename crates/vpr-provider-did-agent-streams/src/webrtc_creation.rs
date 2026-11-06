@@ -1,7 +1,7 @@
 use super::*;
 
 impl DidAgentStreamsAvatar {
-    fn create_webrtc_session(
+    pub(super) fn create_webrtc_session(
         &self,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
