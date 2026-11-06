@@ -1,6 +1,8 @@
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind};
 use vpr_policy::{AuthorityScope, DataClass};
 
 use crate::cancellation::ProviderCancellation;
+use crate::error::{ProviderExecutionError, RuntimeDenyReason};
 use crate::execution_gate::ProviderEgressGuard;
 
 /// Internal linearized capability for one immediate provider operation.
@@ -14,6 +16,33 @@ pub(crate) struct ProviderExecutionPermit {
     // Drop means local I/O returned; it is not a remote audio/video STOP receipt.
     #[allow(dead_code)] // Held for its Drop side effect, never read as a value.
     pub(crate) active_egress: Option<ProviderEgressGuard>,
+}
+
+impl ProviderExecutionPermit {
+    /// Check the same canonical cancellation before and after provider I/O.
+    /// Even a misbehaving provider's late success is never authorized output.
+    pub(crate) fn dispatch<T>(
+        &self,
+        operation: impl FnOnce(&dyn CancellationProbe) -> Result<T, ProviderError>,
+    ) -> Result<T, ProviderExecutionError> {
+        if self.cancellation.is_cancelled() {
+            return Err(ProviderExecutionError::Denied(
+                RuntimeDenyReason::TurnCancelled,
+            ));
+        }
+        let result = operation(&self.cancellation);
+        if self.cancellation.is_cancelled() {
+            return match result {
+                Err(error) if error.kind == ProviderErrorKind::Cancelled => {
+                    Err(ProviderExecutionError::Provider(error))
+                }
+                _ => Err(ProviderExecutionError::Denied(
+                    RuntimeDenyReason::TurnCancelled,
+                )),
+            };
+        }
+        result.map_err(ProviderExecutionError::from)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
