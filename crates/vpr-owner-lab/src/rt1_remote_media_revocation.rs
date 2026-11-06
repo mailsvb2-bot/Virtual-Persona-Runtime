@@ -88,8 +88,14 @@ impl Rt1RemoteMediaRevocation {
         // remote sender identity is known; do not wait for another owner
         // callback that may never arrive.
         drop(created);
-        if self.revoked.load(Ordering::Acquire) && !self.confirmed.load(Ordering::Acquire) {
-            self.cancel_locked()?;
+        if self.revoked.load(Ordering::Acquire) {
+            // A late CREATE must never be returned as an admissible session,
+            // even when compensating STOP succeeds. The caller may publish
+            // media on Ok; STOP confirmation is not renewed visitor authority.
+            if !self.confirmed.load(Ordering::Acquire) {
+                self.cancel_locked()?;
+            }
+            return Err("RT1_VISITOR_REVOKED".into());
         }
         Ok(())
     }
