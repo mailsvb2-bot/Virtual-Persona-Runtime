@@ -120,8 +120,11 @@ impl Rt1RemoteMediaRevocation {
             .as_deref()
             .is_some_and(|created| created != stopped_session)
         {
-            // The worker acknowledged STOP for a different sender. Preserve
-            // quarantine; never advertise confirmed audio/video termination.
+            // A confirmed STOP for another sender proves the operation identity
+            // is ambiguous. Do not accept a later matching receipt as proof
+            // that the other sender has stopped: quarantine both identities.
+            self.identity_conflict.store(true, Ordering::Release);
+            self.confirmed.store(false, Ordering::Release);
             return Err("RT1_REMOTE_MEDIA_STOP_IDENTITY_MISMATCH".into());
         }
         *self.confirmed_session_id.lock() = Some(stopped_session);
