@@ -23,6 +23,7 @@ mod protocol;
 mod provider_error;
 mod response_json;
 mod session_creation;
+mod webrtc_creation;
 
 use client_control::DidClientControlRegistry;
 pub use echo::DidEchoBackend;
@@ -233,28 +234,6 @@ impl DidAgentStreamsAvatar {
             }
             PresenterLookupError::Provider(provider) => provider,
         })
-    }
-
-    fn create_webrtc_session(
-        &self,
-        cancellation: &dyn CancellationProbe,
-    ) -> Result<RealtimeAvatarSession, ProviderError> {
-        Self::ensure_active(cancellation)?;
-        let response = self
-            .authorized(self.client.post(self.streams_url()?))
-            .json(&CreateStreamRequest {
-                fluent: self.config.fluent,
-            })
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateStreamResponse = decode_json_response(response, Some(cancellation))?;
-        let client_interrupt = body.fluent && body.interrupt_enabled;
-        let session: RealtimeAvatarSession = body.try_into()?;
-        if client_interrupt {
-            self.client_control.register_interrupt(&session)?;
-        }
-        Ok(session)
     }
 
     fn authorized(&self, request: RequestBuilder) -> RequestBuilder {
