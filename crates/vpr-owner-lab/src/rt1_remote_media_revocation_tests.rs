@@ -420,6 +420,17 @@ fn wrong_sender_stop_receipt_cannot_confirm_remote_audio_or_video() {
     );
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
+    // Further STOP retries must not accept a receipt for a different
+    // remote sender and must not clear the identity quarantine.
+    assert_eq!(
+        remote.revoke_confirmed().unwrap_err(),
+        "RT1_REMOTE_SESSION_ID_CONFLICT"
+    );
+    assert_eq!(
+        remote.record_created_session("created-sender").unwrap_err(),
+        "RT1_REMOTE_SESSION_ID_CONFLICT"
+    );
+    assert!(!remote.is_stop_confirmed());
     worker.join().unwrap();
 }
 
