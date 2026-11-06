@@ -83,6 +83,17 @@ impl Rt1RemoteMediaRevocation {
             return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
         }
         *created = Some(session_id.to_owned());
+        // CREATE may finish after owner revoke. Returning Ok here would allow
+        // the caller to publish media on an already revoked operation.
+        // A STOP that was previously uncertain must be compensated as soon
+        // as the actual remote session identity becomes known.
+        drop(created);
+        if self.revoked.load(Ordering::Acquire) {
+            if !self.confirmed.load(Ordering::Acquire) {
+                self.cancel_locked()?;
+            }
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
         Ok(())
     }
 
@@ -120,11 +131,8 @@ impl Rt1RemoteMediaRevocation {
             .as_deref()
             .is_some_and(|created| created != stopped_session)
         {
-            // A valid STOP for a different sender leaves the operation
-            // identity ambiguous. Permanently quarantine both identities:
-            // a later matching STOP cannot prove the unexpected sender stopped.
-            self.identity_conflict.store(true, Ordering::Release);
-            self.confirmed.store(false, Ordering::Release);
+            // The worker acknowledged STOP for a different sender. Preserve
+            // quarantine; never advertise confirmed audio/video termination.
             return Err("RT1_REMOTE_MEDIA_STOP_IDENTITY_MISMATCH".into());
         }
         *self.confirmed_session_id.lock() = Some(stopped_session);
