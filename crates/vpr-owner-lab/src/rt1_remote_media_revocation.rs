@@ -83,6 +83,14 @@ impl Rt1RemoteMediaRevocation {
             return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
         }
         *created = Some(session_id.to_owned());
+        // A CREATE response can arrive after an earlier STOP timed out or
+        // returned an uncertain receipt. Retry compensation now that the
+        // remote sender identity is known; do not wait for another owner
+        // callback that may never arrive.
+        drop(created);
+        if self.revoked.load(Ordering::Acquire) && !self.confirmed.load(Ordering::Acquire) {
+            self.cancel_locked()?;
+        }
         Ok(())
     }
 
