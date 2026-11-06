@@ -67,6 +67,9 @@ impl Rt1RemoteMediaRevocation {
             return Err("RT1_REMOTE_SESSION_ID_INVALID".into());
         }
         let _serial = self.stop_gate.lock();
+        if self.identity_conflict.load(Ordering::Acquire) {
+            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+        }
         let mut created = self.created_session_id.lock();
         if created
             .as_deref()
@@ -131,8 +134,10 @@ impl Rt1RemoteMediaRevocation {
             .as_deref()
             .is_some_and(|created| created != stopped_session)
         {
-            // The worker acknowledged STOP for a different sender. Preserve
-            // quarantine; never advertise confirmed audio/video termination.
+            // A STOP for a different sender cannot prove that the original
+            // sender stopped. Keep the operation permanently quarantined.
+            self.identity_conflict.store(true, Ordering::Release);
+            self.confirmed.store(false, Ordering::Release);
             return Err("RT1_REMOTE_MEDIA_STOP_IDENTITY_MISMATCH".into());
         }
         *self.confirmed_session_id.lock() = Some(stopped_session);
