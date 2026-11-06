@@ -468,7 +468,9 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
     let worker = std::thread::spawn(move || {
         for (status, confirmed) in [("202 Accepted", false), ("200 OK", true)] {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = Vec::new();
             let mut buffer = [0_u8; 2048];
             loop {
@@ -488,8 +490,14 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
                 "session_id": "sender-12",
                 "audio_stopped": confirmed,
                 "video_stopped": confirmed,
-            }).to_string();
-            write!(socket, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            })
+            .to_string();
+            write!(
+                socket,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
         }
     });
     let client =
@@ -502,7 +510,10 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
     // No second revoke call: the late CREATE callback must compensate itself.
-    assert_eq!(remote.record_created_session("sender-12").unwrap_err(), "RT1_VISITOR_REVOKED");
+    assert_eq!(
+        remote.record_created_session("sender-12").unwrap_err(),
+        "RT1_VISITOR_REVOKED"
+    );
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
