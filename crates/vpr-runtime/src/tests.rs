@@ -7,8 +7,8 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use crate::cancellation::TurnCancellation;
 use crate::TurnInterruptHandle;
+use crate::cancellation::TurnCancellation;
 use crate::clock::RuntimeClock;
 use crate::provider::ProviderOperation;
 use vpr_domain::{
