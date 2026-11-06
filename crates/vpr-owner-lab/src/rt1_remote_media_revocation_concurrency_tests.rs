@@ -37,10 +37,9 @@ fn partial_audio_stop_receipt_never_confirms_video_and_retries_same_sender() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let worker = std::thread::spawn(move || {
-        for (status, audio_stopped, video_stopped) in [
-            ("202 Accepted", true, false),
-            ("200 OK", true, true),
-        ] {
+        for (status, audio_stopped, video_stopped) in
+            [("202 Accepted", true, false), ("200 OK", true, true)]
+        {
             let (mut socket, _) = listener.accept().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
