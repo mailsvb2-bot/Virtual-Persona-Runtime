@@ -526,3 +526,6 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
+
+#[path = "rt1_remote_media_revocation_concurrency_tests.rs"]
+mod concurrency_tests;
