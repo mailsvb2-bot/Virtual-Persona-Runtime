@@ -453,7 +453,67 @@ fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
     let remote = Rt1RemoteMediaRevocation::new(client, "matching-late".into(), 5).unwrap();
     remote.revoke_confirmed().unwrap();
-    remote.record_created_session("same-sender").unwrap();
+    assert_eq!(
+        remote.record_created_session("same-sender").unwrap_err(),
+        "RT1_VISITOR_REVOKED"
+    );
+    assert!(remote.is_stop_confirmed());
+    worker.join().unwrap();
+}
+
+#[test]
+fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let worker = std::thread::spawn(move || {
+        for (status, confirmed) in [("202 Accepted", false), ("200 OK", true)] {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let read = socket.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(b"DELETE /v1/avatar/operations/late-uncertain "));
+            let body = serde_json::json!({
+                "operation_id": "late-uncertain",
+                "generation": 12,
+                "session_id": "sender-12",
+                "audio_stopped": confirmed,
+                "video_stopped": confirmed,
+            })
+            .to_string();
+            write!(
+                socket,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+    });
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+    let remote = Rt1RemoteMediaRevocation::new(client, "late-uncertain".into(), 12).unwrap();
+    assert_eq!(
+        remote.revoke_confirmed().unwrap_err(),
+        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
+    );
+    assert!(remote.is_revoked());
+    assert!(!remote.is_stop_confirmed());
+    // No second revoke call: the late CREATE callback must compensate itself.
+    assert_eq!(
+        remote.record_created_session("sender-12").unwrap_err(),
+        "RT1_VISITOR_REVOKED"
+    );
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
