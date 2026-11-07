@@ -48,7 +48,9 @@ impl VisitorEgressState {
         if *active == 0 {
             return true;
         }
-        self.drained.wait_for(&mut active, timeout);
+        // A condition variable can wake spuriously. Never report a drained
+        // provider or browser delivery until its permit actually drops.
+        self.drained.wait_while_for(&mut active, |count| *count != 0, timeout);
         *active == 0
     }
 }
