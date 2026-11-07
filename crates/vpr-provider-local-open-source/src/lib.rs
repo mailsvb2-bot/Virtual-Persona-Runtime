@@ -151,6 +151,43 @@ impl LocalOpenSourceAvatar {
         Ok(session)
     }
 
+    fn stop_session_confirmed(
+        &self,
+        session: &RealtimeAvatarSession,
+        deadline: std::time::Instant,
+    ) -> Result<(), ProviderError> {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
+        let id = Self::validate_session(session)?;
+        // This is a stronger worker contract than the legacy DELETE:
+        // plain 2xx/204 is NOT proof that audio and video have stopped.
+        let response = self
+            .authorized(self.client.delete(self.session_url(id)?))
+            .timeout(remaining)
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let response = expect_success(response)?;
+        let receipt: RemoteMediaStopReceipt = decode_json_response(response, None)?;
+        if std::time::Instant::now() > deadline {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Timeout,
+                retryable: false,
+            });
+        }
+        // Reject stale or ambiguous confirmations. Only the exact current
+        // session and explicit positive receipts for *both* media senders
+        // satisfy the worker contract; a generic successful DELETE does not.
+        if receipt.session_id != id || !receipt.audio_stopped || !receipt.video_stopped {
+            return Err(invalid_response());
+        }
+        Ok(())
+    }
+
     fn ensure_active(cancellation: &dyn CancellationProbe) -> Result<(), ProviderError> {
         if cancellation.is_cancelled() {
             Err(cancelled())
@@ -295,43 +332,6 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .send()
             .map_err(|error| map_transport_error(&error))?;
         expect_success(response).map(|_| ())
-    }
-
-    fn stop_session_confirmed(
-        &self,
-        session: &RealtimeAvatarSession,
-        deadline: std::time::Instant,
-    ) -> Result<(), ProviderError> {
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(ProviderError {
-                kind: ProviderErrorKind::Timeout,
-                retryable: false,
-            });
-        }
-        let id = Self::validate_session(session)?;
-        // This is a stronger worker contract than the legacy DELETE:
-        // plain 2xx/204 is NOT proof that audio and video have stopped.
-        let response = self
-            .authorized(self.client.delete(self.session_url(id)?))
-            .timeout(remaining)
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let receipt: RemoteMediaStopReceipt = decode_json_response(response, None)?;
-        if std::time::Instant::now() > deadline {
-            return Err(ProviderError {
-                kind: ProviderErrorKind::Timeout,
-                retryable: false,
-            });
-        }
-        // Reject stale or ambiguous confirmations. Only the exact current
-        // session and explicit positive receipts for *both* media senders
-        // satisfy the worker contract; a generic successful DELETE does not.
-        if receipt.session_id != id || !receipt.audio_stopped || !receipt.video_stopped {
-            return Err(invalid_response());
-        }
-        Ok(())
     }
 
     fn close_session(&self, session: &RealtimeAvatarSession) -> Result<(), ProviderError> {
