@@ -129,6 +129,7 @@ local_lab_files = {
     # Test-only caller of the gated local RT1 route, never shipped as an API surface.
     Path("crates/vpr-owner-lab/ui/e2e/rt1-canonical-provider.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-livekit.spec.ts"),
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-livekit-provider-lifecycle.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-local-canary.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-late-microphone-revoke.spec.ts"),
     Path("crates/vpr-owner-lab/ui/e2e/rt1-late-livekit-connect.spec.ts"),
