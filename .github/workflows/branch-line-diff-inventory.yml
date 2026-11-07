@@ -2,9 +2,6 @@ name: Branch line-diff inventory
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - audit/branch-diff-inventory-20261103
 
 permissions:
   contents: read
@@ -23,7 +20,7 @@ jobs:
       - name: Generate complete line-by-line branch inventory
         run: python3 scripts/audit_branch_diffs.py --out branch-audit
       - name: Upload patch inventory
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: branch-line-diff-inventory
           path: branch-audit/
