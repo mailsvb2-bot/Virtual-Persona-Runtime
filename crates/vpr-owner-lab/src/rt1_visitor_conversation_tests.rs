@@ -92,3 +92,24 @@ fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
     );
     assert!(receiver.try_recv().is_err());
 }
+
+#[test]
+fn drop_cleanup_never_waits_for_a_busy_provider_engine() {
+    use std::time::{Duration, Instant};
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = Mutex::new(OwnerLabEngine::new(Box::new(provider), true).unwrap());
+    // A provider turn may hold this mutex while external I/O is stalled.
+    let _busy = engine.lock();
+    let before = Instant::now();
+    try_stop_uncontended(&engine);
+    assert!(
+        before.elapsed() < Duration::from_millis(250),
+        "Drop cleanup must not wait for the provider engine mutex"
+    );
+}
