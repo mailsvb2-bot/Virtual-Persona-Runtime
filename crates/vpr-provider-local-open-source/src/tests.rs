@@ -154,3 +154,55 @@ fn cancellation_prevents_network_work() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
 }
+
+#[test]
+fn failed_create_http_response_must_not_allow_duplicate_allocation_retry() {
+    // A worker can allocate a remote sender and still reply with HTTP 503.
+    // Retrying that CREATE is unsafe without worker-side idempotency.
+    for status in ["500 Internal Server Error", "503 Service Unavailable"] {
+        let (endpoint, captured) = serve(vec![(status, "{}".to_owned())]);
+        let error = provider(endpoint)
+            .create_session(&Probe(AtomicBool::new(false)))
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(!error.retryable);
+        assert!(
+            captured
+                .recv()
+                .unwrap()
+                .starts_with("POST /v1/avatar/sessions ")
+        );
+    }
+}
+
+#[test]
+fn remote_allocation_without_session_id_times_out_and_cannot_be_admitted() {
+    // The worker has accepted CREATE but withheld its allocation receipt.
+    // Without a session id the client cannot address a compensating STOP.
+    // This RT0 compatibility route must fail closed; RT1 bounded startup
+    // remains unavailable until the worker provides a cancellation contract.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        assert!(read_request(&mut stream).starts_with("POST /v1/avatar/sessions "));
+        thread::sleep(Duration::from_millis(300));
+        let _ = stream.write_all(
+            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+    });
+    let avatar = LocalOpenSourceAvatar::new(
+        LocalOpenSourceAvatarConfig::new(format!("http://{address}"), "worker-secret")
+            .with_timeout(Duration::from_millis(40)),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    let result = avatar.create_session(&Probe(AtomicBool::new(false)));
+    let error = result.unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    // A timeout does not prove the remote worker failed to allocate.
+    // Repeating CREATE could create a second uncontrolled media sender.
+    assert!(!error.retryable);
+    assert!(started.elapsed() < Duration::from_millis(250));
+    server.join().unwrap();
+}
