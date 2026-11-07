@@ -50,3 +50,6 @@ jobs:
       - name: Real owner publication, separate visitor RTP, revoked dual-track STOP
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.config.ts
+      - name: Canonical D-ID WebRTC visitor safety and unconfirmed STOP
+        working-directory: crates/vpr-owner-lab/ui
+        run: npx playwright test --config playwright.rt1.canonical.config.ts
