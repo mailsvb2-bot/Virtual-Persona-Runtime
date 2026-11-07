@@ -480,6 +480,16 @@ impl Rt1VisitorConversation {
         self.remote.is_some()
     }
 
+    /// Observed remote STOP receipt for this visitor's exact worker operation.
+    /// Never infer sender shutdown from local disconnect or publication revoke.
+    /// A canonical D-ID session has no authenticated dual-track receipt path.
+    #[must_use]
+    pub fn remote_media_stop_confirmed(&self) -> bool {
+        self.remote
+            .as_ref()
+            .is_some_and(|remote| remote.is_stop_confirmed())
+    }
+
     /// # Errors
     /// Always attempts provider cleanup, even if owner pause already removed
     /// the registration. A failed remote close remains retryable on a later call.

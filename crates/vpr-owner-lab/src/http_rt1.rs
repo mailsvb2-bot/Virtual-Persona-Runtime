@@ -486,9 +486,7 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
-// Text uses the same canonical visitor engine and publication-scoped
-// interruptible provider permit as microphone turns. This local diagnostic
-// endpoint does not grant authority to the owner engine or public visitors.
+// Canonical visitor permit; no public RT1 provider egress.
 fn visitor_text(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -546,16 +544,20 @@ fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1H
     // Audio interrupt is not evidence of remote video shutdown.
     Ok(json_response(
         200,
-        &serde_json::json!({
-            "ok": true, "remote_video_stop_confirmed": false
-        }),
+        &serde_json::json!({"ok": true, "remote_video_stop_confirmed": false}),
     ))
 }
 
 fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorSession = parse_json(request)?;
-    let active = lookup(state, &body.session_id)?.is_active();
-    Ok(json_response(200, &serde_json::json!({"active": active})))
+    let c = lookup(state, &body.session_id)?;
+    // Only an authenticated dual-track worker receipt can confirm remote STOP.
+    let stopped = c.remote_media_stop_confirmed();
+    let status = serde_json::json!({
+        "active": c.is_active(), "remote_stop_confirmed": stopped,
+        "remote_video_stop_confirmed": stopped,
+    });
+    Ok(json_response(200, &status))
 }
 
 fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
