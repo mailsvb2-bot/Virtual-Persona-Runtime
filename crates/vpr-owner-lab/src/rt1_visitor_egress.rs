@@ -91,6 +91,25 @@ mod tests {
     }
 
     #[test]
+    fn spurious_drain_notifications_do_not_release_an_active_provider() {
+        let state = Arc::new(VisitorEgressState::default());
+        let revoked = AtomicBool::new(false);
+        let permit = state.admit(&revoked).unwrap();
+        let notifier = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            for _ in 0..20 {
+                notifier.drained.notify_all();
+                std::thread::yield_now();
+            }
+        });
+        // A wakeup is not a STOP receipt or completion of the egress permit.
+        assert!(!state.quiescent(Duration::from_millis(20)));
+        worker.join().unwrap();
+        drop(permit);
+        assert!(state.quiescent(Duration::ZERO));
+    }
+
+    #[test]
     fn stalled_provider_turn_cannot_queue_a_second_turn() {
         let state = Arc::new(VisitorEgressState::default());
         let revoked = AtomicBool::new(false);
