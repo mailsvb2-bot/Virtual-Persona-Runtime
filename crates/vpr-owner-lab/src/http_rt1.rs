@@ -486,9 +486,7 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
     Ok(json_response(200, &serde_json::json!({"ok": true})))
 }
 
-// Text uses the same canonical visitor engine and publication-scoped
-// interruptible provider permit as microphone turns. This local diagnostic
-// endpoint does not grant authority to the owner engine or public visitors.
+// Canonical visitor permit; no public RT1 provider egress.
 fn visitor_text(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -546,9 +544,7 @@ fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1H
     // Audio interrupt is not evidence of remote video shutdown.
     Ok(json_response(
         200,
-        &serde_json::json!({
-            "ok": true, "remote_video_stop_confirmed": false
-        }),
+        &serde_json::json!({"ok": true, "remote_video_stop_confirmed": false}),
     ))
 }
 
