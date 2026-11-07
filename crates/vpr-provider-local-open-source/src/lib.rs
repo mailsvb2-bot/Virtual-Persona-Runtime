@@ -169,8 +169,18 @@ impl RealtimeAvatarPort for LocalOpenSourceAvatar {
             .authorized(self.client.post(self.sessions_url()?))
             .json(&CreateSessionRequest {})
             .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
+            .map_err(|error| {
+                // The worker may have allocated a sender before transport failure.
+                // Without an operation id, repeating CREATE risks an orphan.
+                let mut failure = map_transport_error(&error);
+                failure.retryable = false;
+                failure
+            })?;
+        let response = expect_success(response).map_err(|mut failure| {
+            // Even an HTTP 5xx can follow a successful remote allocation.
+            failure.retryable = false;
+            failure
+        })?;
         let body: CreateSessionResponse = decode_json_response(response, Some(cancellation))?;
         body.try_into()
     }
