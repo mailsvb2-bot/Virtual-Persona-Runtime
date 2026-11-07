@@ -580,9 +580,13 @@ impl Drop for Rt1VisitorConversation {
         if let Some(remote) = &self.remote {
             let _ = remote.revoke_confirmed();
         }
-        let mut engine = self.engine.lock();
-        if engine.session_revocation_handle().is_some() {
-            let _ = engine.stop_visitor_provider_confirmed();
+        // Drop must never wait for a provider turn holding the engine mutex.
+        // The independent stop-only capability was already dispatched above;
+        // if the engine is busy, cleanup remains unconfirmed, not a receipt.
+        if let Some(mut engine) = self.engine.try_lock() {
+            if engine.session_revocation_handle().is_some() {
+                let _ = engine.stop_visitor_provider_confirmed();
+            }
         }
     }
 }
