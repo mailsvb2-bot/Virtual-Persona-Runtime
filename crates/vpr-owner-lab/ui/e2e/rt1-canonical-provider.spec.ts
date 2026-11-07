@@ -66,110 +66,43 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
   expect(publish.status).toBe(200);
   const visitor_token = String(publish.body.visitor_token);
 
+  // D-ID cannot confirm independent remote video STOP. Never CREATE a remote
+  // session or issue visitor voice/text egress while this safety gate is unmet.
   const start = await call("/api/rt1/visitor/start", { visitor_token, consent: true });
-  expect(start.status, JSON.stringify(start.body)).toBe(200);
-  expect(start.body.signal.transport.kind).toBe("web_rtc");
-  expect(start.body.voice_enabled).toBe(false);
-  expect(start.body.signal.transport.offer.kind).toBe("offer");
-  expect(start.body.signal.transport.offer.sdp).toContain("backend-e2e-");
-  const session_id = String(start.body.session_id);
+  expect(start.status, JSON.stringify(start.body)).toBe(503);
+  expect(start.body.code).toBe("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+  expect(start.body).not.toHaveProperty("session_id");
 
-  // A regular D-ID WebRTC avatar has no independent private Echo STOP.
-  // RT1 must never send visitor microphone audio to that unfenced adapter.
-  // The final HTTP delivery handler is a distinct dispatch path: verify it
-  // did not bypass the existing owner-lab CSRF and same-origin policy.
   const forgedText = await request.post(`${base}/api/rt1/visitor/text`, {
     headers: { "content-type": "application/json", origin: base },
-    data: { session_id, text: "CSRF bypass attempt" },
+    data: { session_id: "forged-session", text: "CSRF bypass attempt" },
   });
   expect(forgedText.status()).toBe(403);
   expect((await forgedText.json()).code).toBe("CSRF_DENIED");
 
-  // A D-ID WebRTC-only session has no independent Echo STOP; the shared
-  // canonical LLM delivery gate must not turn a text reply into unfenced
-  // browser/provider egress merely because a session ID is known.
-  const unsupportedText = await call("/api/rt1/visitor/text", {
-    session_id,
-    text: "Can you answer while the remote sender has no STOP capability?",
+  const deniedText = await call("/api/rt1/visitor/text", {
+    session_id: "forged-session", text: "No unfenced LLM egress",
   });
-  expect(unsupportedText.status).toBe(409);
-  expect(unsupportedText.body).not.toHaveProperty("reply");
-
-  const unsupportedVoice = await call("/api/rt1/visitor/voice", {
-    session_id,
-    pcm: [0, 0, 0, 0],
+  expect(deniedText.status).not.toBe(200);
+  expect(deniedText.body).not.toHaveProperty("reply");
+  const deniedVoice = await call("/api/rt1/visitor/voice", {
+    session_id: "forged-session", pcm: [0, 0, 0, 0],
   });
-  expect(unsupportedVoice.status).toBe(409);
+  expect(deniedVoice.status).not.toBe(200);
 
-
-  // Legacy D-ID WebRTC has no private audio STOP capability.
-  const unsupportedInterrupt = await call("/api/rt1/visitor/interrupt", { session_id });
-  expect(unsupportedInterrupt.status).toBe(409);
-
-  const answer = await call("/api/rt1/visitor/answer", {
-    session_id,
-    sdp: "v=0 canonical-browser-answer",
-  });
-  expect(answer.status).toBe(200);
-
-  const ice = await call("/api/rt1/visitor/ice", {
-    session_id,
-    candidate: "candidate:1 1 udp 1 192.0.2.1 9000 typ host",
-    sdp_mid: "0",
-    sdp_mline_index: 0,
-  });
-  expect(ice.status, JSON.stringify(ice.body)).toBe(200);
-
-  const requestsBefore = (await (await request.get(`${provider}/__state`)).json()).requests;
-  const creates = requestsBefore.filter(
-    (item: { method: string; path: string }) =>
-      item.method === "POST" && item.path === "/agents/backend-e2e-agent/streams",
+  const providerRequests = async () =>
+    (await (await request.get(`${provider}/__state`)).json()).requests as
+      { method: string; path: string }[];
+  const creates = (await providerRequests()).filter(
+    (item) => item.method === "POST" && item.path === "/agents/backend-e2e-agent/streams",
   );
-  expect(creates).toHaveLength(1);
-  const sdps = requestsBefore.filter(
-    (item: { method: string; path: string }) =>
-      item.method === "POST" && /\/streams\/stream-\d+\/sdp$/.test(item.path),
-  );
-  expect(sdps).toHaveLength(1);
-  const candidates = requestsBefore.filter(
-    (item: { method: string; path: string }) =>
-      item.method === "POST" && /\/streams\/stream-\d+\/ice$/.test(item.path),
-  );
-  expect(candidates).toHaveLength(1);
-
+  expect(creates).toHaveLength(0);
 
   const pause = await call("/api/rt1/owner/pause", { owner_token });
   expect(pause.status).toBe(200);
-  expect(pause.body.remote_stop_confirmed).toBe(false);
-  const stopped = await call("/api/rt1/visitor/close", { session_id });
-  // D-ID legacy DELETE is a provider close acknowledgement, NOT independent
-  // proof that both remote RTP senders ended. Never return a successful close
-  // or discard the session's retry handle when remote video is unconfirmed.
-  expect(stopped.status, JSON.stringify(stopped.body)).toBe(502);
-  expect(stopped.body.code).toBe("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
-  const quarantined = await call("/api/rt1/visitor/status", { session_id });
-  expect(quarantined.status).toBe(200);
-  expect(quarantined.body.active).toBe(false);
-  const textAfterRevoke = await call("/api/rt1/visitor/text", {
-    session_id,
-    text: "This must never escape after owner pause",
-  });
-  expect(textAfterRevoke.status).toBe(409);
-  expect(textAfterRevoke.body).not.toHaveProperty("reply");
-
-  const deniedAfterRevoke = await call("/api/rt1/visitor/voice", {
-    session_id,
-    pcm: [0, 0, 0, 0],
-  });
-  expect(deniedAfterRevoke.status).toBe(409);
-
-  const state = (await (await request.get(`${provider}/__state`)).json()).requests;
-  const deletes = state.filter(
-    (item: { method: string; path: string }) =>
-      item.method === "DELETE" && /\/agents\/backend-e2e-agent\/streams\/stream-\d+$/.test(item.path),
-  );
-  expect(deletes).toHaveLength(1);
-  expect(deletes[0].path).toBe(sdps[0].path.replace(/\/sdp$/, ""));
   const stale = await call("/api/rt1/visitor/start", { visitor_token, consent: true });
   expect(stale.status).not.toBe(200);
+  expect((await providerRequests()).filter(
+    (item) => item.method === "POST" && item.path === "/agents/backend-e2e-agent/streams",
+  )).toHaveLength(0);
 });
