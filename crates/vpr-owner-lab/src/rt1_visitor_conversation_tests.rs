@@ -83,6 +83,9 @@ fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
         interrupt: Arc::new(LiveVisitorInterrupt::default()),
         remote: None,
     };
+    // A session without an authenticated worker STOP receipt must not be
+    // reported as remotely closed, even if its local media is absent.
+    assert!(!conversation.remote_media_stop_confirmed());
     let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     assert_eq!(
         conversation
