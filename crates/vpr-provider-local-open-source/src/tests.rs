@@ -77,7 +77,10 @@ fn full_worker_control_plane_matches_contract() {
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
         ("200 OK", "{}".to_owned()),
-        ("200 OK", r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.to_owned()),
+        (
+            "200 OK",
+            r#"{"session_id":"local-1","audio_stopped":true,"video_stopped":true}"#.to_owned(),
+        ),
     ]);
     let avatar = provider(endpoint);
     let probe = Probe(AtomicBool::new(false));
