@@ -554,8 +554,20 @@ fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1H
 
 fn visitor_status(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorSession = parse_json(request)?;
-    let active = lookup(state, &body.session_id)?.is_active();
-    Ok(json_response(200, &serde_json::json!({"active": active})))
+    let conversation = lookup(state, &body.session_id)?;
+    let active = conversation.is_active();
+    // Never claim successful remote termination from a local revoke. The
+    // receipt is true only after the durable worker attests both tracks STOP
+    // for the same operation; legacy D-ID stays fail-closed.
+    let remote_stop_confirmed = conversation.remote_media_stop_confirmed();
+    Ok(json_response(
+        200,
+        &serde_json::json!({
+            "active": active,
+            "remote_stop_confirmed": remote_stop_confirmed,
+            "remote_video_stop_confirmed": remote_stop_confirmed,
+        }),
+    ))
 }
 
 fn visitor_close(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
