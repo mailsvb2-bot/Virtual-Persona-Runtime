@@ -583,10 +583,16 @@ impl Drop for Rt1VisitorConversation {
         // Drop must never wait for a provider turn holding the engine mutex.
         // The independent stop-only capability was already dispatched above;
         // if the engine is busy, cleanup remains unconfirmed, not a receipt.
-        if let Some(mut engine) = self.engine.try_lock() {
-            if engine.session_revocation_handle().is_some() {
-                let _ = engine.stop_visitor_provider_confirmed();
-            }
+        try_stop_uncontended(&self.engine);
+    }
+}
+
+// Best-effort cleanup must not block the caller if a provider holds the engine.
+// This does not certify remote STOP; durable reconciliation is still required.
+fn try_stop_uncontended(engine: &Mutex<OwnerLabEngine>) {
+    if let Some(mut engine) = engine.try_lock() {
+        if engine.session_revocation_handle().is_some() {
+            let _ = engine.stop_visitor_provider_confirmed();
         }
     }
 }
