@@ -41,7 +41,8 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
-    // Retain STOP handle before CREATE; never hold registry lock during HTTP.
+    // Retained BEFORE remote CREATE, even if no browser session ID is returned.
+    // Never hold this registry lock while doing provider network I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
 }
@@ -49,6 +50,11 @@ pub(super) struct Rt1HttpState {
 #[path = "http_rt1_cleanup.rs"]
 mod cleanup;
 pub(super) use cleanup::spawn_cleanup_reconciler;
+#[path = "http_rt1_start.rs"]
+mod start;
+#[path = "http_rt1_verified_worker.rs"]
+mod verified_worker;
+use start::visitor_start;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -225,7 +231,9 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
-        if std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true") {
+        if verified_worker::selected()
+            || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true")
+        {
             for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
                 if std::env::var(name)
                     .ok()
@@ -338,108 +346,6 @@ fn new_visitor_session_id() -> Result<String, HttpResponse> {
     Ok(session_id)
 }
 
-fn visitor_start(
-    request: &mut tiny_http::Request,
-    state: &AppState,
-) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
-    let body: VisitorStart = parse_json(request)?;
-    if !body.consent {
-        return Err(error_response(403, "CONSENT_REQUIRED"));
-    }
-    // Do not call the provider until the retry handle exists.
-    let session_id = new_visitor_session_id()?;
-    let providers = ProviderBundle::from_env(false)
-        .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
-    let mut engine = super::engine_bootstrap::assemble(providers, true)
-        .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
-    if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
-        return Err(error_response(409, "RT1_PERSONA_NOT_REVIEWED"));
-    }
-    let manager = Rt1OwnerController::new().visitor_sessions();
-    let started = if std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true") {
-        let retry_id = session_id.clone();
-        Rt1VisitorConversation::start_diagnostic(
-            manager,
-            body.visitor_token,
-            engine,
-            true,
-            |remote| state.rt1.register_remote(retry_id, remote),
-        )
-    } else {
-        // Canonical D-ID remote video STOP has no authoritative receipt yet.
-        return Err(error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
-    };
-    let (conversation, bundle) =
-        started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
-    // Register before checking revocation: if STOP is uncertain, the
-    // quarantined server-side handle must survive even though the browser
-    // never received a usable SDP/session ID.
-    let conversation = Arc::new(conversation);
-    // Capability lookup and the post-registration authority check can invoke
-    // remote STOP. Never hold the shared HTTP registry during provider I/O.
-    match register_visitor(
-        &state.rt1.conversations,
-        &session_id,
-        &conversation,
-        Rt1VisitorConversation::is_active,
-    ) {
-        Ok(()) => {}
-        Err(RegistrationFailure::Collision) => {
-            if conversation.close().is_err() {
-                return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
-            }
-            return Err(error_response(409, "RT1_SESSION_COLLISION"));
-        }
-        Err(RegistrationFailure::Revoked) => {
-            // The browser never receives this session ID, but the server must
-            // retain it for STOP reconciliation if the provider is uncertain.
-            let receipt_path = conversation.has_remote_video_stop_receipt_path();
-            if finalize_registered_stop(
-                &state.rt1.conversations,
-                &session_id,
-                &conversation,
-                conversation.close(),
-                receipt_path,
-            )
-            .is_err()
-            {
-                return Err(error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
-            }
-            return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
-        }
-    }
-    // Authorization can change after registration or during capability
-    // discovery. Never lose the retry handle when that late check fails.
-    let voice_enabled = conversation.supports_private_voice();
-    if !conversation.is_active() {
-        let receipt_path = conversation.has_remote_video_stop_receipt_path();
-        if finalize_registered_stop(
-            &state.rt1.conversations,
-            &session_id,
-            &conversation,
-            conversation.close(),
-            receipt_path,
-        )
-        .is_err()
-        {
-            return Err(error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
-        }
-        return Err(error_response(409, "RT1_VISITOR_REVOKED_DURING_START"));
-    }
-    Ok((
-        json_response(
-            200,
-            &serde_json::json!({
-                "session_id": session_id,
-                "signal": bundle,
-                "voice_enabled": voice_enabled,
-                "diagnostic_rtp": std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
-            }),
-        ),
-        conversation,
-    ))
-}
-
 fn lookup(state: &AppState, session_id: &str) -> Rt1HttpResultConversation {
     state
         .rt1
@@ -532,19 +438,21 @@ fn visitor_voice(
 
 fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorSession = parse_json(request)?;
-    lookup(state, &body.session_id)?
-        .interrupt_turn()
-        .map_err(|code| {
-            if code == "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED" {
-                error_response(502, "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED")
-            } else {
-                error_response(409, "RT1_VISITOR_INTERRUPT_DENIED")
-            }
-        })?;
-    // Audio interrupt is not evidence of remote video shutdown.
+    let conversation = lookup(state, &body.session_id)?;
+    conversation.interrupt_turn().map_err(|code| {
+        if code == "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED" {
+            error_response(502, "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED")
+        } else {
+            error_response(409, "RT1_VISITOR_INTERRUPT_DENIED")
+        }
+    })?;
+    // Only the worker's authenticated BOTH-track receipt may confirm video.
     Ok(json_response(
         200,
-        &serde_json::json!({"ok": true, "remote_video_stop_confirmed": false}),
+        &serde_json::json!({
+            "ok": true,
+            "remote_video_stop_confirmed": conversation.remote_media_stop_confirmed(),
+        }),
     ))
 }
 

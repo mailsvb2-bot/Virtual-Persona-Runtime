@@ -91,7 +91,9 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
             '"/api/rt1/visitor/start" => visitor_start(request, state)',
             dispatch,
         )
-        start = http.split("fn visitor_start(", 1)[1].split("fn lookup(", 1)[0]
+        # Visitor start was extracted, not bypassed: verify its actual source.
+        start = (OWNER / "http_rt1_start.rs").read_text(encoding="utf-8")
+        self.assertIn("pub(super) fn visitor_start(", start)
         self.assertIn(
             "Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse>",
             start,

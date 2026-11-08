@@ -5,6 +5,8 @@ manufactures a remote media STOP receipt or starts an RTP sender itself.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import json
 from http.server import BaseHTTPRequestHandler
@@ -93,7 +95,7 @@ def handler_for(
                 return
             segments = parts.path.strip("/").split("/")
             if segments[:3] != ["v1", "avatar", "operations"] or (
-                len(segments) != 4 and not (len(segments) == 5 and segments[4] in ("offer", "answer"))
+                len(segments) != 4 and not (len(segments) == 5 and segments[4] in ("offer", "answer", "pcm"))
             ):
                 self._send(404, {"error": "not found"})
                 return
@@ -142,6 +144,52 @@ def handler_for(
                         pass
                 except RuntimeError:
                     self._send(409, {"error": "media offer unavailable"})
+                return
+            if method == "POST" and len(segments) == 5 and segments[4] == "pcm":
+                # This is the existing canonical sender, not a second voice
+                # transport. Accept only bounded PCM16/16kHz/mono from the
+                # authenticated Owner Lab worker client.
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 1 <= length <= 45000:
+                        raise ValueError("invalid PCM request length")
+                    payload = json.loads(self.rfile.read(length))
+                    if (not isinstance(payload, dict) or
+                            set(payload) != {"pcm_base64", "sample_rate_hz", "channels"} or
+                            type(payload["sample_rate_hz"]) is not int or
+                            payload["sample_rate_hz"] != 16000 or
+                            type(payload["channels"]) is not int or
+                            payload["channels"] != 1 or
+                            not isinstance(payload["pcm_base64"], str)):
+                        raise ValueError("invalid PCM metadata")
+                    pcm = base64.b64decode(payload["pcm_base64"], validate=True)
+                    if not 640 <= len(pcm) <= 32000 or len(pcm) % 640:
+                        raise ValueError("invalid PCM frame length")
+                except (ValueError, TypeError, KeyError, binascii.Error, json.JSONDecodeError):
+                    self._send(400, {"error": "invalid PCM audio"})
+                    return
+                row = lifecycle.status(operation_id)
+                if row is None or row[1] != "active" or not row[2]:
+                    self._send(410, {"error": "media operation not active"})
+                    return
+                # The exact physical STOP lock and publication transaction
+                # also protect final SDP delivery. No PCM may be queued
+                # after CANCEL commits, or after both RTP senders stop.
+                try:
+                    with lifecycle._exclusive_stop():
+                        with lifecycle._active_publication_transaction(operation_id, row) as active:
+                            if not active:
+                                self._send_fenced(410, {"error": "operation revoked"})
+                            else:
+                                lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
+                                self._send_fenced(200, {
+                                    "operation_id": operation_id, "accepted_bytes": len(pcm),
+                                })
+                except (RuntimeError, OSError, AttributeError):
+                    # Failure to enqueue sound cannot grant a fresh media
+                    # session. The durable owner can revoke on an uncertain
+                    # transport outcome; never retry a failed CREATE.
+                    self._send(409, {"error": "PCM delivery unavailable"})
                 return
             if method == "POST" and len(segments) == 5 and segments[4] == "answer":
                 row = lifecycle.status(operation_id)

@@ -13,6 +13,9 @@ import json
 import logging
 import os
 import threading
+import time
+from collections import deque
+from fractions import Fraction
 from dataclasses import dataclass, field
 
 from rt1_media_worker_lifecycle import StopReceipt
@@ -55,6 +58,71 @@ def parse_ice_servers(raw: str | None) -> list[dict]:
             raise ValueError("TURN requires ephemeral credentials")
         result.append({"urls": urls, "username": username, "credential": credential})
     return result
+
+
+def _make_pcm_audio_track():
+    """One bounded PCM16 mono 16 kHz source for the existing aiortc RTP sender.
+
+    Browser delivery consumes the same track from CREATE until verified STOP.
+    No second WebRTC peer or voice executor is created.
+    """
+    from aiortc import AudioStreamTrack
+    from aiortc.mediastreams import MediaStreamError
+    from av import AudioFrame
+
+    class PcmAudioTrack(AudioStreamTrack):
+        SAMPLE_RATE = 16_000
+        FRAME_SAMPLES = 320  # 20 ms, 640 bytes
+        MAX_PENDING_FRAMES = 100  # 2 seconds, bounded producer
+        FRAME_BYTES = FRAME_SAMPLES * 2
+
+        def __init__(self):
+            super().__init__()
+            self._frames = deque()
+            self._guard = threading.Lock()
+            self._pts = 0
+            self._started = None
+
+        def push_pcm(self, pcm: bytes):
+            if not pcm or len(pcm) % self.FRAME_BYTES:
+                raise ValueError("PCM must contain complete 20ms mono 16k frames")
+            count = len(pcm) // self.FRAME_BYTES
+            with self._guard:
+                if self.readyState != "live":
+                    raise RuntimeError("remote audio sender stopped")
+                if len(self._frames) + count > self.MAX_PENDING_FRAMES:
+                    raise RuntimeError("remote audio sender backpressure")
+                self._frames.extend(
+                    pcm[offset:offset + self.FRAME_BYTES]
+                    for offset in range(0, len(pcm), self.FRAME_BYTES)
+                )
+
+        async def recv(self):
+            if self.readyState != "live":
+                raise MediaStreamError
+            if self._started is None:
+                self._started = time.monotonic()
+            await asyncio.sleep(max(
+                0.0, self._started + self._pts / self.SAMPLE_RATE - time.monotonic()
+            ))
+            if self.readyState != "live":
+                raise MediaStreamError
+            with self._guard:
+                payload = self._frames.popleft() if self._frames else bytes(self.FRAME_BYTES)
+            frame = AudioFrame(format="s16", layout="mono", samples=self.FRAME_SAMPLES)
+            frame.planes[0].update(payload)
+            frame.sample_rate = self.SAMPLE_RATE
+            frame.pts = self._pts
+            frame.time_base = Fraction(1, self.SAMPLE_RATE)
+            self._pts += self.FRAME_SAMPLES
+            return frame
+
+        def stop(self):
+            with self._guard:
+                self._frames.clear()
+            super().stop()
+
+    return PcmAudioTrack()
 
 
 @dataclass
@@ -173,13 +241,13 @@ class AiortcSenderBackend:
     ) -> str:
         if cancel_requested is not None and cancel_requested.is_set():
             raise asyncio.CancelledError("WebRTC CREATE cancelled before allocation")
-        from aiortc import AudioStreamTrack, RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
+        from aiortc import RTCPeerConnection, VideoStreamTrack, RTCConfiguration, RTCIceServer
         session_id = self.recovery_session_id(operation_id, generation)
         peer = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[
             RTCIceServer(urls=item["urls"], username=item["username"], credential=item["credential"])
             for item in self._ice_servers
         ]))
-        audio = AudioStreamTrack()
+        audio = _make_pcm_audio_track()
         video = VideoStreamTrack()
         try:
             peer.addTrack(audio)
@@ -245,6 +313,19 @@ class AiortcSenderBackend:
             )
             if entry.closed:
                 raise RuntimeError("WebRTC operation revoked during answer")
+
+    def push_pcm(self, operation_id: str, session_id: str, generation: int, pcm: bytes):
+        """Queue bounded authorized TTS PCM on the existing RTP sender.
+
+        The canonical durable worker HTTP boundary owns revocation
+        serialization. This method cannot allocate a session or resurrect STOP.
+        """
+        with self._lock:
+            entry = self._sessions.get(session_id)
+            if (entry is None or entry.closed or
+                    (entry.operation_id, entry.generation) != (operation_id, generation)):
+                raise RuntimeError("remote audio sender revoked")
+            entry.audio.push_pcm(pcm)
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))

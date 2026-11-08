@@ -52,7 +52,7 @@ fn stored_avatar_selection_can_supply_local_worker_without_did_env() {
     profile
         .select_local_avatar("https://avatar.example.test", "worker-secret")
         .unwrap();
-    let (avatar, descriptor) = super::build_avatar(Some(&profile)).unwrap();
+    let (avatar, descriptor) = super::avatar_factory::build_avatar(Some(&profile)).unwrap();
     assert_eq!(descriptor.provider, "local-open-source");
     assert_eq!(avatar.descriptor().provider, "local-open-source");
 }

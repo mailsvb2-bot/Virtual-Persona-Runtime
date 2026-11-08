@@ -83,17 +83,28 @@ pub struct Rt1VisitorConversation {
     remote: Option<Arc<Rt1RemoteMediaRevocation>>,
 }
 
+type RegisterWorkerCleanup<'a> = dyn Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String> + 'a;
+
 impl Rt1VisitorConversation {
-    /// Start with the configured canonical avatar provider and its existing
-    /// WebRTC/LiveKit transport. No synthetic sender is created here.
     ///
     /// # Errors
     /// Rejects stale publication, failed provider allocation or raced revoke.
     pub fn start(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
+        engine: OwnerLabEngine,
+        consent: bool,
+    ) -> Result<(Self, LabSignalBundle), String> {
+        Self::start_inner(manager, visitor_token, engine, consent, None, None)
+    }
+
+    fn start_inner(
+        manager: Arc<VisitorSessionManager>,
+        visitor_token: String,
         mut engine: OwnerLabEngine,
         consent: bool,
+        remote: Option<Arc<Rt1RemoteMediaRevocation>>,
+        register_cleanup: Option<&RegisterWorkerCleanup<'_>>,
     ) -> Result<(Self, LabSignalBundle), String> {
         if !consent {
             return Err("CONSENT_REQUIRED".into());
@@ -105,19 +116,30 @@ impl Rt1VisitorConversation {
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
         let fast_revoke = Arc::clone(&interrupt);
         let on_revoke = Arc::clone(&interrupt);
+        let remote_stop = remote.clone();
         let id = manager.open_with_fast_revoke(
             visitor_token,
             move || fast_revoke.revoke_authority_only(),
-            move || on_revoke.stop(),
+            move || {
+                // Invalidate owner publication promptly. The already
+                // registered reconciler performs verified worker STOP.
+                if let Some(remote) = &remote_stop {
+                    remote.request_revoke();
+                }
+                on_revoke.stop();
+            },
         )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
             let _ = manager.close(&id);
             return Err(error);
         }
+        if let (Some(remote), Some(register)) = (&remote, register_cleanup)
+            && let Err(error) = register(remote)
+        {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
 
-        // Register the startup turn BEFORE provider CREATE. A pause during a
-        // slow D-ID/LiveKit allocation can now cancel the canonical transport
-        // without waiting for the engine mutex or a provider-generated ID.
         let startup_interrupt = Arc::clone(&interrupt);
         let started =
             engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
@@ -146,12 +168,24 @@ impl Rt1VisitorConversation {
                     None
                 };
                 let _ = manager.close(&id);
+                if remote
+                    .as_ref()
+                    .is_some_and(|worker| worker.revoke_confirmed().is_err())
+                {
+                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+                }
                 if matches!(cleanup, Some(Err(_))) {
                     return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
                 }
                 return Err(error.code().to_owned());
             }
         };
+        if let Some(worker) = &remote
+            && worker.synchronize_created_session().is_err()
+        {
+            let _ = manager.close(&id);
+            return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+        }
         *interrupt.session.lock() = engine.session_revocation_handle();
         *interrupt.backend_stop.lock() = engine.visitor_avatar_stop_handle();
         if interrupt.cancelled.load(Ordering::Acquire)
@@ -173,7 +207,7 @@ impl Rt1VisitorConversation {
                 id,
                 engine: Mutex::new(engine),
                 interrupt,
-                remote: None,
+                remote,
             },
             bundle,
         ))
@@ -222,9 +256,6 @@ impl Rt1VisitorConversation {
             visitor_token,
             move || fast_interrupt.revoke_authority_only(),
             move || {
-                // Canonical authority withdrawal must not wait on worker
-                // network I/O or a signaling gate owned by a stalled ANSWER.
-                // The registered HTTP cleanup reconciler owns durable STOP.
                 stop_remote.request_revoke();
                 stop_interrupt.stop();
             },
@@ -267,8 +298,6 @@ impl Rt1VisitorConversation {
             }
             Ok(diagnostic_signal_bundle(offer))
         })();
-        // CREATE/OFFER failure may leave a remote sender running. Treat an
-        // unconfirmed compensating STOP as the dominant error.
         let bundle = started.map_err(|error| {
             let _ = manager.close(&id);
             if remote.revoke_confirmed().is_err() {
@@ -304,9 +333,12 @@ impl Rt1VisitorConversation {
     /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
     #[must_use]
     pub fn supports_private_voice(&self) -> bool {
-        // The visitor microphone's external STT/LLM/TTS path is still
-        // fail-closed; never advertise a voice control that cannot execute.
-        false
+        self.remote
+            .as_ref()
+            .is_some_and(|worker| !worker.is_revoked())
+            && self.interrupt.backend_stop.lock().is_some()
+            && !self.interrupt.cancelled.load(Ordering::Acquire)
+            && self.manager.authorize(&self.id).is_ok()
     }
 
     /// Whether this visitor retains the current canonical publication permit.
@@ -355,7 +387,10 @@ impl Rt1VisitorConversation {
         pcm_s16le_mono_16khz: Vec<u8>,
     ) -> Result<(), String> {
         validate_microphone_audio(&pcm_s16le_mono_16khz)?;
-        if self.remote.is_some() {
+        // The verified worker keeps an independent STOP handle while its
+        // canonical voice input is staged. A diagnostic remote sender without
+        // that capability must remain voice-denied.
+        if self.remote.is_some() && self.interrupt.backend_stop.lock().is_none() {
             return Err("RT1_DIAGNOSTIC_VOICE_NOT_AUTHORIZED".into());
         }
         self.queue_media_fragment(sender, pcm_s16le_mono_16khz)
@@ -374,8 +409,7 @@ impl Rt1VisitorConversation {
         // Never enable arbitrary provider egress. Only the canonical
         // server-owned Echo sender exposes an independent bounded STOP that
         // does not require the engine mutex held during this voice turn.
-        if self.remote.is_some()
-            || self.interrupt.cancelled.load(Ordering::Acquire)
+        if self.interrupt.cancelled.load(Ordering::Acquire)
             || self.interrupt.backend_stop.lock().is_none()
         {
             return unsupported_visitor_voice_egress();
@@ -422,7 +456,10 @@ impl Rt1VisitorConversation {
     /// Fails closed if private audio STOP is uncertain.
     pub fn interrupt_turn(&self) -> Result<(), String> {
         self.manager.authorize(&self.id)?;
-        if self.remote.is_some() || self.interrupt.cancelled.load(Ordering::Acquire) {
+        if self.remote.is_some() {
+            return self.interrupt_verified_worker();
+        }
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_INTERRUPT_DENIED".into());
         }
         let stop = self
@@ -556,6 +593,9 @@ fn stop_if_uncontended(engine: &Mutex<OwnerLabEngine>) -> Result<(), String> {
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
     Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
 }
+
+#[path = "rt1_visitor_worker_start.rs"]
+mod verified_worker_start;
 
 #[cfg(test)]
 #[path = "rt1_visitor_conversation_tests.rs"]
