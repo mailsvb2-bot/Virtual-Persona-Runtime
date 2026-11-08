@@ -23,6 +23,8 @@ impl Rt1VisitorConversation {
             manager, visitor_token, engine, consent, Some(remote),
             Some(&register_cleanup),
         )
+    }
+
     /// Interrupting a verified worker terminates the whole remote session.
     /// It cannot authorize another voice turn after both RTP senders stop.
     pub(super) fn interrupt_verified_worker(&self) -> Result<(), String> {
@@ -34,7 +36,5 @@ impl Rt1VisitorConversation {
             .ok_or_else(|| "RT1_VISITOR_INTERRUPT_DENIED".to_owned())?
             .revoke_confirmed()
             .map_err(|_| "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".to_owned())
-    }
-
     }
 }
