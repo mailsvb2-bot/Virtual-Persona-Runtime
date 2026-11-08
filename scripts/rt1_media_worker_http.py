@@ -228,17 +228,17 @@ def handler_for(
                 # Durable status is observable without reopening the session.
                 # The state is *not* a STOP receipt; only a completed backend
                 # confirmation can advance the operation to "stopped".
-                row = lifecycle.status(operation_id)
+                row = lifecycle.status_with_stop_confirmation(operation_id)
                 if row is None:
                     self._send(404, {"error": "unknown operation"})
                     return
-                generation, phase, session_id = row
+                generation, phase, session_id, stop_confirmed = row
                 self._send(200, {
                     "operation_id": operation_id,
                     "generation": generation,
                     "phase": phase,
                     "session_id": session_id,
-                    "stop_confirmed": phase == "stopped" and session_id is not None,
+                    "stop_confirmed": stop_confirmed,
                 })
                 return
             try:
