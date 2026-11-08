@@ -508,14 +508,9 @@ impl Rt1VisitorConversation {
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
         {
-            let mut engine = self.engine.lock();
-            if engine.session_revocation_handle().is_some() {
-                engine
-                    .stop_visitor_provider_confirmed()
-                    .map_err(|error| error.code().to_owned())
-            } else {
-                Ok(())
-            }
+            // A new turn may grab the engine mutex after quiescence checks.
+            // An unconfirmed stop must fail closed rather than block revoke.
+            stop_if_uncontended(&self.engine)
         } else {
             // Do not wait on an engine mutex held by a stalled provider and
             // do not claim confirmed close. The HTTP registry retains this
@@ -534,10 +529,24 @@ impl Drop for Rt1VisitorConversation {
         if let Some(remote) = &self.remote {
             let _ = remote.revoke_confirmed();
         }
-        let mut engine = self.engine.lock();
-        if engine.session_revocation_handle().is_some() {
-            let _ = engine.stop_visitor_provider_confirmed();
-        }
+        // Drop cannot wait for a provider that still owns the engine mutex.
+        // This is best-effort cleanup, never a verified remote STOP receipt.
+        let _ = stop_if_uncontended(&self.engine);
+    }
+}
+
+// A quiescence observation does not guarantee exclusive access: another
+// provider turn can acquire this mutex immediately afterward. Refuse to wait.
+fn stop_if_uncontended(engine: &Mutex<OwnerLabEngine>) -> Result<(), String> {
+    let Some(mut engine) = engine.try_lock() else {
+        return Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into());
+    };
+    if engine.session_revocation_handle().is_some() {
+        engine
+            .stop_visitor_provider_confirmed()
+            .map_err(|error| error.code().to_owned())
+    } else {
+        Ok(())
     }
 }
 
