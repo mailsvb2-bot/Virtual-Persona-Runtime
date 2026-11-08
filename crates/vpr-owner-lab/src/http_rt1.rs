@@ -41,10 +41,8 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
-    // Retained BEFORE remote CREATE, even if no browser session ID is returned.
-    // Never hold this registry lock while doing provider network I/O.
+    // Retain STOP handle before CREATE; never hold registry lock during HTTP.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
-    // One existing reconciler, woken promptly by owner revoke. No second STOP.
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
 }
 
