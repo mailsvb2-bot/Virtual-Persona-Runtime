@@ -222,8 +222,11 @@ impl Rt1VisitorConversation {
             visitor_token,
             move || fast_interrupt.revoke_authority_only(),
             move || {
+                // Canonical authority withdrawal must not wait on worker
+                // network I/O or a signaling gate owned by a stalled ANSWER.
+                // The registered HTTP cleanup reconciler owns durable STOP.
+                stop_remote.request_revoke();
                 stop_interrupt.stop();
-                let _ = stop_remote.revoke_confirmed();
             },
         )?;
 
