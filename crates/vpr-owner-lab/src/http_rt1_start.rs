@@ -3,8 +3,8 @@
 use super::{
     AppState, HttpResponse, ProviderBundle, RegistrationFailure, Rt1OwnerController,
     Rt1RemoteMediaRevocation, Rt1VisitorConversation, VisitorStart, error_response,
-    finalize_registered_stop, json_response, new_visitor_session_id, parse_json,
-    register_visitor, restore_reviewed_persona, verified_worker,
+    finalize_registered_stop, json_response, new_visitor_session_id, parse_json, register_visitor,
+    restore_reviewed_persona, verified_worker,
 };
 use std::sync::Arc;
 
