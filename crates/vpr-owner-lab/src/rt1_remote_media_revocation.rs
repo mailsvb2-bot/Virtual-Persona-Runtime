@@ -17,6 +17,7 @@ pub struct Rt1RemoteMediaRevocation {
     revoked: AtomicBool,
     confirmed: AtomicBool,
     stop_gate: Mutex<()>,
+    revoke_notifier: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// CREATE can return after owner revoke/STOP. Correlate both outcomes to
     /// the exact remote sender, not just the operation/generation envelope.
     created_session_id: Mutex<Option<String>>,
@@ -50,6 +51,7 @@ impl Rt1RemoteMediaRevocation {
             revoked: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
             stop_gate: Mutex::new(()),
+            revoke_notifier: Mutex::new(None),
             created_session_id: Mutex::new(None),
             confirmed_session_id: Mutex::new(None),
             identity_conflict: AtomicBool::new(false),
@@ -116,6 +118,26 @@ impl Rt1RemoteMediaRevocation {
             return Err("RT1_VISITOR_REVOKED".into());
         }
         Ok(())
+    }
+
+    /// Attach the existing HTTP cleanup worker's wake signal, not another
+    /// STOP executor. May be installed before any remote CREATE.
+    pub fn install_revoke_notifier(&self, notify: impl Fn() + Send + Sync + 'static) {
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(notify);
+        *self.revoke_notifier.lock() = Some(Arc::clone(&notify));
+        if self.is_revoked() {
+            notify();
+        }
+    }
+
+    /// Revoke authority synchronously, then wake the already-running cleanup
+    /// reconciler. Never wait for remote network I/O or the SDP STOP mutex.
+    pub fn request_revoke(&self) {
+        self.revoked.store(true, Ordering::Release);
+        let notify = self.revoke_notifier.lock().clone();
+        if let Some(notify) = notify {
+            notify();
+        }
     }
 
     /// Invoked by the existing canonical visitor stop callback, after the

@@ -4,6 +4,37 @@ use std::net::TcpListener;
 use std::time::Duration;
 
 #[test]
+fn owner_revoke_request_does_not_wait_for_worker_or_forge_stop() {
+    use std::time::Instant;
+
+    // A worker socket exists but deliberately accepts no requests. Revoke
+    // must update the canonical operation fence without making HTTP calls.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+    let remote = Rt1RemoteMediaRevocation::new(client, "paused-owner".into(), 1).unwrap();
+
+    let began = Instant::now();
+    remote.request_revoke();
+    assert!(
+        began.elapsed() < Duration::from_millis(250),
+        "owner publication revoke waited on remote media STOP"
+    );
+    assert!(remote.is_revoked());
+    assert!(!remote.is_stop_confirmed());
+    assert!(
+        listener.accept().is_err(),
+        "authority withdrawal must not call the network worker"
+    );
+    assert_eq!(
+        remote.submit_answer("v=0").unwrap_err(),
+        "RT1_VISITOR_REVOKED"
+    );
+}
+
+#[test]
 fn remote_stop_pending_never_confirms_and_can_be_reconciled() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());

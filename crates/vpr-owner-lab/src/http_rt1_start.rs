@@ -15,6 +15,11 @@ fn selected_provider_bundle(
         let (remote, avatar) = verified_worker::prepare(session_id)?;
         let providers = ProviderBundle::from_env_with_avatar(true, avatar)
             .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+        // The worker accepts PCM, not provider text. Without canonical TTS
+        // the browser must not receive a voice-enabled session.
+        if providers.tts.is_none() {
+            return Err(error_response(503, "RT1_TTS_NOT_CONFIGURED"));
+        }
         Ok((providers, Some(remote)))
     } else {
         let providers = ProviderBundle::from_env(false)
