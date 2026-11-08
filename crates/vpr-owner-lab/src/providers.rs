@@ -105,8 +105,15 @@ impl ProviderBundle {
             None
         };
         let (avatar, avatar_descriptor) = if let Some(avatar) = override_avatar {
-            let descriptor = avatar.descriptor();
-            (avatar, descriptor)
+            let identity = avatar.descriptor();
+            let endpoint = env::var("RT1_WORKER_ENDPOINT").unwrap_or_default();
+            let fingerprint = descriptor(
+                "avatar",
+                &identity.provider,
+                &identity.model,
+                &[&endpoint, identity.representation.as_deref().unwrap_or("")],
+            );
+            (avatar, fingerprint)
         } else {
             build_avatar(profile.as_ref())?
         };
