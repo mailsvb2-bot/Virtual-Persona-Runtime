@@ -67,9 +67,35 @@ impl ProviderBundle {
         Self::from_env_with_secure_store(require_voice, false)
     }
 
+    /// Build the same canonical STT/LLM/TTS bundle for a supplied verified
+    /// worker avatar. Validate PCM capability against the actual selected
+    /// avatar, never against a discarded D-ID/environment provider.
+    ///
+    /// # Errors
+    /// Rejects incomplete voice credentials or an unsupported avatar.
+    pub fn from_env_with_avatar(
+        require_voice: bool,
+        avatar: Box<dyn RealtimeAvatarPort>,
+    ) -> Result<Self, String> {
+        let allow_secure_store = credential_source_allows_secure_store()?;
+        Self::from_env_with_secure_store_and_avatar(
+            require_voice,
+            allow_secure_store,
+            Some(avatar),
+        )
+    }
+
     fn from_env_with_secure_store(
         require_voice: bool,
         allow_secure_store: bool,
+    ) -> Result<Self, String> {
+        Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, None)
+    }
+
+    fn from_env_with_secure_store_and_avatar(
+        require_voice: bool,
+        allow_secure_store: bool,
+        override_avatar: Option<Box<dyn RealtimeAvatarPort>>,
     ) -> Result<Self, String> {
         #[cfg(windows)]
         let profile = resolve_provider_credential_profile(require_voice, allow_secure_store)?;
@@ -78,7 +104,12 @@ impl ProviderBundle {
             let _ = (require_voice, allow_secure_store);
             None
         };
-        let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
+        let (avatar, avatar_descriptor) = if let Some(avatar) = override_avatar {
+            let descriptor = avatar.descriptor();
+            (avatar, descriptor)
+        } else {
+            build_avatar(profile.as_ref())?
+        };
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
             profile
