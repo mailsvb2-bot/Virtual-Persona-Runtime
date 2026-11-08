@@ -95,3 +95,27 @@ fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
     );
     assert!(receiver.try_recv().is_err());
 }
+
+#[test]
+fn visitor_provider_cleanup_does_not_block_on_busy_engine_mutex() {
+    use std::time::{Duration, Instant};
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = Mutex::new(OwnerLabEngine::new(Box::new(provider), true).unwrap());
+    // Simulate a provider request holding the engine during revoke/close.
+    let _busy = engine.lock();
+    let before = Instant::now();
+    assert_eq!(
+        stop_if_uncontended(&engine),
+        Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into())
+    );
+    assert!(
+        before.elapsed() < Duration::from_millis(250),
+        "close or Drop must not block on a stalled provider mutex"
+    );
+}
