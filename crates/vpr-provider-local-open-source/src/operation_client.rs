@@ -224,11 +224,7 @@ impl RemoteOperationClient {
     /// # Errors
     /// Denies stale operations, invalid audio, rejected acknowledgements and
     /// cancellations. No automatic retry of ambiguous provider writes.
-    pub fn push_pcm(
-        &self,
-        operation_id: &str,
-        pcm: &[u8],
-    ) -> Result<(), ProviderError> {
+    pub fn push_pcm(&self, operation_id: &str, pcm: &[u8]) -> Result<(), ProviderError> {
         if pcm.len() < 640 || pcm.len() > 32_000 || pcm.len() % 640 != 0 {
             return Err(denied());
         }
