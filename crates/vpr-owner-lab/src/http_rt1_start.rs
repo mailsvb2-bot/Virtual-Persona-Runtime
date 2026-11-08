@@ -1,6 +1,27 @@
 //! Existing RT1 HTTP visitor start: one reviewed Persona, one canonical
 //! owner visitor authority and a worker STOP handle registered before CREATE.
-use super::*;
+use super::{
+    AppState, HttpResponse, ProviderBundle, RegistrationFailure, Rt1OwnerController,
+    Rt1RemoteMediaRevocation, Rt1VisitorConversation, VisitorStart, error_response,
+    finalize_registered_stop, json_response, new_visitor_session_id, parse_json,
+    register_visitor, restore_reviewed_persona, verified_worker,
+};
+use std::sync::Arc;
+
+fn selected_provider_bundle(
+    session_id: &str,
+) -> Result<(ProviderBundle, Option<Arc<Rt1RemoteMediaRevocation>>), HttpResponse> {
+    if verified_worker::selected() {
+        let (remote, avatar) = verified_worker::prepare(session_id)?;
+        let providers = ProviderBundle::from_env_with_avatar(true, avatar)
+            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+        Ok((providers, Some(remote)))
+    } else {
+        let providers = ProviderBundle::from_env(false)
+            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+        Ok((providers, None))
+    }
+}
 
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
@@ -12,19 +33,7 @@ pub(super) fn visitor_start(
     }
     // Do not call the provider until the retry handle exists.
     let session_id = new_visitor_session_id()?;
-    // Assemble the SAME canonical STT/LLM/TTS providers against the selected
-    // verified worker, rather than constructing and validating an unrelated
-    // D-ID avatar before replacing it. No second voice/authority path.
-    let (providers, worker) = if verified_worker::selected() {
-        let (remote, avatar) = verified_worker::prepare(&session_id)?;
-        let providers = ProviderBundle::from_env_with_avatar(true, avatar)
-            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
-        (providers, Some(remote))
-    } else {
-        let providers = ProviderBundle::from_env(false)
-            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
-        (providers, None)
-    };
+    let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
