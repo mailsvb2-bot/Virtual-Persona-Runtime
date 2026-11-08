@@ -38,8 +38,11 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                     while track.readyState == "live":
                         frame = await track.recv()
                         received[track.kind] += 1
-                        if track.kind == "audio" and frame.to_ndarray().any():
-                            received_pcm["audible"] = True
+                        if track.kind == "audio":
+                            # PyAV exposes decoded sample buffers directly;
+                            # NumPy is not a runtime dependency of this RTP test.
+                            if any(any(bytes(plane)[:frame.samples * 2]) for plane in frame.planes):
+                                received_pcm["audible"] = True
                 except Exception as error:
                     if track.kind == "audio" and track.readyState == "live":
                         received_pcm["errors"].append(str(error))
