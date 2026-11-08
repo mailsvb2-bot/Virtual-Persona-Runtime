@@ -50,7 +50,8 @@ impl VisitorEgressState {
         }
         // A spurious notify must not prematurely end the bounded wait for
         // the canonical provider/browser delivery permit to drain.
-        self.drained.wait_while_for(&mut active, |count| *count != 0, timeout);
+        self.drained
+            .wait_while_for(&mut active, |count| *count != 0, timeout);
         *active == 0
     }
 }
