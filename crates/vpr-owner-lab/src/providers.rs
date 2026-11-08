@@ -100,8 +100,7 @@ impl ProviderBundle {
             let _ = (require_voice, allow_secure_store);
             None
         };
-        let (avatar, avatar_descriptor) =
-            build_selected_avatar(override_avatar, profile.as_ref())?;
+        let (avatar, avatar_descriptor) = build_selected_avatar(override_avatar, profile.as_ref())?;
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
             profile
@@ -188,7 +187,10 @@ fn selected_tts_name(
         .ok()
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
     let name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
-        profile?.tts.as_ref().map(|tts| tts.provider.to_ascii_lowercase())
+        profile?
+            .tts
+            .as_ref()
+            .map(|tts| tts.provider.to_ascii_lowercase())
     });
     if voice_profile.is_some() && name.is_none() {
         return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
