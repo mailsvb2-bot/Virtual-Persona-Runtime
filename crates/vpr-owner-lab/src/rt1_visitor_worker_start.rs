@@ -1,6 +1,9 @@
 //! Verified local-worker voice startup uses the existing canonical engine
 //! and owner/visitor authority; no second executor or publication route.
-use super::*;
+use super::{
+    Arc, LabSignalBundle, OwnerLabEngine, Rt1RemoteMediaRevocation,
+    Rt1VisitorConversation, VisitorSessionManager,
+};
 
 impl Rt1VisitorConversation {
     /// Use the existing owner-side STT/LLM/TTS engine with the authenticated
