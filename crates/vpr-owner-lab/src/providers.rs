@@ -133,26 +133,7 @@ impl ProviderBundle {
         };
         let voice_profile = VoiceProfile::from_env()?;
         validate_voice_profile_configuration(voice_profile.as_ref(), profile.as_ref())?;
-        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
-            .ok()
-            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
-            profile
-                .as_ref()?
-                .tts
-                .as_ref()
-                .map(|tts| tts.provider.to_ascii_lowercase())
-        });
-        if voice_profile.is_some() && tts_name.is_none() {
-            return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
-        }
-        if strict {
-            validate_strict_voice_selection(
-                tts_name.as_deref(),
-                voice_profile.as_ref(),
-                optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
-            )?;
-        }
+        let tts_name = selected_tts_name(profile.as_ref(), voice_profile.as_ref())?;
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
         }
@@ -199,6 +180,29 @@ impl ProviderBundle {
 // Reuse the single provider selection path. A verified RT1 worker replaces
 // only the avatar port; STT/LLM/TTS composition and credential provenance
 // remain canonical.
+fn selected_tts_name(
+    profile: Option<&ProviderCredentialProfile>,
+    voice_profile: Option<&VoiceProfile>,
+) -> Result<Option<String>, String> {
+    let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    let name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
+        profile?.tts.as_ref().map(|tts| tts.provider.to_ascii_lowercase())
+    });
+    if voice_profile.is_some() && name.is_none() {
+        return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
+    }
+    if strict {
+        validate_strict_voice_selection(
+            name.as_deref(),
+            voice_profile,
+            optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
+        )?;
+    }
+    Ok(name)
+}
+
 fn build_selected_avatar(
     override_avatar: Option<Box<dyn RealtimeAvatarPort>>,
     profile: Option<&ProviderCredentialProfile>,
