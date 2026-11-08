@@ -5,7 +5,7 @@ mod avatar_selection;
 mod llm_wire;
 mod provider_state;
 mod tts_factory;
-use avatar_factory::build_avatar;
+use avatar_factory::build_selected_avatar;
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
@@ -201,25 +201,6 @@ fn selected_tts_name(
         )?;
     }
     Ok(name)
-}
-
-fn build_selected_avatar(
-    override_avatar: Option<Box<dyn RealtimeAvatarPort>>,
-    profile: Option<&ProviderCredentialProfile>,
-) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
-    if let Some(avatar) = override_avatar {
-        let identity = avatar.descriptor();
-        let endpoint = env::var("RT1_WORKER_ENDPOINT").unwrap_or_default();
-        let fingerprint = descriptor(
-            "avatar",
-            &identity.provider,
-            &identity.model,
-            &[&endpoint, identity.representation.as_deref().unwrap_or("")],
-        );
-        Ok((avatar, fingerprint))
-    } else {
-        build_avatar(profile)
-    }
 }
 
 #[cfg(windows)]
