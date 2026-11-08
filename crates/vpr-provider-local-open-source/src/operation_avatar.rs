@@ -104,7 +104,11 @@ impl OperationWorkerAvatar {
             let next = samples.get(left + 1).copied().unwrap_or(samples[left]);
             let b = i64::from(next);
             let interpolated = (a * (16_000 - fraction) + b * fraction) / 16_000;
-            output.extend_from_slice(&i16::try_from(interpolated).map_err(|_| denied())?.to_le_bytes());
+            output.extend_from_slice(
+                &i16::try_from(interpolated)
+                    .map_err(|_| denied())?
+                    .to_le_bytes(),
+            );
         }
         while output.len() % 640 != 0 {
             output.push(0);
