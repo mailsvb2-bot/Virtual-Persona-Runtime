@@ -83,6 +83,8 @@ pub struct Rt1VisitorConversation {
     remote: Option<Arc<Rt1RemoteMediaRevocation>>,
 }
 
+type RegisterWorkerCleanup = dyn Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String>;
+
 impl Rt1VisitorConversation {
     ///
     /// # Errors
@@ -102,7 +104,7 @@ impl Rt1VisitorConversation {
         mut engine: OwnerLabEngine,
         consent: bool,
         remote: Option<Arc<Rt1RemoteMediaRevocation>>,
-        register_cleanup: Option<&dyn Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String>>,
+        register_cleanup: Option<&RegisterWorkerCleanup>,
     ) -> Result<(Self, LabSignalBundle), String> {
         if !consent {
             return Err("CONSENT_REQUIRED".into());
