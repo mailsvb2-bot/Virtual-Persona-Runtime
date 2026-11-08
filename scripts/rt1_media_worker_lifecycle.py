@@ -670,3 +670,24 @@ class MediaLifecycle:
     def status(self, operation_id: str):
         with self._lock:
             return self._get(operation_id)
+
+    def status_with_stop_confirmation(self, operation_id: str):
+        """Read status and durable dual-track STOP evidence atomically.
+
+        A legacy or interrupted row may say 'stopped' with an allocated sender
+        but lack stop_verified=1. Never report that row as remotely stopped.
+        The single SQLite SELECT keeps phase and evidence in one snapshot.
+        """
+        with self._lock:
+            row = self._db.execute(
+                """SELECT generation,phase,session_id,stop_verified
+                   FROM media_operations WHERE id=?""",
+                (operation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        generation, phase, session_id, verified = row
+        return (
+            generation, phase, session_id,
+            phase == "stopped" and session_id is not None and verified == 1,
+        )
