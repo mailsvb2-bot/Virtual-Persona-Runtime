@@ -84,8 +84,6 @@ pub struct Rt1VisitorConversation {
 }
 
 impl Rt1VisitorConversation {
-    /// Start with the configured canonical avatar provider and its existing
-    /// WebRTC/LiveKit transport. No synthetic sender is created here.
     ///
     /// # Errors
     /// Rejects stale publication, failed provider allocation or raced revoke.
@@ -138,9 +136,6 @@ impl Rt1VisitorConversation {
             return Err(error);
         }
 
-        // Register the startup turn BEFORE provider CREATE. A pause during a
-        // slow D-ID/LiveKit allocation can now cancel the canonical transport
-        // without waiting for the engine mutex or a provider-generated ID.
         let startup_interrupt = Arc::clone(&interrupt);
         let started =
             engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
@@ -299,8 +294,6 @@ impl Rt1VisitorConversation {
             }
             Ok(diagnostic_signal_bundle(offer))
         })();
-        // CREATE/OFFER failure may leave a remote sender running. Treat an
-        // unconfirmed compensating STOP as the dominant error.
         let bundle = started.map_err(|error| {
             let _ = manager.close(&id);
             if remote.revoke_confirmed().is_err() {
