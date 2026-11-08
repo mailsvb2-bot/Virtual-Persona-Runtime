@@ -437,19 +437,21 @@ fn visitor_voice(
 
 fn visitor_interrupt(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: VisitorSession = parse_json(request)?;
-    lookup(state, &body.session_id)?
-        .interrupt_turn()
-        .map_err(|code| {
-            if code == "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED" {
-                error_response(502, "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED")
-            } else {
-                error_response(409, "RT1_VISITOR_INTERRUPT_DENIED")
-            }
-        })?;
-    // Audio interrupt is not evidence of remote video shutdown.
+    let conversation = lookup(state, &body.session_id)?;
+    conversation.interrupt_turn().map_err(|code| {
+        if code == "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED" {
+            error_response(502, "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED")
+        } else {
+            error_response(409, "RT1_VISITOR_INTERRUPT_DENIED")
+        }
+    })?;
+    // Only the worker's authenticated BOTH-track receipt may confirm video.
     Ok(json_response(
         200,
-        &serde_json::json!({"ok": true, "remote_video_stop_confirmed": false}),
+        &serde_json::json!({
+            "ok": true,
+            "remote_video_stop_confirmed": conversation.remote_media_stop_confirmed(),
+        }),
     ))
 }
 
