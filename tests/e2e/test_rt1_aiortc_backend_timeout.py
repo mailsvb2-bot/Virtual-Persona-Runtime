@@ -127,7 +127,15 @@ class SenderTimeoutTests(unittest.TestCase):
         )
         backend = AiortcSenderBackend(timeout=0.2)
         try:
-            with patch.dict(sys.modules, {"aiortc": fake_aiortc}):
+            # The PCM track factory also imports aiortc.mediastreams and av;
+            # keep this fake transport self-contained without real RTP.
+            fake_streams = SimpleNamespace(MediaStreamError=RuntimeError)
+            fake_av = SimpleNamespace(AudioFrame=object)
+            with patch.dict(sys.modules, {
+                "aiortc": fake_aiortc,
+                "aiortc.mediastreams": fake_streams,
+                "av": fake_av,
+            }):
                 with self.assertRaisesRegex(RuntimeError, "timed out; STOP unconfirmed"):
                     backend.allocate("late-create", 1)
                 self.assertTrue(started.is_set(), "CREATE did not reach the provider")
