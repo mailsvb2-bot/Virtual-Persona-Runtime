@@ -56,6 +56,24 @@ impl Rt1RemoteMediaRevocation {
         })
     }
 
+    /// Bind a canonical worker CREATE to the worker's authenticated durable
+    /// identity before any visitor receives an SDP offer or private PCM.
+    /// # Errors
+    /// Refuses stale generation, pending STOP and unknown remote senders.
+    pub fn synchronize_created_session(&self) -> Result<(), String> {
+        let status = self
+            .worker
+            .status(&self.operation_id)
+            .map_err(|_| "RT1_REMOTE_CREATE_UNCONFIRMED".to_owned())?;
+        if status.generation != self.generation || status.phase != "active" {
+            return Err("RT1_REMOTE_CREATE_UNCONFIRMED".into());
+        }
+        let session_id = status
+            .session_id
+            .ok_or_else(|| "RT1_REMOTE_CREATE_UNCONFIRMED".to_owned())?;
+        self.record_created_session(&session_id)
+    }
+
     /// Bind a late CREATE reply to the operation before publishing its SDP.
     /// A STOP receipt for a different sender cannot authorize that CREATE.
     /// The STOP gate serializes this binding against remote cancellation.
