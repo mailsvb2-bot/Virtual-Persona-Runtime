@@ -24,6 +24,8 @@ mod signaling;
 mod text_egress;
 #[path = "rt1_visitor_voice_stream_staging.rs"]
 mod voice_stream_staging;
+#[path = "rt1_visitor_voice_capability.rs"]
+mod voice_capability;
 use helpers::{
     diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
     revoked_diagnostic_offer_error, validate_microphone_audio,
@@ -81,6 +83,8 @@ pub struct Rt1VisitorConversation {
     engine: Mutex<OwnerLabEngine>,
     interrupt: Arc<LiveVisitorInterrupt>,
     remote: Option<Arc<Rt1RemoteMediaRevocation>>,
+    // Only start_with_verified_worker may authorize PCM speech.
+    verified_worker_voice: bool,
 }
 
 type RegisterWorkerCleanup<'a> = dyn Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String> + 'a;
@@ -205,6 +209,7 @@ impl Rt1VisitorConversation {
                 id,
                 engine: Mutex::new(engine),
                 interrupt,
+                verified_worker_voice: remote.is_some(),
                 remote,
             },
             bundle,
@@ -321,22 +326,10 @@ impl Rt1VisitorConversation {
                 engine: Mutex::new(engine),
                 interrupt,
                 remote: Some(remote),
+                verified_worker_voice: false,
             },
             bundle,
         ))
-    }
-
-    /// Whether the selected canonical avatar exposes an independent
-    /// server-owned STOP capability for private microphone speech.
-    /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
-    #[must_use]
-    pub fn supports_private_voice(&self) -> bool {
-        self.remote
-            .as_ref()
-            .is_some_and(|worker| !worker.is_revoked())
-            && self.interrupt.backend_stop.lock().is_some()
-            && !self.interrupt.cancelled.load(Ordering::Acquire)
-            && self.manager.authorize(&self.id).is_ok()
     }
 
     /// Whether this visitor retains the current canonical publication permit.
@@ -385,10 +378,8 @@ impl Rt1VisitorConversation {
         pcm_s16le_mono_16khz: Vec<u8>,
     ) -> Result<(), String> {
         validate_microphone_audio(&pcm_s16le_mono_16khz)?;
-        // The verified worker keeps an independent STOP handle while its
-        // canonical voice input is staged. A diagnostic remote sender without
-        // that capability must remain voice-denied.
-        if self.remote.is_some() && self.interrupt.backend_stop.lock().is_none() {
+        // Diagnostic RTP has no verified voice delivery authority.
+        if self.remote.is_some() && !self.verified_worker_voice {
             return Err("RT1_DIAGNOSTIC_VOICE_NOT_AUTHORIZED".into());
         }
         self.queue_media_fragment(sender, pcm_s16le_mono_16khz)
@@ -404,12 +395,9 @@ impl Rt1VisitorConversation {
     /// # Errors
     /// Always denies unsupported visitor microphone provider egress.
     pub fn voice_turn(&self, pcm_s16le_mono_16khz: Vec<u8>) -> Result<LabVoiceResult, String> {
-        // Never enable arbitrary provider egress. Only the canonical
-        // server-owned Echo sender exposes an independent bounded STOP that
-        // does not require the engine mutex held during this voice turn.
-        if self.interrupt.cancelled.load(Ordering::Acquire)
-            || self.interrupt.backend_stop.lock().is_none()
-        {
+        // Only the verified worker may accept PCM while the registered
+        // independent dual-track STOP and publication permit remain live.
+        if !self.supports_private_voice() {
             return unsupported_visitor_voice_egress();
         }
         // Stage the exact PCM under the canonical publication transaction.
