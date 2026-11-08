@@ -1,4 +1,4 @@
-//! The existing RT1 durable worker as a canonical RealtimeAvatarPort.
+//! The existing RT1 durable worker as a canonical `RealtimeAvatarPort`.
 //! It owns no publication authority: the caller pre-registers this operation
 //! under the existing RT1 owner/visitor revocation and STOP coordinator.
 use std::sync::Mutex;
@@ -23,7 +23,7 @@ fn denied() -> ProviderError {
 }
 
 /// A single worker-backed avatar session driven by the existing canonical
-/// OwnerLabEngine. CREATE is non-retryable; only the worker ledger owns STOP.
+/// `OwnerLabEngine`. CREATE is non-retryable; only the worker ledger owns STOP.
 pub struct OperationWorkerAvatar {
     client: RemoteOperationClient,
     operation_id: String,
@@ -88,20 +88,23 @@ impl OperationWorkerAvatar {
             .chunks_exact(2)
             .map(|sample| i16::from_le_bytes([sample[0], sample[1]]))
             .collect();
-        let output_len = (samples.len() as u64 * 16_000 / u64::from(rate)) as usize;
+        let output_len = usize::try_from(
+            u64::try_from(samples.len()).map_err(|_| denied())? * 16_000 / u64::from(rate),
+        )
+        .map_err(|_| denied())?;
         if output_len == 0 || output_len > 480_000 {
             return Err(denied());
         }
-        let mut output = Vec::with_capacity((output_len + 319) / 320 * 640);
+        let mut output = Vec::with_capacity(output_len.div_ceil(320) * 640);
         for index in 0..output_len {
-            let position = index as u64 * u64::from(rate);
+            let position = u64::try_from(index).map_err(|_| denied())? * u64::from(rate);
             let left = (position / 16_000) as usize;
-            let fraction = (position % 16_000) as i64;
+            let fraction = i64::try_from(position % 16_000).map_err(|_| denied())?;
             let a = i64::from(samples[left]);
             let next = samples.get(left + 1).copied().unwrap_or(samples[left]);
             let b = i64::from(next);
             let interpolated = (a * (16_000 - fraction) + b * fraction) / 16_000;
-            output.extend_from_slice(&(interpolated as i16).to_le_bytes());
+            output.extend_from_slice(&i16::try_from(interpolated).map_err(|_| denied())?.to_le_bytes());
         }
         while output.len() % 640 != 0 {
             output.push(0);
