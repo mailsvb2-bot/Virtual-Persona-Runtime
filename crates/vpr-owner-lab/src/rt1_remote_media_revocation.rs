@@ -100,6 +100,14 @@ impl Rt1RemoteMediaRevocation {
         Ok(())
     }
 
+    /// Revoke publication authority immediately, without HTTP, worker STOP,
+    /// or waiting on the signaling mutex. The existing HTTP-owned reconciler
+    /// retains this operation and requests the independently verified dual-track
+    /// STOP. Explicit visitor close still waits for a real receipt.
+    pub fn request_revoke(&self) {
+        self.revoked.store(true, Ordering::Release);
+    }
+
     /// Invoked by the existing canonical visitor stop callback, after the
     /// owner publication transaction is released. No engine mutex is held.
     /// An uncertain outcome stays unconfirmed and can be reconciled later.
