@@ -86,7 +86,7 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0.02)
                 self.assertTrue(
                     received_pcm["audible"],
-                    f"browser decoded no injected PCM RTP; frames={received}, errors={received_pcm[\'errors\']}",
+                    "browser decoded no injected PCM RTP; frames={}, errors={}".format(received, received_pcm["errors"]),
                 )
 
                 receipt = await asyncio.wait_for(
