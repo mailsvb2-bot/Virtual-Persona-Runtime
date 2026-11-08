@@ -16,6 +16,16 @@ impl Rt1HttpState {
         if pending.len() >= MAX_TRACKED_REMOTE_OPERATIONS || pending.contains_key(&retry_id) {
             return Err("RT1_REMOTE_CLEANUP_CAPACITY_EXCEEDED".into());
         }
+        // The callback only signals this already-running reconciler; it
+        // never starts a second STOP worker or makes a network request.
+        let wake = Arc::clone(&self.cleanup_notify);
+        remote.install_revoke_notifier(move || {
+            let (sequence, ready) = &*wake;
+            let mut number = sequence.lock();
+            *number = number.wrapping_add(1);
+            drop(number);
+            ready.notify_one();
+        });
         pending.insert(retry_id, remote);
         Ok(())
     }
@@ -47,14 +57,20 @@ impl Rt1HttpState {
 /// A single bounded cleanup worker for the lifetime of the local owner lab.
 /// Unknown STOP outcomes retain their retry handles and cannot claim success.
 pub(crate) fn spawn_cleanup_reconciler(state: &Arc<AppState>) {
+    let wake = Arc::clone(&state.rt1.cleanup_notify);
     let state = Arc::downgrade(state);
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-            let Some(state) = state.upgrade() else {
-                break;
-            };
-            state.rt1.reconcile_remote_stops();
+    std::thread::spawn(move || loop {
+        // Capture the generation before reconciling so a concurrent revoke
+        // cannot be lost between the STOP attempt and the bounded wait.
+        let (sequence, ready) = &*wake;
+        let before = *sequence.lock();
+        let Some(state) = state.upgrade() else {
+            break;
+        };
+        state.rt1.reconcile_remote_stops();
+        let mut observed = sequence.lock();
+        if *observed == before {
+            ready.wait_for(&mut observed, std::time::Duration::from_secs(2));
         }
     });
 }
