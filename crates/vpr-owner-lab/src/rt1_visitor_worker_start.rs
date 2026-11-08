@@ -20,7 +20,11 @@ impl Rt1VisitorConversation {
         register_cleanup: impl Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String>,
     ) -> Result<(Self, LabSignalBundle), String> {
         Self::start_inner(
-            manager, visitor_token, engine, consent, Some(remote),
+            manager,
+            visitor_token,
+            engine,
+            consent,
+            Some(remote),
             Some(&register_cleanup),
         )
     }
