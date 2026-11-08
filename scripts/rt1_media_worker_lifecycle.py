@@ -658,14 +658,27 @@ class MediaLifecycle:
                 raise
 
     def reconcile(self):
-        """Replay STOP only for known session IDs; NEVER replay CREATE."""
+        """Retry each known STOP independently; never replay CREATE.
+
+        A permanently unreachable sender must not starve later eligible STOPs.
+        Each failed sender keeps its durable uncertain row and the whole pass
+        remains unsuccessful so the caller can report/retry reconciliation.
+        """
         with self._lock:
             pending = self._db.execute(
                 "SELECT id,generation,session_id FROM media_operations WHERE phase IN ('stopping','uncertain')"
             ).fetchall()
+        first_failure = None
         for operation_id, generation, session_id in pending:
-            if session_id:
+            if not session_id:
+                continue
+            try:
                 self._finish_stop(operation_id, session_id, generation)
+            except Exception as error:
+                if first_failure is None:
+                    first_failure = error
+        if first_failure is not None:
+            raise RuntimeError("RT1 STOP reconciliation incomplete") from first_failure
 
     def status(self, operation_id: str):
         with self._lock:
