@@ -24,13 +24,24 @@ pub(super) fn visitor_start(
     let started = if let Some(worker) = worker {
         let retry_id = session_id.clone();
         Rt1VisitorConversation::start_with_verified_worker(
-            manager, body.visitor_token, engine, true, worker,
-            |remote| state.rt1.register_remote(retry_id.clone(), Arc::clone(remote)),
+            manager,
+            body.visitor_token,
+            engine,
+            true,
+            worker,
+            |remote| {
+                state
+                    .rt1
+                    .register_remote(retry_id.clone(), Arc::clone(remote))
+            },
         )
     } else if std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true") {
         let retry_id = session_id.clone();
         Rt1VisitorConversation::start_diagnostic(
-            manager, body.visitor_token, engine, true,
+            manager,
+            body.visitor_token,
+            engine,
+            true,
             |remote| state.rt1.register_remote(retry_id, remote),
         )
     } else {
@@ -107,4 +118,3 @@ pub(super) fn visitor_start(
         conversation,
     ))
 }
-
