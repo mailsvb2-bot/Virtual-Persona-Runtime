@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use vpr_owner_lab::{ProviderBundle, Rt1RemoteMediaRevocation};
+use vpr_owner_lab::Rt1RemoteMediaRevocation;
 use vpr_provider_local_open_source::{
     OperationWorkerAvatar, operation_client::RemoteOperationClient,
 };
@@ -18,12 +18,8 @@ pub(super) fn selected() -> bool {
 /// register its remote STOP handle after visitor authorization and before
 /// invoking the canonical avatar engine's existing startup path.
 pub(super) fn prepare(
-    providers: &mut ProviderBundle,
     operation_id: &str,
-) -> Result<Option<Arc<Rt1RemoteMediaRevocation>>, HttpResponse> {
-    if !selected() {
-        return Ok(None);
-    }
+) -> Result<(Arc<Rt1RemoteMediaRevocation>, Box<OperationWorkerAvatar>), HttpResponse> {
     let endpoint = std::env::var("RT1_WORKER_ENDPOINT")
         .map_err(|_| error_response(503, "RT1_WORKER_NOT_CONFIGURED"))?;
     let token = std::env::var("RT1_WORKER_TOKEN")
@@ -34,9 +30,9 @@ pub(super) fn prepare(
         Rt1RemoteMediaRevocation::new(client.clone(), operation_id.to_owned(), 1)
             .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
     );
-    providers.avatar = Box::new(
+    let avatar = Box::new(
         OperationWorkerAvatar::new(client, operation_id.to_owned(), 1)
             .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
     );
-    Ok(Some(remote))
+    Ok((remote, avatar))
 }
