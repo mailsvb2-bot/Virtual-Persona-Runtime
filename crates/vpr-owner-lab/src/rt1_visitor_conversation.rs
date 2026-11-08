@@ -169,7 +169,10 @@ impl Rt1VisitorConversation {
                     None
                 };
                 let _ = manager.close(&id);
-                if remote.as_ref().is_some_and(|worker| worker.revoke_confirmed().is_err()) {
+                if remote
+                    .as_ref()
+                    .is_some_and(|worker| worker.revoke_confirmed().is_err())
+                {
                     return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
                 }
                 if matches!(cleanup, Some(Err(_))) {
@@ -333,7 +336,9 @@ impl Rt1VisitorConversation {
     /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
     #[must_use]
     pub fn supports_private_voice(&self) -> bool {
-        self.remote.as_ref().is_some_and(|worker| !worker.is_revoked())
+        self.remote
+            .as_ref()
+            .is_some_and(|worker| !worker.is_revoked())
             && self.interrupt.backend_stop.lock().is_some()
             && !self.interrupt.cancelled.load(Ordering::Acquire)
             && self.manager.authorize(&self.id).is_ok()
