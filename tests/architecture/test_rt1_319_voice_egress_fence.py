@@ -15,6 +15,7 @@ SOURCE = (
 
 
 STAGING_SOURCE = SOURCE.with_name("rt1_visitor_voice_stream_staging.rs")
+VOICE_CAPABILITY_SOURCE = SOURCE.with_name("rt1_visitor_voice_capability.rs")
 
 
 def method_body(source: str, method: str) -> str:
@@ -49,12 +50,23 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         self.assertNotIn("self.remote.is_some()", body)
         staged = method_body(self.source, "stage_microphone_audio")
         self.assertIn(
-            "self.remote.is_some() && self.interrupt.backend_stop.lock().is_none()",
-            staged,
+            "self.remote.is_some() && !self.verified_worker_voice", staged
         )
-        self.assertIn("self.interrupt.cancelled.load(Ordering::Acquire)", body)
-        self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
+        self.assertIn("if !self.supports_private_voice()", body)
         self.assertIn("return unsupported_visitor_voice_egress()", body)
+        capability = method_body(
+            VOICE_CAPABILITY_SOURCE.read_text(encoding="utf-8"), "supports_private_voice"
+        )
+        self.assertIn("self.verified_worker_voice", capability)
+        self.assertIn("!worker.is_revoked()", capability)
+        self.assertIn("self.interrupt.cancelled.load(Ordering::Acquire)", capability)
+        self.assertIn("self.manager.authorize(&self.id).is_ok()", capability)
+        self.assertIn("verified_worker_voice: remote.is_some()", self.source)
+        self.assertIn("verified_worker_voice: false", self.source)
+        self.assertIn(
+            "if providers.tts.is_none()",
+            SOURCE.with_name("http_rt1_start.rs").read_text(encoding="utf-8"),
+        )
         self.assertIn("self.stage_microphone_audio(&sender, pcm_s16le_mono_16khz)?", body)
         self.assertIn("std::sync::mpsc::sync_channel(1)", body)
         self.assertIn("self.manager.begin_provider_egress(&self.id)?", body)
