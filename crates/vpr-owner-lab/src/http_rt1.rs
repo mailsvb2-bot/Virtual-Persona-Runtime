@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use serde::Deserialize;
 use vpr_owner_lab::{
     OwnerContextState, ProviderBundle, Rt1OwnerController, Rt1RemoteMediaRevocation,
@@ -44,6 +44,8 @@ pub(super) struct Rt1HttpState {
     // Retained BEFORE remote CREATE, even if no browser session ID is returned.
     // Never hold this registry lock while doing provider network I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
+    // One existing reconciler, woken promptly by owner revoke. No second STOP.
+    cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
 }
 
 #[path = "http_rt1_cleanup.rs"]
