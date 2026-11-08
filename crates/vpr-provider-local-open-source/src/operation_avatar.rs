@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn canonical_tts_pcm_resamples_to_bounded_worker_frames() {
         let samples: Vec<u8> = (0..24_000)
-            .flat_map(|index| (index as i16).to_le_bytes())
+            .flat_map(|index| i16::try_from(index).expect("test sample fits i16").to_le_bytes())
             .collect();
         let result = OperationWorkerAvatar::normalize_pcm(&samples, 24_000, 1).unwrap();
         assert_eq!(result.len(), 32_000);
