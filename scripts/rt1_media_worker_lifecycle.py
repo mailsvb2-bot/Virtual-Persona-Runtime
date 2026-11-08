@@ -678,7 +678,9 @@ class MediaLifecycle:
                 if first_failure is None:
                     first_failure = error
         if first_failure is not None:
-            raise RuntimeError("RT1 STOP reconciliation incomplete") from first_failure
+            # Preserve the established provider error contract for callers
+            # and recovery tests, after attempting every known STOP target.
+            raise first_failure
 
     def status(self, operation_id: str):
         with self._lock:
