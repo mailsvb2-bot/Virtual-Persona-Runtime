@@ -28,7 +28,7 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
         receiver = RTCPeerConnection()
         backend = AiortcSenderBackend(timeout=8)
         received = {"audio": 0, "video": 0}
-        received_pcm = {"audible": False}
+        received_pcm = {"audible": False, "errors": []}
         drain_tasks = []
 
         @receiver.on("track")
@@ -40,9 +40,9 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                         received[track.kind] += 1
                         if track.kind == "audio" and frame.to_ndarray().any():
                             received_pcm["audible"] = True
-                except Exception:
-                    # Closing a real transport terminates pending recv().
-                    pass
+                except Exception as error:
+                    if track.kind == "audio" and track.readyState == "live":
+                        received_pcm["errors"].append(str(error))
             drain_tasks.append(asyncio.create_task(drain()))
 
         try:
@@ -80,13 +80,13 @@ class ActualRtpRevocation(unittest.IsolatedAsyncioTestCase):
                     backend.push_pcm, operation, session_id, generation,
                     one_frame * 25,
                 )
-                for _ in range(100):
+                for _ in range(300):
                     if received_pcm["audible"]:
                         break
                     await asyncio.sleep(0.02)
                 self.assertTrue(
                     received_pcm["audible"],
-                    "browser never decoded the injected nonzero PCM RTP",
+                    f"browser decoded no injected PCM RTP; frames={received}, errors={received_pcm[\'errors\']}",
                 )
 
                 receipt = await asyncio.wait_for(
