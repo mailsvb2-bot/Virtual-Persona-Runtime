@@ -49,10 +49,10 @@ pub(super) struct Rt1HttpState {
 #[path = "http_rt1_cleanup.rs"]
 mod cleanup;
 pub(super) use cleanup::spawn_cleanup_reconciler;
-#[path = "http_rt1_verified_worker.rs"]
-mod verified_worker;
 #[path = "http_rt1_start.rs"]
 mod start;
+#[path = "http_rt1_verified_worker.rs"]
+mod verified_worker;
 use start::visitor_start;
 
 #[derive(Deserialize)]
