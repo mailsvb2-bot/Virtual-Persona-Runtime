@@ -95,21 +95,7 @@ impl Rt1VisitorConversation {
         engine: OwnerLabEngine,
         consent: bool,
     ) -> Result<(Self, LabSignalBundle), String> {
-        Self::start_inner(manager, visitor_token, engine, consent, None)
-    }
-
-    /// Start with the same canonical engine and a durable dual-track STOP
-    /// worker already registered with the owner publication authority.
-    /// # Errors
-    /// Denies unresolved CREATE, stale publication or STOP uncertainty.
-    pub fn start_with_verified_worker(
-        manager: Arc<VisitorSessionManager>,
-        visitor_token: String,
-        engine: OwnerLabEngine,
-        consent: bool,
-        remote: Arc<Rt1RemoteMediaRevocation>,
-    ) -> Result<(Self, LabSignalBundle), String> {
-        Self::start_inner(manager, visitor_token, engine, consent, Some(remote))
+        Self::start_inner(manager, visitor_token, engine, consent, None, None)
     }
 
     fn start_inner(
@@ -118,6 +104,7 @@ impl Rt1VisitorConversation {
         mut engine: OwnerLabEngine,
         consent: bool,
         remote: Option<Arc<Rt1RemoteMediaRevocation>>,
+        register_cleanup: Option<&dyn Fn(&Arc<Rt1RemoteMediaRevocation>) -> Result<(), String>>,
     ) -> Result<(Self, LabSignalBundle), String> {
         if !consent {
             return Err("CONSENT_REQUIRED".into());
@@ -141,6 +128,12 @@ impl Rt1VisitorConversation {
             },
         )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
+            let _ = manager.close(&id);
+            return Err(error);
+        }
+        if let (Some(remote), Some(register)) = (&remote, register_cleanup)
+            && let Err(error) = register(remote)
+        {
             let _ = manager.close(&id);
             return Err(error);
         }
@@ -592,6 +585,9 @@ fn stop_if_uncontended(engine: &Mutex<OwnerLabEngine>) -> Result<(), String> {
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
     Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
 }
+
+#[path = "rt1_visitor_worker_start.rs"]
+mod verified_worker_start;
 
 #[cfg(test)]
 #[path = "rt1_visitor_conversation_tests.rs"]
