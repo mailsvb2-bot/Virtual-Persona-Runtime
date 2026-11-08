@@ -5,7 +5,7 @@ mod avatar_selection;
 mod llm_wire;
 mod provider_state;
 mod tts_factory;
-use avatar_factory::build_avatar;
+use avatar_factory::build_selected_avatar;
 #[cfg(any(windows, test))]
 use avatar_selection::avatar_provider_config_complete_with;
 use avatar_selection::select_environment_avatar_provider_with;
@@ -67,9 +67,31 @@ impl ProviderBundle {
         Self::from_env_with_secure_store(require_voice, false)
     }
 
+    /// Build the same canonical STT/LLM/TTS bundle for a supplied verified
+    /// worker avatar. Validate PCM capability against the actual selected
+    /// avatar, never against a discarded D-ID/environment provider.
+    ///
+    /// # Errors
+    /// Rejects incomplete voice credentials or an unsupported avatar.
+    pub fn from_env_with_avatar(
+        require_voice: bool,
+        avatar: Box<dyn RealtimeAvatarPort>,
+    ) -> Result<Self, String> {
+        let allow_secure_store = credential_source_allows_secure_store()?;
+        Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, Some(avatar))
+    }
+
     fn from_env_with_secure_store(
         require_voice: bool,
         allow_secure_store: bool,
+    ) -> Result<Self, String> {
+        Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, None)
+    }
+
+    fn from_env_with_secure_store_and_avatar(
+        require_voice: bool,
+        allow_secure_store: bool,
+        override_avatar: Option<Box<dyn RealtimeAvatarPort>>,
     ) -> Result<Self, String> {
         #[cfg(windows)]
         let profile = resolve_provider_credential_profile(require_voice, allow_secure_store)?;
@@ -78,7 +100,7 @@ impl ProviderBundle {
             let _ = (require_voice, allow_secure_store);
             None
         };
-        let (avatar, avatar_descriptor) = build_avatar(profile.as_ref())?;
+        let (avatar, avatar_descriptor) = build_selected_avatar(override_avatar, profile.as_ref())?;
 
         let stt_name = optional_env_lower("VPR_OWNER_LAB_STT_PROVIDER").or_else(|| {
             profile
@@ -110,26 +132,7 @@ impl ProviderBundle {
         };
         let voice_profile = VoiceProfile::from_env()?;
         validate_voice_profile_configuration(voice_profile.as_ref(), profile.as_ref())?;
-        let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
-            .ok()
-            .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        let tts_name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
-            profile
-                .as_ref()?
-                .tts
-                .as_ref()
-                .map(|tts| tts.provider.to_ascii_lowercase())
-        });
-        if voice_profile.is_some() && tts_name.is_none() {
-            return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
-        }
-        if strict {
-            validate_strict_voice_selection(
-                tts_name.as_deref(),
-                voice_profile.as_ref(),
-                optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
-            )?;
-        }
+        let tts_name = selected_tts_name(profile.as_ref(), voice_profile.as_ref())?;
         if tts_name.is_some() {
             ensure_avatar_pcm_compatible(avatar.as_ref())?;
         }
@@ -173,6 +176,35 @@ impl ProviderBundle {
         })
     }
 }
+// Reuse the single provider selection path. A verified RT1 worker replaces
+// only the avatar port; STT/LLM/TTS composition and credential provenance
+// remain canonical.
+fn selected_tts_name(
+    profile: Option<&ProviderCredentialProfile>,
+    voice_profile: Option<&VoiceProfile>,
+) -> Result<Option<String>, String> {
+    let strict = env::var("VPR_OWNER_LAB_RT0_EVIDENCE")
+        .ok()
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    let name = optional_env_lower("VPR_OWNER_LAB_TTS_PROVIDER").or_else(|| {
+        profile?
+            .tts
+            .as_ref()
+            .map(|tts| tts.provider.to_ascii_lowercase())
+    });
+    if voice_profile.is_some() && name.is_none() {
+        return Err("VOICE_PROFILE_TTS_NOT_CONFIGURED".into());
+    }
+    if strict {
+        validate_strict_voice_selection(
+            name.as_deref(),
+            voice_profile,
+            optional_env_lower("VPR_OWNER_LAB_TTS_ALT_PROVIDER").is_some(),
+        )?;
+    }
+    Ok(name)
+}
+
 #[cfg(windows)]
 fn resolve_provider_credential_profile(
     require_voice: bool,

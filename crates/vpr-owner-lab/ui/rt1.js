@@ -325,8 +325,9 @@
     const id = sessionId;
     voiceRequestEpoch += 1;
     disconnectMicrophone();
+    let stopped;
     try {
-      await api("/api/rt1/visitor/interrupt", { session_id: id });
+      stopped = await api("/api/rt1/visitor/interrupt", { session_id: id });
     } catch (error) {
       // A failed STOP cannot authorize another microphone upload.
       voiceEnabled = false;
@@ -334,7 +335,14 @@
       throw error;
     }
     if (sessionId === id && !stopping) {
-      message("Ответ прерван. Удалённая остановка видео этим не подтверждается.");
+      if (stopped.remote_video_stop_confirmed === true) {
+        // This STOP closes the whole worker session; never resume its mic.
+        voiceEnabled = false;
+        el("speak").disabled = true;
+        message("Удалённая остановка аудио и видео подтверждена. Завершите сессию.");
+      } else {
+        message("Ответ прерван. Удалённая остановка видео этим не подтверждается.");
+      }
     }
   }));
 

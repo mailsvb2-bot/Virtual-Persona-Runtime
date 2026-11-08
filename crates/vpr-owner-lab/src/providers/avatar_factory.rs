@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::Arc;
 
 use vpr_provider_did_agent_streams::{
@@ -131,4 +132,25 @@ fn build_did_avatar(
             &fingerprint_refs,
         ),
     ))
+}
+
+/// Pick the already-authorized canonical avatar BEFORE validating TTS.
+/// An RT1 worker override must not require an unused D-ID configuration.
+pub(super) fn build_selected_avatar(
+    override_avatar: Option<Box<dyn RealtimeAvatarPort>>,
+    profile: Option<&ProviderCredentialProfile>,
+) -> Result<(Box<dyn RealtimeAvatarPort>, ProviderDescriptor), String> {
+    if let Some(avatar) = override_avatar {
+        let identity = avatar.descriptor();
+        let endpoint = env::var("RT1_WORKER_ENDPOINT").unwrap_or_default();
+        let fingerprint = descriptor(
+            "avatar",
+            &identity.provider,
+            &identity.model,
+            &[&endpoint, identity.representation.as_deref().unwrap_or("")],
+        );
+        Ok((avatar, fingerprint))
+    } else {
+        build_avatar(profile)
+    }
 }

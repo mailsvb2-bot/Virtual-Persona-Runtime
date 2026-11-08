@@ -44,7 +44,14 @@ class VisitorVoiceEgressGate(unittest.TestCase):
 
     def test_buffered_voice_requires_stop_only_capability_and_canonical_runtime(self):
         body = method_body(self.source, "voice_turn")
-        self.assertIn("self.remote.is_some()", body)
+        # The verified remote worker is now allowed only with an independent
+        # STOP capability; the old blanket remote denial would block STT.
+        self.assertNotIn("self.remote.is_some()", body)
+        staged = method_body(self.source, "stage_microphone_audio")
+        self.assertIn(
+            "self.remote.is_some() && self.interrupt.backend_stop.lock().is_none()",
+            staged,
+        )
         self.assertIn("self.interrupt.cancelled.load(Ordering::Acquire)", body)
         self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
         self.assertIn("return unsupported_visitor_voice_egress()", body)
