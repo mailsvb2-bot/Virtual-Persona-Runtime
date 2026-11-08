@@ -121,8 +121,6 @@ impl Rt1VisitorConversation {
             visitor_token,
             move || fast_revoke.revoke_authority_only(),
             move || {
-                // Invalidate owner publication promptly. The already
-                // registered reconciler performs verified worker STOP.
                 if let Some(remote) = &remote_stop {
                     remote.request_revoke();
                 }
