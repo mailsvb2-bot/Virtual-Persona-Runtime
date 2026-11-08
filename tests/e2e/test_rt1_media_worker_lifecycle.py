@@ -511,6 +511,42 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(restarted.status("op-a")[1], "stopped")
         self.assertEqual(len(attempts), 2)
 
+    def test_reconciler_does_not_starve_other_stops_after_first_failure(self):
+        # Two inherited uncertain rows can coexist after a crash/migration.
+        # A failed first STOP must not prevent a different known sender from
+        # receiving its independently verified dual-track STOP receipt.
+        with self.worker._lock:
+            self.worker._db.execute("BEGIN IMMEDIATE")
+            try:
+                self.worker._write("first-stalled", 1, "uncertain", "media-first")
+                self.worker._write("second-recoverable", 1, "uncertain", "media-second")
+                self.worker._db.execute("COMMIT")
+            except BaseException:
+                self.worker._db.execute("ROLLBACK")
+                raise
+        original_stop = self.sender.stop
+        attempted = []
+
+        def stop_one_failed(operation_id, session_id, generation):
+            attempted.append(operation_id)
+            if operation_id == "first-stalled":
+                raise ConnectionError("first remote sender unreachable")
+            return original_stop(operation_id, session_id, generation)
+
+        self.sender.stop = stop_one_failed
+        with self.assertRaisesRegex(ConnectionError, "first remote sender unreachable"):
+            self.worker.reconcile()
+        self.assertEqual(attempted, ["first-stalled", "second-recoverable"])
+        self.assertEqual(self.worker.status("first-stalled")[1], "uncertain")
+        self.assertEqual(self.worker.status("second-recoverable")[1], "stopped")
+        self.assertEqual(
+            self.worker.status_with_stop_confirmation("second-recoverable")[3],
+            True,
+        )
+        # The unresolved first sender must still block allocation.
+        with self.assertRaises(RuntimeError):
+            self.worker.create("new-operation", 1)
+
     def test_cancel_before_create_persists_tombstone_across_restart(self):
         other = mod.MediaLifecycle(self.db, self.sender)
         self.assertIsNone(other.cancel("op-a", 1))
