@@ -4,6 +4,8 @@
 //! and a revocation-serialized visitor egress gate are verified.
 use std::time::Duration;
 
+use base64::Engine;
+
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use vpr_integration::{ProviderError, ProviderErrorKind};
@@ -55,6 +57,12 @@ struct OfferReply {
 struct AnswerReply {
     operation_id: String,
     accepted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct PcmReply {
+    operation_id: String,
+    accepted_bytes: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -204,6 +212,44 @@ impl RemoteOperationClient {
         let reply: AnswerReply =
             super::decode_json_response(response, None).map_err(|_| denied())?;
         if reply.operation_id != operation_id || !reply.accepted {
+            return Err(denied());
+        }
+        Ok(())
+    }
+
+    /// Queue one bounded PCM16/16kHz/mono utterance fragment on the exact
+    /// canonical worker session, under its publication/STOP transaction.
+    /// This does not open a second WebRTC sender or authorize a visitor turn.
+    ///
+    /// # Errors
+    /// Denies stale operations, invalid audio, rejected acknowledgements and
+    /// cancellations. No automatic retry of ambiguous provider writes.
+    pub fn push_pcm(
+        &self,
+        operation_id: &str,
+        pcm: &[u8],
+    ) -> Result<(), ProviderError> {
+        if pcm.len() < 640 || pcm.len() > 32_000 || pcm.len() % 640 != 0 {
+            return Err(denied());
+        }
+        let mut url = self.url(operation_id)?;
+        url.path_segments_mut().map_err(|()| denied())?.push("pcm");
+        let response = self
+            .client
+            .post(url)
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({
+                "pcm_base64": base64::engine::general_purpose::STANDARD.encode(pcm),
+                "sample_rate_hz": 16000,
+                "channels": 1,
+            }))
+            .send()
+            .map_err(|_| denied())?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(denied());
+        }
+        let reply: PcmReply = super::decode_json_response(response, None).map_err(|_| denied())?;
+        if reply.operation_id != operation_id || reply.accepted_bytes != pcm.len() {
             return Err(denied());
         }
         Ok(())
