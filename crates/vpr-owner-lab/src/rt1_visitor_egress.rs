@@ -48,7 +48,9 @@ impl VisitorEgressState {
         if *active == 0 {
             return true;
         }
-        self.drained.wait_for(&mut active, timeout);
+        // A spurious notify must not prematurely end the bounded wait for
+        // the canonical provider/browser delivery permit to drain.
+        self.drained.wait_while_for(&mut active, |count| *count != 0, timeout);
         *active == 0
     }
 }
@@ -85,6 +87,25 @@ mod tests {
         assert!(state.admit(&revoked).is_err());
         assert!(!state.quiescent(Duration::from_millis(1)));
         drop(lease);
+        assert!(state.quiescent(Duration::ZERO));
+    }
+
+    #[test]
+    fn spurious_drain_notifications_do_not_release_an_active_provider() {
+        let state = Arc::new(VisitorEgressState::default());
+        let revoked = AtomicBool::new(false);
+        let permit = state.admit(&revoked).unwrap();
+        let notifier = Arc::clone(&state);
+        let worker = std::thread::spawn(move || {
+            for _ in 0..20 {
+                notifier.drained.notify_all();
+                std::thread::yield_now();
+            }
+        });
+        // A wakeup is not a STOP receipt or completion of the egress permit.
+        assert!(!state.quiescent(Duration::from_millis(20)));
+        worker.join().unwrap();
+        drop(permit);
         assert!(state.quiescent(Duration::ZERO));
     }
 
