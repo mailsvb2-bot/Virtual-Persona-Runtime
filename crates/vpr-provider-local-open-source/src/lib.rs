@@ -1,4 +1,6 @@
 pub mod operation_client;
+mod operation_avatar;
+pub use operation_avatar::OperationWorkerAvatar;
 
 use std::time::Duration;
 
