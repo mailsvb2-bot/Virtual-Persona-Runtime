@@ -2,6 +2,7 @@
 
 A separate deployed test must inspect real sender RTP on revoke.
 """
+import base64
 import json
 import sys
 import tempfile
@@ -23,6 +24,10 @@ class Backend:
     def __init__(self):
         self.allocations = 0
         self.stops = 0
+        self.pcm_pushes = []
+
+    def push_pcm(self, operation_id, session_id, generation, pcm):
+        self.pcm_pushes.append((operation_id, session_id, generation, pcm))
 
     def allocate(self, operation_id, generation):
         self.allocations += 1
@@ -75,6 +80,42 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertIs(stopped["video_stopped"], True)
         self.assertEqual(self.backend.stops, 1)
         self.assertEqual(self.request("PUT")[0], 409)
+
+    def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000,
+            "channels": 1,
+        }).encode()
+        url = self.url + "/pcm"
+
+        def post_audio(data, token="test-secret"):
+            req = Request(
+                url, data=data, method="POST",
+                headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"},
+            )
+            try:
+                with urlopen(req, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        self.assertEqual(post_audio(body, token="bad")[0], 401)
+        self.assertEqual(post_audio(body)[0], 410)
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(post_audio(body)[0], 200)
+        self.assertEqual(
+            self.backend.pcm_pushes,
+            [("operation-1", "media-1", 1, pcm)],
+        )
+        self.assertEqual(post_audio(json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 48000, "channels": 1,
+        }).encode())[0], 400)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(post_audio(body)[0], 410)
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
 
     def test_authenticated_durable_status_never_invents_stop_receipt(self):
         request = Request(self.url, headers={"Authorization": "Bearer test-secret"})
