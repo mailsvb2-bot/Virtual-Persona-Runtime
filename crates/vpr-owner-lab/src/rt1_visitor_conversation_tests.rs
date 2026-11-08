@@ -112,4 +112,15 @@ fn drop_cleanup_never_waits_for_a_busy_provider_engine() {
         before.elapsed() < Duration::from_millis(250),
         "Drop cleanup must not wait for the provider engine mutex"
     );
+    // Even after the quiescence check, a concurrent turn may acquire the
+    // engine mutex. Explicit close must fail closed, not wait indefinitely.
+    let before_close = Instant::now();
+    assert_eq!(
+        stop_if_uncontended(&engine),
+        Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into())
+    );
+    assert!(
+        before_close.elapsed() < Duration::from_millis(250),
+        "Explicit close must not wait for a busy provider engine"
+    );
 }
