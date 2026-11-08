@@ -22,10 +22,10 @@ mod helpers;
 mod signaling;
 #[path = "rt1_visitor_text_egress.rs"]
 mod text_egress;
-#[path = "rt1_visitor_voice_stream_staging.rs"]
-mod voice_stream_staging;
 #[path = "rt1_visitor_voice_capability.rs"]
 mod voice_capability;
+#[path = "rt1_visitor_voice_stream_staging.rs"]
+mod voice_stream_staging;
 use helpers::{
     diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
     revoked_diagnostic_offer_error, validate_microphone_audio,
