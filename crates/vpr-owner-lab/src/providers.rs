@@ -78,11 +78,7 @@ impl ProviderBundle {
         avatar: Box<dyn RealtimeAvatarPort>,
     ) -> Result<Self, String> {
         let allow_secure_store = credential_source_allows_secure_store()?;
-        Self::from_env_with_secure_store_and_avatar(
-            require_voice,
-            allow_secure_store,
-            Some(avatar),
-        )
+        Self::from_env_with_secure_store_and_avatar(require_voice, allow_secure_store, Some(avatar))
     }
 
     fn from_env_with_secure_store(
