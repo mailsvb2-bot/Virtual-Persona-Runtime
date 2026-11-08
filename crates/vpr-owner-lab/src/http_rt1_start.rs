@@ -12,9 +12,19 @@ pub(super) fn visitor_start(
     }
     // Do not call the provider until the retry handle exists.
     let session_id = new_visitor_session_id()?;
-    let mut providers = ProviderBundle::from_env(verified_worker::selected())
-        .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
-    let worker = verified_worker::prepare(&mut providers, &session_id)?;
+    // Assemble the SAME canonical STT/LLM/TTS providers against the selected
+    // verified worker, rather than constructing and validating an unrelated
+    // D-ID avatar before replacing it. No second voice/authority path.
+    let (providers, worker) = if verified_worker::selected() {
+        let (remote, avatar) = verified_worker::prepare(&session_id)?;
+        let providers = ProviderBundle::from_env_with_avatar(true, avatar)
+            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+        (providers, Some(remote))
+    } else {
+        let providers = ProviderBundle::from_env(false)
+            .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
+        (providers, None)
+    };
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
