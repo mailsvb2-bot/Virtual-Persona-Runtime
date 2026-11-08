@@ -385,7 +385,10 @@ impl Rt1VisitorConversation {
         pcm_s16le_mono_16khz: Vec<u8>,
     ) -> Result<(), String> {
         validate_microphone_audio(&pcm_s16le_mono_16khz)?;
-        if self.remote.is_some() {
+        // The verified worker keeps an independent STOP handle while its
+        // canonical voice input is staged. A diagnostic remote sender without
+        // that capability must remain voice-denied.
+        if self.remote.is_some() && self.interrupt.backend_stop.lock().is_none() {
             return Err("RT1_DIAGNOSTIC_VOICE_NOT_AUTHORIZED".into());
         }
         self.queue_media_fragment(sender, pcm_s16le_mono_16khz)
