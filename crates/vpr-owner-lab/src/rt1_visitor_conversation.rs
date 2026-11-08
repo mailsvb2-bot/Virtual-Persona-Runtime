@@ -554,14 +554,7 @@ impl Rt1VisitorConversation {
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
         {
-            let mut engine = self.engine.lock();
-            if engine.session_revocation_handle().is_some() {
-                engine
-                    .stop_visitor_provider_confirmed()
-                    .map_err(|error| error.code().to_owned())
-            } else {
-                Ok(())
-            }
+            stop_if_uncontended(&self.engine)
         } else {
             // Do not wait on an engine mutex held by a stalled provider and
             // do not claim confirmed close. The HTTP registry retains this
@@ -587,14 +580,25 @@ impl Drop for Rt1VisitorConversation {
     }
 }
 
-// Best-effort cleanup must not block the caller if a provider holds the engine.
-// This does not certify remote STOP; durable reconciliation is still required.
-fn try_stop_uncontended(engine: &Mutex<OwnerLabEngine>) {
-    if let Some(mut engine) = engine.try_lock() {
-        if engine.session_revocation_handle().is_some() {
-            let _ = engine.stop_visitor_provider_confirmed();
-        }
+// A quiescence observation cannot guarantee that the engine mutex is free:
+// another provider turn can acquire it immediately afterward. Never block a
+// revoke/close caller on that race. A busy engine is an unconfirmed STOP.
+fn stop_if_uncontended(engine: &Mutex<OwnerLabEngine>) -> Result<(), String> {
+    let Some(mut engine) = engine.try_lock() else {
+        return Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into());
+    };
+    if engine.session_revocation_handle().is_some() {
+        engine
+            .stop_visitor_provider_confirmed()
+            .map_err(|error| error.code().to_owned())
+    } else {
+        Ok(())
     }
+}
+
+// Drop is best-effort only; never turn this into a remote STOP receipt.
+fn try_stop_uncontended(engine: &Mutex<OwnerLabEngine>) {
+    let _ = stop_if_uncontended(engine);
 }
 
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
