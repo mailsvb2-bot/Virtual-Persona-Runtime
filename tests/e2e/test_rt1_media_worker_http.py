@@ -96,6 +96,30 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(stopped["phase"], "stopped")
         self.assertIs(stopped["stop_confirmed"], True)
 
+    def test_legacy_stopped_row_without_verified_receipt_is_not_confirmed(self):
+        # A migrated/corrupted stopped phase is not proof of dual-track STOP.
+        # This exercises the real authenticated HTTP status, not just SQLite.
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        previous_stops = self.backend.stops
+        self.lifecycle._db.execute(
+            "UPDATE media_operations SET stop_verified=0 WHERE id=?",
+            ("operation-1",),
+        )
+        request = Request(self.url, headers={"Authorization": "Bearer test-secret"})
+        with urlopen(request, timeout=3) as response:
+            unverified = json.load(response)
+        self.assertEqual(unverified["phase"], "stopped")
+        self.assertEqual(unverified["session_id"], "media-1")
+        self.assertIs(unverified["stop_confirmed"], False)
+        # Merely checking status must not retry sender STOP or mutate ledger.
+        self.assertEqual(self.backend.stops, previous_stops)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(self.backend.stops, previous_stops + 1)
+        with urlopen(request, timeout=3) as response:
+            recovered = json.load(response)
+        self.assertIs(recovered["stop_confirmed"], True)
+
     def test_failed_remote_video_stop_quarantines_operation_and_denies_recreate(self):
         original_stop = self.backend.stop
 
