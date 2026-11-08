@@ -451,7 +451,10 @@ impl Rt1VisitorConversation {
     /// Fails closed if private audio STOP is uncertain.
     pub fn interrupt_turn(&self) -> Result<(), String> {
         self.manager.authorize(&self.id)?;
-        if self.remote.is_some() || self.interrupt.cancelled.load(Ordering::Acquire) {
+        if self.remote.is_some() {
+            return self.interrupt_verified_worker();
+        }
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
             return Err("RT1_VISITOR_INTERRUPT_DENIED".into());
         }
         let stop = self
