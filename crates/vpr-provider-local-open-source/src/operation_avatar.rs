@@ -1,8 +1,8 @@
 //! The existing RT1 durable worker as a canonical RealtimeAvatarPort.
 //! It owns no publication authority: the caller pre-registers this operation
 //! under the existing RT1 owner/visitor revocation and STOP coordinator.
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -120,18 +120,14 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
     }
 
     fn capabilities(&self) -> RealtimeAvatarCapabilities {
-        RealtimeAvatarCapabilities::new([
-            RealtimeAvatarCapability::AudioPcmInput,
-        ])
+        RealtimeAvatarCapabilities::new([RealtimeAvatarCapability::AudioPcmInput])
     }
 
     fn create_session(
         &self,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
-        if cancellation.is_cancelled()
-            || self.create_attempted.swap(true, Ordering::AcqRel)
-        {
+        if cancellation.is_cancelled() || self.create_attempted.swap(true, Ordering::AcqRel) {
             return Err(denied());
         }
         // CREATE is never retried after an ambiguous remote outcome.
