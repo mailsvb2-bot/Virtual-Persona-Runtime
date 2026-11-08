@@ -222,19 +222,27 @@ fn registered_remote_revoke_wakes_one_existing_cleanup_reconciler() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let client =
-        RemoteOperationClient::new(&endpoint, "secret", Duration::from_secs(3)).unwrap();
+    let client = RemoteOperationClient::new(&endpoint, "secret", Duration::from_secs(3)).unwrap();
     let remote = Arc::new(
         super::Rt1RemoteMediaRevocation::new(client, "wake-owner-stop".into(), 1).unwrap(),
     );
     let state = super::Rt1HttpState::default();
-    state.register_remote("retry".into(), Arc::clone(&remote)).unwrap();
+    state
+        .register_remote("retry".into(), Arc::clone(&remote))
+        .unwrap();
     let (sequence, _) = &*state.cleanup_notify;
     let before = *sequence.lock();
     remote.request_revoke();
-    assert_ne!(*sequence.lock(), before, "revocation did not wake STOP reconciler");
+    assert_ne!(
+        *sequence.lock(),
+        before,
+        "revocation did not wake STOP reconciler"
+    );
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
     // Network STOP must run only in the already-registered reconciler.
-    assert!(listener.accept().is_err(), "owner revoke performed blocking HTTP");
+    assert!(
+        listener.accept().is_err(),
+        "owner revoke performed blocking HTTP"
+    );
 }
