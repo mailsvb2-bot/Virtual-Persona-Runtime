@@ -534,7 +534,7 @@ class LifecycleTests(unittest.TestCase):
             return original_stop(operation_id, session_id, generation)
 
         self.sender.stop = stop_one_failed
-        with self.assertRaisesRegex(RuntimeError, "reconciliation incomplete"):
+        with self.assertRaisesRegex(ConnectionError, "first remote sender unreachable"):
             self.worker.reconcile()
         self.assertEqual(attempted, ["first-stalled", "second-recoverable"])
         self.assertEqual(self.worker.status("first-stalled")[1], "uncertain")
