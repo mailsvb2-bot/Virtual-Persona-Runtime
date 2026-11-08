@@ -92,8 +92,32 @@ impl Rt1VisitorConversation {
     pub fn start(
         manager: Arc<VisitorSessionManager>,
         visitor_token: String,
+        engine: OwnerLabEngine,
+        consent: bool,
+    ) -> Result<(Self, LabSignalBundle), String> {
+        Self::start_inner(manager, visitor_token, engine, consent, None)
+    }
+
+    /// Start with the same canonical engine and a durable dual-track STOP
+    /// worker already registered with the owner publication authority.
+    /// # Errors
+    /// Denies unresolved CREATE, stale publication or STOP uncertainty.
+    pub fn start_with_verified_worker(
+        manager: Arc<VisitorSessionManager>,
+        visitor_token: String,
+        engine: OwnerLabEngine,
+        consent: bool,
+        remote: Arc<Rt1RemoteMediaRevocation>,
+    ) -> Result<(Self, LabSignalBundle), String> {
+        Self::start_inner(manager, visitor_token, engine, consent, Some(remote))
+    }
+
+    fn start_inner(
+        manager: Arc<VisitorSessionManager>,
+        visitor_token: String,
         mut engine: OwnerLabEngine,
         consent: bool,
+        remote: Option<Arc<Rt1RemoteMediaRevocation>>,
     ) -> Result<(Self, LabSignalBundle), String> {
         if !consent {
             return Err("CONSENT_REQUIRED".into());
@@ -105,10 +129,16 @@ impl Rt1VisitorConversation {
         let interrupt = Arc::new(LiveVisitorInterrupt::default());
         let fast_revoke = Arc::clone(&interrupt);
         let on_revoke = Arc::clone(&interrupt);
+        let remote_stop = remote.clone();
         let id = manager.open_with_fast_revoke(
             visitor_token,
             move || fast_revoke.revoke_authority_only(),
-            move || on_revoke.stop(),
+            move || {
+                on_revoke.stop();
+                if let Some(remote) = &remote_stop {
+                    let _ = remote.revoke_confirmed();
+                }
+            },
         )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
             let _ = manager.close(&id);
@@ -146,12 +176,21 @@ impl Rt1VisitorConversation {
                     None
                 };
                 let _ = manager.close(&id);
+                if remote.as_ref().is_some_and(|worker| worker.revoke_confirmed().is_err()) {
+                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+                }
                 if matches!(cleanup, Some(Err(_))) {
                     return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
                 }
                 return Err(error.code().to_owned());
             }
         };
+        if let Some(worker) = &remote
+            && worker.synchronize_created_session().is_err()
+        {
+            let _ = manager.close(&id);
+            return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+        }
         *interrupt.session.lock() = engine.session_revocation_handle();
         *interrupt.backend_stop.lock() = engine.visitor_avatar_stop_handle();
         if interrupt.cancelled.load(Ordering::Acquire)
@@ -173,7 +212,7 @@ impl Rt1VisitorConversation {
                 id,
                 engine: Mutex::new(engine),
                 interrupt,
-                remote: None,
+                remote,
             },
             bundle,
         ))
@@ -301,9 +340,10 @@ impl Rt1VisitorConversation {
     /// Generic WebRTC/LiveKit text-control avatars remain voice-denied.
     #[must_use]
     pub fn supports_private_voice(&self) -> bool {
-        // The visitor microphone's external STT/LLM/TTS path is still
-        // fail-closed; never advertise a voice control that cannot execute.
-        false
+        self.remote.as_ref().is_some_and(|worker| !worker.is_revoked())
+            && self.interrupt.backend_stop.lock().is_some()
+            && !self.interrupt.cancelled.load(Ordering::Acquire)
+            && self.manager.authorize(&self.id).is_ok()
     }
 
     /// Whether this visitor retains the current canonical publication permit.
@@ -371,8 +411,7 @@ impl Rt1VisitorConversation {
         // Never enable arbitrary provider egress. Only the canonical
         // server-owned Echo sender exposes an independent bounded STOP that
         // does not require the engine mutex held during this voice turn.
-        if self.remote.is_some()
-            || self.interrupt.cancelled.load(Ordering::Acquire)
+        if self.interrupt.cancelled.load(Ordering::Acquire)
             || self.interrupt.backend_stop.lock().is_none()
         {
             return unsupported_visitor_voice_egress();
