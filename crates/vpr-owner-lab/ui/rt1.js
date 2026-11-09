@@ -20,6 +20,7 @@
   let microphonePending = false;
   let microphoneRequest = 0;
   let voiceRequestEpoch = 0;
+  let pageHidden = false;
 
   function message(text, problem = false) {
     status.textContent = text;
@@ -44,6 +45,19 @@
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.code || "Ошибка сервера");
     return payload;
+  }
+
+  // Best effort only: an HTTP request is not evidence of remote RTP STOP.
+  // The server's durable worker remains the authority for cleanup/retries.
+  function requestKeepaliveClose(id) {
+    const body = JSON.stringify({ session_id: id });
+    void fetch("/api/rt1/visitor/close", {
+      method: "POST",
+      keepalive: true,
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrf },
+      body
+    }).catch(() => {});
   }
 
   async function busy(task) {
@@ -473,6 +487,15 @@
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
     const joinedId = start.session_id;
     sessionId = joinedId;
+    // The tab may have left while CREATE was still in flight and no session
+    // ID was available to the pagehide handler. Reconcile that late identity
+    // without ever connecting media or reopening a revoked browser session.
+    if (pageHidden) {
+      voiceEnabled = false;
+      stopping = true;
+      requestKeepaliveClose(joinedId);
+      return;
+    }
     // A successful START creates a sender, not yet an accepted browser SDP.
     // Do not expose microphone capture until transport signaling completes.
     const advertisedVoice = start.voice_enabled === true;
@@ -595,21 +618,18 @@
   }));
 
   window.addEventListener("pagehide", () => {
+    // Invalidate *pending* START as well: its session ID may arrive only
+    // after this callback, when no earlier STOP request could name it.
+    pageHidden = true;
     if (sessionId) {
-      // A page restored from BFCache must not resume an unverified sender.
       voiceEnabled = false;
       stopping = true;
-      // A best-effort request is not a STOP receipt. The backend ledger
-      // remains the source of truth after abrupt tab close.
-      const body = JSON.stringify({ session_id: sessionId });
-      void fetch("/api/rt1/visitor/close", {
-        method: "POST",
-        keepalive: true,
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json", "X-VPR-CSRF": csrf },
-        body
-      }).catch(() => {});
+      requestKeepaliveClose(sessionId);
       cleanupLocal();
     }
+  });
+  window.addEventListener("pageshow", (event) => {
+    // BFCache must never resurrect the old authorization or media sender.
+    if (event.persisted && pageHidden) window.location.reload();
   });
 })();
