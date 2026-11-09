@@ -1,0 +1,41 @@
+name: Retire content-identical historical branches
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/retire_identical_branches.py
+      - .github/workflows/retire-identical-branches.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: vpr-identical-branch-retirement
+  cancel-in-progress: false
+
+jobs:
+  retire-identical:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify exact main SHA and retire identical branch trees
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python3 scripts/retire_identical_branches.py --execute --out branch-retirement
+      - name: Preserve immutable branch-head inventory and deletion outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: branch-retirement-inventory
+          path: branch-retirement/
+          retention-days: 90
+          if-no-files-found: warn
