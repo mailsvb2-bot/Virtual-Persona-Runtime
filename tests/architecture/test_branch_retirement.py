@@ -45,7 +45,7 @@ class BranchRetirementTests(TestCase):
 
     def test_push_has_exact_ref_lease(self):
         process = mock.Mock(returncode=0)
-        with mock.patch.object(retirement, "main_head", return_value="main"):
+        with mock.patch.object(retirement, "remote_main_head", return_value="main"):
             with mock.patch.object(retirement, "remote_branches", return_value=[("old", "head")]):
                 with mock.patch.object(retirement, "git", return_value=process) as git:
                     self.assertEqual(retirement.retire({"name": "old", "sha": "head"}, "main"), "deleted")
