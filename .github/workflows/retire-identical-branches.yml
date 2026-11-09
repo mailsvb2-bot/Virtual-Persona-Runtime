@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - scripts/retire_identical_branches.py
+      - tests/architecture/test_branch_retirement.py
       - .github/workflows/retire-identical-branches.yml
   workflow_dispatch:
 
@@ -26,6 +27,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      - name: Test fail-closed branch retirement invariants
+        run: python3 -m unittest discover -s tests/architecture -p 'test_branch_retirement.py'
       - name: Verify exact main SHA and retire identical branch trees
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
