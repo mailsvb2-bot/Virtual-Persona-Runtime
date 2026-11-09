@@ -1,6 +1,6 @@
 //! Localhost-only RT1 browser entry. Uses the existing owner workspace and
 //! visitor conversation, never the owner RT0 engine as a visitor's authority.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -41,6 +41,7 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
+    pending_starts: Mutex<HashSet<String>>,
 }
 
 #[derive(Deserialize)]
@@ -317,6 +318,34 @@ fn finalize_registered_stop<T>(
     Ok(())
 }
 
+/// A pending START owns its identity until registration completes or fails.
+/// This reservation is local admission protection, not a durable STOP receipt.
+struct PendingStart<'a> {
+    pending: &'a Mutex<HashSet<String>>,
+    id: String,
+}
+
+impl Drop for PendingStart<'_> {
+    fn drop(&mut self) {
+        self.pending.lock().remove(&self.id);
+    }
+}
+
+fn reserve_start<'a, T>(
+    pending: &'a Mutex<HashSet<String>>,
+    sessions: &Mutex<HashMap<String, Arc<T>>>,
+    id: String,
+) -> Option<PendingStart<'a>> {
+    // Serialize reservation against other START requests. Registered sessions
+    // never reuse an ID while their remote STOP remains unconfirmed.
+    let mut in_flight = pending.lock();
+    if in_flight.contains(&id) || sessions.lock().contains_key(&id) {
+        return None;
+    }
+    in_flight.insert(id.clone());
+    Some(PendingStart { pending, id })
+}
+
 /// Allocate the HTTP retry identity before any remote CREATE. Entropy failure
 /// must never strand an already-started provider without a STOP lookup key.
 fn new_visitor_session_id() -> Result<String, HttpResponse> {
@@ -340,7 +369,21 @@ fn visitor_start(
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
     // Do not call the provider until the retry handle exists.
-    let session_id = new_visitor_session_id()?;
+    let (session_id, _start_reservation) = {
+        let mut reserved = None;
+        for _ in 0..8 {
+            let id = new_visitor_session_id()?;
+            if let Some(guard) = reserve_start(
+                &state.rt1.pending_starts,
+                &state.rt1.conversations,
+                id.clone(),
+            ) {
+                reserved = Some((id, guard));
+                break;
+            }
+        }
+        reserved.ok_or_else(|| error_response(503, "RT1_SESSION_ID_RESERVATION_FAILED"))?
+    };
     let providers = ProviderBundle::from_env(false)
         .map_err(|_| error_response(503, "RT1_PROVIDER_UNAVAILABLE"))?;
     let mut engine = super::engine_bootstrap::assemble(providers, true)
