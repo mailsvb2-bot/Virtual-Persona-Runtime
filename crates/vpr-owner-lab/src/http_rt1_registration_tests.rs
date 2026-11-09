@@ -142,3 +142,41 @@ fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
     assert!(routed.delivery.is_none());
     assert_eq!(routed.response.status_code().0, 409);
 }
+
+#[test]
+fn pending_start_reserves_identity_before_remote_create() {
+    let pending = Mutex::new(std::collections::HashSet::new());
+    let sessions = Mutex::new(HashMap::<String, Arc<u8>>::new());
+    let first = super::reserve_start(&pending, &sessions, "same".into())
+        .expect("first START must reserve");
+    assert!(super::reserve_start(&pending, &sessions, "same".into()).is_none());
+    drop(first);
+    assert!(super::reserve_start(&pending, &sessions, "same".into()).is_some());
+}
+
+#[test]
+fn failed_start_releases_pending_identity_without_erasing_registered_session() {
+    let pending = Mutex::new(std::collections::HashSet::new());
+    let sessions = Mutex::new(HashMap::<String, Arc<u8>>::new());
+    {
+        let _reservation = super::reserve_start(&pending, &sessions, "reserved".into()).unwrap();
+        sessions.lock().insert("reserved".into(), Arc::new(9));
+    }
+    assert!(pending.lock().is_empty());
+    assert!(super::reserve_start(&pending, &sessions, "reserved".into()).is_none());
+    assert_eq!(**sessions.lock().get("reserved").unwrap(), 9);
+}
+
+#[test]
+fn concurrent_starts_cannot_reserve_same_identity() {
+    let pending = Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let sessions = Arc::new(Mutex::new(HashMap::<String, Arc<u8>>::new()));
+    let first = super::reserve_start(&pending, &sessions, "same".into()).unwrap();
+    let p = Arc::clone(&pending);
+    let s = Arc::clone(&sessions);
+    let worker = std::thread::spawn(move || {
+        super::reserve_start(&p, &s, "same".into()).is_none()
+    });
+    assert!(worker.join().unwrap());
+    drop(first);
+}
