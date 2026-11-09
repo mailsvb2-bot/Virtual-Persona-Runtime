@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: true
@@ -33,7 +33,7 @@ jobs:
         run: python3 scripts/retire_identical_branches.py --execute --out branch-retirement
       - name: Preserve immutable branch-head inventory and deletion outcomes
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: branch-retirement-inventory
           path: branch-retirement/
