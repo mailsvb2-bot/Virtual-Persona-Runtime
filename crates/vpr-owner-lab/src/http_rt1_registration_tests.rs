@@ -147,8 +147,8 @@ fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
 fn pending_start_reserves_identity_before_remote_create() {
     let pending = Mutex::new(std::collections::HashSet::new());
     let sessions = Mutex::new(HashMap::<String, Arc<u8>>::new());
-    let first = super::reserve_start(&pending, &sessions, "same".into())
-        .expect("first START must reserve");
+    let first =
+        super::reserve_start(&pending, &sessions, "same".into()).expect("first START must reserve");
     assert!(super::reserve_start(&pending, &sessions, "same".into()).is_none());
     drop(first);
     assert!(super::reserve_start(&pending, &sessions, "same".into()).is_some());
