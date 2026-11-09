@@ -471,19 +471,27 @@
     if (!visitor_token) throw new Error("Введите код приглашения.");
     message("Устанавливается защищённое медиасоединение…");
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
-    sessionId = start.session_id;
+    const joinedId = start.session_id;
+    sessionId = joinedId;
     el("send-text").disabled = false;
     voiceEnabled = start.voice_enabled === true;
     el("speak").disabled = !voiceEnabled || voiceInFlight;
     el("interrupt").disabled = !voiceEnabled;
+    const assertCurrent = () => {
+      if (sessionId !== joinedId || stopping) {
+        throw new Error("Медиасессия была отозвана во время подключения.");
+      }
+    };
     try {
+      assertCurrent();
       const transport = start.signal.transport;
       if (!transport) throw new Error("Провайдер не предоставил медиасессию.");
       if (transport.kind === "live_kit") {
         await connectLiveKit(transport);
+        assertCurrent();
       } else if (transport.kind === "web_rtc" && transport.offer) {
       const offer = transport.offer;
-      peer = new RTCPeerConnection({
+      const connection = new RTCPeerConnection({
         iceServers: Array.isArray(transport.ice_servers)
           ? transport.ice_servers.map((server) => ({
               urls: server.urls,
@@ -492,9 +500,11 @@
             }))
           : []
       });
+      peer = connection;
       const gatheredIce = [];
       if (start.diagnostic_rtp === false) {
-        peer.onicecandidate = (event) => {
+        connection.onicecandidate = (event) => {
+          if (peer !== connection || sessionId !== joinedId || stopping) return;
           if (event.candidate) {
             gatheredIce.push({
               candidate: event.candidate.candidate,
@@ -506,7 +516,8 @@
       }
       const remoteAudio = new MediaStream();
       const remoteVideo = new MediaStream();
-      peer.ontrack = (event) => {
+      connection.ontrack = (event) => {
+        if (peer !== connection || sessionId !== joinedId || stopping) return;
         const track = event.track;
         if (track.kind === "audio") {
           remoteAudio.addTrack(track);
@@ -519,37 +530,46 @@
           el("video").play().catch(() => message("Нажмите на видео для воспроизведения.", true));
         }
       };
-      peer.onconnectionstatechange = () => {
-        if (!peer) return;
-        if (peer.connectionState === "connected") message("Звук и видео подключены.");
-        if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+      connection.onconnectionstatechange = () => {
+        if (peer !== connection || sessionId !== joinedId || stopping) return;
+        if (connection.connectionState === "connected") message("Звук и видео подключены.");
+        if (["failed", "disconnected", "closed"].includes(connection.connectionState)) {
           message("Соединение прервано; завершаем удалённую сессию.", true);
           void leave().catch((error) => message(String(error.message || error), true));
         }
       };
-      await peer.setRemoteDescription({ type: "offer", sdp: offer.sdp });
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      await waitForIceGathering(peer);
+      await connection.setRemoteDescription({ type: "offer", sdp: offer.sdp });
+      assertCurrent();
+      const answer = await connection.createAnswer();
+      assertCurrent();
+      await connection.setLocalDescription(answer);
+      assertCurrent();
+      await waitForIceGathering(connection);
+      assertCurrent();
       await api("/api/rt1/visitor/answer", {
-        session_id: sessionId,
-        sdp: peer.localDescription.sdp
+        session_id: joinedId,
+        sdp: connection.localDescription.sdp
       });
+      assertCurrent();
       for (const ice of gatheredIce) {
-        await api("/api/rt1/visitor/ice", { session_id: sessionId, ...ice });
+        assertCurrent();
+        await api("/api/rt1/visitor/ice", { session_id: joinedId, ...ice });
       }
       } else {
         throw new Error("Неподдерживаемый тип медиасессии.");
       }
+      assertCurrent();
       checking = setInterval(async () => {
-        if (!sessionId || stopping) return;
+        if (sessionId !== joinedId || stopping) return;
         try {
-          const result = await api("/api/rt1/visitor/status", { session_id: sessionId });
+          const result = await api("/api/rt1/visitor/status", { session_id: joinedId });
+          if (sessionId !== joinedId || stopping) return;
           if (!result.active) {
             message("Владелец завершил доступ. Закрываем соединение.");
             await leave();
           }
         } catch (error) {
+          if (sessionId !== joinedId || stopping) return;
           message("Не удаётся проверить полномочия сессии: отключаем медиапоток.", true);
           cleanupLocal();
           try { await leave(); } catch (_) { /* Leave remains retryable. */ }
@@ -557,8 +577,11 @@
       }, 2000);
       if (transport.kind === "web_rtc") message("Ожидаем аудио и видео от Persona…");
     } catch (error) {
-      cleanupLocal();
-      try { await leave(); } catch (_) { /* Keep session id for STOP retry. */ }
+      // Late ICE/SDP completion from an old join must never close a newer one.
+      if (sessionId === joinedId) {
+        cleanupLocal();
+        try { await leave(); } catch (_) { /* Keep session id for STOP retry. */ }
+      }
       throw error;
     }
   }));
