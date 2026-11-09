@@ -39,6 +39,16 @@ def main_head() -> str:
     return git("rev-parse", "refs/remotes/origin/main").stdout.strip()
 
 
+def remote_main_head() -> str:
+    """Read authoritative remote main; fail closed on missing/ambiguous refs."""
+    lines = git("ls-remote", "--heads", "origin", "refs/heads/main").stdout.splitlines()
+    matches = [line.split("\t", 1)[0] for line in lines
+               if line.endswith("\trefs/heads/main")]
+    if len(matches) != 1 or len(matches[0]) != 40:
+        raise RuntimeError("cannot verify remote main ref")
+    return matches[0]
+
+
 def classify(main_sha: str, name: str, head_sha: str, protected: set[str]) -> dict:
     item = {"name": name, "sha": head_sha, "decision": "retain"}
     if name in protected:
@@ -90,7 +100,7 @@ def open_pr_heads() -> set[str]:
 def retire(item: dict, expected_main: str) -> str:
     """Force-with-lease prevents deleting a branch modified after classification."""
     name, sha = item["name"], item["sha"]
-    if main_head() != expected_main:
+    if remote_main_head() != expected_main:
         return "main_changed"
     current = dict(remote_branches()).get(name)
     if current != sha:
@@ -115,18 +125,31 @@ def run(output: Path, execute: bool) -> dict:
     # Write snapshot BEFORE any deletion.
     (output / "inventory-before.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    def checkpoint() -> None:
+        # Commit an audit checkpoint before the next potentially failing API call.
+        staged = output / "inventory-after.json.tmp"
+        staged.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+                          encoding="utf-8")
+        staged.replace(output / "inventory-after.json")
+
+    checkpoint()
     if execute:
         # Recheck PR protections for each deletion attempt; network failure
         # aborts rather than skipping an unknown protected ref.
         for item in branches:
             if item["decision"] != "eligible":
                 continue
-            if item["name"] in open_pr_heads():
-                item["outcome"] = "protected_by_new_pr"
-                continue
-            item["outcome"] = retire(item, main_sha)
-    (output / "inventory-after.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            try:
+                if item["name"] in open_pr_heads():
+                    item["outcome"] = "protected_by_new_pr"
+                else:
+                    item["outcome"] = retire(item, main_sha)
+            except Exception as exc:
+                item["outcome"] = "verification_failed"
+                item["error_type"] = type(exc).__name__
+                checkpoint()
+                raise
+            checkpoint()
     print(json.dumps({
         "main_sha": main_sha,
         "total": len(branches),
