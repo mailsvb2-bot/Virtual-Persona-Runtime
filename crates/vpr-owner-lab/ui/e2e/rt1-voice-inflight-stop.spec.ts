@@ -160,3 +160,41 @@ test("late WebRTC offer resolution after pagehide never submits SDP or ICE", asy
   expect(answers).toBe(0);
   expect(ice).toBe(0);
 });
+
+
+test("pagehide while START is pending attempts late sender STOP without connecting media", async ({ page }) => {
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  let releaseStart: (() => void) | null = null;
+  await page.route("**/api/rt1/visitor/start", async route => {
+    await new Promise<void>(resolve => { releaseStart = resolve; });
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      session_id: "created-after-pagehide", voice_enabled: true,
+      signal: { transport: { kind: "web_rtc", offer: { type: "offer", sdp: "remote-offer" } } },
+    }) });
+  });
+  let closes = 0;
+  let answers = 0;
+  await page.route("**/api/rt1/visitor/close", route => {
+    closes += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      ok: true, remote_stop_confirmed: true,
+    }) });
+  });
+  await page.route("**/api/rt1/visitor/answer", route => {
+    answers += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await page.goto("/rt1");
+  await page.locator("#visitor-token").fill("scoped-invite");
+  await page.locator("#consent").check();
+  await page.locator("#join").click();
+  await expect.poll(() => Boolean(releaseStart)).toBe(true);
+  // There is no session ID yet. A best-effort close is only possible after
+  // the pending START eventually returns its exact operation identity.
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  (releaseStart as (() => void) | null)?.();
+  await expect.poll(() => closes).toBe(1);
+  expect(answers).toBe(0);
+  await expect(page.locator("#speak")).toBeDisabled();
+});
