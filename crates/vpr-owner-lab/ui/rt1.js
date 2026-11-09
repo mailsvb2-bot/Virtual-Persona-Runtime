@@ -473,10 +473,13 @@
     const start = await api("/api/rt1/visitor/start", { visitor_token, consent: true });
     const joinedId = start.session_id;
     sessionId = joinedId;
-    el("send-text").disabled = false;
-    voiceEnabled = start.voice_enabled === true;
-    el("speak").disabled = !voiceEnabled || voiceInFlight;
-    el("interrupt").disabled = !voiceEnabled;
+    // A successful START creates a sender, not yet an accepted browser SDP.
+    // Do not expose microphone capture until transport signaling completes.
+    const advertisedVoice = start.voice_enabled === true;
+    voiceEnabled = false;
+    el("send-text").disabled = true;
+    el("speak").disabled = true;
+    el("interrupt").disabled = true;
     const assertCurrent = () => {
       if (sessionId !== joinedId || stopping) {
         throw new Error("Медиасессия была отозвана во время подключения.");
@@ -575,6 +578,11 @@
           try { await leave(); } catch (_) { /* Leave remains retryable. */ }
         }
       }, 2000);
+      assertCurrent();
+      voiceEnabled = advertisedVoice;
+      el("speak").disabled = !voiceEnabled || voiceInFlight || microphonePending;
+      el("interrupt").disabled = !voiceEnabled;
+      el("send-text").disabled = false;
       if (transport.kind === "web_rtc") message("Ожидаем аудио и видео от Persona…");
     } catch (error) {
       // Late ICE/SDP completion from an old join must never close a newer one.
