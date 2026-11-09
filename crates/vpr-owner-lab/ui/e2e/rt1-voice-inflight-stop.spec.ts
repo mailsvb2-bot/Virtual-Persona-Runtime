@@ -98,3 +98,63 @@ test("visitor microphone stays disabled during pending voice and unconfirmed rem
   await expect(page.locator("#status")).toContainText("RT1_REMOTE_STOP_UNCONFIRMED");
   expect(voiceRequests).toBe(1);
 });
+
+
+test("late WebRTC offer resolution after pagehide never submits SDP or ICE", async ({ page }) => {
+  await page.addInitScript(() => {
+    const win = window as typeof window & { __completeRemote?: () => void };
+    class DeferredPeer {
+      localDescription = { type: "answer", sdp: "local-answer" };
+      iceGatheringState = "complete";
+      connectionState = "new";
+      onicecandidate: ((event: unknown) => void) | null = null;
+      ontrack: ((event: unknown) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      async setRemoteDescription(): Promise<void> {
+        await new Promise<void>((resolve) => { win.__completeRemote = resolve; });
+      }
+      async createAnswer(): Promise<{ type: string; sdp: string }> {
+        return { type: "answer", sdp: "local-answer" };
+      }
+      async setLocalDescription(): Promise<void> {}
+      close(): void { this.connectionState = "closed"; }
+    }
+    (win as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = DeferredPeer;
+    Object.defineProperty(HTMLMediaElement.prototype, "play", {
+      configurable: true, value: async () => {},
+    });
+  });
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/visitor/start", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      session_id: "revoked-before-answer", voice_enabled: false, diagnostic_rtp: true,
+      signal: { transport: { kind: "web_rtc", offer: { type: "offer", sdp: "remote-offer" }, ice_servers: [] } },
+    }) }));
+  let answers = 0;
+  let ice = 0;
+  await page.route("**/api/rt1/visitor/answer", route => {
+    answers += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await page.route("**/api/rt1/visitor/ice", route => {
+    ice += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+  });
+  await page.route("**/api/rt1/visitor/close", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ remote_stop_confirmed: true }) }));
+  await page.goto("/rt1");
+  await page.locator("#visitor-token").fill("scoped-invite");
+  await page.locator("#consent").check();
+  await page.locator("#join").click();
+  await expect.poll(() => page.evaluate(() =>
+    typeof (window as typeof window & { __completeRemote?: () => void }).__completeRemote
+  )).toBe("function");
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await page.evaluate(() =>
+    (window as typeof window & { __completeRemote?: () => void }).__completeRemote?.()
+  );
+  await expect(page.locator("#status")).toContainText("отозвана");
+  expect(answers).toBe(0);
+  expect(ice).toBe(0);
+});
