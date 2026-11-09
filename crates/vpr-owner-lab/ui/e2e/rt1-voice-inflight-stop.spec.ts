@@ -128,7 +128,7 @@ test("late WebRTC offer resolution after pagehide never submits SDP or ICE", asy
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
   await page.route("**/api/rt1/visitor/start", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
-      session_id: "revoked-before-answer", voice_enabled: false, diagnostic_rtp: true,
+      session_id: "revoked-before-answer", voice_enabled: true, diagnostic_rtp: true,
       signal: { transport: { kind: "web_rtc", offer: { type: "offer", sdp: "remote-offer" }, ice_servers: [] } },
     }) }));
   let answers = 0;
@@ -150,6 +150,8 @@ test("late WebRTC offer resolution after pagehide never submits SDP or ICE", asy
   await expect.poll(() => page.evaluate(() =>
     typeof (window as typeof window & { __completeRemote?: () => void }).__completeRemote
   )).toBe("function");
+  // START alone must not expose microphone capture before SDP acceptance.
+  await expect(page.locator("#speak")).toBeDisabled();
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await page.evaluate(() =>
     (window as typeof window & { __completeRemote?: () => void }).__completeRemote?.()
