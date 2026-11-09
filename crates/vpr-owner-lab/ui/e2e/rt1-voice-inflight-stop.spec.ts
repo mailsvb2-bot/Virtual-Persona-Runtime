@@ -163,6 +163,26 @@ test("late WebRTC offer resolution after pagehide never submits SDP or ICE", asy
 
 
 test("pagehide while START is pending attempts late sender STOP without connecting media", async ({ page }) => {
+  await page.addInitScript(() => {
+    const win = window as typeof window & { __peerConstructed?: boolean };
+    win.__peerConstructed = false;
+    class FakePeer {
+      iceGatheringState = "complete";
+      connectionState = "connected";
+      localDescription = { type: "answer", sdp: "valid-fake-answer" };
+      onicecandidate: ((event: unknown) => void) | null = null;
+      ontrack: ((event: unknown) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      constructor() { win.__peerConstructed = true; }
+      async setRemoteDescription(): Promise<void> {}
+      async createAnswer(): Promise<{ type: string; sdp: string }> {
+        return { type: "answer", sdp: "valid-fake-answer" };
+      }
+      async setLocalDescription(): Promise<void> {}
+      close(): void { this.connectionState = "closed"; }
+    }
+    (win as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = FakePeer;
+  });
   await page.route("**/api/bootstrap", route =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
   let releaseStart: (() => void) | null = null;
@@ -195,6 +215,11 @@ test("pagehide while START is pending attempts late sender STOP without connecti
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   (releaseStart as (() => void) | null)?.();
   await expect.poll(() => closes).toBe(1);
+  // A healthy peer mock would connect without the pagehide fence. This test
+  // must fail if startup constructs a WebRTC peer after the tab has left.
+  expect(await page.evaluate(() =>
+    (window as typeof window & { __peerConstructed?: boolean }).__peerConstructed
+  )).toBe(false);
   expect(answers).toBe(0);
   await expect(page.locator("#speak")).toBeDisabled();
 });
