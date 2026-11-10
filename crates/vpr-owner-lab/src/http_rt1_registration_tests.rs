@@ -246,3 +246,41 @@ fn registered_remote_revoke_wakes_one_existing_cleanup_reconciler() {
         "owner revoke performed blocking HTTP"
     );
 }
+
+#[test]
+fn duplicate_start_id_is_denied_before_provider_create() {
+    let state = Arc::new(super::Rt1HttpState::default());
+    let first = super::reserve_start(&state, "same-id".into())
+        .expect("first START must reserve a retry identity");
+    let other = Arc::clone(&state);
+    let attempted = std::thread::spawn(move || {
+        super::reserve_start(&other, "same-id".into()).is_none()
+    });
+    assert!(
+        attempted.join().unwrap(),
+        "second START could reuse a pending remote CREATE identity"
+    );
+    drop(first);
+    assert!(
+        super::reserve_start(&state, "same-id".into()).is_some(),
+        "failure must release the local reservation"
+    );
+}
+
+#[test]
+fn unresolved_remote_stop_target_cannot_be_reused_by_start() {
+    use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+    let state = super::Rt1HttpState::default();
+    let client = RemoteOperationClient::new(
+        "http://127.0.0.1:1", "test-secret", Duration::from_secs(1),
+    )
+    .unwrap();
+    let remote = Arc::new(
+        super::Rt1RemoteMediaRevocation::new(client, "pending-remote".into(), 1).unwrap(),
+    );
+    state.remote_cleanup.lock().insert("same-id".into(), remote);
+    assert!(
+        super::reserve_start(&state, "same-id".into()).is_none(),
+        "unconfirmed STOP identity must not be overwritten by CREATE"
+    );
+}
