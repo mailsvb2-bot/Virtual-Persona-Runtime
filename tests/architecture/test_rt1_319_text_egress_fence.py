@@ -110,7 +110,7 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         # extracted startup module. A failed HTTP write must not orphan a
         # remote sender whose identity never reached the visitor.
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
-        conversation = (OWNER / "rt1_visitor_conversation.rs").read_text(encoding="utf-8")
+        conversation = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
         cleanup = (OWNER / "http_rt1_cleanup.rs").read_text(encoding="utf-8")
         dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
             "pub(super) fn route_post(", 1
