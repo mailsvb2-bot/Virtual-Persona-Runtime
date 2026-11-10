@@ -46,6 +46,34 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Exercise the browser's real concurrent asset fetch path rather than the
   // Playwright APIRequestContext connection pool. Both browser loading and
   // response integrity remain mandatory (no mocks and no timeout suppression).
+  // Capture the FIRST navigation/module fetch. Previously these listeners
+  // were installed after the bootstrap probe, so a stalled page reported
+  // pending=[] and failed=[] even if initial app.js never executed.
+  const pending = new Set<string>();
+  const failed: string[] = [];
+  const scriptFailures: string[] = [];
+  const pageErrorNames: string[] = [];
+  const safePath = (url: string): string => {
+    try {
+      const parsed = new URL(url);
+      return parsed.origin === ownerLabUrl ? parsed.pathname : "[external]";
+    } catch {
+      return "[invalid]";
+    }
+  };
+  page.on("request", (outgoing) => pending.add(safePath(outgoing.url())));
+  page.on("requestfinished", (outgoing) => pending.delete(safePath(outgoing.url())));
+  page.on("requestfailed", (outgoing) => {
+    const path = safePath(outgoing.url());
+    pending.delete(path);
+    failed.push(path);
+  });
+  page.on("response", (response) => {
+    if (response.request().resourceType() === "script" && response.status() >= 400) {
+      scriptFailures.push(`${safePath(response.url())}:${response.status()}`);
+    }
+  });
+  page.on("pageerror", (error) => pageErrorNames.push(error.name));
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
   const appAssets = [
@@ -68,14 +96,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
 
-  const pending = new Set<string>();
-  const failed: string[] = [];
-  page.on("request", (outgoing) => pending.add(outgoing.url()));
-  page.on("requestfinished", (outgoing) => pending.delete(outgoing.url()));
-  page.on("requestfailed", (outgoing) => {
-    pending.delete(outgoing.url());
-    failed.push(`${outgoing.url()}: ${outgoing.failure()?.errorText ?? "unknown"}`);
-  });
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
@@ -88,7 +108,8 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   } catch (error) {
     throw new Error(
       `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
-      `failed=${JSON.stringify(failed)}; readiness=${String(error)}`,
+      `failedPaths=${JSON.stringify(failed)}; scriptFailures=${JSON.stringify(scriptFailures)}; ` +
+      `pageErrorNames=${JSON.stringify(pageErrorNames)}; readiness=${String(error)}`,
     );
   }
 
