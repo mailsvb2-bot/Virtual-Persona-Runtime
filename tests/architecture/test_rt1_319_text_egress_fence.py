@@ -158,6 +158,28 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn("self.manager.close(&self.id)", browser)
         self.assertNotIn("remote.revoke_confirmed()", dispatch)
 
+    def test_lost_text_or_voice_ack_revokes_remote_media_sender(self):
+        # Provider egress may already be underway even when the browser
+        # never receives its TEXT/VOICE acknowledgement. Use the same STOP
+        # authority as START/SDP/ICE; do not invent a second executor.
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        delivery = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
+        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
+            "pub(super) fn route_post(", 1
+        )[0]
+        routing = http.split("pub(super) fn route_post(", 1)[1].split(
+            "type Rt1HttpResult =", 1
+        )[0]
+        for name in ("text", "voice"):
+            self.assertIn(f'path == "/api/rt1/visitor/{name}"', dispatch)
+            self.assertIn(f"guarded_reply(visitor_{name}(request, state))", routing)
+        self.assertIn("request.respond(routed.response).is_err() && must_compensate", dispatch)
+        self.assertIn("conversation.begin_browser_delivery()", dispatch)
+        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
+        self.assertIn("remote.request_revoke()", delivery)
+        self.assertIn("self.manager.close(&self.id)", delivery)
+        self.assertNotIn("remote.revoke_confirmed()", dispatch)
+
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
