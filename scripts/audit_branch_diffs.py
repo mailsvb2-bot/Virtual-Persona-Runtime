@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -52,9 +53,15 @@ def inventory(output: Path) -> dict:
         )
         # A newly introduced path missing from main is a porting candidate,
         # not authorization to merge stale implementations automatically.
-        introduced_paths = git(
-            "diff", "--name-only", "--diff-filter=A", base, branch, "--"
-        ).splitlines()
+        # -z preserves literal paths (Unicode, tabs, newlines and whitespace).
+        # Never parse Git's human-readable quoted filename output.
+        raw_paths = subprocess.check_output([
+            "git", "diff", "-z", "--name-only", "--diff-filter=A",
+            base, branch, "--",
+        ])
+        introduced_paths = [
+            os.fsdecode(path) for path in raw_paths.split(b"\\0") if path
+        ]
         missing_paths = [
             path for path in introduced_paths
             if subprocess.run(
@@ -84,7 +91,7 @@ def inventory(output: Path) -> dict:
             "content_identical_to_main": not patch,
         })
     (output / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(summary, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
     (output / "README.txt").write_text(
         "Every .introduced.patch records the full branch-introduced changes "
