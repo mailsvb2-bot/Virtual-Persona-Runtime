@@ -516,6 +516,19 @@ impl Rt1VisitorConversation {
             .is_some_and(|remote| remote.is_stop_confirmed())
     }
 
+    /// The START provider may have allocated an outgoing sender even if the
+    /// browser never received its session identity/SDP. Revoke publication
+    /// authority synchronously and wake the existing STOP reconciler rather
+    /// than strand an unreachable sender. This is not a STOP receipt.
+    pub fn revoke_undelivered_start(&self) {
+        self.interrupt.revoke_authority_only();
+        if let Some(remote) = &self.remote {
+            remote.request_revoke();
+        }
+        // The existing canonical callback owns cleanup; no second worker.
+        let _ = self.manager.close(&self.id);
+    }
+
     /// # Errors
     /// Always attempts provider cleanup, even if owner pause already removed
     /// the registration. A failed remote close remains retryable on a later call.
