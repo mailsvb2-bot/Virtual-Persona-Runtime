@@ -105,6 +105,32 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn("conversation.begin_browser_delivery()", writer)
         self.assertIn("request.respond(routed.response)", writer)
 
+    def test_undelivered_start_revokes_canonical_sender_and_retries_stop(self):
+        # Adapted from the historical #324 START/dispatch fence to the current
+        # extracted startup module. A failed HTTP write must not orphan a
+        # remote sender whose identity never reached the visitor.
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        conversation = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
+        cleanup = (OWNER / "http_rt1_cleanup.rs").read_text(encoding="utf-8")
+        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
+            "pub(super) fn route_post(", 1
+        )[0]
+        self.assertIn('path == "/api/rt1/visitor/start"', dispatch)
+        self.assertIn("request.respond(routed.response).is_err()", dispatch)
+        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
+        self.assertIn("conversation.begin_browser_delivery()", dispatch)
+        revoke = conversation.split("pub fn revoke_undelivered_start(&self)", 1)[1].split(
+            "pub fn close(&self)", 1
+        )[0]
+        self.assertIn("self.interrupt.revoke_authority_only()", revoke)
+        self.assertIn("remote.request_revoke()", revoke)
+        self.assertIn("self.manager.close(&self.id)", revoke)
+        self.assertNotIn("std::thread::spawn(", revoke)
+        self.assertNotIn("remote.revoke_confirmed()", revoke)
+        self.assertIn("remote.is_revoked()", cleanup)
+        self.assertIn("remote.revoke_confirmed()", cleanup)
+        self.assertIn("registry.remove(&id)", cleanup)
+
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")

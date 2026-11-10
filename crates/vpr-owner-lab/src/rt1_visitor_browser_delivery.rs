@@ -8,6 +8,17 @@ pub struct Rt1BrowserDeliveryPermit {
 }
 
 impl Rt1VisitorConversation {
+    /// A START may allocate a sender even when its SDP/session identity never
+    /// reaches the browser. Revoke synchronously and wake the existing durable
+    /// STOP reconciler; local disconnect is not a verified remote STOP.
+    pub fn revoke_undelivered_start(&self) {
+        self.interrupt.revoke_authority_only();
+        if let Some(remote) = &self.remote {
+            remote.request_revoke();
+        }
+        let _ = self.manager.close(&self.id);
+    }
+
     /// Acquire a final browser-delivery lease using the SAME publication
     /// admission gate as the canonical STT/LLM/TTS provider turns. The lease
     /// must live until the HTTP write finishes, not merely until JSON is built.

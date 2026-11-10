@@ -158,13 +158,17 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         return;
     };
     if let Some(conversation) = routed.delivery {
-        match conversation.begin_browser_delivery() {
-            Ok(_lease) => {
-                let _ = request.respond(routed.response);
+        if let Ok(_lease) = conversation.begin_browser_delivery() {
+            if request.respond(routed.response).is_err() && path == "/api/rt1/visitor/start" {
+                // No usable session identity reached the browser. The existing
+                // registered STOP reconciler owns remote sender shutdown.
+                conversation.revoke_undelivered_start();
             }
-            Err(_) => {
-                let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
+        } else {
+            if path == "/api/rt1/visitor/start" {
+                conversation.revoke_undelivered_start();
             }
+            let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
         }
     } else {
         let _ = request.respond(routed.response);
