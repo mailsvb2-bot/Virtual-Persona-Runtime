@@ -172,24 +172,57 @@ def handler_for(
                 if row is None or row[1] != "active" or not row[2]:
                     self._send(410, {"error": "media operation not active"})
                     return
-                # The exact physical STOP lock and publication transaction
-                # also protect final SDP delivery. No PCM may be queued
-                # after CANCEL commits, or after both RTP senders stop.
+                # PCM delivery can have a remote side effect before the
+                # provider reports an error. Never keep that sender active
+                # following an uncertain or partially accepted audio push.
+                # Preserve the canonical STOP/publication serialization.
+                pcm_failed = False
+                response_started = False
                 try:
                     with lifecycle._exclusive_stop():
                         with lifecycle._active_publication_transaction(operation_id, row) as active:
                             if not active:
+                                response_started = True
                                 self._send_fenced(410, {"error": "operation revoked"})
                             else:
-                                lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
-                                self._send_fenced(200, {
-                                    "operation_id": operation_id, "accepted_bytes": len(pcm),
-                                })
-                except (RuntimeError, OSError, AttributeError):
-                    # Failure to enqueue sound cannot grant a fresh media
-                    # session. The durable owner can revoke on an uncertain
-                    # transport outcome; never retry a failed CREATE.
-                    self._send(409, {"error": "PCM delivery unavailable"})
+                                try:
+                                    lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
+                                except Exception:
+                                    # The provider may have enqueued audio
+                                    # before returning a failed acknowledgement.
+                                    pcm_failed = True
+                                else:
+                                    response_started = True
+                                    try:
+                                        self._send_fenced(200, {
+                                            "operation_id": operation_id,
+                                            "accepted_bytes": len(pcm),
+                                        })
+                                    except Exception:
+                                        # The client may have received a partial
+                                        # 200. Never write a second response.
+                                        pcm_failed = True
+                except Exception:
+                    pcm_failed = True
+                if pcm_failed:
+                    # Run compensation only AFTER releasing the SQLite
+                    # publication transaction and the physical STOP lock.
+                    # Unconfirmed STOP stays in the durable ledger; no retry
+                    # of PCM is authorized.
+                    try:
+                        lifecycle.cancel_bounded(
+                            operation_id, row[0], min(stop_timeout_seconds, 0.5)
+                        )
+                    except Exception:
+                        pass
+                    if not response_started:
+                        try:
+                            self._send(409, {
+                                "error": "PCM delivery unavailable",
+                                "stop_confirmed": False,
+                            })
+                        except OSError:
+                            pass
                 return
             if method == "POST" and len(segments) == 5 and segments[4] == "answer":
                 row = lifecycle.status(operation_id)
