@@ -60,7 +60,7 @@ def inventory(output: Path) -> dict:
             base, branch, "--",
         ])
         introduced_paths = [
-            os.fsdecode(path) for path in raw_paths.split(b"\\0") if path
+            os.fsdecode(path) for path in raw_paths.split(bytes([0])) if path
         ]
         missing_paths = [
             path for path in introduced_paths
