@@ -28,6 +28,21 @@ fn selected_provider_bundle(
     }
 }
 
+// Pre-provider collision rejection, including reserved IDs and durable
+// unresolved STOP targets. The lease spans the entire START and drops safely
+// on every error; it never removes a remote cleanup target.
+fn reserve_session_identity(
+    state: &AppState,
+) -> Result<(String, super::PendingStart<'_>), HttpResponse> {
+    for _ in 0..8 {
+        let candidate = new_visitor_session_id()?;
+        if let Some(lease) = super::reserve_start(&state.rt1, candidate.clone()) {
+            return Ok((candidate, lease));
+        }
+    }
+    Err(error_response(503, "RT1_SESSION_ID_RESERVATION_FAILED"))
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
@@ -36,8 +51,7 @@ pub(super) fn visitor_start(
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
-    // Do not call the provider until the retry handle exists.
-    let session_id = new_visitor_session_id()?;
+    let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;

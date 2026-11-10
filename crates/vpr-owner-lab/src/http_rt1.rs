@@ -1,6 +1,6 @@
 //! Localhost-only RT1 browser entry. Uses the existing owner workspace and
 //! visitor conversation, never the owner RT0 engine as a visitor's authority.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use parking_lot::{Condvar, Mutex};
@@ -41,6 +41,9 @@ pub(super) fn static_get_response(path: &str) -> Option<HttpResponse> {
 #[derive(Default)]
 pub(super) struct Rt1HttpState {
     conversations: Mutex<HashMap<String, Arc<Rt1VisitorConversation>>>,
+    // An identity must be reserved BEFORE provider CREATE; collisions are not
+    // repaired by overwriting an existing remote STOP retry handle.
+    pending_starts: Mutex<HashSet<String>>,
     // Retained BEFORE remote CREATE, even if no browser session ID is returned.
     // Never hold this registry lock while doing provider network I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
@@ -334,6 +337,37 @@ fn finalize_registered_stop<T>(
         active.remove(session_id);
     }
     Ok(())
+}
+
+/// A START holds this reservation until registration or failure. The drop
+/// guard never certifies remote STOP and cannot clear a durable cleanup handle.
+struct PendingStart<'a> {
+    pending: &'a Mutex<HashSet<String>>,
+    id: String,
+}
+
+impl Drop for PendingStart<'_> {
+    fn drop(&mut self) {
+        self.pending.lock().remove(&self.id);
+    }
+}
+
+fn reserve_start(state: &Rt1HttpState, id: String) -> Option<PendingStart<'_>> {
+    // A pending ID, an active/retryable visitor, or a durable unresolved
+    // remote STOP target must never be handed to a second provider CREATE.
+    // Hold pending across both checks so concurrent START cannot pass twice.
+    let mut pending = state.pending_starts.lock();
+    if pending.contains(&id)
+        || state.conversations.lock().contains_key(&id)
+        || state.remote_cleanup.lock().contains_key(&id)
+    {
+        return None;
+    }
+    pending.insert(id.clone());
+    Some(PendingStart {
+        pending: &state.pending_starts,
+        id,
+    })
 }
 
 /// Allocate the HTTP retry identity before any remote CREATE. Entropy failure
