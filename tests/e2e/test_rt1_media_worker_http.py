@@ -117,6 +117,69 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(post_audio(body)[0], 410)
         self.assertEqual(len(self.backend.pcm_pushes), 1)
 
+    def test_partially_accepted_pcm_failure_revokes_and_stops_both_senders(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+
+        def accepted_then_failed(operation_id, session_id, generation, payload):
+            self.backend.pcm_pushes.append((operation_id, session_id, generation, payload))
+            raise TimeoutError("provider accepted audio before ACK was lost")
+
+        self.backend.push_pcm = accepted_then_failed
+        request = Request(
+            self.url + "/pcm", data=body, method="POST",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with self.assertRaises(HTTPError) as result:
+            urlopen(request, timeout=3)
+        self.assertEqual(result.exception.code, 409)
+        self.assertIs(json.load(result.exception)["stop_confirmed"], False)
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(self.lifecycle.status_with_stop_confirmation("operation-1"),
+                         (1, "stopped", "media-1", True))
+        with self.assertRaises(HTTPError) as late:
+            urlopen(request, timeout=3)
+        self.assertEqual(late.exception.code, 410)
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+
+    def test_failed_pcm_stop_remains_quarantined_not_falsely_verified(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+
+        def failed_push(*args):
+            raise OSError("unknown PCM send result")
+
+        def failed_stop(*args):
+            self.backend.stops += 1
+            raise TimeoutError("remote sender STOP unconfirmed")
+
+        self.backend.push_pcm = failed_push
+        self.backend.stop = failed_stop
+        request = Request(
+            self.url + "/pcm", data=body, method="POST",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with self.assertRaises(HTTPError) as result:
+            urlopen(request, timeout=3)
+        self.assertEqual(result.exception.code, 409)
+        self.assertIs(json.load(result.exception)["stop_confirmed"], False)
+        current = self.lifecycle.status_with_stop_confirmation("operation-1")
+        self.assertIn(current[1], ("stopping", "uncertain"))
+        self.assertIs(current[3], False)
+        self.assertEqual(self.request("PUT")[0], 409)
+        with self.assertRaises(HTTPError) as late:
+            urlopen(request, timeout=3)
+        self.assertEqual(late.exception.code, 410)
+
     def test_authenticated_durable_status_never_invents_stop_receipt(self):
         request = Request(self.url, headers={"Authorization": "Bearer test-secret"})
         try:
