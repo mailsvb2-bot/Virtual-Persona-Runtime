@@ -8,9 +8,10 @@ pub struct Rt1BrowserDeliveryPermit {
 }
 
 impl Rt1VisitorConversation {
-    /// A START may allocate a sender even when its SDP/session identity never
-    /// reaches the browser. Revoke synchronously and wake the existing durable
-    /// STOP reconciler; local disconnect is not a verified remote STOP.
+    /// START can allocate a sender, and SDP ANSWER/ICE may activate it before
+    /// the final browser acknowledgement. If that response fails, revoke
+    /// synchronously through the existing STOP reconciler. Local disconnect
+    /// is never evidence of verified remote audio/video shutdown.
     pub fn revoke_undelivered_start(&self) {
         self.interrupt.revoke_authority_only();
         if let Some(remote) = &self.remote {
