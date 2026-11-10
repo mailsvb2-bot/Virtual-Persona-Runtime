@@ -177,6 +177,7 @@ def handler_for(
                 # following an uncertain or partially accepted audio push.
                 # Preserve the canonical STOP/publication serialization.
                 pcm_failed = False
+                push_attempted = False
                 response_started = False
                 try:
                     with lifecycle._exclusive_stop():
@@ -186,6 +187,7 @@ def handler_for(
                                 self._send_fenced(410, {"error": "operation revoked"})
                             else:
                                 try:
+                                    push_attempted = True
                                     lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
                                 except Exception:
                                     # The provider may have enqueued audio
@@ -203,15 +205,18 @@ def handler_for(
                                         # 200. Never write a second response.
                                         pcm_failed = True
                 except Exception:
-                    # No PCM side effect occurred when admission, the STOP
-                    # lock, or the publication transaction failed before
-                    # push_pcm. Contention is a retryable 409, not a revoke.
-                    if not response_started:
-                        try:
-                            self._send(409, {"error": "PCM delivery unavailable"})
-                        except OSError:
-                            pass
-                    return
+                    # Lock/admission failures precede any provider side effect.
+                    # A transaction-exit failure AFTER push_pcm is ambiguous
+                    # and must still quarantine the remote sender.
+                    if push_attempted:
+                        pcm_failed = True
+                    else:
+                        if not response_started:
+                            try:
+                                self._send(409, {"error": "PCM delivery unavailable"})
+                            except OSError:
+                                pass
+                        return
                 if pcm_failed:
                     # Run compensation only AFTER releasing the SQLite
                     # publication transaction and the physical STOP lock.
