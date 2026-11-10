@@ -36,8 +36,20 @@ pub(super) fn visitor_start(
     if !body.consent {
         return Err(error_response(403, "CONSENT_REQUIRED"));
     }
-    // Do not call the provider until the retry handle exists.
-    let session_id = new_visitor_session_id()?;
+    // Reserve the exact retry identity before any provider CREATE. A rare
+    // collision (including a pending or quarantined sender) must be retried
+    // without allocating media or overwriting the durable STOP target.
+    let (session_id, _reservation) = {
+        let mut found = None;
+        for _ in 0..8 {
+            let candidate = new_visitor_session_id()?;
+            if let Some(lease) = super::reserve_start(&state.rt1, candidate.clone()) {
+                found = Some((candidate, lease));
+                break;
+            }
+        }
+        found.ok_or_else(|| error_response(503, "RT1_SESSION_ID_RESERVATION_FAILED"))?
+    };
     let (providers, worker) = selected_provider_bundle(&session_id)?;
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
