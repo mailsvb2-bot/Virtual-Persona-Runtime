@@ -159,9 +159,7 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
     };
     if let Some(conversation) = routed.delivery {
         if let Ok(_lease) = conversation.begin_browser_delivery() {
-            if request.respond(routed.response).is_err()
-                && path == "/api/rt1/visitor/start"
-            {
+            if request.respond(routed.response).is_err() && path == "/api/rt1/visitor/start" {
                 // No usable session identity reached the browser. The existing
                 // registered STOP reconciler owns remote sender shutdown.
                 conversation.revoke_undelivered_start();
