@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - audit/branch-diff-inventory-20261103
+      - chore/branch-integration-candidate-report-20261111
 
 permissions:
   contents: read
