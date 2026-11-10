@@ -161,14 +161,17 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         return;
     };
     if let Some(conversation) = routed.delivery {
+        // START may allocate a sender; ANSWER may activate its audio/video
+        // tracks. Losing either final HTTP acknowledgement is ambiguous and
+        // must revoke the exact sender through the existing STOP reconciler.
+        let must_compensate = path == "/api/rt1/visitor/start"
+            || path == "/api/rt1/visitor/answer";
         if let Ok(_lease) = conversation.begin_browser_delivery() {
-            if request.respond(routed.response).is_err() && path == "/api/rt1/visitor/start" {
-                // No usable session identity reached the browser. The existing
-                // registered STOP reconciler owns remote sender shutdown.
+            if request.respond(routed.response).is_err() && must_compensate {
                 conversation.revoke_undelivered_start();
             }
         } else {
-            if path == "/api/rt1/visitor/start" {
+            if must_compensate {
                 conversation.revoke_undelivered_start();
             }
             let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
@@ -196,12 +199,16 @@ pub(super) fn route_post(
     if path == "/api/rt1/visitor/voice" {
         return Some(guarded_reply(visitor_voice(request, state)));
     }
+    if path == "/api/rt1/visitor/answer" {
+        // Successful SDP answer can start remote media: retain the browser
+        // delivery permit through the acknowledgement write.
+        return Some(guarded_reply(visitor_answer(request, state)));
+    }
     let result = match path {
         "/api/rt1/owner/provision" => owner_provision(request),
         "/api/rt1/owner/publish" => owner_publish(request, state),
         "/api/rt1/owner/pause" => owner_revoke(request, false),
         "/api/rt1/owner/unpublish" => owner_revoke(request, true),
-        "/api/rt1/visitor/answer" => visitor_answer(request, state),
         "/api/rt1/visitor/ice" => visitor_ice(request, state),
         "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
@@ -396,18 +403,23 @@ fn lookup(state: &AppState, session_id: &str) -> Rt1HttpResultConversation {
 
 type Rt1HttpResultConversation = Result<Arc<Rt1VisitorConversation>, HttpResponse>;
 
-fn visitor_answer(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+fn visitor_answer(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
     let body: VisitorAnswer = parse_json(request)?;
-    lookup(state, &body.session_id)?
-        .submit_answer(&body.sdp)
-        .map_err(|code| {
-            if code == "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED" {
-                error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED")
-            } else {
-                error_response(409, "RT1_VISITOR_ANSWER_DENIED")
-            }
-        })?;
-    Ok(json_response(200, &serde_json::json!({"ok": true})))
+    let conversation = lookup(state, &body.session_id)?;
+    conversation.submit_answer(&body.sdp).map_err(|code| {
+        if code == "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED" {
+            error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED")
+        } else {
+            error_response(409, "RT1_VISITOR_ANSWER_DENIED")
+        }
+    })?;
+    Ok((
+        json_response(200, &serde_json::json!({"ok": true})),
+        conversation,
+    ))
 }
 
 fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
