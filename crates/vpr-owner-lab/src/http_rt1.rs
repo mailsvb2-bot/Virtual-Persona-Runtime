@@ -161,12 +161,16 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         return;
     };
     if let Some(conversation) = routed.delivery {
-        // START may allocate a sender; ANSWER may activate its audio/video
-        // tracks. Losing either final HTTP acknowledgement is ambiguous and
-        // must revoke the exact sender through the existing STOP reconciler.
+        // START and SDP/ICE may create or activate remote media. TEXT and
+        // VOICE can also dispatch provider speech before the final browser
+        // acknowledgement. If that acknowledgement is lost, quarantine the
+        // exact sender through the SAME canonical revocation reconciler.
+        // Only successful visitor routes provide this delivery lease.
         let must_compensate = path == "/api/rt1/visitor/start"
             || path == "/api/rt1/visitor/answer"
-            || path == "/api/rt1/visitor/ice";
+            || path == "/api/rt1/visitor/ice"
+            || path == "/api/rt1/visitor/text"
+            || path == "/api/rt1/visitor/voice";
         if let Ok(_lease) = conversation.begin_browser_delivery() {
             if request.respond(routed.response).is_err() && must_compensate {
                 conversation.revoke_undelivered_start();
