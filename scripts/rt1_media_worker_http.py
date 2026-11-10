@@ -203,7 +203,15 @@ def handler_for(
                                         # 200. Never write a second response.
                                         pcm_failed = True
                 except Exception:
-                    pcm_failed = True
+                    # No PCM side effect occurred when admission, the STOP
+                    # lock, or the publication transaction failed before
+                    # push_pcm. Contention is a retryable 409, not a revoke.
+                    if not response_started:
+                        try:
+                            self._send(409, {"error": "PCM delivery unavailable"})
+                        except OSError:
+                            pass
+                    return
                 if pcm_failed:
                     # Run compensation only AFTER releasing the SQLite
                     # publication transaction and the physical STOP lock.
