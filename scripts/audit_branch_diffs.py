@@ -50,6 +50,18 @@ def inventory(output: Path) -> dict:
             ["git", "diff", "--binary", "--no-ext-diff", "--find-renames",
              "--no-color", base, branch, "--"]
         )
+        # A newly introduced path missing from main is a porting candidate,
+        # not authorization to merge stale implementations automatically.
+        introduced_paths = git(
+            "diff", "--name-only", "--diff-filter=A", base, branch, "--"
+        ).splitlines()
+        missing_paths = [
+            path for path in introduced_paths
+            if subprocess.run(
+                ["git", "cat-file", "-e", f"origin/main:{path}"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode != 0
+        ]
         introduced_name = f"{index:03d}.introduced.patch"
         (output / introduced_name).write_bytes(introduced)
         patch_name = f"{index:03d}.patch"
@@ -61,6 +73,7 @@ def inventory(output: Path) -> dict:
             "head_sha": head,
             "merge_base_sha": base,
             "introduced_patch": introduced_name,
+            "introduced_paths_missing_from_main": missing_paths,
             "introduced_patch_bytes": len(introduced),
             "behind": int(counts[0]),
             "ahead": int(counts[1]),
@@ -78,7 +91,9 @@ def inventory(output: Path) -> dict:
         "from the common ancestor, including content already integrated in main. "
         "Every numbered .patch is the full line-by-line current-content diff from "
         "the pinned main SHA to the named branch, not an automatically safe merge. "
-        "Review patch content, authorship, tests and release gates before porting.\n",
+        "Missing introduced paths are porting candidates, not proof of safe code. "
+        "Also review existing paths for missing behavior. Review authorship, tests "
+        "and release gates before porting.\n",
         encoding="utf-8",
     )
     return summary
