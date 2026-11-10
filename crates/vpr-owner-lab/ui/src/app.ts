@@ -2618,6 +2618,15 @@ const finishMicrophoneTurn = async (): Promise<void> => {
     let serverDeliveredSpeechObserved = false;
     const scheduleSegmentDelivery = (segment: VoiceSegment): void => {
       if (deliveryGeneration !== voiceDeliveryGeneration) return;
+      const command = segment.client_command;
+      // Server-owned speech is emitted by the canonical provider, not by
+      // browser playback. Counting it here fabricates a browser receipt
+      // that can never be completed and keeps playback permanently pending.
+      if (!command) {
+        if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
+        serverDeliveredSpeechObserved = true;
+        return;
+      }
       const voiceForSegment = activeVoiceEvidence;
       if (voiceForSegment?.requestSequence === requestSequence) {
         voiceForSegment.providerPlaybackExpectedCount += 1;
@@ -2625,16 +2634,9 @@ const finishMicrophoneTurn = async (): Promise<void> => {
         syncRt0PlaybackPending(voiceForSegment);
         updateControls();
       }
-      const command = segment.client_command;
       // A new authorized output may be heard only after the preceding turn's
       // provider STOP returned. Never unmute a stale cancelled generation.
       if (deliveryGeneration === voiceDeliveryGeneration) setLocalAudioMuted(false);
-      if (!command) {
-        // Server-owned delivery has already passed the canonical provider
-        // boundary and recorded Sent; there is no browser command to publish.
-        serverDeliveredSpeechObserved = true;
-        return;
-      }
       let commandSent = false;
       const nativeLiveKitQueue = command.route.kind === "live_kit_text_topic";
       const dispatch: Promise<boolean> = nativeLiveKitQueue
