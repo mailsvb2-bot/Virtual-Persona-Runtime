@@ -193,8 +193,20 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(replies[0][0], 410,
                          "late PCM success was acknowledged after revoke")
         self.assertEqual(len(self.backend.pcm_pushes), 1)
-        # The existing durable STOP reconciler can now acquire the lock.
-        self.assertEqual(self.request("DELETE")[0], 200)
+        # An earlier STOP attempt may still own the nonblocking attempt gate.
+        # Retry until a verified BOTH-track sender receipt is durable; never
+        # interpret 202 or 409 as STOP success.
+        deadline = time.monotonic() + 2.5
+        while True:
+            code, result = self.request("DELETE")
+            if code == 200:
+                self.assertIs(result["audio_stopped"], True)
+                self.assertIs(result["video_stopped"], True)
+                break
+            self.assertIn(code, (202, 409))
+            self.assertLess(time.monotonic(), deadline,
+                            "STOP did not reconcile after blocked PCM released")
+            time.sleep(0.025)
         self.assertEqual(self.lifecycle.status_with_stop_confirmation("operation-1"),
                          (1, "stopped", "media-1", True))
 
