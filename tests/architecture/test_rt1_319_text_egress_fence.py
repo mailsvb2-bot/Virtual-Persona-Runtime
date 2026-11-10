@@ -131,6 +131,33 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn("remote.revoke_confirmed()", cleanup)
         self.assertIn("registry.remove(&id)", cleanup)
 
+    def test_lost_answer_and_ice_http_ack_revokes_registered_sender(self):
+        # Historical #324 serialized provider signaling, but current HTTP
+        # transport also must revoke when an accepted SDP/ICE loses its ACK.
+        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        browser = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
+        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
+            "pub(super) fn route_post(", 1
+        )[0]
+        routing = http.split("pub(super) fn route_post(", 1)[1].split(
+            "type Rt1HttpResult =", 1
+        )[0]
+        for name in ("answer", "ice"):
+            route = f'/api/rt1/visitor/{name}'
+            self.assertIn(f'path == "{route}"', routing)
+            self.assertIn(f"guarded_reply(visitor_{name}(request, state))", routing)
+            self.assertNotIn(f'"{route}" => visitor_{name}(request, state)', routing)
+            self.assertIn(f'path == "{route}"', dispatch)
+            handler = http.split(f"fn visitor_{name}(", 1)[1].split("\n}\n", 1)[0]
+            self.assertIn("let conversation = lookup(state, &body.session_id)?", handler)
+        self.assertIn("request.respond(routed.response).is_err() && must_compensate", dispatch)
+        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
+        self.assertIn("conversation.begin_browser_delivery()", dispatch)
+        self.assertIn("self.interrupt.revoke_authority_only()", browser)
+        self.assertIn("remote.request_revoke()", browser)
+        self.assertIn("self.manager.close(&self.id)", browser)
+        self.assertNotIn("remote.revoke_confirmed()", dispatch)
+
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
         manager = (OWNER / "rt1_visitor_session_manager.rs").read_text(encoding="utf-8")
