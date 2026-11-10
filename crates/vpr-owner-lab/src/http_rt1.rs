@@ -165,7 +165,8 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         // tracks. Losing either final HTTP acknowledgement is ambiguous and
         // must revoke the exact sender through the existing STOP reconciler.
         let must_compensate = path == "/api/rt1/visitor/start"
-            || path == "/api/rt1/visitor/answer";
+            || path == "/api/rt1/visitor/answer"
+            || path == "/api/rt1/visitor/ice";
         if let Ok(_lease) = conversation.begin_browser_delivery() {
             if request.respond(routed.response).is_err() && must_compensate {
                 conversation.revoke_undelivered_start();
@@ -200,16 +201,18 @@ pub(super) fn route_post(
         return Some(guarded_reply(visitor_voice(request, state)));
     }
     if path == "/api/rt1/visitor/answer" {
-        // Successful SDP answer can start remote media: retain the browser
+        // Successful signaling may start remote media: retain the browser
         // delivery permit through the acknowledgement write.
         return Some(guarded_reply(visitor_answer(request, state)));
+    }
+    if path == "/api/rt1/visitor/ice" {
+        return Some(guarded_reply(visitor_ice(request, state)));
     }
     let result = match path {
         "/api/rt1/owner/provision" => owner_provision(request),
         "/api/rt1/owner/publish" => owner_publish(request, state),
         "/api/rt1/owner/pause" => owner_revoke(request, false),
         "/api/rt1/owner/unpublish" => owner_revoke(request, true),
-        "/api/rt1/visitor/ice" => visitor_ice(request, state),
         "/api/rt1/visitor/interrupt" => visitor_interrupt(request, state),
         "/api/rt1/visitor/status" => visitor_status(request, state),
         "/api/rt1/visitor/close" => visitor_close(request, state),
@@ -422,7 +425,10 @@ fn visitor_answer(
     ))
 }
 
-fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
+fn visitor_ice(
+    request: &mut tiny_http::Request,
+    state: &AppState,
+) -> Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse> {
     let body: VisitorIce = parse_json(request)?;
     if body
         .candidate
@@ -432,14 +438,18 @@ fn visitor_ice(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpRes
     {
         return Err(error_response(400, "RT1_INVALID_ICE_CANDIDATE"));
     }
-    lookup(state, &body.session_id)?
+    let conversation = lookup(state, &body.session_id)?;
+    conversation
         .submit_ice(vpr_integration::WebRtcIceCandidate {
             candidate: body.candidate,
             sdp_mid: body.sdp_mid,
             sdp_mline_index: body.sdp_mline_index,
         })
         .map_err(|_| error_response(409, "RT1_VISITOR_ICE_DENIED"))?;
-    Ok(json_response(200, &serde_json::json!({"ok": true})))
+    Ok((
+        json_response(200, &serde_json::json!({"ok": true})),
+        conversation,
+    ))
 }
 
 // Canonical visitor permit; no public RT1 provider egress.
