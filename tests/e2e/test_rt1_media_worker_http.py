@@ -141,6 +141,63 @@ class HttpLifecycleTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
         self.assertEqual(len(self.backend.pcm_pushes), 1)
 
+    def test_revoke_commits_while_provider_pcm_is_blocked(self):
+        """Never hold the durable CANCEL transaction across provider audio IO."""
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+        entered, release = threading.Event(), threading.Event()
+        replies = []
+
+        def blocked_pcm(operation_id, session_id, generation, payload):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test PCM call remained blocked")
+            self.backend.pcm_pushes.append((operation_id, session_id, generation, payload))
+
+        self.backend.push_pcm = blocked_pcm
+
+        def send_pcm():
+            request = Request(
+                self.url + "/pcm", data=body, method="POST",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+            try:
+                with urlopen(request, timeout=4) as response:
+                    replies.append((response.status, json.load(response)))
+            except HTTPError as error:
+                replies.append((error.code, json.load(error)))
+
+        caller = threading.Thread(target=send_pcm)
+        caller.start()
+        try:
+            self.assertTrue(entered.wait(2), "PCM did not enter backend")
+            begin = time.monotonic()
+            cancel_code, cancel_body = self.request("DELETE")
+            self.assertLess(time.monotonic() - begin, 1.5,
+                            "CANCEL waited behind a stalled PCM transaction")
+            # STOP cannot acquire the sender lock before the in-flight PCM
+            # completes. Durable cancellation must nevertheless commit.
+            self.assertIn(cancel_code, (202, 409))
+            self.assertIs(cancel_body["stop_confirmed"], False)
+            self.assertEqual(self.lifecycle.status("operation-1")[1], "stopping")
+            self.assertEqual(self.request("PUT")[0], 409)
+        finally:
+            release.set()
+            caller.join(timeout=5)
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(len(replies), 1)
+        self.assertEqual(replies[0][0], 410,
+                         "late PCM success was acknowledged after revoke")
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+        # The existing durable STOP reconciler can now acquire the lock.
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(self.lifecycle.status_with_stop_confirmation("operation-1"),
+                         (1, "stopped", "media-1", True))
+
     def test_partially_accepted_pcm_failure_revokes_and_stops_both_senders(self):
         self.assertEqual(self.request("PUT")[0], 200)
         pcm = bytes([1, 0]) * 320
