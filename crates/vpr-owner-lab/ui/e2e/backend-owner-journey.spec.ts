@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Request as BrowserRequest } from "@playwright/test";
 
 const ownerLabUrl = "http://127.0.0.1:18787";
 const providerUrl = "http://127.0.0.1:18788";
@@ -49,7 +49,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // Capture the FIRST navigation/module fetch. Previously these listeners
   // were installed after the bootstrap probe, so a stalled page reported
   // pending=[] and failed=[] even if initial app.js never executed.
-  const pending = new Set<string>();
+  const pending = new Set<BrowserRequest>();
   const failed: string[] = [];
   const scriptFailures: string[] = [];
   const pageErrorNames: string[] = [];
@@ -61,11 +61,11 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
       return "[invalid]";
     }
   };
-  page.on("request", (outgoing) => pending.add(safePath(outgoing.url())));
-  page.on("requestfinished", (outgoing) => pending.delete(safePath(outgoing.url())));
+  page.on("request", (outgoing) => pending.add(outgoing));
+  page.on("requestfinished", (outgoing) => pending.delete(outgoing));
   page.on("requestfailed", (outgoing) => {
     const path = safePath(outgoing.url());
-    pending.delete(path);
+    pending.delete(outgoing);
     failed.push(path);
   });
   page.on("response", (response) => {
@@ -107,7 +107,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     ).not.toHaveText("Загрузка…", { timeout: 20_000 });
   } catch (error) {
     throw new Error(
-      `Owner Lab failed to initialize; pending=${JSON.stringify([...pending])}; ` +
+      `Owner Lab failed to initialize; pendingPaths=${JSON.stringify([...pending].map(req => safePath(req.url())))}; ` +
       `failedPaths=${JSON.stringify(failed)}; scriptFailures=${JSON.stringify(scriptFailures)}; ` +
       `pageErrorNames=${JSON.stringify(pageErrorNames)}; readiness=${String(error)}`,
     );
