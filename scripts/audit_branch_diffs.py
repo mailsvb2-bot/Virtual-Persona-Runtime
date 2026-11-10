@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -50,6 +51,24 @@ def inventory(output: Path) -> dict:
             ["git", "diff", "--binary", "--no-ext-diff", "--find-renames",
              "--no-color", base, branch, "--"]
         )
+        # A newly introduced path missing from main is a porting candidate,
+        # not authorization to merge stale implementations automatically.
+        # -z preserves literal paths (Unicode, tabs, newlines and whitespace).
+        # Never parse Git's human-readable quoted filename output.
+        raw_paths = subprocess.check_output([
+            "git", "diff", "-z", "--name-only", "--diff-filter=A",
+            base, branch, "--",
+        ])
+        introduced_paths = [
+            os.fsdecode(path) for path in raw_paths.split(bytes([0])) if path
+        ]
+        missing_paths = [
+            path for path in introduced_paths
+            if subprocess.run(
+                ["git", "cat-file", "-e", f"origin/main:{path}"],
+                check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode != 0
+        ]
         introduced_name = f"{index:03d}.introduced.patch"
         (output / introduced_name).write_bytes(introduced)
         patch_name = f"{index:03d}.patch"
@@ -61,6 +80,7 @@ def inventory(output: Path) -> dict:
             "head_sha": head,
             "merge_base_sha": base,
             "introduced_patch": introduced_name,
+            "introduced_paths_missing_from_main": missing_paths,
             "introduced_patch_bytes": len(introduced),
             "behind": int(counts[0]),
             "ahead": int(counts[1]),
@@ -71,14 +91,16 @@ def inventory(output: Path) -> dict:
             "content_identical_to_main": not patch,
         })
     (output / "summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(summary, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
     (output / "README.txt").write_text(
         "Every .introduced.patch records the full branch-introduced changes "
         "from the common ancestor, including content already integrated in main. "
         "Every numbered .patch is the full line-by-line current-content diff from "
         "the pinned main SHA to the named branch, not an automatically safe merge. "
-        "Review patch content, authorship, tests and release gates before porting.\n",
+        "Missing introduced paths are porting candidates, not proof of safe code. "
+        "Also review existing paths for missing behavior. Review authorship, tests "
+        "and release gates before porting.\n",
         encoding="utf-8",
     )
     return summary
