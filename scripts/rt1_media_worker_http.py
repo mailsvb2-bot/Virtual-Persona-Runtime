@@ -181,33 +181,39 @@ def handler_for(
                 response_started = False
                 try:
                     with lifecycle._exclusive_stop():
+                        # The first transaction only admits the existing exact
+                        # sender. It MUST end before calling a provider which
+                        # can block indefinitely. Durable CANCEL is then free
+                        # to commit from another request/process.
                         with lifecycle._active_publication_transaction(operation_id, row) as active:
-                            if not active:
-                                response_started = True
-                                self._send_fenced(410, {"error": "operation revoked"})
+                            admitted = active
+                        if not admitted:
+                            response_started = True
+                            self._send_fenced(410, {"error": "operation revoked"})
+                        else:
+                            try:
+                                push_attempted = True
+                                lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
+                            except Exception:
+                                # A failed ACK may follow partially queued PCM.
+                                pcm_failed = True
                             else:
-                                try:
-                                    push_attempted = True
-                                    lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
-                                except Exception:
-                                    # The provider may have enqueued audio
-                                    # before returning a failed acknowledgement.
-                                    pcm_failed = True
-                                else:
+                                # CANCEL may have committed during push_pcm.
+                                # Never acknowledge an already revoked send;
+                                # hold the STOP gate across the final response.
+                                with lifecycle._active_publication_transaction(operation_id, row) as still_active:
                                     response_started = True
-                                    try:
+                                    if still_active:
                                         self._send_fenced(200, {
                                             "operation_id": operation_id,
                                             "accepted_bytes": len(pcm),
                                         })
-                                    except Exception:
-                                        # The client may have received a partial
-                                        # 200. Never write a second response.
+                                    else:
                                         pcm_failed = True
+                                        self._send_fenced(410, {"error": "operation revoked"})
                 except Exception:
-                    # Lock/admission failures precede any provider side effect.
-                    # A transaction-exit failure AFTER push_pcm is ambiguous
-                    # and must still quarantine the remote sender.
+                    # A failure after entering backend code is ambiguous.
+                    # Keep a durable STOP target, never turn it into success.
                     if push_attempted:
                         pcm_failed = True
                     else:
