@@ -117,6 +117,30 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(post_audio(body)[0], 410)
         self.assertEqual(len(self.backend.pcm_pushes), 1)
 
+    def test_pcm_lock_contention_does_not_revoke_without_provider_send(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+        request = Request(
+            self.url + "/pcm", data=body, method="POST",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        # The HTTP handler runs in another thread, and the physical STOP
+        # lock is already owned by a concurrent operation. No push began.
+        with self.lifecycle._exclusive_stop():
+            with self.assertRaises(HTTPError) as error:
+                urlopen(request, timeout=3)
+            self.assertEqual(error.exception.code, 409)
+        self.assertEqual(self.backend.pcm_pushes, [])
+        self.assertEqual(self.backend.stops, 0)
+        self.assertEqual(self.lifecycle.status("operation-1")[1], "active")
+        with urlopen(request, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+
     def test_partially_accepted_pcm_failure_revokes_and_stops_both_senders(self):
         self.assertEqual(self.request("PUT")[0], 200)
         pcm = bytes([1, 0]) * 320
