@@ -124,3 +124,17 @@ fn drop_cleanup_never_waits_for_a_busy_provider_engine() {
         "Explicit close must not wait for a busy provider engine"
     );
 }
+
+#[test]
+fn revoked_stop_without_provider_handle_remains_retryable() {
+    let interrupt = LiveVisitorInterrupt::default();
+    interrupt.stop();
+    assert!(interrupt.cancelled.load(Ordering::Acquire));
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+    // A late CREATE may install the stop-only handle after initial revoke.
+    // The missing handle must never permanently consume the STOP attempt.
+    interrupt.stop();
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
