@@ -237,7 +237,7 @@ jobs:
       - name: Strict RTP active-stream regression
         run: npm run test:rtp
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Browser contract E2E
         run: npm run test:e2e
 
@@ -261,7 +261,7 @@ jobs:
         working-directory: .
         run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Backend-integrated browser E2E
         run: npm run test:e2e:backend
 
@@ -285,7 +285,7 @@ jobs:
         working-directory: .
         run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Backend-integrated voice browser E2E
         run: npm run test:e2e:voice
 
@@ -306,6 +306,6 @@ jobs:
       - name: Build
         run: npm run build
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Backend-integrated Expressive LiveKit E2E
         run: npm run test:e2e:expressive
