@@ -461,7 +461,8 @@ impl Rt1VisitorConversation {
         if let Some(turn) = self.interrupt.turn.lock().clone() {
             let _ = turn.interrupt();
         }
-        if stop.stop().is_err() {
+        // The independent STOP fence also belongs to revoke/close callbacks.
+        if interrupt_stop::stop_for_interruption(&self.interrupt, &stop).is_err() {
             // An unconfirmed sender must not accept another voice turn.
             self.interrupt.stop();
             let _ = self.manager.close(&self.id);

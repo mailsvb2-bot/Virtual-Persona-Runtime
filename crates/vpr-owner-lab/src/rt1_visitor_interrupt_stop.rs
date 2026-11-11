@@ -29,3 +29,21 @@ pub(super) fn dispatch(interrupt: &LiveVisitorInterrupt) {
         interrupt.stop_in_flight.store(false, Ordering::Release);
     }
 }
+
+/// Synchronous interruption competes with asynchronous revoke for the SAME
+/// provider STOP capability. An in-progress STOP is not a receipt.
+/// No second execution path or provider authority is created here.
+pub(super) fn stop_for_interruption(
+    interrupt: &LiveVisitorInterrupt,
+    stop: &vpr_runtime::RealtimeAvatarStopHandle,
+) -> Result<(), ()> {
+    if interrupt.stop_in_flight.swap(true, Ordering::AcqRel) {
+        return Err(());
+    }
+    let result = stop.stop().map_err(|_| ());
+    // On failure caller revokes visitor and allows retryable STOP.
+    // Do not mark stop_confirmed on normal interruption: the visitor could
+    // legitimately speak again before a later owner revoke.
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    result
+}
