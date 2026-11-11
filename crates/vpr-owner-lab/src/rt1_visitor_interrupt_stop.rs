@@ -94,3 +94,24 @@ mod tests {
         assert!(!interrupt.cancelled.load(Ordering::Acquire));
     }
 }
+
+/// The engine-backed close/Drop path shares the exact STOP ownership used
+/// by asynchronous revoke and synchronous visitor interruption. A preflight
+/// atomic load is insufficient: revoke could acquire the lease after it.
+/// Local success is NOT a durable remote audio/video STOP receipt.
+pub(super) fn stop_engine_serialized(
+    interrupt: &LiveVisitorInterrupt,
+    engine: &parking_lot::Mutex<crate::state::OwnerLabEngine>,
+) -> Result<(), String> {
+    if interrupt.stop_in_flight.swap(true, Ordering::AcqRel) {
+        return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
+    }
+    let result = super::stop_if_uncontended(engine);
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    if result.is_err() && interrupt.cancelled.load(Ordering::Acquire) {
+        // The revoke callback may have skipped STOP while close owned the
+        // lease. Failed engine cleanup remains retryable via the same sender.
+        dispatch(interrupt);
+    }
+    result
+}
