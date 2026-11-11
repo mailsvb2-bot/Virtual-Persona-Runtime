@@ -152,3 +152,21 @@ fn confirmed_provider_cleanup_suppresses_close_callback_stop_dispatch() {
     assert!(interrupt.stop_confirmed.load(Ordering::Acquire));
     assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
 }
+
+#[test]
+fn revoke_callback_does_not_reset_an_inflight_interrupt_stop() {
+    let interrupt = LiveVisitorInterrupt::default();
+    // Simulate the synchronous interruption owning the STOP fence while
+    // an owner revoke concurrently invokes its asynchronous callback.
+    interrupt.stop_in_flight.store(true, Ordering::Release);
+    interrupt.stop();
+    assert!(interrupt.cancelled.load(Ordering::Acquire));
+    assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+    // The synchronous owner releases the fence after the provider returns.
+    // An uncertain outcome remains retryable rather than being confirmed.
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    interrupt.stop();
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
