@@ -584,7 +584,12 @@ impl Rt1VisitorConversation {
             .remote
             .as_ref()
             .map_or(Ok(()), |remote| remote.revoke_confirmed());
-        let local_stop = if self
+        let local_stop = if self.interrupt.stop_in_flight.load(Ordering::Acquire) {
+            // A callback may already be performing network STOP. Do not
+            // dispatch a second STOP through the engine or report close as
+            // confirmed while its outcome is unknown.
+            Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into())
+        } else if self
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
         {
@@ -610,7 +615,9 @@ impl Drop for Rt1VisitorConversation {
         // Drop must never wait for a provider turn holding the engine mutex.
         // The independent stop-only capability was already dispatched above;
         // if the engine is busy, cleanup remains unconfirmed, not a receipt.
-        try_stop_uncontended(&self.engine);
+        if !self.interrupt.stop_in_flight.load(Ordering::Acquire) {
+            try_stop_uncontended(&self.engine);
+        }
     }
 }
 
