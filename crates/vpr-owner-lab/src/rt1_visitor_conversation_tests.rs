@@ -121,3 +121,27 @@ fn visitor_provider_cleanup_does_not_block_on_busy_engine_mutex() {
         "close or Drop must not block on a stalled provider mutex"
     );
 }
+
+#[test]
+fn revoked_stop_without_provider_handle_remains_retryable() {
+    let interrupt = LiveVisitorInterrupt::default();
+    interrupt.stop();
+    assert!(interrupt.cancelled.load(Ordering::Acquire));
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+    // A late CREATE can install the handle after initial revoke.
+    interrupt.stop();
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
+
+#[test]
+fn confirmed_provider_cleanup_suppresses_close_callback_stop_dispatch() {
+    let interrupt = LiveVisitorInterrupt::default();
+    interrupt.revoke_authority_only();
+    interrupt.stop_confirmed.store(true, Ordering::Release);
+    interrupt.stop();
+    assert!(interrupt.cancelled.load(Ordering::Acquire));
+    assert!(interrupt.stop_confirmed.load(Ordering::Acquire));
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+}

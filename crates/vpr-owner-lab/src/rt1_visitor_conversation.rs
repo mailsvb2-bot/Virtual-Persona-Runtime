@@ -18,6 +18,8 @@ use crate::state::{
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
+#[path = "rt1_visitor_interrupt_stop.rs"]
+mod interrupt_stop;
 #[path = "rt1_visitor_signaling.rs"]
 mod signaling;
 #[path = "rt1_visitor_text_egress.rs"]
@@ -37,6 +39,8 @@ struct LiveVisitorInterrupt {
     session: Mutex<Option<SessionRevocationHandle>>,
     turn: Mutex<Option<TurnInterruptHandle>>,
     backend_stop: Mutex<Option<RealtimeAvatarStopHandle>>,
+    stop_in_flight: Arc<AtomicBool>,
+    stop_confirmed: Arc<AtomicBool>,
 }
 
 impl LiveVisitorInterrupt {
@@ -64,13 +68,7 @@ impl LiveVisitorInterrupt {
         // Provider STOP can take network time: never block owner pause on it
         // or on the conversation engine mutex. The explicit visitor close
         // still requires a separate confirmed close_session receipt.
-        if let Some(stop) = self.backend_stop.lock().take() {
-            std::thread::spawn(move || {
-                if let Err(error) = stop.stop() {
-                    eprintln!("RT1 best-effort backend STOP failed: {error:?}");
-                }
-            });
-        }
+        interrupt_stop::dispatch(self);
     }
 }
 
@@ -195,8 +193,13 @@ impl Rt1VisitorConversation {
                 .authorize_persona(&id, &persona_id, persona_version)
                 .is_err()
         {
-            interrupt.stop();
+            // Synchronously fence permits; confirmed cleanup precedes the
+            // manager callback. No duplicate asynchronous STOP on success.
+            interrupt.revoke_authority_only();
             let stop_result = engine.stop_visitor_provider_confirmed();
+            if stop_result.is_ok() {
+                interrupt.stop_confirmed.store(true, Ordering::Release);
+            }
             let _ = manager.close(&id);
             if stop_result.is_err() {
                 return Err("RT1_PROVIDER_START_REVOKED_STOP_UNCONFIRMED".into());
