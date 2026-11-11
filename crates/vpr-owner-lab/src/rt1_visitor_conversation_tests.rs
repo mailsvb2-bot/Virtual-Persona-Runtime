@@ -198,3 +198,51 @@ fn concurrent_owner_stop_prevents_duplicate_local_stop_and_false_close_receipt()
     assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
+
+#[test]
+fn engine_stop_atomic_lease_rejects_callback_stop_and_preserves_unconfirmed_receipt() {
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = Mutex::new(OwnerLabEngine::new(Box::new(provider), true).unwrap());
+    let interrupt = LiveVisitorInterrupt::default();
+
+    // The asynchronous callback owns the same STOP lease. close/Drop must
+    // reject an overlapping engine STOP, not infer success.
+    interrupt.stop_in_flight.store(true, Ordering::Release);
+    assert_eq!(
+        interrupt_stop::stop_engine_serialized(&interrupt, &engine),
+        Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into())
+    );
+    assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+
+    // Once the callback releases, engine cleanup can use the lease. A
+    // successful local no-op is never an authenticated remote STOP receipt.
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    assert!(interrupt_stop::stop_engine_serialized(&interrupt, &engine).is_ok());
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
+
+#[test]
+fn busy_engine_stop_releases_lease_and_does_not_fake_remote_confirmation() {
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = Mutex::new(OwnerLabEngine::new(Box::new(provider), true).unwrap());
+    let interrupt = LiveVisitorInterrupt::default();
+    let _busy = engine.lock();
+    assert_eq!(
+        interrupt_stop::stop_engine_serialized(&interrupt, &engine),
+        Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into())
+    );
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
