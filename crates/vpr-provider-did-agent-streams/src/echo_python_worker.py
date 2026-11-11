@@ -173,6 +173,34 @@ async def run():
     close_control_confirmed = True
     close_pcm_task = None
     terminal_media_failure = False
+    room_disconnected = False
+    disconnect_gate = asyncio.Lock()
+
+    async def disconnect_once(timeout=MEDIA_CLOSE_TIMEOUT_SECONDS):
+        """Close the private sender promptly; never infer remote AV STOP."""
+        nonlocal room_disconnected
+        async with disconnect_gate:
+            if room_disconnected:
+                return True
+            try:
+                await asyncio.wait_for(room.disconnect(), timeout=timeout)
+            except Exception:
+                # Final shutdown can retry. An uncertain disconnect is not OK.
+                return False
+            room_disconnected = True
+            return True
+
+    async def fail_closed_media_error():
+        """On background media failure, fence and tear down without stdin wakeup."""
+        nonlocal terminal_media_failure, close_control_confirmed
+        terminal_media_failure = True
+        close_control_confirmed = False
+        for task in tuple(tasks.values()):
+            if task is not asyncio.current_task():
+                task.cancel()
+        if active_pcm is not None and active_pcm["task"] is not asyncio.current_task():
+            active_pcm["task"].cancel()
+        await disconnect_once()
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm, terminal_media_failure
@@ -215,7 +243,6 @@ async def run():
                 emit(state["end_id"], False)
                 state["end_id"] = None
         except Exception:
-            terminal_media_failure = True
             emit(state["stream_id"], False, failure_stage)
             if state["generation"] == generation:
                 generation += 1
@@ -224,6 +251,7 @@ async def run():
                         await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
                     except Exception:
                         pass
+            await fail_closed_media_error()
             if state["end_id"] is not None:
                 emit(state["end_id"], False)
                 state["end_id"] = None
@@ -293,7 +321,6 @@ async def run():
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
-            terminal_media_failure = True
             # A failed stream is terminal for this publisher generation.
             # An incomplete WAV may already be in D-ID's playback queue.
             # Fence every queued utterance before sending the remote interrupt;
@@ -308,6 +335,7 @@ async def run():
                         await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
                     except Exception:
                         pass
+            await fail_closed_media_error()
             emit(identifier, False)
         finally:
             if writer is not None:
@@ -529,9 +557,7 @@ async def run():
             _, unfinished = await asyncio.wait(pending, timeout=0.45)
             if unfinished:
                 cleanup_confirmed = False
-        try:
-            await asyncio.wait_for(room.disconnect(), timeout=0.45)
-        except Exception:
+        if not await disconnect_once(timeout=0.45):
             cleanup_confirmed = False
         if close_identifier is not None:
             # Only local private-publisher teardown, never remote D-ID video STOP.
