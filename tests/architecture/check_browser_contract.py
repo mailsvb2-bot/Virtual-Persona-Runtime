@@ -852,7 +852,7 @@ for required in ("/agents/", "authorization", "session_id", "ice_servers"):
         raise SystemExit(f"Owner Lab backend provider fixture missing: {required}")
 for required in (
     "python3 tests/architecture/check_browser_contract.py",
-    "npx playwright install --with-deps chromium",
+    "npx playwright install chromium",
     "npm run test:e2e",
     "npm run test:e2e:backend",
     "npm run test:e2e:voice",
