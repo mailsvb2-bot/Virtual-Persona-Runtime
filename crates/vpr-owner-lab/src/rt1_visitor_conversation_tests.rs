@@ -170,3 +170,33 @@ fn revoke_callback_does_not_reset_an_inflight_interrupt_stop() {
     assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
+
+#[test]
+fn close_does_not_confirm_or_duplicate_an_inflight_stop() {
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = OwnerLabEngine::new(Box::new(provider), true).unwrap();
+    let manager = Arc::new(VisitorSessionManager::new(Arc::new(
+        crate::rt1_workspace_service::Rt1WorkspaceService::new(),
+    )));
+    let interrupt = Arc::new(LiveVisitorInterrupt::default());
+    interrupt.stop_in_flight.store(true, Ordering::Release);
+    let conversation = Rt1VisitorConversation {
+        manager,
+        id: "unadmitted".into(),
+        engine: Mutex::new(engine),
+        interrupt: Arc::clone(&interrupt),
+        remote: None,
+    };
+    assert_eq!(
+        conversation.close(),
+        Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into())
+    );
+    assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+}
