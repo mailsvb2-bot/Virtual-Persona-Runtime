@@ -35,6 +35,8 @@ struct LiveVisitorInterrupt {
     session: Mutex<Option<SessionRevocationHandle>>,
     turn: Mutex<Option<TurnInterruptHandle>>,
     backend_stop: Mutex<Option<RealtimeAvatarStopHandle>>,
+    stop_in_flight: Arc<AtomicBool>,
+    stop_confirmed: Arc<AtomicBool>,
 }
 
 impl LiveVisitorInterrupt {
@@ -62,12 +64,27 @@ impl LiveVisitorInterrupt {
         // Provider STOP can take network time: never block owner pause on it
         // or on the conversation engine mutex. The explicit visitor close
         // still requires a separate confirmed close_session receipt.
-        if let Some(stop) = self.backend_stop.lock().take() {
+        // Keep the stop-only capability available after an uncertain result.
+        // A failed best-effort STOP must be retryable by a later close/revoke;
+        // concurrent callbacks must not dispatch duplicate STOP requests.
+        if self.stop_confirmed.load(Ordering::Acquire)
+            || self.stop_in_flight.swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
+        let stop = self.backend_stop.lock().clone();
+        if let Some(stop) = stop {
+            let in_flight = Arc::clone(&self.stop_in_flight);
+            let confirmed = Arc::clone(&self.stop_confirmed);
             std::thread::spawn(move || {
-                if let Err(error) = stop.stop() {
-                    eprintln!("RT1 best-effort backend STOP failed: {error:?}");
+                match stop.stop() {
+                    Ok(()) => confirmed.store(true, Ordering::Release),
+                    Err(error) => eprintln!("RT1 best-effort backend STOP failed: {error:?}"),
                 }
+                in_flight.store(false, Ordering::Release);
             });
+        } else {
+            self.stop_in_flight.store(false, Ordering::Release);
         }
     }
 }
