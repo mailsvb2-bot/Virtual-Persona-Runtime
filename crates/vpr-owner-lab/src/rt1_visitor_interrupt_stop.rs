@@ -61,3 +61,36 @@ fn release_interruption_stop(interrupt: &LiveVisitorInterrupt) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_revoke_during_interruption_replays_stop_after_shared_fence_release() {
+        let interrupt = LiveVisitorInterrupt::default();
+        interrupt.stop_in_flight.store(true, Ordering::Release);
+        // Owner callback marks the canonical authority revoked, but it cannot
+        // issue a competing STOP while the interruption owns the fence.
+        interrupt.stop();
+        assert!(interrupt.cancelled.load(Ordering::Acquire));
+        assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
+        assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+
+        assert!(release_interruption_stop(&interrupt));
+        // No handle was installed in this deterministic admission race.
+        // It must remain retryable for a late CREATE rather than confirmed.
+        assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+        assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn normal_interruption_never_claims_remote_stop_receipt() {
+        let interrupt = LiveVisitorInterrupt::default();
+        interrupt.stop_in_flight.store(true, Ordering::Release);
+        assert!(!release_interruption_stop(&interrupt));
+        assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+        assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+        assert!(!interrupt.cancelled.load(Ordering::Acquire));
+    }
+}
