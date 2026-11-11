@@ -18,6 +18,8 @@ use crate::state::{
 mod browser_delivery;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
+#[path = "rt1_visitor_interrupt_stop.rs"]
+mod interrupt_stop;
 #[path = "rt1_visitor_signaling.rs"]
 mod signaling;
 #[path = "rt1_visitor_text_egress.rs"]
@@ -66,27 +68,7 @@ impl LiveVisitorInterrupt {
         // Provider STOP can take network time: never block owner pause on it
         // or on the conversation engine mutex. The explicit visitor close
         // still requires a separate confirmed close_session receipt.
-        // Keep the stop-only capability after an uncertain STOP so later
-        // close/revoke can retry. Concurrent callbacks must not duplicate it.
-        if self.stop_confirmed.load(Ordering::Acquire)
-            || self.stop_in_flight.swap(true, Ordering::AcqRel)
-        {
-            return;
-        }
-        let stop = self.backend_stop.lock().clone();
-        if let Some(stop) = stop {
-            let in_flight = Arc::clone(&self.stop_in_flight);
-            let confirmed = Arc::clone(&self.stop_confirmed);
-            std::thread::spawn(move || {
-                match stop.stop() {
-                    Ok(()) => confirmed.store(true, Ordering::Release),
-                    Err(error) => eprintln!("RT1 best-effort backend STOP failed: {error:?}"),
-                }
-                in_flight.store(false, Ordering::Release);
-            });
-        } else {
-            self.stop_in_flight.store(false, Ordering::Release);
-        }
+        interrupt_stop::dispatch(self);
     }
 }
 
