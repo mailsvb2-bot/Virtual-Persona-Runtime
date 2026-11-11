@@ -48,6 +48,8 @@ class FakeLocalParticipant:
 
     async def send_text(self, text, *, topic):
         self.trace["stops"].append((text, topic))
+        if self.trace["interrupt_latency"]:
+            await asyncio.sleep(self.trace["interrupt_latency"])
         if self.trace["interrupt_fails"]:
             raise RuntimeError("synthetic private vendor interrupt refusal")
 
@@ -58,15 +60,17 @@ class FakeRoom:
     write_latency = 0
     stream_open_fails = False
     interrupt_fails = False
+    interrupt_latency = 0
 
     def __init__(self):
         self.trace = {
             "audio": [], "write_timestamps": [], "closed": 0, "stream_options": [], "stops": [],
-            "connected": [], "disconnected": 0,
+            "connected": [], "disconnected": 0, "disconnected_at": None,
             "close_latency": self.__class__.close_latency,
             "write_latency": self.__class__.write_latency,
             "stream_open_fails": self.__class__.stream_open_fails,
             "interrupt_fails": self.__class__.interrupt_fails,
+            "interrupt_latency": self.__class__.interrupt_latency,
         }
         self.local_participant = FakeLocalParticipant(self.trace)
         self.remote_participants = {
@@ -84,6 +88,7 @@ class FakeRoom:
 
     async def disconnect(self):
         self.trace["disconnected"] += 1
+        self.trace["disconnected_at"] = time.monotonic()
 
 
 class DelayedInput:
@@ -91,6 +96,7 @@ class DelayedInput:
         self.records = list(records)
         self.delay_after_speak = delay_after_speak
         self.delay_before_close = delay_before_close
+        self.close_released_at = None
 
     def readline(self):
         if not self.records:
@@ -100,13 +106,14 @@ class DelayedInput:
             time.sleep(0.12)
         if self.delay_before_close and '"command": "close"' in line:
             time.sleep(self.delay_before_close)
+            self.close_released_at = time.monotonic()
         return line
 
 
 def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latency=None,
                close_latency=0, tts_chunks=None, write_latency=0,
                stream_open_fails=False, interrupt_fails=False,
-               media_io_timeout=None):
+               media_io_timeout=None, interrupt_latency=0):
     spec = importlib.util.spec_from_file_location("vpr_echo_worker", WORKER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -145,12 +152,14 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     FakeRoom.write_latency = write_latency
     FakeRoom.stream_open_fails = stream_open_fails
     FakeRoom.interrupt_fails = interrupt_fails
+    FakeRoom.interrupt_latency = interrupt_latency
     try:
-        sys.stdin = DelayedInput(
+        input_source = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
              for record in (records if records is not None else default_records)],
             delay_after_speak, delay_before_close,
         )
+        sys.stdin = input_source
         sys.stdout = response
         asyncio.run(module.run())
     finally:
@@ -159,12 +168,59 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
             del sys.modules["livekit"]
         else:
             sys.modules["livekit"] = previous
-    return FakeRoom.instances[-1].trace, [
+    trace = FakeRoom.instances[-1].trace
+    trace["close_released_at"] = input_source.close_released_at
+    return trace, [
         json.loads(line) for line in response.getvalue().splitlines()
     ]
 
 
 class EchoWorkerTests(unittest.TestCase):
+    def test_vendor_stop_wait_cancel_cannot_unlock_terminal_audio_failure(self):
+        def truncated_tts(text):
+            yield b"RIFF" + text.encode("utf-8")
+            if text == "first":
+                raise RuntimeError("private TTS stream failed after publication")
+
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "speak", "text": "first"},
+            {"id": 2, "command": "interrupt"},
+            {"id": 3, "command": "speak", "text": "late-after-fault"},
+            {"id": 4, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, tts_chunks=truncated_tts,
+            interrupt_latency=0.35, delay_before_close=0.15,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertNotIn(b"late-after-fault", b"".join(trace["audio"]))
+        self.assertFalse(any(r["id"] == 3 and r["ok"] for r in receipts),
+                         "revoke during a pending vendor STOP cannot re-enable speech")
+
+    def test_background_pcm_failure_disconnects_before_next_stdin_command(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 2, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.50,
+            stream_open_fails=True,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertIsNotNone(trace["close_released_at"])
+        self.assertLess(
+            trace["disconnected_at"], trace["close_released_at"],
+            "worker must disconnect on background failure, not wait for stdin",
+        )
+        self.assertTrue(any(r["id"] == 1 and not r["ok"] for r in receipts))
+
     def test_completed_utterance_is_private_byte_stream_and_stop_is_control_only(self):
         trace, receipts = run_worker(True)
         self.assertEqual(trace["connected"],
