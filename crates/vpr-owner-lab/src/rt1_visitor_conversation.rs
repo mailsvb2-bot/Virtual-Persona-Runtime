@@ -512,7 +512,17 @@ impl Rt1VisitorConversation {
         if let Some(turn) = self.interrupt.turn.lock().clone() {
             let _ = turn.interrupt();
         }
-        if stop.stop().is_err() {
+        // Serialize interruption STOP against the asynchronous revoke/close
+        // callback. A pending STOP is uncertain, never a success receipt.
+        // This fence does not prove remote video RTP cessation.
+        if self.interrupt.stop_in_flight.swap(true, Ordering::AcqRel) {
+            self.interrupt.revoke_authority_only();
+            let _ = self.manager.close(&self.id);
+            return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
+        }
+        let stop_result = stop.stop();
+        self.interrupt.stop_in_flight.store(false, Ordering::Release);
+        if stop_result.is_err() {
             // An unconfirmed sender must not accept another voice turn.
             self.interrupt.stop();
             let _ = self.manager.close(&self.id);
