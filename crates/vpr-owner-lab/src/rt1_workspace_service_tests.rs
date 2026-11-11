@@ -234,7 +234,17 @@ fn independent_service_handles_share_one_transaction_lock() {
     let held = first.transaction.lock();
     assert!(second.transaction.try_lock().is_none());
     drop(held);
-    assert!(second.transaction.try_lock().is_some());
+    // Other parallel Rust tests also use this process-wide transaction lock.
+    // An immediate try_lock can lose to a legitimate concurrent owner; that
+    // is not evidence of a broken shared lock. Require bounded acquisition
+    // after releasing our guard, without weakening the held-lock assertion.
+    assert!(
+        second
+            .transaction
+            .try_lock_for(std::time::Duration::from_secs(2))
+            .is_some(),
+        "shared workspace transaction did not become available after release"
+    );
 }
 
 #[test]

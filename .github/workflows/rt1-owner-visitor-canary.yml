@@ -46,7 +46,7 @@ jobs:
         run: cargo build --locked -p vpr-owner-lab --bin vpr-owner-lab
       - name: Install Chromium
         working-directory: crates/vpr-owner-lab/ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       - name: Real owner publication, separate visitor RTP, revoked dual-track STOP
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.config.ts
