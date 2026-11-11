@@ -203,7 +203,7 @@ async def run():
         await disconnect_once()
 
     async def pump_pcm(state):
-        nonlocal generation, active_pcm, terminal_media_failure
+        nonlocal generation, active_pcm, terminal_media_failure, close_control_confirmed
         writer = None
         published = False
         failure_stage = "pcm_stream_open"
@@ -243,6 +243,10 @@ async def run():
                 emit(state["end_id"], False)
                 state["end_id"] = None
         except Exception:
+            # Fence publication synchronously BEFORE any awaited vendor STOP.
+            # A concurrent stdin interrupt may cancel this task mid-await.
+            terminal_media_failure = True
+            close_control_confirmed = False
             emit(state["stream_id"], False, failure_stage)
             if state["generation"] == generation:
                 generation += 1
@@ -256,6 +260,10 @@ async def run():
                 emit(state["end_id"], False)
                 state["end_id"] = None
         finally:
+            # A racing stdin interrupt may cancel the failure handler while
+            # it awaits vendor STOP. Disconnect must still be attempted.
+            if terminal_media_failure and not room_disconnected:
+                await disconnect_once()
             if writer is not None:
                 try:
                     await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
@@ -265,7 +273,7 @@ async def run():
                 active_pcm = None
 
     async def speak(identifier, phrase, generation_at_start, preauthorized_pcm=None):
-        nonlocal generation, terminal_media_failure
+        nonlocal generation, terminal_media_failure, close_control_confirmed
         writer = None
         published = False
         try:
@@ -321,6 +329,10 @@ async def run():
         except asyncio.CancelledError:
             emit(identifier, False)
         except Exception:
+            # Fence publication synchronously BEFORE any awaited vendor STOP.
+            # Cancellation of this failing task must not unlock later SPEAK.
+            terminal_media_failure = True
+            close_control_confirmed = False
             # A failed stream is terminal for this publisher generation.
             # An incomplete WAV may already be in D-ID's playback queue.
             # Fence every queued utterance before sending the remote interrupt;
@@ -338,6 +350,8 @@ async def run():
             await fail_closed_media_error()
             emit(identifier, False)
         finally:
+            if terminal_media_failure and not room_disconnected:
+                await disconnect_once()
             if writer is not None:
                 try:
                     await asyncio.wait_for(writer.aclose(), timeout=MEDIA_CLOSE_TIMEOUT_SECONDS)
