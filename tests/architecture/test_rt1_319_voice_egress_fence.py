@@ -128,7 +128,11 @@ class VisitorVoiceEgressGate(unittest.TestCase):
     def test_interrupt_uses_canonical_stop_without_engine_mutex(self):
         body = method_body(self.source, "interrupt_turn")
         self.assertIn("self.manager.authorize(&self.id)?", body)
-        self.assertIn("stop.stop().is_err()", body)
+        self.assertIn("interrupt_stop::stop_for_interruption(&self.interrupt, &stop).is_err()", body)
+        stop = STOP_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("interrupt.stop_in_flight.swap(true, Ordering::AcqRel)", stop)
+        self.assertIn("let result = stop.stop().map_err(|_| ())", stop)
+        self.assertIn("interrupt.stop_in_flight.store(false, Ordering::Release)", stop)
         self.assertIn(".await_provider_quiescence(&self.id, Duration::from_millis(250))", body)
         self.assertIn("self.interrupt.stop()", body)
         self.assertIn("self.manager.close(&self.id)", body)
