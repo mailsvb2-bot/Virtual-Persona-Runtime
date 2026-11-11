@@ -584,16 +584,11 @@ impl Rt1VisitorConversation {
             .remote
             .as_ref()
             .map_or(Ok(()), |remote| remote.revoke_confirmed());
-        let local_stop = if self.interrupt.stop_in_flight.load(Ordering::Acquire) {
-            // A callback may already be performing network STOP. Do not
-            // dispatch a second STOP through the engine or report close as
-            // confirmed while its outcome is unknown.
-            Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into())
-        } else if self
+        let local_stop = if self
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
         {
-            stop_if_uncontended(&self.engine)
+            stop_engine_serialized(&self.interrupt, &self.engine)
         } else {
             // Do not wait on an engine mutex held by a stalled provider and
             // do not claim confirmed close. The HTTP registry retains this
@@ -615,10 +610,26 @@ impl Drop for Rt1VisitorConversation {
         // Drop must never wait for a provider turn holding the engine mutex.
         // The independent stop-only capability was already dispatched above;
         // if the engine is busy, cleanup remains unconfirmed, not a receipt.
-        if !self.interrupt.stop_in_flight.load(Ordering::Acquire) {
-            try_stop_uncontended(&self.engine);
-        }
+        let _ = stop_engine_serialized(&self.interrupt, &self.engine);
     }
+}
+
+// The engine and callback STOP paths share one atomic lease. Checking the
+// flag before calling the engine is insufficient: a callback can acquire it
+// between the check and the network request.
+fn stop_engine_serialized(
+    interrupt: &LiveVisitorInterrupt,
+    engine: &Mutex<OwnerLabEngine>,
+) -> Result<(), String> {
+    if interrupt.stop_in_flight.swap(true, Ordering::AcqRel) {
+        return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
+    }
+    let result = stop_if_uncontended(engine);
+    if result.is_ok() {
+        interrupt.stop_confirmed.store(true, Ordering::Release);
+    }
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    result
 }
 
 // A quiescence observation cannot guarantee that the engine mutex is free:
@@ -635,11 +646,6 @@ fn stop_if_uncontended(engine: &Mutex<OwnerLabEngine>) -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-// Drop is best-effort only; never turn this into a remote STOP receipt.
-fn try_stop_uncontended(engine: &Mutex<OwnerLabEngine>) {
-    let _ = stop_if_uncontended(engine);
 }
 
 fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
