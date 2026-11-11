@@ -62,7 +62,7 @@ class FakeRoom:
     def __init__(self):
         self.trace = {
             "audio": [], "write_timestamps": [], "closed": 0, "stream_options": [], "stops": [],
-            "connected": [], "disconnected": 0,
+            "connected": [], "disconnected": 0, "disconnected_at": None,
             "close_latency": self.__class__.close_latency,
             "write_latency": self.__class__.write_latency,
             "stream_open_fails": self.__class__.stream_open_fails,
@@ -84,6 +84,7 @@ class FakeRoom:
 
     async def disconnect(self):
         self.trace["disconnected"] += 1
+        self.trace["disconnected_at"] = time.monotonic()
 
 
 class DelayedInput:
@@ -91,6 +92,7 @@ class DelayedInput:
         self.records = list(records)
         self.delay_after_speak = delay_after_speak
         self.delay_before_close = delay_before_close
+        self.close_released_at = None
 
     def readline(self):
         if not self.records:
@@ -100,6 +102,7 @@ class DelayedInput:
             time.sleep(0.12)
         if self.delay_before_close and '"command": "close"' in line:
             time.sleep(self.delay_before_close)
+            self.close_released_at = time.monotonic()
         return line
 
 
@@ -146,11 +149,12 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
     FakeRoom.stream_open_fails = stream_open_fails
     FakeRoom.interrupt_fails = interrupt_fails
     try:
-        sys.stdin = DelayedInput(
+        input_source = DelayedInput(
             [json.dumps(record, ensure_ascii=False) + "\n"
              for record in (records if records is not None else default_records)],
             delay_after_speak, delay_before_close,
         )
+        sys.stdin = input_source
         sys.stdout = response
         asyncio.run(module.run())
     finally:
@@ -159,12 +163,35 @@ def run_worker(delay_after_speak, records=None, delay_before_close=0, tts_latenc
             del sys.modules["livekit"]
         else:
             sys.modules["livekit"] = previous
-    return FakeRoom.instances[-1].trace, [
+    trace = FakeRoom.instances[-1].trace
+    trace["close_released_at"] = input_source.close_released_at
+    return trace, [
         json.loads(line) for line in response.getvalue().splitlines()
     ]
 
 
 class EchoWorkerTests(unittest.TestCase):
+    def test_background_pcm_failure_disconnects_before_next_stdin_command(self):
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 1, "command": "pcm", "pcm_hex": bytes(320).hex(),
+             "sample_rate_hz": 16000, "channels": 1},
+            {"id": 2, "command": "close"},
+        ]
+        trace, receipts = run_worker(
+            True, records=records, delay_before_close=0.50,
+            stream_open_fails=True,
+        )
+        self.assertEqual(trace["disconnected"], 1)
+        self.assertIsNotNone(trace["close_released_at"])
+        self.assertLess(
+            trace["disconnected_at"], trace["close_released_at"],
+            "worker must disconnect on background failure, not wait for stdin",
+        )
+        self.assertTrue(any(r["id"] == 1 and not r["ok"] for r in receipts))
+
     def test_completed_utterance_is_private_byte_stream_and_stop_is_control_only(self):
         trace, receipts = run_worker(True)
         self.assertEqual(trace["connected"],
