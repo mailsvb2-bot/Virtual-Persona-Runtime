@@ -16,6 +16,7 @@ SOURCE = (
 
 STAGING_SOURCE = SOURCE.with_name("rt1_visitor_voice_stream_staging.rs")
 VOICE_CAPABILITY_SOURCE = SOURCE.with_name("rt1_visitor_voice_capability.rs")
+STOP_SOURCE = SOURCE.with_name("rt1_visitor_interrupt_stop.rs")
 
 
 def method_body(source: str, method: str) -> str:
@@ -79,10 +80,17 @@ class VisitorVoiceEgressGate(unittest.TestCase):
 
     def test_owner_revocation_dispatches_only_stop_capability(self):
         source = self.source
+        dispatch = STOP_SOURCE.read_text(encoding="utf-8")
         self.assertIn("engine.visitor_avatar_stop_handle()", source)
-        self.assertIn("self.backend_stop.lock().take()", source)
-        self.assertIn("stop.stop()", source)
         self.assertIn("self.cancelled.store(true, Ordering::Release)", source)
+        self.assertIn("interrupt_stop::dispatch(self)", source)
+        # A failed STOP must remain retryable, never consume the handle.
+        self.assertIn("interrupt.backend_stop.lock().clone()", dispatch)
+        self.assertNotIn(".take()", dispatch)
+        self.assertIn("interrupt.stop_in_flight.swap(true, Ordering::AcqRel)", dispatch)
+        self.assertIn("interrupt.stop_confirmed.load(Ordering::Acquire)", dispatch)
+        self.assertIn("stop.stop()", dispatch)
+        self.assertIn("in_flight.store(false, Ordering::Release)", dispatch)
 
     def test_internal_streaming_reuses_engine_but_only_stages_bounded_local_events(self):
         body = method_body(STAGING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming_staged")
