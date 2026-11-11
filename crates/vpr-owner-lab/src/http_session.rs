@@ -121,7 +121,9 @@ fn fence_authority(
             return Err(error_response(500, "INTERNAL_ERROR"));
         }
     }
-    Ok(stopped)
+    // STOP is not a provider-drain receipt. Never acknowledge a fence while
+    // an admitted STT/LLM/TTS request is still in flight.
+    Ok(stopped && revoker.await_provider_quiescence(Duration::ZERO))
 }
 
 /// First phase of user Close: deny new turns and revoke provider authority now.
@@ -187,6 +189,13 @@ fn complete_deferred_session(
     Ok(())
 }
 
+fn provider_egress_quiescent(state: &AppState, timeout: Duration) -> bool {
+    // Clone canonical session authority and release the registry lock before
+    // waiting. Never hold the registry or engine mutex during provider I/O.
+    let revoker = state.session_revocation.lock().clone();
+    revoker.is_none_or(|revoker| revoker.await_provider_quiescence(timeout))
+}
+
 fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u64) {
     // A single request can time out after the canonical authority has already
     // been revoked. Finish only when the voice worker has released its output
@@ -198,7 +207,9 @@ fn finish_after_quiescence(state: &AppState, close: bool, expected_generation: u
         {
             return;
         }
-        if state.voice_streams.wait_until_quiescent() {
+        if state.voice_streams.wait_until_quiescent()
+            && provider_egress_quiescent(state, Duration::from_millis(100))
+        {
             let _ = complete_deferred_session(state, close, expected_generation);
             return;
         }
@@ -214,7 +225,9 @@ fn end_session(
 ) -> Result<HttpResponse, HttpResponse> {
     let _stopped = fence_authority(state, expected_session_sequence)?;
     let expected_generation = state.active_session_sequence.load(Ordering::Acquire);
-    if !state.voice_streams.wait_until_quiescent() {
+    if !state.voice_streams.wait_until_quiescent()
+        || !provider_egress_quiescent(state, Duration::ZERO)
+    {
         let worker_state = Arc::clone(state);
         thread::spawn(move || {
             finish_after_quiescence(&worker_state, close, expected_generation);
