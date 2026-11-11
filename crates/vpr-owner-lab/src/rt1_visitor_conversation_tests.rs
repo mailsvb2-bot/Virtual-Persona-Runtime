@@ -200,3 +200,28 @@ fn close_does_not_confirm_or_duplicate_an_inflight_stop() {
     assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
+
+
+#[test]
+fn engine_stop_respects_callback_lease_and_does_not_claim_receipt() {
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = Mutex::new(OwnerLabEngine::new(Box::new(provider), true).unwrap());
+    let interrupt = LiveVisitorInterrupt::default();
+    interrupt.stop_in_flight.store(true, Ordering::Release);
+    assert_eq!(
+        stop_engine_serialized(&interrupt, &engine).unwrap_err(),
+        "RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED"
+    );
+    assert!(interrupt.stop_in_flight.load(Ordering::Acquire));
+    assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+    interrupt.stop_in_flight.store(false, Ordering::Release);
+    // No session was created; this only verifies the lease is released and
+    // that an uncontended local no-op is not confused with remote RTP proof.
+    assert!(stop_engine_serialized(&interrupt, &engine).is_ok());
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+}
