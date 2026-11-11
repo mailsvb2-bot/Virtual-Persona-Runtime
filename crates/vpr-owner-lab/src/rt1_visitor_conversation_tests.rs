@@ -138,3 +138,17 @@ fn revoked_stop_without_provider_handle_remains_retryable() {
     assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
+
+#[test]
+fn confirmed_provider_cleanup_suppresses_close_callback_stop_dispatch() {
+    // The revoked-during-CREATE path performs confirmed engine cleanup
+    // before manager.close(). A confirmed result must not schedule another
+    // asynchronous STOP through the visitor callback.
+    let interrupt = LiveVisitorInterrupt::default();
+    interrupt.revoke_authority_only();
+    interrupt.stop_confirmed.store(true, Ordering::Release);
+    interrupt.stop();
+    assert!(interrupt.cancelled.load(Ordering::Acquire));
+    assert!(interrupt.stop_confirmed.load(Ordering::Acquire));
+    assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+}
