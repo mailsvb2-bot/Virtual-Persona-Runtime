@@ -176,8 +176,15 @@ impl Rt1VisitorConversation {
                 .authorize_persona(&id, &persona_id, persona_version)
                 .is_err()
         {
-            interrupt.stop();
+            // Revoke permits before touching the provider. Do not dispatch a
+            // second asynchronous STOP before the engine's confirmed cleanup:
+            // manager.close() will invoke the existing retryable callback if
+            // that cleanup fails. A successful receipt must suppress it.
+            interrupt.revoke_authority_only();
             let stop_result = engine.stop_visitor_provider_confirmed();
+            if stop_result.is_ok() {
+                interrupt.stop_confirmed.store(true, Ordering::Release);
+            }
             let _ = manager.close(&id);
             if stop_result.is_err() {
                 return Err("RT1_PROVIDER_START_REVOKED_STOP_UNCONFIRMED".into());
