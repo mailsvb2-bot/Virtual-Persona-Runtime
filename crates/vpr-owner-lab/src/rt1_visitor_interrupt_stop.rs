@@ -41,9 +41,23 @@ pub(super) fn stop_for_interruption(
         return Err(());
     }
     let result = stop.stop().map_err(|_| ());
-    // On failure caller revokes visitor and allows retryable STOP.
-    // Do not mark stop_confirmed on normal interruption: the visitor could
-    // legitimately speak again before a later owner revoke.
+    // An owner revoke may have arrived while interruption owned this fence.
+    // The revoke callback was then correctly unable to dispatch another STOP.
+    // On release, replay its pending cleanup through the SAME STOP path.
+    // A normal voice interruption is NOT a confirmed remote media shutdown.
+    let was_revoked = release_interruption_stop(interrupt);
+    if was_revoked { Err(()) } else { result }
+}
+
+/// Release interruption ownership and resume a revoke that raced with it.
+/// No remote STOP receipt is fabricated from a successful voice interruption.
+/// A later revoke will acquire the same gate if it arrives after this check.
+fn release_interruption_stop(interrupt: &LiveVisitorInterrupt) -> bool {
     interrupt.stop_in_flight.store(false, Ordering::Release);
-    result
+    if interrupt.cancelled.load(Ordering::Acquire) {
+        dispatch(interrupt);
+        true
+    } else {
+        false
+    }
 }
