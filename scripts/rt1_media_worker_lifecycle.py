@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from queue import Queue, Empty
 import threading
 from contextlib import contextmanager
@@ -89,6 +90,9 @@ class MediaLifecycle:
                 self._db.execute("ROLLBACK")
             raise
         self._lock = threading.RLock()
+        # An OS shutdown signal permanently fences all later CREATE requests.
+        # A live CREATE is quarantined in SQLite before media teardown.
+        self._closing = threading.Event()
         # A timed-out CREATE still owns its provider thread until it exits.
         # Bound outstanding allocations instead of spawning one per HTTP PUT.
         self._create_gate = threading.BoundedSemaphore(1)
@@ -137,6 +141,8 @@ class MediaLifecycle:
         """
         if not 0 < timeout <= 60:
             raise ValueError("invalid CREATE timeout")
+        if self._closing.is_set():
+            raise RuntimeError("RT1 worker shutting down; CREATE denied")
         if not self._create_gate.acquire(blocking=False):
             raise RuntimeError("another provider CREATE remains in flight")
         outcome = Queue(maxsize=1)
@@ -240,6 +246,8 @@ class MediaLifecycle:
                 raise RuntimeError("backend supplied invalid preassigned sender identity")
             recovery_id = candidate
         with self._lock:
+            if self._closing.is_set():
+                raise RuntimeError("RT1 worker shutting down; CREATE denied")
             # The Python lock is per process. BEGIN IMMEDIATE also serializes
             # admission across distinct worker processes sharing this ledger.
             # Commit the durable CREATE intent before any provider allocation.
@@ -633,6 +641,52 @@ class MediaLifecycle:
                         self._db.execute("ROLLBACK")
                     raise
             return receipt
+
+    def begin_shutdown(self) -> None:
+        """Fence new allocations and persist a durable revoke for every sender.
+
+        This is the same ledger used for owner revocation and restart
+        recovery. No separate worker or authority is created, and a local
+        track.close() is never counted as remote two-track STOP evidence.
+        """
+        self._closing.set()
+        self.quarantine_after_restart()
+
+    def revoke_all_bounded(self, timeout: float) -> bool:
+        """Drain active/uncertain media with ONE global shutdown deadline.
+
+        Return true only when every allocated sender has a durable verified
+        audio+video STOP receipt. Pending CREATE with no authoritative sender
+        identity remains uncertain and returns false. No retry reopens CREATE.
+        """
+        if not 0 < timeout <= 60:
+            raise ValueError("invalid shutdown deadline")
+        deadline = time.monotonic() + timeout
+        self.begin_shutdown()
+        with self._lock:
+            operations = self._db.execute(
+                """SELECT id,generation FROM media_operations
+                   WHERE phase != 'stopped'
+                      OR (session_id IS NOT NULL AND stop_verified=0)"""
+            ).fetchall()
+        for operation_id, generation in operations:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                self.cancel_bounded(operation_id, generation, min(left, 1.0))
+            except Exception:
+                # Uncertain remains durable and blocks future sender CREATE.
+                # Continue to other pending senders within the same deadline.
+                pass
+        with self._lock:
+            unresolved = self._db.execute(
+                """SELECT 1 FROM media_operations
+                   WHERE phase != 'stopped'
+                      OR (session_id IS NOT NULL AND stop_verified=0)
+                   LIMIT 1"""
+            ).fetchone()
+        return unresolved is None
 
     def quarantine_after_restart(self):
         """Fence every sender identity inherited without a live backend handle.
