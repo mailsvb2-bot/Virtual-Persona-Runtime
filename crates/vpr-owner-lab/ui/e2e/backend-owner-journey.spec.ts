@@ -321,6 +321,7 @@ test("Owner Lab reports blocked module and offers real reload", async ({ page })
   const status = page.locator("#status");
   await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
   await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveAttribute("data-bootstrap-failure", "module-load");
   await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
 });
