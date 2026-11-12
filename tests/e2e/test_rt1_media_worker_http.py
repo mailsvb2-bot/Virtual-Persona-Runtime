@@ -356,6 +356,15 @@ class HttpLifecycleTests(unittest.TestCase):
         # Initial lost-ACK compensation and the explicit DELETE both failed;
         # canonical reconciliation is the third verified STOP attempt.
         self.assertEqual(self.backend.stops, 3)
+        self.assertFalse(self.lifecycle._closing.is_set())
+        # Durable CANCEL was committed despite the STOP error. No permanent
+        # worker-wide shutdown: unrelated operations remain usable once
+        # confirmed STOP of the first sender permits admission.
+        self.server.RequestHandlerClass._send = original_write
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 2)
+        self.assertEqual(self.request("DELETE")[0], 200)
 
     def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):
         pcm = bytes([1, 0]) * 320

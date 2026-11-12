@@ -428,12 +428,26 @@ def handler_for(
                                 min(stop_timeout_seconds, 0.5),
                             )
                         except Exception:
-                            # If SQLite also rejected CANCEL, the row may
-                            # still say 'active'. Fence ALL later CREATEs in
-                            # this process and make the ONE existing periodic
-                            # STOP reconciler quarantine this unacknowledged
-                            # sender once the writer lock becomes available.
-                            lifecycle.request_shutdown()
+                            # A backend STOP may fail AFTER durable CANCEL
+                            # already entered 'uncertain' or 'stopping'. That
+                            # sender is safely quarantined: the reconciler can
+                            # retry without permanently shutting down all
+                            # future independent sessions. A SQLite write
+                            # failure, by contrast, may leave the row active.
+                            try:
+                                quarantined = lifecycle.status(operation_id)
+                            except Exception:
+                                quarantined = None
+                            if not (
+                                quarantined is not None
+                                and quarantined[0] == generation
+                                and quarantined[2] == session_id
+                                and quarantined[1] in ("stopping", "uncertain", "stopped")
+                            ):
+                                # No durable quarantine evidence: fail closed
+                                # locally and let the ONE periodic reconciler
+                                # quarantine the row once SQLite is writable.
+                                lifecycle.request_shutdown()
                         if isinstance(error, (sqlite3.Error, RuntimeError)):
                             try:
                                 self._send(
