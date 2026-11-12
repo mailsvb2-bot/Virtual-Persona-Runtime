@@ -217,3 +217,43 @@ fn denied_delivery_late_stop_cannot_remove_replacement() {
     super::finalize_denied_delivery(&sessions, &old, Ok(()), true).unwrap();
     assert!(Arc::ptr_eq(sessions.lock().get("same").unwrap(), &replacement));
 }
+
+#[test]
+fn late_revoked_turn_stop_keeps_retry_handle_until_both_senders_confirmed() {
+    let sessions = Arc::new(Mutex::new(HashMap::new()));
+    let conversation = Arc::new(31_u8);
+    sessions.lock().insert("late-turn".into(), Arc::clone(&conversation));
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker_sessions = Arc::clone(&sessions);
+    let worker_conversation = Arc::clone(&conversation);
+    let worker = std::thread::spawn(move || {
+        // Model the slow STOP invoked after the final turn authority check.
+        started_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        super::finalize_denied_delivery(
+            &worker_sessions,
+            &worker_conversation,
+            Err("remote video sender still active".into()),
+            true,
+        )
+    });
+    started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(sessions.try_lock().is_some(), "remote STOP blocked the HTTP registry");
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        worker.join().unwrap(),
+        Err("remote video sender still active".into())
+    );
+    assert!(Arc::ptr_eq(
+        sessions.lock().get("late-turn").unwrap(),
+        &conversation
+    ));
+    assert_eq!(
+        super::finalize_denied_delivery(&sessions, &conversation, Ok(()), false),
+        Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED".into())
+    );
+    assert!(sessions.lock().contains_key("late-turn"));
+    super::finalize_denied_delivery(&sessions, &conversation, Ok(()), true).unwrap();
+    assert!(sessions.lock().is_empty());
+}
