@@ -284,6 +284,9 @@ class ReconcileTests(unittest.TestCase):
             finally:
                 competing.execute("ROLLBACK")
                 competing.close()
+            # The fixture intentionally fails its FIRST STOP acknowledgement;
+            # isolate database contention rather than testing STOP retry here.
+            sender.stops = 1
             self.assertTrue(drain_shutdown(lifecycle, timeout=1.5))
             self.assertEqual(
                 lifecycle.status_with_stop_confirmation("active"),
