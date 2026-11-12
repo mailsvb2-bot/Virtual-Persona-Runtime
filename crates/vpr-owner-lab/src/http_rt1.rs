@@ -578,6 +578,15 @@ fn visitor_text(
     // A revoked session may not receive a buffered LLM result even when
     // the provider returns after authority was withdrawn.
     if !conversation.is_active() {
+        // A late owner revoke after the LLM turn must also initiate remote
+        // STOP. Keep the registration if either sender remains unconfirmed.
+        let receipt_path = conversation.has_remote_video_stop_receipt_path();
+        let _ = finalize_denied_delivery(
+            &state.rt1.conversations,
+            &conversation,
+            conversation.close(),
+            receipt_path,
+        );
         return Err(error_response(409, "RT1_VISITOR_TEXT_DENIED"));
     }
     Ok((json_response(200, &result), conversation))
@@ -601,6 +610,15 @@ fn visitor_voice(
         .voice_turn(body.pcm)
         .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
     if !conversation.is_active() {
+        // The microphone turn may have started remote media before revoke.
+        // Do not leave it running merely because the HTTP reply is denied.
+        let receipt_path = conversation.has_remote_video_stop_receipt_path();
+        let _ = finalize_denied_delivery(
+            &state.rt1.conversations,
+            &conversation,
+            conversation.close(),
+            receipt_path,
+        );
         return Err(error_response(409, "RT1_VISITOR_VOICE_DENIED"));
     }
     Ok((json_response(200, &result), conversation))
