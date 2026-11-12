@@ -114,13 +114,14 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   // could starve its actual ES-module imports and fabricate a bootstrap hang.
   // No wait, mock, retry or timeout increase: the browser's own imports must
   // finish and real canonical owner workflow state must already be ready.
-  // Reference capture is a separate module entry, not a dependency of
-  // app.js. Owner workflow readiness may happen first; wait for its actual
-  // requestfinished event instead of taking a one-time racing snapshot.
-  // This is an assertion on the same navigation, NOT a test retry.
+  // Assert the main app dependency graph, not an independent entry script.
+  // reference-capture.js loads separately from index.html and is checked
+  // below as a full-size static asset; it is not a prerequisite for owner
+  // bootstrap. A network-delayed independent module must not falsely fail
+  // a working canonical owner journey.
   await expect.poll(() => [...finishedModules], { timeout: 20_000 })
     .toEqual(expect.arrayContaining([
-      "/app.js", "/reference-capture.js", "/bootstrap-context.js",
+      "/app.js", "/owner-capture.js", "/bootstrap-context.js",
     ]));
 
   // Still exercise simultaneous nonempty static asset responses against the
