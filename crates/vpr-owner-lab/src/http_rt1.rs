@@ -189,20 +189,18 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
             if request.respond(routed.response).is_err() && must_compensate {
                 conversation.revoke_undelivered_start();
             }
+        } else if must_compensate {
+            conversation.revoke_undelivered_start();
+            // Revocation intent is not a remote audio/video STOP receipt.
+            // Report the exact unconfirmed outcome without exposing the
+            // provider's private error payload to the visitor.
+            let response = delivery_denied_after_revoke(
+                conversation.has_remote_video_stop_receipt_path(),
+                conversation.remote_media_stop_confirmed(),
+            );
+            let _ = request.respond(response);
         } else {
-            if must_compensate {
-                conversation.revoke_undelivered_start();
-                // Revocation intent is not a remote audio/video STOP receipt.
-                // Report the exact unconfirmed outcome without exposing the
-                // provider's private error payload to the visitor.
-                let response = delivery_denied_after_revoke(
-                    conversation.has_remote_video_stop_receipt_path(),
-                    conversation.remote_media_stop_confirmed(),
-                );
-                let _ = request.respond(response);
-            } else {
-                let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
-            }
+            let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
         }
     } else {
         let _ = request.respond(routed.response);
