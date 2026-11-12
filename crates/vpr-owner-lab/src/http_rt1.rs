@@ -151,6 +151,11 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
                 let _ = request.respond(routed.response);
             }
             Err(_) => {
+                // A revoked START may have allocated remote media before the
+                // browser delivery fence failed. Trigger the canonical STOP
+                // callback now; do not discard the registry's retry handle
+                // when the remote audio/video outcome is uncertain.
+                let _ = conversation.close();
                 let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
             }
         }
