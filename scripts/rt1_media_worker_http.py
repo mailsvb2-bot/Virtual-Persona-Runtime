@@ -9,6 +9,7 @@ import base64
 import binascii
 import hmac
 import json
+import sqlite3
 import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
@@ -413,12 +414,12 @@ def handler_for(
                                     self._send_fenced(410, {
                                         "error": "operation revoked",
                                     })
-                    except (OSError, RuntimeError) as error:
-                        # CREATE may have started both RTP senders, but the
-                        # client did not receive a usable authoritative ID.
-                        # Cancel through the ONE durable dual-track STOP path.
-                        # A partial HTTP response must never be followed by a
-                        # second response on that socket.
+                    except Exception as error:
+                        # Publication can fail AFTER real allocation even if
+                        # the socket is fine: SQLite BEGIN IMMEDIATE can hit
+                        # SQLITE_BUSY. Every error on this boundary MUST
+                        # compensate the exact sender, not only OSError and
+                        # RuntimeError. Never produce a fictional STOP receipt.
                         if isinstance(error, OSError):
                             self.close_connection = True
                         try:
@@ -427,16 +428,27 @@ def handler_for(
                                 min(stop_timeout_seconds, 0.5),
                             )
                         except Exception:
-                            # The reconciler must retry an unverified STOP.
-                            pass
-                        if isinstance(error, RuntimeError):
+                            # If SQLite also rejected CANCEL, the row may
+                            # still say 'active'. Fence ALL later CREATEs in
+                            # this process and make the ONE existing periodic
+                            # STOP reconciler quarantine this unacknowledged
+                            # sender once the writer lock becomes available.
+                            lifecycle.request_shutdown()
+                        if isinstance(error, (sqlite3.Error, RuntimeError)):
                             try:
-                                self._send(409, {
-                                    "error": "media create delivery unavailable",
-                                    "stop_confirmed": False,
-                                })
+                                self._send(
+                                    503 if isinstance(error, sqlite3.Error) else 409,
+                                    {
+                                        "error": "media create delivery unavailable",
+                                        "stop_confirmed": False,
+                                    },
+                                )
                             except OSError:
                                 self.close_connection = True
+                        else:
+                            # Unknown failures could occur after a partial
+                            # write; no second HTTP response is ever safe.
+                            self.close_connection = True
                     return
                 else:
                     receipt = lifecycle.cancel_bounded(
