@@ -1,4 +1,5 @@
 """Durable STOP retry: transient network loss must not allow media resurrection."""
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -242,6 +243,75 @@ class ReconcileTests(unittest.TestCase):
         except RuntimeError:
             return False
         return True
+
+    def test_shutdown_waits_for_late_both_track_receipt_within_global_deadline(self):
+        class LateSender(FlakySender):
+            def stop(self, operation_id, session_id, generation):
+                self.stops += 1
+                time.sleep(1.25)
+                self.active = False
+                return StopReceipt(operation_id, session_id, generation, True, True)
+
+        with tempfile.TemporaryDirectory() as directory:
+            sender = LateSender()
+            lifecycle = MediaLifecycle(Path(directory) / "media.db", sender)
+            lifecycle.create("late-stop", 1)
+            started = time.monotonic()
+            self.assertTrue(drain_shutdown(lifecycle, timeout=2.5))
+            self.assertGreaterEqual(time.monotonic() - started, 1.2)
+            self.assertLess(time.monotonic() - started, 2.5)
+            self.assertEqual(
+                lifecycle.status_with_stop_confirmation("late-stop"),
+                (1, "stopped", "flaky-session", True),
+            )
+            self.assertEqual(sender.stops, 1)
+
+    def test_shutdown_quarantine_obeys_deadline_when_sqlite_writer_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "media.db"
+            sender = FlakySender()
+            lifecycle = MediaLifecycle(path, sender)
+            lifecycle.create("active", 1)
+            competing = sqlite3.connect(path, isolation_level=None)
+            try:
+                competing.execute("BEGIN IMMEDIATE")
+                started = time.monotonic()
+                self.assertFalse(drain_shutdown(lifecycle, timeout=0.07))
+                self.assertLess(time.monotonic() - started, 0.35)
+                with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                    lifecycle.create("late", 1)
+                self.assertEqual(lifecycle.status("active")[1], "active")
+            finally:
+                competing.execute("ROLLBACK")
+                competing.close()
+            self.assertTrue(drain_shutdown(lifecycle, timeout=1.5))
+            self.assertEqual(
+                lifecycle.status_with_stop_confirmation("active"),
+                (1, "stopped", "flaky-session", True),
+            )
+
+    def test_shutdown_lock_wait_obeys_deadline_when_inprocess_writer_busy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lifecycle = MediaLifecycle(Path(directory) / "media.db", FlakySender())
+            started_lock = threading.Event()
+            release_lock = threading.Event()
+
+            def hold_lock():
+                with lifecycle._lock:
+                    started_lock.set()
+                    release_lock.wait(2)
+
+            worker = threading.Thread(target=hold_lock)
+            worker.start()
+            try:
+                self.assertTrue(started_lock.wait(1))
+                start = time.monotonic()
+                self.assertFalse(drain_shutdown(lifecycle, timeout=0.06))
+                self.assertLess(time.monotonic() - start, 0.3)
+            finally:
+                release_lock.set()
+                worker.join(timeout=1)
+            self.assertTrue(drain_shutdown(lifecycle, timeout=0.5))
 
     def test_reconciler_rejects_nonpositive_interval(self):
         with tempfile.TemporaryDirectory() as directory:
