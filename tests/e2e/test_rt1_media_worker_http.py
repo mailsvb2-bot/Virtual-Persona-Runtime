@@ -525,6 +525,84 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(late.exception.code, 410)
         self.assertEqual(len(self.backend.pcm_pushes), 1)
 
+    def test_pcm_lost_backend_ack_and_sqlite_cancel_failure_fences_new_create(self):
+        """An accepted PCM chunk is unsafe when durable CANCEL cannot commit."""
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+
+        def accepted_then_failed(operation_id, session_id, generation, payload):
+            self.backend.pcm_pushes.append(
+                (operation_id, session_id, generation, payload)
+            )
+            raise TimeoutError("PCM accepted, provider acknowledgement lost")
+
+        def sqlite_locked(*_args, **_kwargs):
+            raise sqlite3.OperationalError("simulated CANCEL persistence failure")
+
+        self.backend.push_pcm = accepted_then_failed
+        self.lifecycle.cancel_bounded = sqlite_locked
+        request = Request(
+            self.url + "/pcm", data=body, method="POST",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with self.assertRaises(HTTPError) as result:
+            urlopen(request, timeout=3)
+        self.assertEqual(result.exception.code, 409)
+        self.assertIs(json.load(result.exception)["stop_confirmed"], False)
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+        self.assertTrue(self.lifecycle._closing.is_set())
+        self.assertEqual(self.backend.stops, 0)
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertNotEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        # The SAME worker reconciler can quarantine the former active row and
+        # stop both RTP senders; a failed CANCEL is never a STOP receipt.
+        self.lifecycle.reconcile()
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+
+    def test_pcm_lost_http_ack_compensates_without_second_response(self):
+        """A partial successful audio response must not be followed by a 409."""
+        self.assertEqual(self.request("PUT")[0], 200)
+        pcm = bytes([1, 0]) * 320
+        body = json.dumps({
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000, "channels": 1,
+        }).encode()
+        original = self.server.RequestHandlerClass._send_fenced
+        writes = []
+
+        def failed_audio_ack(handler, status, payload):
+            writes.append(status)
+            if status == 200 and "accepted_bytes" in payload:
+                raise BrokenPipeError("simulated lost PCM HTTP acknowledgement")
+            return original(handler, status, payload)
+
+        self.server.RequestHandlerClass._send_fenced = failed_audio_ack
+        request = Request(
+            self.url + "/pcm", data=body, method="POST",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        from http.client import RemoteDisconnected
+        from urllib.error import URLError
+        with self.assertRaises((RemoteDisconnected, URLError)):
+            urlopen(request, timeout=3)
+        self.assertEqual(writes.count(200), 1)
+        self.assertEqual(len(writes), 1, "a second reply followed lost HTTP 200")
+        self.assertEqual(len(self.backend.pcm_pushes), 1)
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+
     def test_failed_pcm_stop_remains_quarantined_not_falsely_verified(self):
         self.assertEqual(self.request("PUT")[0], 200)
         pcm = bytes([1, 0]) * 320
