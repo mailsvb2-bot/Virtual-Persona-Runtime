@@ -77,7 +77,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
   const appAssets = [
-    "/", "/styles.css", "/app.js", "/tts-selector.js",
+    "/", "/styles.css", "/app.js", "/bootstrap-watchdog.js", "/tts-selector.js",
     "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
     "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
     "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
@@ -281,4 +281,16 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   const speech = requests.find((entry) => entry.method === "POST" && entry.path.endsWith("/stream-1"));
   expect(speech?.body).toContain("Проверка низкоуровневого avatar speak");
   expect(requests.every((entry) => entry.authorization === "Basic backend-e2e-secret")).toBeTruthy();
+});
+
+// The local Owner Lab must visibly recover when the real browser cannot
+// download its main module. No egress or test-only bootstrap route is added.
+test("Owner Lab reports blocked module and offers real reload", async ({ page }) => {
+  await page.route("**/app.js", async (route) => route.abort("failed"));
+  await page.goto("/", { waitUntil: "commit" });
+  const status = page.locator("#status");
+  await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
 });

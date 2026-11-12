@@ -17,17 +17,16 @@ mod http_voice;
 mod launch;
 mod rt1_startup;
 
+use http_json::{parse_empty_json, parse_json, read_body};
+use http_session::reject_if_session_ending;
+use parking_lot::Mutex as ParkingMutex;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-
-use http_json::{parse_empty_json, parse_json, read_body};
-use http_session::reject_if_session_ending;
-use parking_lot::Mutex as ParkingMutex;
-use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
@@ -47,6 +46,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; connect-src 'self' ht
 const HEX: &[u8; 16] = b"0123456789abcdef";
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/dist/app.js");
+const BOOTSTRAP_WATCHDOG_JS: &str = include_str!("../ui/bootstrap-watchdog.js");
 const TTS_SELECTOR_JS: &str = include_str!("../ui/dist/tts-selector.js");
 const INTERRUPTED_ANSWER_JS: &str = include_str!("../ui/dist/interrupted-answer.js");
 const OWNER_CAPTURE_JS: &str = include_str!("../ui/dist/owner-capture.js");
@@ -241,6 +241,7 @@ fn static_get_response(path: &str) -> Option<HttpResponse> {
     let response = match path {
         "/" => static_response(INDEX_HTML, "text/html; charset=utf-8"),
         "/app.js" => static_response(APP_JS, JS_MIME),
+        "/bootstrap-watchdog.js" => static_response(BOOTSTRAP_WATCHDOG_JS, JS_MIME),
         "/tts-selector.js" => static_response(TTS_SELECTOR_JS, JS_MIME),
         "/interrupted-answer.js" => static_response(INTERRUPTED_ANSWER_JS, JS_MIME),
         "/owner-capture.js" => static_response(OWNER_CAPTURE_JS, JS_MIME),
