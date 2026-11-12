@@ -86,7 +86,7 @@ pub(super) fn visitor_start(
         // The unverified D-ID route is deliberately never promoted.
         return Err(error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
     };
-    let (conversation, bundle) = started.map_err(startup_errors::startup_error_response)?;
+    let (conversation, bundle) = started.map_err(|reason| startup_errors::startup_error_response(&reason))?;
     // Register before checking revocation: if STOP is uncertain, the
     // quarantined server-side handle must survive even though the browser
     // never received a usable SDP/session ID.
