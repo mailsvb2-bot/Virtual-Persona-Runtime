@@ -4,7 +4,7 @@ use super::{
     AppState, HttpResponse, ProviderBundle, RegistrationFailure, Rt1OwnerController,
     Rt1RemoteMediaRevocation, Rt1VisitorConversation, VisitorStart, error_response,
     finalize_registered_stop, json_response, new_visitor_session_id, parse_json, register_visitor,
-    restore_reviewed_persona, verified_worker,
+    restore_reviewed_persona, startup_errors, verified_worker,
 };
 use std::sync::Arc;
 
@@ -86,8 +86,7 @@ pub(super) fn visitor_start(
         // The unverified D-ID route is deliberately never promoted.
         return Err(error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED"));
     };
-    let (conversation, bundle) =
-        started.map_err(|_| error_response(409, "RT1_VISITOR_START_DENIED"))?;
+    let (conversation, bundle) = started.map_err(startup_errors::startup_error_response)?;
     // Register before checking revocation: if STOP is uncertain, the
     // quarantined server-side handle must survive even though the browser
     // never received a usable SDP/session ID.
