@@ -101,20 +101,24 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     // runner an otherwise usable Owner Lab can remain stuck at that browser
     // milestone even while its bootstrap and canonical API path are healthy.
     // Check that the real app executes and finishes bootstrap instead.
+    // The independent watchdog can replace "Загрузка…" with a failure
+    // notice. That is NOT a successful Owner Lab bootstrap or user readiness.
     await expect(
-      page.locator("#status"),
-      "Owner Lab must run its JavaScript and finish backend bootstrap",
-    ).not.toHaveText("Загрузка…", { timeout: 20_000 });
+      page.locator("#workflow-state"),
+      "Owner Lab must actually load canonical owner workflow state",
+    ).toContainText("Ожидает проверки владельцем", { timeout: 20_000 });
+    await expect(page.locator("#status")).not.toContainText("Интерфейс не загрузился");
   } catch (error) {
+    const displayedStatus = (await page.locator("#status").textContent().catch(() => ""))?.trim();
     throw new Error(
       `Owner Lab failed to initialize; pendingPaths=${JSON.stringify([...pending].map(req => safePath(req.url())))}; ` +
       `failedPaths=${JSON.stringify(failed)}; scriptFailures=${JSON.stringify(scriptFailures)}; ` +
-      `pageErrorNames=${JSON.stringify(pageErrorNames)}; readiness=${String(error)}`,
+      `pageErrorNames=${JSON.stringify(pageErrorNames)}; status=${JSON.stringify(displayedStatus)}; ` +
+      `readiness=${String(error)}`,
     );
   }
 
   await expect(page.locator("#owner-workflow")).toBeVisible();
-  await expect(page.locator("#workflow-state")).toContainText("Ожидает проверки владельцем");
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
   await expect(page.locator("#workflow-next")).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
