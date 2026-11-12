@@ -76,12 +76,21 @@ def main():
     reconciler.start()
 
     def request_shutdown(_signum, _frame):
-        # Signal callbacks cannot call server.shutdown() on the serving
-        # thread: BaseServer.shutdown waits for serve_forever to exit.
-        # Fence admission immediately, then wake the server on another thread.
-        lifecycle.begin_shutdown()
+        # A Python signal callback must never block on the SQLite writer lock
+        # or BaseServer.shutdown. Fence admission immediately, then let a
+        # separate control thread persist quarantine before ending serve_forever.
+        lifecycle.request_shutdown()
+
+        def finish_signal_shutdown():
+            try:
+                lifecycle.begin_shutdown()
+            finally:
+                server.shutdown()
+
         threading.Thread(
-            target=server.shutdown, name="rt1-graceful-shutdown", daemon=True
+            target=finish_signal_shutdown,
+            name="rt1-graceful-shutdown",
+            daemon=True,
         ).start()
 
     previous_term = signal.signal(signal.SIGTERM, request_shutdown)
@@ -89,15 +98,26 @@ def main():
         try:
             server.serve_forever()
         finally:
-            # Also covers KeyboardInterrupt, unexpected server errors and
-            # ordinary return. Never leave active CREATE permitted.
-            lifecycle.begin_shutdown()
-            server.server_close()
-            shutdown.set()
-            reconciler.join(timeout=3)
-            drain_shutdown(lifecycle)
-            # Last-resort local track closure is NOT a durable remote receipt.
-            backend.shutdown()
+            # This also covers KeyboardInterrupt and server faults. Always
+            # close local senders, even if the durable ledger cannot be read.
+            lifecycle.request_shutdown()
+            confirmed = False
+            try:
+                lifecycle.begin_shutdown()
+            finally:
+                server.server_close()
+                shutdown.set()
+                reconciler.join(timeout=3)
+                try:
+                    confirmed = drain_shutdown(lifecycle)
+                finally:
+                    # Local track teardown is not a verified durable receipt.
+                    backend.shutdown()
+            if not confirmed:
+                raise RuntimeError(
+                    "RT1 worker shutdown: remote STOP unconfirmed; "
+                    "durable allocation remains quarantined"
+                )
     finally:
         signal.signal(signal.SIGTERM, previous_term)
 
