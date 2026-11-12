@@ -293,6 +293,81 @@ class HttpLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.request("PUT")[0], 409)
 
+    def test_create_ack_failure_unverified_stopped_row_fences_new_allocation(self):
+        """Legacy 'stopped' without dual RTP receipts is NOT compensation."""
+        from http.client import RemoteDisconnected
+        from urllib.error import URLError
+
+        original_send = self.server.RequestHandlerClass._send_fenced
+        def fail_create_ack(handler, status, body):
+            if status == 200 and body.get("session_id") == "media-1":
+                raise BrokenPipeError("CREATE session-id delivery lost")
+            return original_send(handler, status, body)
+
+        def failed_cancel_after_unverified_write(operation_id, generation, timeout):
+            # Emulate legacy/incomplete durable STOP migration: the phase says
+            # stopped, but neither sender was independently confirmed stopped.
+            self.lifecycle._db.execute(
+                "UPDATE media_operations SET phase='stopped', stop_verified=0 "
+                "WHERE id=? AND generation=?",
+                (operation_id, generation),
+            )
+            raise sqlite3.OperationalError("CANCEL confirmation lost")
+
+        self.server.RequestHandlerClass._send_fenced = fail_create_ack
+        self.lifecycle.cancel_bounded = failed_cancel_after_unverified_write
+        with self.assertRaises((RemoteDisconnected, URLError)):
+            self.request("PUT")
+
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.backend.stops, 0)
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", False),
+        )
+        self.assertTrue(self.lifecycle._closing.is_set())
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertNotEqual(self.request("PUT")[0], 200)
+        self.lifecycle.reconcile()
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+        self.assertEqual(self.backend.stops, 1)
+
+    def test_create_ack_failed_cancel_with_real_stop_receipt_keeps_worker_available(self):
+        """Only a durable dual-track STOP receipt permits another operation."""
+        from http.client import RemoteDisconnected
+        from urllib.error import URLError
+
+        original_send = self.server.RequestHandlerClass._send_fenced
+        original_cancel = self.lifecycle.cancel_bounded
+
+        def fail_create_ack(handler, status, body):
+            if status == 200 and body.get("session_id") == "media-1":
+                raise BrokenPipeError("lost CREATE delivery after allocation")
+            return original_send(handler, status, body)
+
+        def stop_then_report_failed_ack(operation_id, generation, timeout):
+            receipt = original_cancel(operation_id, generation, timeout)
+            self.assertTrue(receipt.audio_stopped)
+            self.assertTrue(receipt.video_stopped)
+            raise TimeoutError("provider-side cancellation ACK was lost")
+
+        self.server.RequestHandlerClass._send_fenced = fail_create_ack
+        self.lifecycle.cancel_bounded = stop_then_report_failed_ack
+        with self.assertRaises((RemoteDisconnected, URLError)):
+            self.request("PUT")
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+        self.assertFalse(self.lifecycle._closing.is_set())
+        self.server.RequestHandlerClass._send_fenced = original_send
+        self.lifecycle.cancel_bounded = original_cancel
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertEqual(self.request("PUT")[0], 200)
+
     def test_lost_create_http_ack_compensates_dual_track_sender(self):
         # The client lost the newly created sender ID after successful CREATE.
         # This is not the backend allocate() timeout case: HTTP delivery alone

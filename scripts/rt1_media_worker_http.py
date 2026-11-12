@@ -444,32 +444,13 @@ def handler_for(
                         # RuntimeError. Never produce a fictional STOP receipt.
                         if isinstance(error, OSError):
                             self.close_connection = True
-                        try:
-                            lifecycle.cancel_bounded(
-                                operation_id, generation,
-                                min(stop_timeout_seconds, 0.5),
-                            )
-                        except Exception:
-                            # A backend STOP may fail AFTER durable CANCEL
-                            # already entered 'uncertain' or 'stopping'. That
-                            # sender is safely quarantined: the reconciler can
-                            # retry without permanently shutting down all
-                            # future independent sessions. A SQLite write
-                            # failure, by contrast, may leave the row active.
-                            try:
-                                quarantined = lifecycle.status(operation_id)
-                            except Exception:
-                                quarantined = None
-                            if not (
-                                quarantined is not None
-                                and quarantined[0] == generation
-                                and quarantined[2] == session_id
-                                and quarantined[1] in ("stopping", "uncertain", "stopped")
-                            ):
-                                # No durable quarantine evidence: fail closed
-                                # locally and let the ONE periodic reconciler
-                                # quarantine the row once SQLite is writable.
-                                lifecycle.request_shutdown()
+                        # CREATE, OFFER, ANSWER and PCM all use the SAME
+                        # durable STOP coordinator. In particular a legacy
+                        # 'stopped' row without independent sender receipts is
+                        # NOT a safe quarantine and must fence further CREATEs.
+                        compensate_failed_publication(
+                            operation_id, generation, session_id
+                        )
                         if isinstance(error, (sqlite3.Error, RuntimeError)):
                             try:
                                 self._send(
