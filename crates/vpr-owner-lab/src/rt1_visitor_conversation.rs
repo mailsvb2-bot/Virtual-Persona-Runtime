@@ -534,17 +534,13 @@ impl Rt1VisitorConversation {
             .remote
             .as_ref()
             .map_or(Ok(()), |remote| remote.revoke_confirmed());
-        let local_stop = if self.interrupt.stop_in_flight.load(Ordering::Acquire) {
-            // A revoke callback still owns provider STOP: never compete with
-            // it through the engine or report the outcome as confirmed.
-            Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into())
-        } else if self
+        let local_stop = if self
             .interrupt
             .provider_quiescent(Duration::from_millis(250))
         {
-            // A new turn may grab the engine mutex after quiescence checks.
-            // An unconfirmed stop must fail closed rather than block revoke.
-            stop_if_uncontended(&self.engine)
+            // Acquire the SAME atomic STOP ownership as the revoke callback.
+            // A read-only check allows a second STOP to race after it returns.
+            interrupt_stop::stop_engine_serialized(&self.interrupt, &self.engine)
         } else {
             // Do not wait on an engine mutex held by a stalled provider and
             // do not claim confirmed close. The HTTP registry retains this
@@ -565,9 +561,7 @@ impl Drop for Rt1VisitorConversation {
         }
         // Drop cannot wait for a provider that still owns the engine mutex.
         // This is best-effort cleanup, never a verified remote STOP receipt.
-        if !self.interrupt.stop_in_flight.load(Ordering::Acquire) {
-            let _ = stop_if_uncontended(&self.engine);
-        }
+        let _ = interrupt_stop::stop_engine_serialized(&self.interrupt, &self.engine);
     }
 }
 
