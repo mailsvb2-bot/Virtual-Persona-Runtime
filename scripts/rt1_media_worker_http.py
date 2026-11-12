@@ -63,7 +63,7 @@ def handler_for(
         raise ValueError("invalid HTTP body deadline")
 
     def compensate_failed_publication(operation_id: str, generation: int, session_id: str):
-        """One durable STOP path for an offer/answer that may have started RTP.
+        """One durable STOP path for media creation, signaling or PCM side effects.
 
         Failure to persist CANCEL is not a verified STOP. Fence all new CREATEs
         until the same reconciler can quarantine the existing sender.
@@ -300,20 +300,20 @@ def handler_for(
                     # publication transaction and the physical STOP lock.
                     # Unconfirmed STOP stays in the durable ledger; no retry
                     # of PCM is authorized.
-                    try:
-                        lifecycle.cancel_bounded(
-                            operation_id, row[0], min(stop_timeout_seconds, 0.5)
-                        )
-                    except Exception:
-                        pass
-                    if not response_started:
+                    compensate_failed_publication(operation_id, row[0], row[2])
+                    if response_started:
+                        # A provider push may succeed but its final HTTP 200
+                        # may be partially written or lost. Never attempt a
+                        # second response or let this connection be reused.
+                        self.close_connection = True
+                    else:
                         try:
                             self._send(409, {
                                 "error": "PCM delivery unavailable",
                                 "stop_confirmed": False,
                             })
                         except OSError:
-                            pass
+                            self.close_connection = True
                 return
             if method == "POST" and len(segments) == 5 and segments[4] == "answer":
                 row = lifecycle.status(operation_id)
