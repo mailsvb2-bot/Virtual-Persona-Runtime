@@ -132,10 +132,7 @@ pub(super) struct Rt1RoutedResponse {
 
 /// Never present an unverified dual-track STOP as a routine browser denial.
 /// Reuses only the existing remote media worker and cleanup coordinator.
-fn delivery_denied_after_revoke(
-    remote_stop_path: bool,
-    stop_confirmed: bool,
-) -> HttpResponse {
+fn delivery_denied_after_revoke(remote_stop_path: bool, stop_confirmed: bool) -> HttpResponse {
     if !remote_stop_path {
         return error_response(502, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
     }
