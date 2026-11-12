@@ -82,10 +82,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   page.on("pageerror", (error) => pageErrorNames.push(error.name));
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
-
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
@@ -143,6 +139,14 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
     expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
   }
+
+  // A competing Playwright HTTP request before real module bootstrap can
+  // starve the same bounded Rust HTTP worker pool under constrained CI load.
+  // First prove the actual browser graph and static-asset stress completed,
+  // then obtain the CSRF token through the real authenticated backend route.
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
 
   await expect(page.locator("#owner-workflow")).toBeVisible();
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
