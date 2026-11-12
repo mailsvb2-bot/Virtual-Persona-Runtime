@@ -363,6 +363,8 @@ class HttpLifecycleTests(unittest.TestCase):
             (1, "stopped", "media-1", True),
         )
         self.assertFalse(self.lifecycle._closing.is_set())
+        self.server.RequestHandlerClass._send_fenced = original_send
+        self.lifecycle.cancel_bounded = original_cancel
         self.url = self.url.replace("operation-1", "operation-2")
         self.assertEqual(self.request("PUT")[0], 200)
 
