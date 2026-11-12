@@ -55,6 +55,8 @@ mod cleanup;
 pub(super) use cleanup::spawn_cleanup_reconciler;
 #[path = "http_rt1_start.rs"]
 mod start;
+#[path = "http_rt1_start_errors.rs"]
+mod startup_errors;
 #[path = "http_rt1_verified_worker.rs"]
 mod verified_worker;
 use start::visitor_start;
