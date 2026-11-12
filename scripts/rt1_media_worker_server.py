@@ -82,10 +82,9 @@ def main():
         lifecycle.request_shutdown()
 
         def finish_signal_shutdown():
-            try:
-                lifecycle.begin_shutdown()
-            finally:
-                server.shutdown()
+            # The main thread owns bounded SQLite quarantine and dual-track
+            # STOP in its finally block. Never consume that grace budget here.
+            server.shutdown()
 
         threading.Thread(
             target=finish_signal_shutdown,
@@ -103,16 +102,14 @@ def main():
             lifecycle.request_shutdown()
             confirmed = False
             try:
-                lifecycle.begin_shutdown()
-            finally:
                 server.server_close()
                 shutdown.set()
                 reconciler.join(timeout=3)
-                try:
-                    confirmed = drain_shutdown(lifecycle)
-                finally:
-                    # Local track teardown is not a verified durable receipt.
-                    backend.shutdown()
+                confirmed = drain_shutdown(lifecycle)
+            finally:
+                # Even SQLite quarantine failure cannot skip local teardown.
+                # Local track closure remains distinct from verified STOP.
+                backend.shutdown()
             if not confirmed:
                 raise RuntimeError(
                     "RT1 worker shutdown: remote STOP unconfirmed; "
