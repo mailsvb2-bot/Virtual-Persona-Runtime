@@ -140,7 +140,7 @@
         <span>Я разрешаю отправку данных выбранным внешним провайдерам (аватар, распознавание речи и языковая модель) для этой тестовой сессии.</span>
       </label>
       <div class="row">
-        <button id="connect" class="primary">Подключить аватар</button>
+        <button id="connect" class="primary" disabled>Подключить аватар</button>
         <button id="revoke" disabled>Отозвать доступ</button>
         <button id="close" disabled>Закрыть</button>
       </div>
@@ -219,6 +219,7 @@
       <pre id="evidence">Ожидание…</pre>
     </section>
   </main>
+  <script async src="/bootstrap-watchdog.js"></script>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/tts-selector.js"></script>
   <script type="module" src="/evidence-export.js"></script>
