@@ -642,6 +642,10 @@ class MediaLifecycle:
                     raise
             return receipt
 
+    def request_shutdown(self) -> None:
+        """Immediately fence new CREATE before slow SQLite or network work."""
+        self._closing.set()
+
     def begin_shutdown(self) -> None:
         """Fence new allocations and persist a durable revoke for every sender.
 
@@ -649,7 +653,7 @@ class MediaLifecycle:
         recovery. No separate worker or authority is created, and a local
         track.close() is never counted as remote two-track STOP evidence.
         """
-        self._closing.set()
+        self.request_shutdown()
         self.quarantine_after_restart()
 
     def revoke_all_bounded(self, timeout: float) -> bool:
