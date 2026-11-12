@@ -62,6 +62,28 @@ def handler_for(
     if not 0 < body_timeout_seconds <= 60:
         raise ValueError("invalid HTTP body deadline")
 
+    def compensate_failed_publication(operation_id: str, generation: int, session_id: str):
+        """One durable STOP path for an offer/answer that may have started RTP.
+
+        Failure to persist CANCEL is not a verified STOP. Fence all new CREATEs
+        until the same reconciler can quarantine the existing sender.
+        """
+        try:
+            lifecycle.cancel_bounded(operation_id, generation, min(stop_timeout_seconds, 0.5))
+        except Exception:
+            try:
+                state = lifecycle.status_with_stop_confirmation(operation_id)
+            except Exception:
+                state = None
+            if not (
+                state is not None
+                and state[0] == generation
+                and state[2] == session_id
+                and (state[1] in ("stopping", "uncertain") or
+                     (state[1] == "stopped" and state[3]))
+            ):
+                lifecycle.request_shutdown()
+
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: dict):
             raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
@@ -164,33 +186,39 @@ def handler_for(
                     # A provider can allocate both RTP senders and then fail
                     # while constructing SDP. Never leave that known sender
                     # active after the only signaling path failed.
-                    try:
-                        lifecycle.cancel_bounded(operation_id, row[0], 0.5)
-                    except Exception:
-                        pass
-                    self._send(409, {"error": "media offer unavailable"})
+                    compensate_failed_publication(operation_id, row[0], row[2])
+                    self._send(409, {
+                        "error": "media offer unavailable", "stop_confirmed": False,
+                    })
                     return
                 # The final ledger check and HTTP delivery MUST share the
                 # exact same OS-held lock as STOP. Otherwise DELETE can
                 # confirm both RTP senders between the check and _send(200),
                 # exposing a revoked SDP offer to a late browser response.
+                write_started = False
                 try:
                     with lifecycle._exclusive_stop():
                         with lifecycle._active_publication_transaction(operation_id, row) as active:
+                            write_started = True
                             if not active:
                                 self._send_fenced(410, {"error": "operation revoked"})
                             else:
                                 self._send_fenced(200, payload)
-                except OSError:
-                    # CREATE already allocated real RTP senders, but the
-                    # browser did not receive a usable offer. Persist revoke
-                    # and compensate both tracks, even when STOP is uncertain.
-                    try:
-                        lifecycle.cancel_bounded(operation_id, row[0], 0.5)
-                    except Exception:
-                        pass
-                except RuntimeError:
-                    self._send(409, {"error": "media offer unavailable"})
+                except Exception:
+                    # Transaction failure, socket loss or provider STOP races
+                    # can occur after allocation. Never lose the STOP target.
+                    compensate_failed_publication(operation_id, row[0], row[2])
+                    if write_started:
+                        # The HTTP reply could already contain a partial 200.
+                        self.close_connection = True
+                    else:
+                        try:
+                            self._send(409, {
+                                "error": "media offer unavailable",
+                                "stop_confirmed": False,
+                            })
+                        except OSError:
+                            self.close_connection = True
                 return
             if method == "POST" and len(segments) == 5 and segments[4] == "pcm":
                 # This is the existing canonical sender, not a second voice
@@ -308,6 +336,7 @@ def handler_for(
                     self._send(400, {"error": "invalid SDP answer"})
                     return
                 write_failed = False
+                response_started = False
                 try:
                     # Serialize the provider's SDP side effect with the SAME
                     # OS-held gate as confirmed audio/video STOP. A provider
@@ -324,6 +353,7 @@ def handler_for(
                         with lifecycle._active_publication_transaction(operation_id, row) as active:
                             if not active:
                                 raise RuntimeError("operation revoked during answer")
+                            response_started = True
                             try:
                                 self._send_fenced(200, {
                                     "operation_id": operation_id, "accepted": True,
@@ -334,30 +364,22 @@ def handler_for(
                                 # must take the normal failure/409 STOP path.
                                 write_failed = True
                     if write_failed:
-                        # The SDP side effect may have happened. Do not send a
-                        # second HTTP response after a partially written 200.
-                        try:
-                            lifecycle.cancel_bounded(operation_id, row[0], 0.5)
-                        except Exception:
-                            pass
+                        # A partial 200 cannot be followed by another reply.
+                        compensate_failed_publication(operation_id, row[0], row[2])
+                        self.close_connection = True
                 except Exception:
-                    # An answer can fail AFTER the remote peer accepted SDP.
-                    # Revoke via the existing durable STOP coordinator. Its
-                    # uncertain state blocks new allocations until BOTH RTP
-                    # sender shutdown receipts are independently confirmed.
-                    try:
-                        # The failed SDP may already have activated remote
-                        # RTP. Persist CANCEL immediately, but never hold this
-                        # HTTP worker behind a hung compensating provider STOP.
-                        # The durable reconciler owns any late/failed receipt.
-                        lifecycle.cancel_bounded(
-                            operation_id, row[0], min(stop_timeout_seconds, 0.5)
-                        )
-                    except Exception:
-                        pass
-                    self._send(409, {
-                        "error": "media answer unavailable", "stop_confirmed": False,
-                    })
+                    # SDP may have taken effect before error/SQLite failure.
+                    compensate_failed_publication(operation_id, row[0], row[2])
+                    if response_started:
+                        self.close_connection = True
+                    else:
+                        try:
+                            self._send(409, {
+                                "error": "media answer unavailable",
+                                "stop_confirmed": False,
+                            })
+                        except OSError:
+                            self.close_connection = True
                 return
             # Only DELETE may revoke an operation. In particular, POST on the
             # operation resource must never fall through to CANCEL; POST is
