@@ -2,8 +2,8 @@
 //! CREATE/STOP for an ordinary admission denial or expose provider internals.
 use super::{HttpResponse, error_response};
 
-pub(super) fn startup_error_response(reason: String) -> HttpResponse {
-    match reason.as_str() {
+pub(super) fn startup_error_response(reason: &str) -> HttpResponse {
+    match reason {
         "RT1_REMOTE_CREATE_UNCONFIRMED" => {
             // The provider may have created media without returning an ID.
             // Keep the already-registered STOP reconciler as the sole owner.
@@ -25,7 +25,7 @@ mod tests {
     #[test]
     fn unresolved_remote_create_requires_reconciliation_not_client_retry() {
         assert_eq!(
-            startup_error_response("RT1_REMOTE_CREATE_UNCONFIRMED".into())
+            startup_error_response("RT1_REMOTE_CREATE_UNCONFIRMED")
                 .status_code()
                 .0,
             502
@@ -39,7 +39,7 @@ mod tests {
             "RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED",
             "RT1_PROVIDER_START_REVOKED_STOP_UNCONFIRMED",
         ] {
-            assert_eq!(startup_error_response(reason.into()).status_code().0, 502);
+            assert_eq!(startup_error_response(reason).status_code().0, 502);
         }
     }
 
@@ -50,7 +50,7 @@ mod tests {
             "RT1_VISITOR_REVOKED_DURING_CREATE",
             "internal provider secrets must never escape",
         ] {
-            assert_eq!(startup_error_response(reason.into()).status_code().0, 409);
+            assert_eq!(startup_error_response(reason).status_code().0, 409);
         }
     }
 }
