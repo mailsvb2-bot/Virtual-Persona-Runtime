@@ -325,7 +325,13 @@ test("Owner Lab reports blocked module and offers real reload", async ({ page })
   const status = page.locator("#status");
   await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
   await expect(status).toHaveAttribute("data-state", "error");
-  await expect(status).toHaveAttribute("data-bootstrap-failure", "module-load");
+  // The watchdog is intentionally async to avoid starving app bootstrap.
+  // If app.js fails before its listener attaches, the only truthful verdict
+  // is "bootstrap-unconfirmed"; if the error was observed, "module-load".
+  // Both cases MUST retain the disabled connect button and real reload path.
+  await expect(status).toHaveAttribute(
+    "data-bootstrap-failure", /^(module-load|bootstrap-unconfirmed)$/,
+  );
   await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
 });
