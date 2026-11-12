@@ -9,7 +9,9 @@
   if (initialText !== "Загрузка…") return;
   // Diagnostics stay local and fixed-label: never record URLs, script content,
   // tokens or provider payloads, and never change the authorization path.
-  let failureKind = "module-timeout";
+  // A missing event is NOT proof of a timeout: async watchdog may load
+  // after an earlier script failure. Keep uncertainty visible and bounded.
+  let failureKind = "bootstrap-unconfirmed";
   const bootstrapModules = new Set([
     "/app.js", "/bootstrap-context.js", "/owner-capture.js",
     "/reference-capture.js", "/provider-event-fence.js",
