@@ -28,7 +28,13 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
   });
   try {
     await page.goto("/", { waitUntil: "commit", timeout: 30_000 });
-    await expect(page.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+    // The independent watchdog may replace "Загрузка…" with an error while
+    // the owner application never initialized. Only the actual canonical
+    // workflow state is proof that the ES module graph and backend are ready.
+    await expect(page.locator("#workflow-state")).toContainText(
+      "Ожидает проверки владельцем", { timeout: 25_000 },
+    );
+    await expect(page.locator("#status")).not.toContainText("Интерфейс не загрузился");
   } catch (error) {
     throw new Error(`Canonical Owner Lab did not initialize; browserErrors=${JSON.stringify(browserErrors)}; pendingRequests=${JSON.stringify([...pendingRequests])}; failedRequests=${JSON.stringify(failedRequests)}; assertion=${String(error)}`);
   }
