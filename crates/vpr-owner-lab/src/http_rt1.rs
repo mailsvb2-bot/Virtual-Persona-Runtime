@@ -130,6 +130,21 @@ pub(super) struct Rt1RoutedResponse {
     pub delivery: Option<Arc<Rt1VisitorConversation>>,
 }
 
+/// Never present an unverified dual-track STOP as a routine browser denial.
+/// Reuses only the existing remote media worker and cleanup coordinator.
+fn delivery_denied_after_revoke(
+    remote_stop_path: bool,
+    stop_confirmed: bool,
+) -> HttpResponse {
+    if !remote_stop_path {
+        return error_response(502, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+    }
+    if !stop_confirmed {
+        return error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED");
+    }
+    error_response(409, "RT1_VISITOR_DELIVERY_DENIED")
+}
+
 fn guarded_reply(
     result: Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse>,
 ) -> Rt1RoutedResponse {
@@ -180,8 +195,17 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         } else {
             if must_compensate {
                 conversation.revoke_undelivered_start();
+                // Revocation intent is not a remote audio/video STOP receipt.
+                // Report the exact unconfirmed outcome without exposing the
+                // provider's private error payload to the visitor.
+                let response = delivery_denied_after_revoke(
+                    conversation.has_remote_video_stop_receipt_path(),
+                    conversation.remote_media_stop_confirmed(),
+                );
+                let _ = request.respond(response);
+            } else {
+                let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
             }
-            let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
         }
     } else {
         let _ = request.respond(routed.response);
