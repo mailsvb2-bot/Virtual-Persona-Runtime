@@ -107,11 +107,44 @@ pub(super) fn stop_engine_serialized(
         return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
     }
     let result = super::stop_if_uncontended(engine);
+    resume_revoked_after_engine_stop(interrupt);
+    result
+}
+
+/// A revoke can lose the STOP lease to close/Drop even when the local engine
+/// cleanup succeeds. Local success is not an authenticated remote RTP receipt:
+/// replay the pending revoke through the existing canonical callback path.
+fn resume_revoked_after_engine_stop(interrupt: &LiveVisitorInterrupt) {
     interrupt.stop_in_flight.store(false, Ordering::Release);
-    if result.is_err() && interrupt.cancelled.load(Ordering::Acquire) {
-        // The revoke callback may have skipped STOP while close owned the
-        // lease. Failed engine cleanup remains retryable via the same sender.
+    if interrupt.cancelled.load(Ordering::Acquire) {
         dispatch(interrupt);
     }
-    result
+}
+
+#[cfg(test)]
+mod engine_stop_revoke_race_tests {
+    use super::*;
+
+    #[test]
+    fn revoked_engine_stop_releases_lease_without_fabricating_remote_receipt() {
+        let interrupt = LiveVisitorInterrupt::default();
+        interrupt.stop_in_flight.store(true, Ordering::Release);
+        interrupt.cancelled.store(true, Ordering::Release);
+        // Models a successful local engine cleanup with no remote sender
+        // handle yet (e.g. CREATE returned an ambiguous/late session ID).
+        resume_revoked_after_engine_stop(&interrupt);
+        assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+        assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+        assert!(interrupt.cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn ordinary_engine_close_does_not_initiate_remote_revoke() {
+        let interrupt = LiveVisitorInterrupt::default();
+        interrupt.stop_in_flight.store(true, Ordering::Release);
+        resume_revoked_after_engine_stop(&interrupt);
+        assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
+        assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
+        assert!(!interrupt.cancelled.load(Ordering::Acquire));
+    }
 }
