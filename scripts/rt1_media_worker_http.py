@@ -9,6 +9,7 @@ import base64
 import binascii
 import hmac
 import json
+import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
 
@@ -102,15 +103,25 @@ def handler_for(
             if not 1 <= length <= limit:
                 raise ValueError("invalid request length")
             previous_timeout = self.connection.gettimeout()
+            deadline = time.monotonic() + body_timeout_seconds
+            raw = bytearray()
             try:
-                self.connection.settimeout(body_timeout_seconds)
-                raw = self.rfile.read(length)
-                if len(raw) != length:
-                    raise ValueError("incomplete request body")
+                # A per-socket timeout alone is insufficient: a client could
+                # drip one byte before each timeout indefinitely. Every chunk
+                # shares one absolute wall-clock deadline.
+                while len(raw) < length:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("request body deadline exceeded")
+                    self.connection.settimeout(remaining)
+                    chunk = self.rfile.read1(min(16384, length - len(raw)))
+                    if not chunk:
+                        raise ValueError("incomplete request body")
+                    raw.extend(chunk)
                 return json.loads(raw)
             except (OSError, ValueError):
-                # A socket that timed out during buffered reads cannot safely
-                # serve another HTTP request on the same connection.
+                # Timed-out buffered readers must never handle another
+                # request on this socket, even if late bytes arrive.
                 self.close_connection = True
                 raise
             finally:
