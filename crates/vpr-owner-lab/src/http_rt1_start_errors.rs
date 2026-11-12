@@ -26,7 +26,8 @@ mod tests {
     fn unresolved_remote_create_requires_reconciliation_not_client_retry() {
         assert_eq!(
             startup_error_response("RT1_REMOTE_CREATE_UNCONFIRMED".into())
-                .status_code().0,
+                .status_code()
+                .0,
             502
         );
     }
