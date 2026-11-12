@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
-from rt1_media_worker_server import reconcile_until_shutdown
+from rt1_media_worker_server import drain_shutdown, reconcile_until_shutdown
 
 
 class FlakySender:
@@ -143,6 +143,105 @@ class ReconcileTests(unittest.TestCase):
             )
             self.assertFalse(sender.active)
             self.assertEqual(sender.stops, 2)
+
+    def test_graceful_shutdown_revokes_live_sender_and_persists_dual_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sender = FlakySender()
+            # This case has a reliable synchronous STOP, unlike FlakySender's
+            # first failed acknowledgement.
+            sender.stops = 1
+            lifecycle = MediaLifecycle(Path(directory) / "media.db", sender)
+            self.assertEqual(lifecycle.create("live-worker", 1), "flaky-session")
+            self.assertTrue(sender.active)
+            self.assertTrue(drain_shutdown(lifecycle, timeout=2))
+            self.assertFalse(sender.active)
+            self.assertEqual(
+                lifecycle.status_with_stop_confirmation("live-worker"),
+                (1, "stopped", "flaky-session", True),
+            )
+            with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                lifecycle.create("replacement", 1)
+            with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                lifecycle.create_bounded("replacement", 1, 0.1)
+            self.assertEqual(sender.stops, 2)
+            # A second drain must not issue duplicate provider STOP.
+            self.assertTrue(drain_shutdown(lifecycle, timeout=0.1))
+            self.assertEqual(sender.stops, 2)
+
+    def test_graceful_shutdown_failed_stop_remains_durable_and_denies_admission(self):
+        class UnreachableSender(FlakySender):
+            def stop(self, operation_id, session_id, generation):
+                self.stops += 1
+                raise ConnectionError("remote STOP unconfirmed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            sender = UnreachableSender()
+            lifecycle = MediaLifecycle(Path(directory) / "media.db", sender)
+            lifecycle.create("live-worker", 1)
+            self.assertFalse(drain_shutdown(lifecycle, timeout=0.25))
+            self.assertEqual(
+                lifecycle.status_with_stop_confirmation("live-worker"),
+                (1, "uncertain", "flaky-session", False),
+            )
+            with self.assertRaises(RuntimeError):
+                lifecycle.create("replacement", 1)
+            # A new process does not get to infer STOP from local cleanup.
+            restarted = MediaLifecycle(Path(directory) / "media.db", sender)
+            restarted.quarantine_after_restart()
+            self.assertFalse(restarted.status_with_stop_confirmation("live-worker")[3])
+            with self.assertRaises(RuntimeError):
+                restarted.create("replacement", 1)
+
+    def test_shutdown_during_create_blocks_late_admission_and_compensates_sender(self):
+        class PendingSender(FlakySender):
+            def __init__(self):
+                super().__init__()
+                self.entered = threading.Event()
+                self.release = threading.Event()
+
+            def allocate(self, operation_id, generation):
+                self.entered.set()
+                if not self.release.wait(3):
+                    raise RuntimeError("fixture timeout")
+                return super().allocate(operation_id, generation)
+
+            def stop(self, operation_id, session_id, generation):
+                self.stops += 1
+                self.active = False
+                return StopReceipt(operation_id, session_id, generation, True, True)
+
+        with tempfile.TemporaryDirectory() as directory:
+            sender = PendingSender()
+            lifecycle = MediaLifecycle(Path(directory) / "media.db", sender)
+            results = []
+            worker = threading.Thread(target=lambda: results.append(
+                self._capture_create(lifecycle, "pending")
+            ))
+            worker.start()
+            try:
+                self.assertTrue(sender.entered.wait(2))
+                self.assertFalse(drain_shutdown(lifecycle, timeout=0.1))
+                self.assertEqual(lifecycle.status("pending")[1], "uncertain")
+                with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                    lifecycle.create("replacement", 1)
+            finally:
+                sender.release.set()
+                worker.join(timeout=3)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(results, [False], "revoked CREATE must never be admitted")
+            self.assertEqual(
+                lifecycle.status_with_stop_confirmation("pending"),
+                (1, "stopped", "flaky-session", True),
+            )
+            self.assertFalse(sender.active)
+
+    @staticmethod
+    def _capture_create(lifecycle, operation_id):
+        try:
+            lifecycle.create(operation_id, 1)
+        except RuntimeError:
+            return False
+        return True
 
     def test_reconciler_rejects_nonpositive_interval(self):
         with tempfile.TemporaryDirectory() as directory:
