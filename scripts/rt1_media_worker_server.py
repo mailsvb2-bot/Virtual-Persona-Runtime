@@ -49,7 +49,10 @@ def main():
     lifecycle.quarantine_after_restart()
     server = ThreadingHTTPServer(
         ("127.0.0.1", int(os.environ.get("RT1_WORKER_PORT", "8099"))),
-        handler_for(lifecycle, token),
+        handler_for(
+            lifecycle, token,
+            body_timeout_seconds=float(os.environ.get("RT1_WORKER_BODY_TIMEOUT_SECONDS", "5")),
+        ),
     )
     shutdown = threading.Event()
     reconciler = threading.Thread(

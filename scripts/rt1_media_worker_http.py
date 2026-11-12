@@ -9,6 +9,7 @@ import base64
 import binascii
 import hmac
 import json
+import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
 
@@ -49,6 +50,7 @@ def handler_for(
     lifecycle: MediaLifecycle, token: str,
     create_timeout_seconds: float = 4.0,
     stop_timeout_seconds: float = 4.0,
+    body_timeout_seconds: float = 5.0,
 ):
     if not token:
         raise ValueError("RT1 worker authentication token is required")
@@ -56,6 +58,8 @@ def handler_for(
         raise ValueError("invalid CREATE deadline")
     if not 0 < stop_timeout_seconds <= 60:
         raise ValueError("invalid STOP deadline")
+    if not 0 < body_timeout_seconds <= 60:
+        raise ValueError("invalid HTTP body deadline")
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: dict):
@@ -78,6 +82,48 @@ def handler_for(
             try:
                 self.connection.settimeout(0.5)
                 self._send(status, body)
+            finally:
+                self.connection.settimeout(previous_timeout)
+
+        def _read_json_body(self, limit: int):
+            """Bound every authenticated request body, not just its declared size.
+
+            An authenticated peer can send a large Content-Length then stall
+            forever after a prefix. Do not let that hold a worker thread or
+            accidentally parse a later request as the remainder of this one.
+            """
+            if len(self.headers.get_all("Content-Length", [])) != 1:
+                raise ValueError("one Content-Length required")
+            if self.headers.get("Transfer-Encoding") is not None:
+                raise ValueError("chunked/ambiguous body not supported")
+            try:
+                length = int(self.headers["Content-Length"])
+            except (ValueError, TypeError) as error:
+                raise ValueError("invalid Content-Length") from error
+            if not 1 <= length <= limit:
+                raise ValueError("invalid request length")
+            previous_timeout = self.connection.gettimeout()
+            deadline = time.monotonic() + body_timeout_seconds
+            raw = bytearray()
+            try:
+                # A per-socket timeout alone is insufficient: a client could
+                # drip one byte before each timeout indefinitely. Every chunk
+                # shares one absolute wall-clock deadline.
+                while len(raw) < length:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("request body deadline exceeded")
+                    self.connection.settimeout(remaining)
+                    chunk = self.rfile.read1(min(16384, length - len(raw)))
+                    if not chunk:
+                        raise ValueError("incomplete request body")
+                    raw.extend(chunk)
+                return json.loads(raw)
+            except (OSError, ValueError):
+                # Timed-out buffered readers must never handle another
+                # request on this socket, even if late bytes arrive.
+                self.close_connection = True
+                raise
             finally:
                 self.connection.settimeout(previous_timeout)
 
@@ -150,10 +196,7 @@ def handler_for(
                 # transport. Accept only bounded PCM16/16kHz/mono from the
                 # authenticated Owner Lab worker client.
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if not 1 <= length <= 45000:
-                        raise ValueError("invalid PCM request length")
-                    payload = json.loads(self.rfile.read(length))
+                    payload = self._read_json_body(45000)
                     if (not isinstance(payload, dict) or
                             set(payload) != {"pcm_base64", "sample_rate_hz", "channels"} or
                             type(payload["sample_rate_hz"]) is not int or
@@ -165,7 +208,7 @@ def handler_for(
                     pcm = base64.b64decode(payload["pcm_base64"], validate=True)
                     if not 640 <= len(pcm) <= 32000 or len(pcm) % 640:
                         raise ValueError("invalid PCM frame length")
-                except (ValueError, TypeError, KeyError, binascii.Error, json.JSONDecodeError):
+                except (ValueError, TypeError, KeyError, OSError, binascii.Error, json.JSONDecodeError):
                     self._send(400, {"error": "invalid PCM audio"})
                     return
                 row = lifecycle.status(operation_id)
@@ -252,10 +295,7 @@ def handler_for(
                 # provider-side ValueError can occur AFTER SDP took effect.
                 # Treating it as a harmless bad request would leak live media.
                 try:
-                    length = int(self.headers.get("Content-Length", "0"))
-                    if not 1 <= length <= 65536:
-                        raise ValueError("invalid SDP size")
-                    payload = json.loads(self.rfile.read(length))
+                    payload = self._read_json_body(65536)
                     if (
                         not isinstance(payload, dict)
                         or payload.get("type") != "answer"
@@ -263,7 +303,7 @@ def handler_for(
                         or not payload["sdp"].strip()
                     ):
                         raise ValueError("invalid SDP answer")
-                except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                except (ValueError, TypeError, KeyError, OSError, json.JSONDecodeError):
                     self._send(400, {"error": "invalid SDP answer"})
                     return
                 write_failed = False
@@ -342,14 +382,11 @@ def handler_for(
                 })
                 return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                if length < 1 or length > 1024:
-                    raise ValueError("invalid request size")
-                payload = json.loads(self.rfile.read(length))
+                payload = self._read_json_body(1024)
                 generation = payload["generation"]
                 if type(generation) is not int or generation < 1:
                     raise ValueError("invalid generation")
-            except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
                 self._send(400, {"error": "invalid request"})
                 return
             try:
