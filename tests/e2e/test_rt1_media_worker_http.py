@@ -894,6 +894,62 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertNotIn("video_stopped", offer)
         self.assertEqual(self.request("DELETE")[0], 200)
 
+    def test_offer_compensation_sqlite_failure_fences_every_new_create(self):
+        """SDP validation failure plus lost durable CANCEL is never safe admission."""
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.backend.offer = lambda operation_id, session_id, generation: {
+            "type": "offer", "sdp": "",  # rejected after real sender allocation
+        }
+
+        def locked_cancel(*_args, **_kwargs):
+            raise sqlite3.OperationalError("simulated sqlite writer contention")
+
+        self.lifecycle.cancel_bounded = locked_cancel
+        request = Request(self.url + "/offer", headers={
+            "Authorization": "Bearer test-secret",
+        })
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(request, timeout=3)
+        self.assertEqual(rejected.exception.code, 409)
+        self.assertIs(json.load(rejected.exception)["stop_confirmed"], False)
+        self.assertTrue(self.lifecycle._closing.is_set())
+        # The old sender is still alive: reject an unrelated fresh CREATE
+        # rather than silently treating the failed CANCEL as a confirmed STOP.
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertNotEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.lifecycle.reconcile()
+        self.assertEqual(self.backend.stops, 1)
+
+    def test_answer_compensation_sqlite_failure_fences_every_new_create(self):
+        """Provider may have accepted the answer before signaling an error."""
+        self.assertEqual(self.request("PUT")[0], 200)
+
+        def partially_accepted_answer(*_args):
+            raise RuntimeError("provider ACK lost after accepting SDP")
+
+        def locked_cancel(*_args, **_kwargs):
+            raise sqlite3.OperationalError("simulated sqlite writer contention")
+
+        self.backend.answer = partially_accepted_answer
+        self.lifecycle.cancel_bounded = locked_cancel
+        request = Request(self.url + "/answer", method="POST",
+                          data=json.dumps({"type": "answer", "sdp": "v=0"}).encode(),
+                          headers={
+                              "Authorization": "Bearer test-secret",
+                              "Content-Type": "application/json",
+                          })
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(request, timeout=3)
+        self.assertEqual(rejected.exception.code, 409)
+        self.assertIs(json.load(rejected.exception)["stop_confirmed"], False)
+        self.assertTrue(self.lifecycle._closing.is_set())
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertNotEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.lifecycle.reconcile()
+        self.assertEqual(self.backend.stops, 1)
+
     def test_invalid_oversized_offer_revokes_remote_sender_before_error(self):
         self.backend.offer = lambda operation_id, session_id, generation: {
             "type": "offer", "sdp": "v=0 " + "x" * 65536,
