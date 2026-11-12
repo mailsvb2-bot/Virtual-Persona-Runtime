@@ -180,3 +180,40 @@ fn concurrent_starts_cannot_reserve_same_identity() {
     assert!(worker.join().unwrap());
     drop(first);
 }
+
+#[test]
+fn denied_browser_delivery_removes_only_confirmed_remote_stop() {
+    let sessions = Mutex::new(HashMap::new());
+    let conversation = Arc::new(21_u8);
+    sessions.lock().insert("hidden-start".into(), Arc::clone(&conversation));
+
+    assert_eq!(
+        super::finalize_denied_delivery(
+            &sessions,
+            &conversation,
+            Err("remote STOP timed out".into()),
+            true,
+        ),
+        Err("remote STOP timed out".into())
+    );
+    assert!(sessions.lock().contains_key("hidden-start"));
+
+    assert_eq!(
+        super::finalize_denied_delivery(&sessions, &conversation, Ok(()), false),
+        Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED".into())
+    );
+    assert!(sessions.lock().contains_key("hidden-start"));
+
+    super::finalize_denied_delivery(&sessions, &conversation, Ok(()), true).unwrap();
+    assert!(sessions.lock().is_empty());
+}
+
+#[test]
+fn denied_delivery_late_stop_cannot_remove_replacement() {
+    let sessions = Mutex::new(HashMap::new());
+    let old = Arc::new(11_u8);
+    let replacement = Arc::new(12_u8);
+    sessions.lock().insert("same".into(), Arc::clone(&replacement));
+    super::finalize_denied_delivery(&sessions, &old, Ok(()), true).unwrap();
+    assert!(Arc::ptr_eq(sessions.lock().get("same").unwrap(), &replacement));
+}
