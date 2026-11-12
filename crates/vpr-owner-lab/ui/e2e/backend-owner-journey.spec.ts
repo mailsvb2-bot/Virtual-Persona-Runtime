@@ -82,10 +82,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   page.on("pageerror", (error) => pageErrorNames.push(error.name));
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
-
   try {
     // "load" waits for EVERY static script and subresource. On an overloaded CI
     // runner an otherwise usable Owner Lab can remain stuck at that browser
@@ -143,6 +139,14 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
     expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
   }
+
+  // A competing Playwright HTTP request before real module bootstrap can
+  // starve the same bounded Rust HTTP worker pool under constrained CI load.
+  // First prove the actual browser graph and static-asset stress completed,
+  // then obtain the CSRF token through the real authenticated backend route.
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
 
   await expect(page.locator("#owner-workflow")).toBeVisible();
   await expect(page.locator("#workflow-create")).toHaveAttribute("data-state", "pending");
@@ -321,6 +325,29 @@ test("Owner Lab reports blocked module and offers real reload", async ({ page })
   const status = page.locator("#status");
   await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
   await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveAttribute("data-bootstrap-failure", "module-load");
   await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
+});
+
+test("Owner Lab never mislabels an app failure preceding the async watchdog", async ({ page }) => {
+  let reportAppFailure!: () => void;
+  const appFailed = new Promise<void>((resolve) => { reportAppFailure = resolve; });
+  page.on("requestfailed", (request) => {
+    if (new URL(request.url()).pathname === "/app.js") reportAppFailure();
+  });
+  // Force the real module failure to precede the independent watchdog.
+  // Keep the watchdog async, because a blocking diagnostic script would
+  // restore the original bootstrap starvation regression.
+  await page.route("**/bootstrap-watchdog.js", async (route) => {
+    await appFailed;
+    await route.continue();
+  });
+  await page.route("**/app.js", async (route) => route.abort("failed"));
+  await page.goto("/", { waitUntil: "commit" });
+  const status = page.locator("#status");
+  await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
+  await expect(status).toHaveAttribute("data-state", "error");
+  await expect(status).toHaveAttribute("data-bootstrap-failure", "bootstrap-unconfirmed");
+  await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
 });
