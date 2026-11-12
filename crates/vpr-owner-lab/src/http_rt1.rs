@@ -155,7 +155,17 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
                 // browser delivery fence failed. Trigger the canonical STOP
                 // callback now; do not discard the registry's retry handle
                 // when the remote audio/video outcome is uncertain.
-                let _ = conversation.close();
+                let receipt_path = conversation.has_remote_video_stop_receipt_path();
+                let stop = conversation.close();
+                // A denied response has no browser-visible session ID. Retire
+                // its server registration only on confirmed remote STOP; keep
+                // uncertain outcomes reachable for reconciliation.
+                let _ = finalize_denied_delivery(
+                    &state.rt1.conversations,
+                    &conversation,
+                    stop,
+                    receipt_path,
+                );
                 let _ = request.respond(error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
             }
         }
@@ -321,6 +331,37 @@ fn finalize_registered_stop<T>(
         active.remove(session_id);
     }
     Ok(())
+}
+
+/// Reconcile a failed browser delivery without relying on a session ID that
+/// was deliberately withheld from the visitor. Never hold the registry lock
+/// while calling the remote provider, and never erase a replacement entry.
+fn finalize_denied_delivery<T>(
+    sessions: &Mutex<HashMap<String, Arc<T>>>,
+    conversation: &Arc<T>,
+    stop: Result<(), String>,
+    remote_video_receipt_path: bool,
+) -> Result<(), String> {
+    let session_id = sessions.lock().iter().find_map(|(id, current)| {
+        Arc::ptr_eq(current, conversation).then(|| id.clone())
+    });
+    if let Some(session_id) = session_id {
+        finalize_registered_stop(
+            sessions,
+            &session_id,
+            conversation,
+            stop,
+            remote_video_receipt_path,
+        )
+    } else {
+        // The caller still owns its Arc, but there is no registration to
+        // retire. A failed STOP must remain an error, not a false receipt.
+        stop.and_then(|()| {
+            remote_video_receipt_path
+                .then_some(())
+                .ok_or_else(|| "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED".into())
+        })
+    }
 }
 
 /// A pending START owns its identity until registration completes or fails.
