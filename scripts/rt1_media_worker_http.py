@@ -391,8 +391,53 @@ def handler_for(
                 return
             try:
                 if method == "PUT":
-                    session_id = lifecycle.create_bounded(operation_id, generation, create_timeout_seconds)
-                    self._send(200, {"operation_id": operation_id, "session_id": session_id})
+                    session_id = lifecycle.create_bounded(
+                        operation_id, generation, create_timeout_seconds
+                    )
+                    try:
+                        # CREATE itself can race with DELETE. Publishing its
+                        # final session identity shares the same durable
+                        # publication transaction and remote STOP fence as
+                        # the SDP offer and answer, with a bounded socket write.
+                        # Never return an active sender ID after STOP won.
+                        with lifecycle._exclusive_stop():
+                            with lifecycle._active_publication_transaction(
+                                operation_id, (generation, "active", session_id)
+                            ) as active:
+                                if active:
+                                    self._send_fenced(200, {
+                                        "operation_id": operation_id,
+                                        "session_id": session_id,
+                                    })
+                                else:
+                                    self._send_fenced(410, {
+                                        "error": "operation revoked",
+                                    })
+                    except (OSError, RuntimeError) as error:
+                        # CREATE may have started both RTP senders, but the
+                        # client did not receive a usable authoritative ID.
+                        # Cancel through the ONE durable dual-track STOP path.
+                        # A partial HTTP response must never be followed by a
+                        # second response on that socket.
+                        if isinstance(error, OSError):
+                            self.close_connection = True
+                        try:
+                            lifecycle.cancel_bounded(
+                                operation_id, generation,
+                                min(stop_timeout_seconds, 0.5),
+                            )
+                        except Exception:
+                            # The reconciler must retry an unverified STOP.
+                            pass
+                        if isinstance(error, RuntimeError):
+                            try:
+                                self._send(409, {
+                                    "error": "media create delivery unavailable",
+                                    "stop_confirmed": False,
+                                })
+                            except OSError:
+                                self.close_connection = True
+                    return
                 else:
                     receipt = lifecycle.cancel_bounded(
                         operation_id, generation, stop_timeout_seconds

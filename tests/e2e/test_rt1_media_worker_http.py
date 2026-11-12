@@ -203,6 +203,118 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.backend.stops, 1)
         self.assertEqual(self.request("PUT")[0], 409)
 
+    def test_create_ack_and_remote_stop_share_publication_fence(self):
+        # Pause the real HTTP 200 delivery after provider allocation. DELETE
+        # must not confirm remote STOP until that final ID delivery finishes.
+        entered_write = threading.Event()
+        release_write = threading.Event()
+        entered_cancel = threading.Event()
+        original_send = self.server.RequestHandlerClass._send_fenced
+        original_cancel = self.lifecycle.cancel
+        responses = []
+        deletes = []
+
+        def paused_ack(handler, status, body):
+            if status == 200 and body.get("session_id") == "media-1":
+                entered_write.set()
+                if not release_write.wait(3):
+                    raise RuntimeError("CREATE ack never released")
+            return original_send(handler, status, body)
+
+        def observed_cancel(*args, **kwargs):
+            entered_cancel.set()
+            return original_cancel(*args, **kwargs)
+
+        self.server.RequestHandlerClass._send_fenced = paused_ack
+        self.lifecycle.cancel = observed_cancel
+        creator = threading.Thread(target=lambda: responses.append(self.request("PUT")))
+        revoker = threading.Thread(target=lambda: deletes.append(self.request("DELETE")))
+        creator.start()
+        try:
+            self.assertTrue(entered_write.wait(2))
+            revoker.start()
+            self.assertTrue(entered_cancel.wait(2))
+            time.sleep(0.08)
+            self.assertFalse(deletes, "remote STOP passed the in-flight CREATE ack")
+            self.assertEqual(self.backend.stops, 0)
+        finally:
+            release_write.set()
+            creator.join(timeout=3)
+            if revoker.ident is not None:
+                revoker.join(timeout=3)
+        self.assertFalse(creator.is_alive())
+        self.assertFalse(revoker.is_alive())
+        self.assertEqual(responses[0][0], 200)
+        self.assertEqual(deletes[0][0], 200)
+        self.assertIs(deletes[0][1]["audio_stopped"], True)
+        self.assertIs(deletes[0][1]["video_stopped"], True)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(self.backend.stops, 1)
+
+    def test_lost_create_http_ack_compensates_dual_track_sender(self):
+        # The client lost the newly created sender ID after successful CREATE.
+        # This is not the backend allocate() timeout case: HTTP delivery alone
+        # failed, so the canonical durable STOP path must still revoke media.
+        from http.client import RemoteDisconnected
+        from urllib.error import URLError
+
+        original_write = self.server.RequestHandlerClass._send
+
+        def disconnected_client(handler, status, body):
+            if status == 200 and body.get("session_id") == "media-1":
+                raise BrokenPipeError("client disconnected during CREATE ack")
+            return original_write(handler, status, body)
+
+        self.server.RequestHandlerClass._send = disconnected_client
+        with self.assertRaises((RemoteDisconnected, URLError)):
+            self.request("PUT")
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+        self.assertEqual(self.request("PUT")[0], 409)
+
+    def test_lost_create_http_ack_with_failed_stop_quarantines_sender(self):
+        from http.client import RemoteDisconnected
+        from urllib.error import URLError
+
+        original_write = self.server.RequestHandlerClass._send
+        original_stop = self.backend.stop
+
+        def disconnected_client(handler, status, body):
+            if status == 200 and body.get("session_id") == "media-1":
+                raise BrokenPipeError("client disconnected during CREATE ack")
+            return original_write(handler, status, body)
+
+        def unconfirmed_stop(operation_id, session_id, generation):
+            self.backend.stops += 1
+            raise TimeoutError("remote dual-track STOP not confirmed")
+
+        self.backend.stop = unconfirmed_stop
+        self.server.RequestHandlerClass._send = disconnected_client
+        with self.assertRaises((RemoteDisconnected, URLError)):
+            self.request("PUT")
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "uncertain", "media-1"))
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "uncertain", "media-1", False),
+        )
+        self.assertEqual(self.request("PUT")[0], 409)
+        stop_status, stop_body = self.request("DELETE")
+        self.assertEqual(stop_status, 503)
+        self.assertIs(stop_body["stop_confirmed"], False)
+        self.backend.stop = original_stop
+        self.lifecycle.reconcile()
+        self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
+        # Initial lost-ACK compensation and the explicit DELETE both failed;
+        # canonical reconciliation is the third verified STOP attempt.
+        self.assertEqual(self.backend.stops, 3)
+
     def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):
         pcm = bytes([1, 0]) * 320
         body = json.dumps({
