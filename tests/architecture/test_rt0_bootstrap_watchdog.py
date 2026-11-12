@@ -22,6 +22,7 @@ class BootstrapWatchdogSafety(unittest.TestCase):
         self.assertIn('window.location.reload()',script)
         self.assertIn('status.dataset.bootstrapFailure = failureKind', script)
         self.assertIn('failureKind = "module-load"', script)
+        self.assertIn('failureKind = "bootstrap-unconfirmed"', script)
         self.assertIn('failureKind = "module-execution"', script)
         self.assertIn('url.origin === window.location.origin', script)
         self.assertNotIn('console.log', script)
