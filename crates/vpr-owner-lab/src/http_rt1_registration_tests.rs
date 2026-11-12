@@ -286,17 +286,29 @@ fn unresolved_remote_stop_target_cannot_be_reused_by_start() {
 
 #[test]
 fn denied_delivery_without_remote_video_stop_receipt_is_not_ordinary_409() {
-    assert_eq!(delivery_denied_after_revoke(false, false).status_code().0, 502);
+    assert_eq!(
+        delivery_denied_after_revoke(false, false).status_code().0,
+        502
+    );
     // A contradictory supplied flag cannot manufacture a remote STOP path.
-    assert_eq!(delivery_denied_after_revoke(false, true).status_code().0, 502);
+    assert_eq!(
+        delivery_denied_after_revoke(false, true).status_code().0,
+        502
+    );
 }
 
 #[test]
 fn denied_delivery_with_pending_dual_track_stop_is_gateway_failure() {
-    assert_eq!(delivery_denied_after_revoke(true, false).status_code().0, 502);
+    assert_eq!(
+        delivery_denied_after_revoke(true, false).status_code().0,
+        502
+    );
 }
 
 #[test]
 fn denied_delivery_with_verified_remote_stop_is_routine_visitor_denial() {
-    assert_eq!(delivery_denied_after_revoke(true, true).status_code().0, 409);
+    assert_eq!(
+        delivery_denied_after_revoke(true, true).status_code().0,
+        409
+    );
 }
