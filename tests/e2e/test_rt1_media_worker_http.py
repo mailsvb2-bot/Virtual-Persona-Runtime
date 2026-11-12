@@ -69,6 +69,53 @@ class HttpLifecycleTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, json.load(error)
 
+    def test_slow_drip_cannot_reset_total_body_deadline(self):
+        self.server.RequestHandlerClass = handler_for(
+            self.lifecycle, "test-secret", body_timeout_seconds=0.25
+        )
+        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as conn:
+            conn.settimeout(2)
+            headers = (
+                "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                "Host: localhost\r\n"
+                "Authorization: Bearer test-secret\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 40\r\n"
+                "Connection: keep-alive\r\n\r\n"
+            ).encode("ascii")
+            conn.sendall(headers)
+            start = time.monotonic()
+            for _ in range(7):
+                try:
+                    conn.sendall(b" ")
+                except OSError:
+                    break
+                time.sleep(0.07)
+            reply = b""
+            while b"\r\n\r\n" not in reply:
+                part = conn.recv(4096)
+                if not part:
+                    break
+                reply += part
+            self.assertIn(b" 400 ", reply.split(b"\r\n", 1)[0])
+            self.assertLess(time.monotonic() - start, 0.9)
+        self.assertEqual(self.backend.allocations, 0)
+        self.assertIsNone(self.lifecycle.status("operation-1"))
+
+    def test_ambiguous_duplicate_content_length_never_enters_create(self):
+        with socket.create_connection(("127.0.0.1", self.server.server_port), timeout=2) as conn:
+            conn.settimeout(2)
+            conn.sendall((
+                "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                "Host: localhost\r\n"
+                "Authorization: Bearer test-secret\r\n"
+                "Content-Length: 16\r\n"
+                "Content-Length: 16\r\n\r\n"
+                '{"generation":1}'
+            ).encode("ascii"))
+            self.assertIn(b" 400 ", conn.recv(4096).split(b"\r\n", 1)[0])
+        self.assertEqual(self.backend.allocations, 0)
+
     def test_stalled_partial_http_body_fails_closed_for_all_mutations(self):
         self.server.RequestHandlerClass = handler_for(
             self.lifecycle, "test-secret", body_timeout_seconds=0.20
