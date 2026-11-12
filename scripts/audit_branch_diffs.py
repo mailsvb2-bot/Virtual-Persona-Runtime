@@ -28,6 +28,74 @@ def branches() -> list[str]:
     )
 
 
+# Block mapping is deliberately based on repository paths, not branch names:
+# a single long-lived branch can contain several independent functional areas.
+# Unknown paths remain visible instead of silently disappearing from the report.
+BLOCK_PATHS = (
+    ("rt1-media-worker", ("scripts/rt1_", "tests/e2e/test_rt1_")),
+    ("rt1-owner-visitor", ("crates/vpr-owner-lab/src/rt1_", "crates/vpr-owner-lab/src/http_rt1", "crates/vpr-owner-lab/ui/rt1", "crates/vpr-owner-lab/ui/e2e/rt1")),
+    ("rt0-voice-and-playback", ("crates/vpr-owner-lab/src/state/voice", "crates/vpr-owner-lab/src/http_voice", "crates/vpr-owner-lab/ui/src/", "crates/vpr-owner-lab/ui/dist/", "scripts/metrotrance", "tests/e2e/test_metrotrance")),
+    ("providers-and-runtime", ("crates/vpr-provider-", "crates/vpr-runtime/", "crates/vpr-integration/", "crates/vpr-owner-lab/src/providers/")),
+    ("build-and-security", (".github/", "Cargo.lock", "Cargo.toml", "package-lock.json", "crates/vpr-owner-lab/ui/package")),
+    ("documentation-and-operations", ("docs/", "README", "scripts/audit_branch", "scripts/retire_")),
+)
+
+
+def functional_block(path: str) -> str:
+    for block, prefixes in BLOCK_PATHS:
+        if path.startswith(prefixes):
+            return block
+    return "other-integration"
+
+
+def changed_paths(base: str, head: str) -> list[str]:
+    """List BOTH rename endpoints, retaining tabs/newlines and Unicode.
+
+    Rename detection would hide the removed source path and its subsystem;
+    disabling it records source deletion and destination addition separately.
+    """
+    raw = subprocess.check_output([
+        "git", "diff", "-z", "--name-only", "--no-renames", base, head, "--",
+    ])
+    return [os.fsdecode(path) for path in raw.split(bytes([0])) if path]
+
+
+def branch_functional_blocks(base: str, head: str) -> dict[str, dict]:
+    """Report introduced files per subsystem, never infer merge safety from history."""
+    blocks: dict[str, dict] = {}
+    for path in changed_paths(base, head):
+        block = blocks.setdefault(functional_block(path), {
+            "introduced_paths": [], "absent_from_main": [],
+            "identical_to_main": [], "different_from_main": [],
+        })
+        block["introduced_paths"].append(path)
+        main_blob = subprocess.run(
+            ["git", "rev-parse", f"origin/main:{path}"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        )
+        branch_blob = subprocess.run(
+            ["git", "rev-parse", f"{head}:{path}"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False,
+        )
+        if main_blob.returncode != 0 and branch_blob.returncode == 0:
+            block["absent_from_main"].append(path)
+        elif (main_blob.returncode == 0 and branch_blob.returncode == 0
+              and main_blob.stdout == branch_blob.stdout
+              and subprocess.run(
+                  ["git", "diff", "--quiet", "--no-ext-diff", "--no-renames",
+                   "origin/main", head, "--", f":(literal){path}"],
+                  check=False,
+              ).returncode == 0):
+            # Matching blob IDs alone ignore executable-bit and symlink mode
+            # differences; the Git diff also compares tree-entry metadata.
+            block["identical_to_main"].append(path)
+        else:
+            # Even when a whole file differs, the useful hunks may already
+            # exist in main. Require review, not a blind file overwrite.
+            block["different_from_main"].append(path)
+    return dict(sorted(blocks.items()))
+
+
 def inventory(output: Path) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     main = git("rev-parse", "refs/remotes/origin/main")
@@ -89,7 +157,27 @@ def inventory(output: Path) -> dict:
             "diff_bytes": len(patch),
             "full_diff": patch_name,
             "content_identical_to_main": not patch,
+            "functional_blocks": branch_functional_blocks(base, branch),
         })
+    # A block-first view of the same canonical audit, without a competing
+    # inventory implementation or an automatic merge execution path.
+    by_block: dict[str, list[dict]] = {}
+    for item in summary["branches"]:
+        for block, paths in item["functional_blocks"].items():
+            by_block.setdefault(block, []).append({
+                "branch": item["name"],
+                "head_sha": item["head_sha"],
+                "behind_main": item["behind"],
+                "absent_from_main": paths["absent_from_main"],
+                "different_from_main": paths["different_from_main"],
+                "identical_to_main": paths["identical_to_main"],
+                "introduced_paths": paths["introduced_paths"],
+                "requires_manual_review": bool(paths["absent_from_main"] or paths["different_from_main"]),
+            })
+    (output / "functional-blocks.json").write_text(
+        json.dumps({"main_sha": main, "blocks": dict(sorted(by_block.items()))},
+                   indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
     (output / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
@@ -100,7 +188,9 @@ def inventory(output: Path) -> dict:
         "the pinned main SHA to the named branch, not an automatically safe merge. "
         "Missing introduced paths are porting candidates, not proof of safe code. "
         "Also review existing paths for missing behavior. Review authorship, tests "
-        "and release gates before porting.\n",
+        "and release gates before porting. functional-blocks.json groups all "
+        "introduced changes by subsystem and marks path-level comparisons; "
+        "it never equates different files or unique commit history with missing code.\n",
         encoding="utf-8",
     )
     return summary
