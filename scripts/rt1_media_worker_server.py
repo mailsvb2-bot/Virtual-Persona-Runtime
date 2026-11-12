@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import logging
+import signal
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -36,6 +37,17 @@ def reconcile_until_shutdown(lifecycle: MediaLifecycle, shutdown: threading.Even
         shutdown.wait(interval)
 
 
+def drain_shutdown(lifecycle: MediaLifecycle, timeout: float = 4.0) -> bool:
+    """Quiesce using the durable canonical owner, not backend-local closure."""
+    confirmed = lifecycle.revoke_all_bounded(timeout)
+    if not confirmed:
+        LOG.error(
+            "RT1 shutdown: remote audio/video STOP remains unconfirmed; "
+            "durable sender quarantine retained"
+        )
+    return confirmed
+
+
 def main():
     token = os.environ["RT1_WORKER_TOKEN"]
     path = os.environ["RT1_WORKER_DB"]
@@ -62,13 +74,32 @@ def main():
         daemon=True,
     )
     reconciler.start()
+
+    def request_shutdown(_signum, _frame):
+        # Signal callbacks cannot call server.shutdown() on the serving
+        # thread: BaseServer.shutdown waits for serve_forever to exit.
+        # Fence admission immediately, then wake the server on another thread.
+        lifecycle.begin_shutdown()
+        threading.Thread(
+            target=server.shutdown, name="rt1-graceful-shutdown", daemon=True
+        ).start()
+
+    previous_term = signal.signal(signal.SIGTERM, request_shutdown)
     try:
-        server.serve_forever()
+        try:
+            server.serve_forever()
+        finally:
+            # Also covers KeyboardInterrupt, unexpected server errors and
+            # ordinary return. Never leave active CREATE permitted.
+            lifecycle.begin_shutdown()
+            server.server_close()
+            shutdown.set()
+            reconciler.join(timeout=3)
+            drain_shutdown(lifecycle)
+            # Last-resort local track closure is NOT a durable remote receipt.
+            backend.shutdown()
     finally:
-        server.server_close()
-        shutdown.set()
-        reconciler.join(timeout=3)
-        backend.shutdown()
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 if __name__ == "__main__":
