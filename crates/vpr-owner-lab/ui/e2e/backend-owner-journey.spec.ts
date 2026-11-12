@@ -52,6 +52,7 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   const pending = new Set<BrowserRequest>();
   const failed: string[] = [];
   const scriptFailures: string[] = [];
+  const finishedModules = new Set<string>();
   const pageErrorNames: string[] = [];
   const safePath = (url: string): string => {
     try {
@@ -62,7 +63,12 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
     }
   };
   page.on("request", (outgoing) => pending.add(outgoing));
-  page.on("requestfinished", (outgoing) => pending.delete(outgoing));
+  page.on("requestfinished", (outgoing) => {
+    pending.delete(outgoing);
+    if (outgoing.resourceType() === "script") {
+      finishedModules.add(safePath(outgoing.url()));
+    }
+  });
   page.on("requestfailed", (outgoing) => {
     const path = safePath(outgoing.url());
     pending.delete(outgoing);
@@ -76,22 +82,6 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
   page.on("pageerror", (error) => pageErrorNames.push(error.name));
   await installTransportFakes(page);
   await page.goto("/", { waitUntil: "commit", timeout: 20_000 });
-  const appAssets = [
-    "/", "/styles.css", "/app.js", "/bootstrap-watchdog.js", "/tts-selector.js",
-    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
-    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
-    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
-  ];
-  const assetResults = await page.evaluate(async (paths) =>
-    Promise.all(paths.map(async (path) => {
-      const response = await fetch(path, { cache: "no-store" });
-      const bytes = await response.arrayBuffer();
-      return { path, status: response.status, bytes: bytes.byteLength };
-    })), appAssets);
-  for (const asset of assetResults) {
-    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
-    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
-  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   expect(bootstrap.ok()).toBeTruthy();
   const csrf = String((await bootstrap.json()).csrf_token);
@@ -116,6 +106,36 @@ test("built UI drives the real Owner Lab backend and provider adapter", async ({
       `pageErrorNames=${JSON.stringify(pageErrorNames)}; status=${JSON.stringify(displayedStatus)}; ` +
       `readiness=${String(error)}`,
     );
+  }
+
+  // Verify real initial browser modules before synthetic concurrency tests.
+  // The prior test flooded the SAME Chromium connection pool with 14 extra
+  // no-store fetches immediately after navigation (waitUntil: commit), which
+  // could starve its actual ES-module imports and fabricate a bootstrap hang.
+  // No wait, mock, retry or timeout increase: the browser's own imports must
+  // finish and real canonical owner workflow state must already be ready.
+  expect([...finishedModules]).toEqual(expect.arrayContaining([
+    "/app.js", "/reference-capture.js", "/bootstrap-context.js",
+  ]));
+
+  // Still exercise simultaneous nonempty static asset responses against the
+  // actual Rust HTTP server, but only AFTER initial module initialization.
+  // This tests concurrency without competing with browser bootstrap itself.
+  const appAssets = [
+    "/", "/styles.css", "/app.js", "/bootstrap-watchdog.js", "/tts-selector.js",
+    "/interrupted-answer.js", "/owner-capture.js", "/voice-command-scheduler.js",
+    "/bootstrap-context.js", "/media-runtime.js", "/session-runtime-state.js",
+    "/evidence-export.js", "/reference-capture.js", "/mic-worklet.js",
+  ];
+  const assetResults = await page.evaluate(async (paths) =>
+    Promise.all(paths.map(async (path) => {
+      const response = await fetch(path, { cache: "no-store" });
+      const bytes = await response.arrayBuffer();
+      return { path, status: response.status, bytes: bytes.byteLength };
+    })), appAssets);
+  for (const asset of assetResults) {
+    expect(asset.status, `Owner Lab static asset unavailable: ${asset.path}`).toBe(200);
+    expect(asset.bytes, `Owner Lab returned an empty asset: ${asset.path}`).toBeGreaterThan(0);
   }
 
   await expect(page.locator("#owner-workflow")).toBeVisible();
