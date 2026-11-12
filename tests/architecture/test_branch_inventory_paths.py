@@ -80,6 +80,49 @@ class BranchInventoryFilenameTests(unittest.TestCase):
                 [absent],
             )
 
+    @unittest.skipIf(os.name == "nt", "Git executable bits differ on Windows")
+    def test_renames_keep_source_deletions_and_mode_changes_are_not_identical(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("branch_audit", AUDIT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args: str) -> None:
+                subprocess.run(["git", *args], cwd=root, check=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            git("init", "-q")
+            git("config", "user.name", "VPR Test")
+            git("config", "user.email", "vpr-test@example.invalid")
+            (root / "old.py").write_text("same\n")
+            (root / "script.py").write_text("script\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            git("branch", "-M", "main")
+            git("checkout", "-qb", "feature")
+            git("mv", "old.py", "new.py")
+            git("update-index", "--chmod=+x", "script.py")
+            git("commit", "-qm", "rename and change mode")
+            git("reset", "--hard", "-q")
+            git("update-ref", "refs/remotes/origin/feature", "HEAD")
+            git("checkout", "-q", "main")
+            (root / "new.py").write_text("same\n")
+            git("add", "new.py")
+            git("commit", "-qm", "main also adds destination")
+            git("update-ref", "refs/remotes/origin/main", "HEAD")
+            before = Path.cwd()
+            try:
+                os.chdir(root)
+                base = module.git("merge-base", "origin/main", "origin/feature")
+                result = module.branch_functional_blocks(base, "origin/feature")
+            finally:
+                os.chdir(before)
+            paths = result["other-integration"]
+            self.assertIn("old.py", paths["introduced_paths"])
+            self.assertIn("new.py", paths["identical_to_main"])
+            self.assertIn("old.py", paths["different_from_main"])
+            self.assertIn("script.py", paths["different_from_main"])
+
     def test_functional_blocks_keep_runtime_and_workers_separate(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("branch_audit", AUDIT)

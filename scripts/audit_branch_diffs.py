@@ -49,9 +49,13 @@ def functional_block(path: str) -> str:
 
 
 def changed_paths(base: str, head: str) -> list[str]:
-    """Git's NUL protocol handles paths with tabs/newlines and Unicode."""
+    """List BOTH rename endpoints, retaining tabs/newlines and Unicode.
+
+    Rename detection would hide the removed source path and its subsystem;
+    disabling it records source deletion and destination addition separately.
+    """
     raw = subprocess.check_output([
-        "git", "diff", "-z", "--name-only", "--find-renames", base, head, "--",
+        "git", "diff", "-z", "--name-only", "--no-renames", base, head, "--",
     ])
     return [os.fsdecode(path) for path in raw.split(bytes([0])) if path]
 
@@ -75,7 +79,15 @@ def branch_functional_blocks(base: str, head: str) -> dict[str, dict]:
         )
         if main_blob.returncode != 0 and branch_blob.returncode == 0:
             block["absent_from_main"].append(path)
-        elif main_blob.returncode == 0 and branch_blob.returncode == 0 and main_blob.stdout == branch_blob.stdout:
+        elif (main_blob.returncode == 0 and branch_blob.returncode == 0
+              and main_blob.stdout == branch_blob.stdout
+              and subprocess.run(
+                  ["git", "diff", "--quiet", "--no-ext-diff", "--no-renames",
+                   "origin/main", head, "--", f":(literal){path}"],
+                  check=False,
+              ).returncode == 0):
+            # Matching blob IDs alone ignore executable-bit and symlink mode
+            # differences; the Git diff also compares tree-entry metadata.
             block["identical_to_main"].append(path)
         else:
             # Even when a whole file differs, the useful hunks may already
