@@ -758,7 +758,15 @@ class MediaLifecycle:
         A permanently unreachable sender must not starve later eligible STOPs.
         Each failed sender keeps its durable uncertain row and the whole pass
         remains unsuccessful so the caller can report/retry reconciliation.
+
+        When a failed CREATE acknowledgement could not persist CANCEL because
+        SQLite was locked, request_shutdown() immediately denies new CREATEs.
+        The SAME canonical reconciler must later quarantine any still-active
+        sender before STOP. Merely selecting uncertain/stopping rows would
+        leave that sender alive indefinitely after SQLite becomes writable.
         """
+        if self._closing.is_set():
+            self.quarantine_after_restart()
         with self._lock:
             pending = self._db.execute(
                 "SELECT id,generation,session_id FROM media_operations WHERE phase IN ('stopping','uncertain')"

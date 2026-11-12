@@ -4,6 +4,7 @@ A separate deployed test must inspect real sender RTP on revoke.
 """
 import base64
 import json
+import sqlite3
 import socket
 import sys
 import tempfile
@@ -251,6 +252,47 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.lifecycle.status("operation-1"), (1, "stopped", "media-1"))
         self.assertEqual(self.backend.stops, 1)
 
+    def test_sqlite_write_lock_after_create_ack_failure_eventually_stops_sender(self):
+        # A second SQLite connection can take the write lock AFTER the real
+        # CREATE commit but BEFORE its final acknowledgement transaction.
+        # Retrying CANCEL under the same lock also fails; the periodic
+        # reconciler must not ignore the still-'active' durable row.
+        blocker = sqlite3.connect(
+            str(Path(self.temp.name) / "ledger.sqlite"),
+            isolation_level=None,
+            timeout=0.1,
+            check_same_thread=False,
+        )
+        self.lifecycle._db.execute("PRAGMA busy_timeout=100")
+        original_create = self.lifecycle.create_bounded
+
+        def block_publication_after_allocation(operation_id, generation, timeout):
+            session_id = original_create(operation_id, generation, timeout)
+            blocker.execute("BEGIN IMMEDIATE")
+            return session_id
+
+        self.lifecycle.create_bounded = block_publication_after_allocation
+        try:
+            response, payload = self.request("PUT")
+            self.assertEqual(response, 503)
+            self.assertIs(payload["stop_confirmed"], False)
+            self.assertNotIn("session_id", payload)
+            self.assertEqual(self.backend.allocations, 1)
+            self.assertEqual(self.backend.stops, 0)
+            self.assertEqual(self.lifecycle.status("operation-1"), (1, "active", "media-1"))
+            self.assertTrue(self.lifecycle._closing.is_set())
+        finally:
+            if blocker.in_transaction:
+                blocker.execute("ROLLBACK")
+            blocker.close()
+        self.lifecycle.reconcile()
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(
+            self.lifecycle.status_with_stop_confirmation("operation-1"),
+            (1, "stopped", "media-1", True),
+        )
+        self.assertEqual(self.request("PUT")[0], 409)
+
     def test_lost_create_http_ack_compensates_dual_track_sender(self):
         # The client lost the newly created sender ID after successful CREATE.
         # This is not the backend allocate() timeout case: HTTP delivery alone
@@ -314,6 +356,15 @@ class HttpLifecycleTests(unittest.TestCase):
         # Initial lost-ACK compensation and the explicit DELETE both failed;
         # canonical reconciliation is the third verified STOP attempt.
         self.assertEqual(self.backend.stops, 3)
+        self.assertFalse(self.lifecycle._closing.is_set())
+        # Durable CANCEL was committed despite the STOP error. No permanent
+        # worker-wide shutdown: unrelated operations remain usable once
+        # confirmed STOP of the first sender permits admission.
+        self.server.RequestHandlerClass._send = original_write
+        self.url = self.url.replace("operation-1", "operation-2")
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 2)
+        self.assertEqual(self.request("DELETE")[0], 200)
 
     def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):
         pcm = bytes([1, 0]) * 320
