@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import logging
+import signal
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -36,6 +37,17 @@ def reconcile_until_shutdown(lifecycle: MediaLifecycle, shutdown: threading.Even
         shutdown.wait(interval)
 
 
+def drain_shutdown(lifecycle: MediaLifecycle, timeout: float = 4.0) -> bool:
+    """Quiesce using the durable canonical owner, not backend-local closure."""
+    confirmed = lifecycle.revoke_all_bounded(timeout)
+    if not confirmed:
+        LOG.error(
+            "RT1 shutdown: remote audio/video STOP remains unconfirmed; "
+            "durable sender quarantine retained"
+        )
+    return confirmed
+
+
 def main():
     token = os.environ["RT1_WORKER_TOKEN"]
     path = os.environ["RT1_WORKER_DB"]
@@ -62,13 +74,49 @@ def main():
         daemon=True,
     )
     reconciler.start()
+
+    def request_shutdown(_signum, _frame):
+        # A Python signal callback must never block on the SQLite writer lock
+        # or BaseServer.shutdown. Fence admission immediately, then let a
+        # separate control thread persist quarantine before ending serve_forever.
+        lifecycle.request_shutdown()
+
+        def finish_signal_shutdown():
+            # The main thread owns bounded SQLite quarantine and dual-track
+            # STOP in its finally block. Never consume that grace budget here.
+            server.shutdown()
+
+        threading.Thread(
+            target=finish_signal_shutdown,
+            name="rt1-graceful-shutdown",
+            daemon=True,
+        ).start()
+
+    previous_term = signal.signal(signal.SIGTERM, request_shutdown)
     try:
-        server.serve_forever()
+        try:
+            server.serve_forever()
+        finally:
+            # This also covers KeyboardInterrupt and server faults. Always
+            # close local senders, even if the durable ledger cannot be read.
+            lifecycle.request_shutdown()
+            confirmed = False
+            try:
+                server.server_close()
+                shutdown.set()
+                reconciler.join(timeout=3)
+                confirmed = drain_shutdown(lifecycle)
+            finally:
+                # Even SQLite quarantine failure cannot skip local teardown.
+                # Local track closure remains distinct from verified STOP.
+                backend.shutdown()
+            if not confirmed:
+                raise RuntimeError(
+                    "RT1 worker shutdown: remote STOP unconfirmed; "
+                    "durable allocation remains quarantined"
+                )
     finally:
-        server.server_close()
-        shutdown.set()
-        reconciler.join(timeout=3)
-        backend.shutdown()
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 if __name__ == "__main__":

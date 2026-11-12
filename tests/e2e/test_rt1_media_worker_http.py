@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 from rt1_media_worker_http import handler_for
 from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
+from rt1_media_worker_server import drain_shutdown
 
 
 class Backend:
@@ -156,6 +157,38 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.backend.pcm_pushes, [])
         self.assertEqual(self.lifecycle.status("operation-1")[1], "active")
         self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_worker_shutdown_fences_new_http_create_and_returns_durable_stop(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.lifecycle.request_shutdown()
+        self.assertEqual(self.request("PUT")[0], 409)
+        self.assertTrue(drain_shutdown(self.lifecycle, timeout=2))
+        status, row = self.request("GET")
+        self.assertEqual(status, 200)
+        self.assertEqual(row["phase"], "stopped")
+        self.assertIs(row["stop_confirmed"], True)
+        self.assertEqual(self.backend.stops, 1)
+        self.assertEqual(self.request("PUT")[0], 409)
+        stopped_status, verified = self.request("DELETE")
+        self.assertEqual(stopped_status, 200)
+        self.assertIs(verified["audio_stopped"], True)
+        self.assertIs(verified["video_stopped"], True)
+        self.assertEqual(self.backend.stops, 1)
+
+    def test_worker_shutdown_failed_dual_stop_quarantines_http_identity(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+
+        def broken_stop(operation_id, session_id, generation):
+            raise ConnectionError("sender unreachable; STOP unconfirmed")
+
+        self.backend.stop = broken_stop
+        self.assertFalse(drain_shutdown(self.lifecycle, timeout=0.25))
+        status, row = self.request("GET")
+        self.assertEqual(status, 200)
+        self.assertEqual(row["phase"], "uncertain")
+        self.assertIs(row["stop_confirmed"], False)
+        self.assertEqual(self.request("PUT")[0], 409)
+        # No browser or API route can infer remote STOP from shutdown intent.
 
     def test_authentication_idempotent_create_and_confirmed_remote_stop(self):
         self.assertEqual(self.request("PUT", token="wrong")[0], 401)
