@@ -228,6 +228,10 @@ class MediaLifecycle:
                 ) from error
             raise RuntimeError("CREATE deadline exceeded; remote STOP unconfirmed") from None
         if succeeded:
+            if self._closing.is_set():
+                # Shutdown owns durable compensating STOP for the allocated
+                # sender. Never deliver a newly revoked CREATE receipt.
+                raise RuntimeError("RT1 worker shutting down; CREATE denied")
             return result
         raise result
 
@@ -370,6 +374,7 @@ class MediaLifecycle:
                     and row[0] == generation
                     and row[1] == "creating"
                     and (operation_id, generation) not in self._expired_create_deadlines
+                    and not self._closing.is_set()
                 ):
                     self._write(operation_id, generation, "active", session_id)
                     self._db.execute("COMMIT")
@@ -646,27 +651,47 @@ class MediaLifecycle:
         """Immediately fence new CREATE before slow SQLite or network work."""
         self._closing.set()
 
-    def begin_shutdown(self) -> None:
-        """Fence new allocations and persist a durable revoke for every sender.
+    def begin_shutdown(self, deadline: float | None = None) -> bool:
+        """Fence CREATE immediately, then durably quarantine through one deadline.
 
-        This is the same ledger used for owner revocation and restart
-        recovery. No separate worker or authority is created, and a local
-        track.close() is never counted as remote two-track STOP evidence.
+        This uses the same SQLite ledger and RLock as normal STOP; a competing
+        writer or in-process lock cannot consume the shutdown grace period.
+        An unsuccessful write never implies that remote senders stopped.
         """
         self.request_shutdown()
-        self.quarantine_after_restart()
+        if deadline is None:
+            self.quarantine_after_restart()
+            return True
+        left = deadline - time.monotonic()
+        if left <= 0 or not self._lock.acquire(timeout=left):
+            return False
+        try:
+            previous = self._db.execute("PRAGMA busy_timeout").fetchone()[0]
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            # Restrict SQLite's normal 5-second busy waiter to the remaining
+            # global shutdown budget; restore the original setting afterward.
+            self._db.execute(f"PRAGMA busy_timeout={max(0, int(left * 1000))}")
+            try:
+                self.quarantine_after_restart()
+            except sqlite3.OperationalError as error:
+                if error.sqlite_errorcode in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    return False
+                raise
+            finally:
+                self._db.execute(f"PRAGMA busy_timeout={previous}")
+            return True
+        finally:
+            self._lock.release()
 
     def revoke_all_bounded(self, timeout: float) -> bool:
-        """Drain active/uncertain media with ONE global shutdown deadline.
-
-        Return true only when every allocated sender has a durable verified
-        audio+video STOP receipt. Pending CREATE with no authoritative sender
-        identity remains uncertain and returns false. No retry reopens CREATE.
-        """
+        """Revoke ALL operations and await verified STOP within one deadline."""
         if not 0 < timeout <= 60:
             raise ValueError("invalid shutdown deadline")
         deadline = time.monotonic() + timeout
-        self.begin_shutdown()
+        if not self.begin_shutdown(deadline):
+            return False
         with self._lock:
             operations = self._db.execute(
                 """SELECT id,generation FROM media_operations
@@ -680,17 +705,29 @@ class MediaLifecycle:
             try:
                 self.cancel_bounded(operation_id, generation, min(left, 1.0))
             except Exception:
-                # Uncertain remains durable and blocks future sender CREATE.
-                # Continue to other pending senders within the same deadline.
+                # Keep compensating other operations; failed STOP stays
+                # quarantined and retryable in the one durable ledger.
                 pass
-        with self._lock:
-            unresolved = self._db.execute(
-                """SELECT 1 FROM media_operations
-                   WHERE phase != 'stopped'
-                      OR (session_id IS NOT NULL AND stop_verified=0)
-                   LIMIT 1"""
-            ).fetchone()
-        return unresolved is None
+        # STOP can finish *after* the first 1-second HTTP timeout. The
+        # remaining grace budget belongs to late verified receipts.
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return False
+            if not self._lock.acquire(timeout=left):
+                return False
+            try:
+                unresolved = self._db.execute(
+                    """SELECT 1 FROM media_operations
+                       WHERE phase != 'stopped'
+                          OR (session_id IS NOT NULL AND stop_verified=0)
+                       LIMIT 1"""
+                ).fetchone()
+            finally:
+                self._lock.release()
+            if unresolved is None:
+                return True
+            time.sleep(min(0.025, max(0, deadline - time.monotonic())))
 
     def quarantine_after_restart(self):
         """Fence every sender identity inherited without a live backend handle.
