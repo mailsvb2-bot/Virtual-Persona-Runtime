@@ -227,9 +227,8 @@
     </section>
   </main>
   <script async src="/bootstrap-watchdog.js"></script>
+  <!-- The canonical app boots first. Noncritical feature entrypoints are
+       imported after owner status is ready so they cannot starve startup. -->
   <script type="module" src="/app.js"></script>
-  <script type="module" src="/tts-selector.js"></script>
-  <script type="module" src="/evidence-export.js"></script>
-  <script type="module" src="/reference-capture.js"></script>
 </body>
 </html>
