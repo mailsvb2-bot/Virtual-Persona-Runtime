@@ -323,6 +323,23 @@ fn register_visitor<T>(
     Ok(())
 }
 
+/// Retain an already-created provider session under a server-only identity
+/// when its requested public identity collides. Never replace the incumbent.
+fn quarantine_collided_visitor<T>(
+    sessions: &Mutex<HashMap<String, Arc<T>>>,
+    conversation: &Arc<T>,
+    candidates: impl IntoIterator<Item = String>,
+) -> Option<String> {
+    for id in candidates {
+        let mut active = sessions.lock();
+        if let std::collections::hash_map::Entry::Vacant(slot) = active.entry(id.clone()) {
+            slot.insert(Arc::clone(conversation));
+            return Some(id);
+        }
+    }
+    None
+}
+
 /// Never discard a quarantined registration on a failed STOP or on a local
 /// transport close that lacks independent remote audio/video sender receipts.
 /// Identity comparison prevents a late STOP from removing a newer session.
@@ -477,18 +494,11 @@ fn visitor_start(
             // its only STOP handle just because the public ID was occupied.
             // Allocate a separate server-only quarantine identity, without
             // replacing the existing visitor or exposing this ID to a browser.
-            let quarantine_id = (0..8)
-                .filter_map(|_| new_visitor_session_id().ok())
-                .find(|id| {
-                    let mut sessions = state.rt1.conversations.lock();
-                    match sessions.entry(id.clone()) {
-                        std::collections::hash_map::Entry::Vacant(slot) => {
-                            slot.insert(Arc::clone(&conversation));
-                            true
-                        }
-                        std::collections::hash_map::Entry::Occupied(_) => false,
-                    }
-                });
+            let quarantine_id = quarantine_collided_visitor(
+                &state.rt1.conversations,
+                &conversation,
+                (0..8).filter_map(|_| new_visitor_session_id().ok()),
+            );
             let Some(quarantine_id) = quarantine_id else {
                 // Fail closed: never claim a successful STOP or deliver SDP.
                 // This path still requires durable out-of-band reconciliation.
