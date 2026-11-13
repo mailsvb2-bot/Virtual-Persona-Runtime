@@ -230,5 +230,7 @@
   <!-- The canonical app boots first. Noncritical feature entrypoints are
        imported after owner status is ready so they cannot starve startup. -->
   <script type="module" src="/app.js"></script>
+  <!-- Independent exact-byte evidence export is a protected browser contract. -->
+  <script type="module" src="/evidence-export.js"></script>
 </body>
 </html>
