@@ -159,6 +159,7 @@ class BranchRetirementTests(TestCase):
         self.assertIn("branches: [main]", workflow)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
         self.assertIn("github.event.workflow_run.head_branch == 'main'", workflow)
+        self.assertIn("github.event.workflow_run.head_repository.full_name == github.repository", workflow)
         self.assertNotIn("  push:", workflow)
 
     def test_retirement_skips_stale_ci_sha_without_losing_retry_inventory(self):
