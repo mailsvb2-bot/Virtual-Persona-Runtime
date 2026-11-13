@@ -566,7 +566,16 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
 }
 
 fn static_response(body: &str, content_type: &str) -> HttpResponse {
-    response(200, body.as_bytes().to_vec(), content_type)
+    // Browser ES modules use many simultaneous GETs. Do not keep a static
+    // response's HTTP/1.1 connection alive across module requests: a stalled
+    // reused socket can otherwise pin one of Chromium's limited connections
+    // while the canonical app waits for its import graph. API requests keep
+    // their existing transport behavior; only bundled assets close.
+    let mut reply = response(200, body.as_bytes().to_vec(), content_type);
+    if let Ok(header) = Header::from_bytes("Connection", "close") {
+        reply.add_header(header);
+    }
+    reply
 }
 
 fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
