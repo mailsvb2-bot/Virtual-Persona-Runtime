@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Safely retire branches that are provably preserved in main.
 
-No inference from merge history, cherry-pick counts, or filenames. A different
-tree is never deleted. The remote ref is re-read before each lease-guarded push.
+No inference from cherry-pick counts, patch IDs, or filenames. A different
+complete tree is eligible ONLY when its exact branch tip is a Git ancestor
+of main. The remote ref is re-read before each lease-guarded push.
 All branch decisions are exported before deletion for independent review.
 """
 from __future__ import annotations
