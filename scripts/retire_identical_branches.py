@@ -150,12 +150,29 @@ def retire(item: dict, expected_main: str) -> str:
     return "deleted" if command.returncode == 0 else "delete_denied"
 
 
-def run(output: Path, execute: bool) -> dict:
+def run(
+    output: Path, execute: bool, expected_main_sha: str | None = None,
+) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     # Unshallow checkout and fetch all remote heads before comparing full trees.
     git("fetch", "--no-tags", "--prune", "origin",
         "+refs/heads/*:refs/remotes/origin/*")
     main_sha = main_head()
+    if expected_main_sha is not None and main_sha != expected_main_sha:
+        # The CI gate checked commit A, but main moved to B during the fetch.
+        # The caller MUST NOT silently upgrade its authority to commit B.
+        summary = {
+            "main_sha": main_sha,
+            "expected_main_sha": expected_main_sha,
+            "execute": False,
+            "branches": [],
+            "skipped": "verified_ci_main_changed",
+        }
+        payload = json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
+        (output / "inventory-before.json").write_text(payload, encoding="utf-8")
+        (output / "inventory-after.json").write_text(payload, encoding="utf-8")
+        print(json.dumps({"main_sha": main_sha, "skipped": summary["skipped"], "deleted": 0}))
+        return summary
     protected = open_pr_heads() if execute else set()
     branches = [classify(main_sha, name, sha, protected)
                 for name, sha in remote_branches()]
@@ -204,8 +221,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, default=Path("branch-retirement"))
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--expected-main-sha", default=None)
     args = parser.parse_args()
-    run(args.out, args.execute)
+    run(args.out, args.execute, args.expected_main_sha)
 
 
 if __name__ == "__main__":

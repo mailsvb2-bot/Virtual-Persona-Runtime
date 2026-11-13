@@ -632,4 +632,12 @@
     // BFCache must never resurrect the old authorization or media sender.
     if (event.persisted && pageHidden) window.location.reload();
   });
+
+  // All handlers above must be installed before the UI is actionable.
+  // This is a readiness receipt for the existing single RT1 script, NOT
+  // provider/media admission and not permission to reopen a revoked sender.
+  for (const id of ["provision", "publish", "pause", "unpublish", "join", "unlock-audio"]) {
+    el(id).disabled = false;
+  }
+  status.dataset.rt1Ready = "true";
 })();

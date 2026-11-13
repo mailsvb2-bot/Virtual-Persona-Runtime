@@ -17,15 +17,29 @@ class BootstrapWatchdogSafety(unittest.TestCase):
     def test_critical_owner_modules_are_preloaded_before_browser_body(self):
         html = HTML.read_text(encoding="utf-8")
         server = SERVER.read_text(encoding="utf-8")
-        for module in ("owner-capture.js", "reference-capture.js"):
+        # All eager modules must be fetched early; the original pair only
+        # moved the bottleneck to /tts-selector.js and /evidence-export.js.
+        initial_modules = (
+            "app.js", "bootstrap-context.js", "evidence-export.js",
+            "interrupted-answer.js", "owner-capture.js",
+            "provider-event-fence.js", "voice-command-scheduler.js",
+            "media-runtime.js", "session-runtime-state.js",
+            "tts-selector.js", "reference-capture.js",
+        )
+        for module in initial_modules:
             preload = f'<link rel="modulepreload" href="/{module}">'
-            self.assertEqual(html.count(preload), 1)
+            self.assertEqual(html.count(preload), 1, module)
             self.assertLess(html.index(preload), html.index("</head>"))
             self.assertIn(f'"/{module}" => static_response(', server)
             self.assertNotIn(f'<script async src="/{module}">', html)
-        self.assertIn('<script type="module" src="/app.js"></script>', html)
-        # A preload must never execute a second application bootstrap.
+        self.assertEqual(html.count('rel="modulepreload"'), len(initial_modules))
+        # Keep heavyweight/on-demand media outside initial loading.
+        self.assertNotIn('rel="modulepreload" href="/mic-worklet.js"', html)
+        self.assertNotIn('rel="modulepreload" href="/vendor/livekit-client.umd.js"', html)
+        # A preload is only a fetch; never add a second application runtime.
         self.assertEqual(html.count('<script type="module" src="/app.js"></script>'), 1)
+        self.assertEqual(html.count('<script type="module" src="/tts-selector.js"></script>'), 1)
+        self.assertEqual(html.count('<script type="module" src="/evidence-export.js"></script>'), 1)
 
     def test_recovery_uses_static_local_code_only(self):
         server = SERVER.read_text(encoding="utf-8")
