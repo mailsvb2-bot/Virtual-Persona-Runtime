@@ -152,7 +152,7 @@ class BranchRetirementTests(TestCase):
 
     def test_retirement_is_driven_by_successful_main_ci_not_arbitrary_push(self):
         workflow = (
-            MODULE.parents[2] / ".github/workflows/retire-identical-branches.yml"
+            MODULE.parents[1] / ".github/workflows/retire-identical-branches.yml"
         ).read_text(encoding="utf-8")
         self.assertIn('workflows: ["CI"]', workflow)
         self.assertIn("types: [completed]", workflow)
@@ -163,7 +163,7 @@ class BranchRetirementTests(TestCase):
 
     def test_retirement_skips_stale_ci_sha_without_losing_retry_inventory(self):
         workflow = (
-            MODULE.parents[2] / ".github/workflows/retire-identical-branches.yml"
+            MODULE.parents[1] / ".github/workflows/retire-identical-branches.yml"
         ).read_text(encoding="utf-8")
         self.assertIn("git ls-remote --heads origin refs/heads/main", workflow)
         self.assertIn("VERIFIED_CI_SHA", workflow)
