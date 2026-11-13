@@ -168,10 +168,50 @@ class BranchRetirementTests(TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("git ls-remote --heads origin refs/heads/main", workflow)
         self.assertIn("VERIFIED_CI_SHA", workflow)
+        self.assertIn("--expected-main-sha", workflow)
         self.assertIn('run=false', workflow)
         self.assertIn("if: steps.current.outputs.run == 'true'", workflow)
         self.assertIn("if: always()", workflow)
         self.assertIn("branch-retirement-inventory", workflow)
+
+    def test_ci_verified_sha_is_checked_again_after_executor_fetch(self):
+        import json
+        import tempfile
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            with patch.object(retirement, "git") as fetch:
+                with patch.object(retirement, "main_head", return_value="b" * 40):
+                    with patch.object(retirement, "open_pr_heads") as prs:
+                        with patch.object(retirement, "remote_branches") as branches:
+                            result = retirement.run(
+                                output, execute=True, expected_main_sha="a" * 40,
+                            )
+            fetch.assert_called_once()
+            prs.assert_not_called()
+            branches.assert_not_called()
+            self.assertEqual(result["skipped"], "verified_ci_main_changed")
+            self.assertEqual(result["branches"], [])
+            self.assertFalse(result["execute"])
+            for filename in ("inventory-before.json", "inventory-after.json"):
+                saved = json.loads((output / filename).read_text(encoding="utf-8"))
+                self.assertEqual(saved["expected_main_sha"], "a" * 40)
+                self.assertEqual(saved["main_sha"], "b" * 40)
+
+    def test_matching_ci_verified_sha_allows_same_canonical_proof_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(retirement, "git") as fetch:
+                with mock.patch.object(retirement, "main_head", return_value="a" * 40):
+                    with mock.patch.object(retirement, "open_pr_heads", return_value=set()):
+                        with mock.patch.object(retirement, "remote_branches", return_value=[]):
+                            result = retirement.run(
+                                Path(tmp), execute=True, expected_main_sha="a" * 40,
+                            )
+            fetch.assert_called_once()
+            self.assertEqual(result["branches"], [])
+            self.assertTrue(result["execute"])
+            self.assertNotIn("skipped", result)
 
     def test_missing_remote_main_fails_closed(self):
         process = mock.Mock(stdout="")
