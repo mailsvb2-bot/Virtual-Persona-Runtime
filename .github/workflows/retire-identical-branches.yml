@@ -55,7 +55,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-        run: python3 scripts/retire_identical_branches.py --execute --out branch-retirement
+          VERIFIED_CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            python3 scripts/retire_identical_branches.py --execute \
+              --expected-main-sha "${VERIFIED_CI_SHA}" --out branch-retirement
+          else
+            python3 scripts/retire_identical_branches.py --execute --out branch-retirement
+          fi
       - name: Preserve immutable branch-head inventory and deletion outcomes
         if: always()
         uses: actions/upload-artifact@v7
