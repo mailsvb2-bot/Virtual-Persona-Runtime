@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VPR Owner Lab</title>
   <link rel="stylesheet" href="/styles.css">
+  <!-- Fetch late-discovered, same-origin critical modules during HTML parse.
+       modulepreload only fetches; the canonical script/module execution order
+       and existing CSP remain unchanged. -->
+  <link rel="modulepreload" href="/owner-capture.js">
+  <link rel="modulepreload" href="/reference-capture.js">
 </head>
 <body>
   <main class="shell">

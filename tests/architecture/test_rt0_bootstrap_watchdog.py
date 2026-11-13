@@ -14,6 +14,19 @@ class BootstrapWatchdogSafety(unittest.TestCase):
         self.assertNotIn('<script defer src="/bootstrap-watchdog.js"></script>', html)
         self.assertIn('<script type="module" src="/app.js"></script>', html)
         self.assertIn('id="connect" class="primary" disabled', html)
+    def test_critical_owner_modules_are_preloaded_before_browser_body(self):
+        html = HTML.read_text(encoding="utf-8")
+        server = SERVER.read_text(encoding="utf-8")
+        for module in ("owner-capture.js", "reference-capture.js"):
+            preload = f'<link rel="modulepreload" href="/{module}">'
+            self.assertEqual(html.count(preload), 1)
+            self.assertLess(html.index(preload), html.index("</head>"))
+            self.assertIn(f'"/{module}" => static_response(', server)
+            self.assertNotIn(f'<script async src="/{module}">', html)
+        self.assertIn('<script type="module" src="/app.js"></script>', html)
+        # A preload must never execute a second application bootstrap.
+        self.assertEqual(html.count('<script type="module" src="/app.js"></script>'), 1)
+
     def test_recovery_uses_static_local_code_only(self):
         server = SERVER.read_text(encoding="utf-8")
         script = SCRIPT.read_text(encoding="utf-8")
