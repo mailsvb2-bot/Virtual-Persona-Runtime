@@ -147,8 +147,22 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
     };
     if let Some(conversation) = routed.delivery {
         match conversation.begin_browser_delivery() {
-            Ok(_lease) => {
-                let _ = request.respond(routed.response);
+            Ok(lease) => {
+                // A successful admission check is not proof that the browser
+                // received its session or media. On a failed socket write,
+                // revoke through the canonical STOP path and retain uncertain
+                // remote sender state for later reconciliation.
+                if request.respond(routed.response).is_err() {
+                    drop(lease);
+                    let receipt_path = conversation.has_remote_video_stop_receipt_path();
+                    let stop = conversation.close();
+                    let _ = finalize_denied_delivery(
+                        &state.rt1.conversations,
+                        &conversation,
+                        stop,
+                        receipt_path,
+                    );
+                }
             }
             Err(_) => {
                 // A revoked START may have allocated remote media before the
