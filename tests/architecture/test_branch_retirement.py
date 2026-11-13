@@ -1,4 +1,4 @@
-"""Hermetic safety gates for the exact-tree historical branch retirement utility."""
+"""Hermetic safety gates for exact-tree and proven-ancestor branch retirement."""
 from __future__ import annotations
 
 import importlib.util
@@ -23,6 +23,33 @@ class BranchRetirementTests(TestCase):
         with mock.patch.object(retirement, "tree", return_value="identical"):
             item = retirement.classify("main", "old", "oldhead", set())
         self.assertEqual(item["decision"], "eligible")
+
+    def test_different_tree_ancestor_is_safe_to_retire(self):
+        with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
+            with mock.patch.object(retirement, "exact_ancestor", return_value=True):
+                item = retirement.classify("main", "merged", "merged-head", set())
+        self.assertEqual(item["decision"], "eligible")
+        self.assertEqual(item["reason"], "exact_branch_tip_ancestor_of_main")
+
+    def test_unique_differing_branch_is_never_eligible(self):
+        with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
+            with mock.patch.object(retirement, "exact_ancestor", return_value=False):
+                item = retirement.classify("main", "unique-code", "different-head", set())
+        self.assertEqual(item["decision"], "retain")
+        self.assertEqual(item["reason"], "different_complete_tree")
+
+    def test_git_ancestor_indeterminate_fails_closed(self):
+        result = mock.Mock(returncode=128)
+        with mock.patch.object(retirement, "git", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "cannot verify Git ancestor"):
+                retirement.exact_ancestor("unknown-head", "main")
+
+    def test_no_branch_with_open_pr_is_deleted_even_if_ancestor(self):
+        with mock.patch.object(retirement, "tree", side_effect=AssertionError("no tree read")):
+            with mock.patch.object(retirement, "exact_ancestor", side_effect=AssertionError("no check")):
+                item = retirement.classify("main", "draft-pr", "ancestor-head", {"draft-pr"})
+        self.assertEqual(item["decision"], "retain")
+        self.assertEqual(item["reason"], "open_pull_request")
 
     def test_open_pull_request_never_eligible(self):
         with mock.patch.object(retirement, "tree", side_effect=AssertionError("must not inspect")):
