@@ -29,6 +29,16 @@ use helpers::{
     validate_microphone_audio,
 };
 
+// A provider panic must not permanently strand the STOP serialization lease.
+// This only restores retryability; it never turns an uncertain STOP into proof.
+struct StopFlightReset(Arc<AtomicBool>);
+
+impl Drop for StopFlightReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 #[derive(Default)]
 struct LiveVisitorInterrupt {
     cancelled: AtomicBool,
@@ -77,11 +87,11 @@ impl LiveVisitorInterrupt {
             let in_flight = Arc::clone(&self.stop_in_flight);
             let confirmed = Arc::clone(&self.stop_confirmed);
             std::thread::spawn(move || {
+                let _reset = StopFlightReset(in_flight);
                 match stop.stop() {
                     Ok(()) => confirmed.store(true, Ordering::Release),
                     Err(error) => eprintln!("RT1 best-effort backend STOP failed: {error:?}"),
                 }
-                in_flight.store(false, Ordering::Release);
             });
         } else {
             self.stop_in_flight.store(false, Ordering::Release);
@@ -520,8 +530,10 @@ impl Rt1VisitorConversation {
             let _ = self.manager.close(&self.id);
             return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
         }
-        let stop_result = stop.stop();
-        self.interrupt.stop_in_flight.store(false, Ordering::Release);
+        let stop_result = {
+            let _reset = StopFlightReset(Arc::clone(&self.interrupt.stop_in_flight));
+            stop.stop()
+        };
         if stop_result.is_err() {
             // An unconfirmed sender must not accept another voice turn.
             self.interrupt.stop();
@@ -624,11 +636,11 @@ fn stop_engine_serialized(
     if interrupt.stop_in_flight.swap(true, Ordering::AcqRel) {
         return Err("RT1_VISITOR_INTERRUPT_STOP_UNCONFIRMED".into());
     }
+    let _reset = StopFlightReset(Arc::clone(&interrupt.stop_in_flight));
     let result = stop_if_uncontended(engine);
     if result.is_ok() {
         interrupt.stop_confirmed.store(true, Ordering::Release);
     }
-    interrupt.stop_in_flight.store(false, Ordering::Release);
     result
 }
 
@@ -655,3 +667,23 @@ fn unsupported_visitor_voice_egress<T>() -> Result<T, String> {
 #[cfg(test)]
 #[path = "rt1_visitor_conversation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod stop_flight_reset_tests {
+    use super::*;
+
+    #[test]
+    fn panicking_provider_releases_stop_lease_without_claiming_confirmation() {
+        let in_flight = Arc::new(AtomicBool::new(true));
+        let confirmed = Arc::new(AtomicBool::new(false));
+        let lease = Arc::clone(&in_flight);
+        let result = std::panic::catch_unwind(move || {
+            let _reset = StopFlightReset(lease);
+            panic!("simulated provider STOP panic");
+        });
+        assert!(result.is_err());
+        assert!(!in_flight.load(Ordering::Acquire));
+        assert!(!confirmed.load(Ordering::Acquire));
+        assert!(!in_flight.swap(true, Ordering::AcqRel), "STOP must be retryable");
+    }
+}
