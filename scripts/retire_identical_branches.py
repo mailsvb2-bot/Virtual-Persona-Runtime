@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Safely retire ONLY non-main branches whose complete Git trees equal main.
+"""Safely retire branches that are provably preserved in main.
 
-No inference from merge history, cherry-pick counts, or filenames. A different
-tree is never deleted. The remote ref is re-read before each lease-guarded push.
+No inference from cherry-pick counts, patch IDs, or filenames. A different
+complete tree is eligible ONLY when its exact branch tip is a Git ancestor
+of main. The remote ref is re-read before each lease-guarded push.
 All branch decisions are exported before deletion for independent review.
 """
 from __future__ import annotations
@@ -49,6 +50,17 @@ def remote_main_head() -> str:
     return matches[0]
 
 
+def exact_ancestor(head_sha: str, main_sha: str) -> bool:
+    """Only a whole-history Git ancestry proof can authorize a differing tree.
+
+    This cannot infer source equivalence from a cherry-pick, patch ID or diff.
+    """
+    result = git("merge-base", "--is-ancestor", head_sha, main_sha, check=False)
+    if result.returncode not in (0, 1):
+        raise RuntimeError("cannot verify Git ancestor relationship")
+    return result.returncode == 0
+
+
 def classify(main_sha: str, name: str, head_sha: str, protected: set[str]) -> dict:
     item = {"name": name, "sha": head_sha, "decision": "retain"}
     if name in protected:
@@ -63,6 +75,11 @@ def classify(main_sha: str, name: str, head_sha: str, protected: set[str]) -> di
     if item["tree_sha"] == tree(main_sha):
         item["decision"] = "eligible"
         item["reason"] = "identical_complete_tree"
+    elif exact_ancestor(head_sha, main_sha):
+        # Every reachable commit is already in current main history.
+        # No extra code or historical commit can be lost by deleting its ref.
+        item["decision"] = "eligible"
+        item["reason"] = "exact_branch_tip_ancestor_of_main"
     return item
 
 
@@ -154,6 +171,7 @@ def run(output: Path, execute: bool) -> dict:
         "main_sha": main_sha,
         "total": len(branches),
         "identical": sum(x["reason"] == "identical_complete_tree" for x in branches),
+        "ancestor": sum(x["reason"] == "exact_branch_tip_ancestor_of_main" for x in branches),
         "deleted": sum(x.get("outcome") == "deleted" for x in branches),
         "different_tree": sum(x["reason"] == "different_complete_tree" for x in branches),
     }))
