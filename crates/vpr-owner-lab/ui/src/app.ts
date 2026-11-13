@@ -3317,5 +3317,23 @@ void api<Bootstrap>("/api/bootstrap")
     }
     updateControls();
     bootstrapComplete = true;
+    // These independent feature controllers are not part of authorization or
+    // canonical owner readiness. Load them only AFTER the real backend owner
+    // state and capture have initialized. Fail visibly in their own feature
+    // panel instead of holding the owner app's module graph hostage.
+    void import("./tts-selector.js").catch(() => {
+      const feedback = document.getElementById("tts-switch-status");
+      if (feedback) feedback.textContent = "Не удалось загрузить настройки озвучивания.";
+    });
+    void import("/reference-capture.js").catch(() => {
+      const voice = document.getElementById("voice-reference-status");
+      const appearance = document.getElementById("appearance-reference-status");
+      for (const field of [voice, appearance]) {
+        if (field) {
+          field.textContent = "Не удалось загрузить обработчик reference.";
+          field.dataset.state = "error";
+        }
+      }
+    });
   })
   .catch((error: unknown) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));
