@@ -11,6 +11,7 @@ mod http_rt1;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
+mod http_static;
 mod http_text;
 mod http_tts;
 mod http_voice;
@@ -19,6 +20,7 @@ mod rt1_startup;
 
 use http_json::{parse_empty_json, parse_json, read_body};
 use http_session::reject_if_session_ending;
+use http_static::static_response;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -563,19 +565,6 @@ fn error_response(status: u16, code: &str) -> HttpResponse {
     let body = serde_json::to_vec(&ErrorResponse { ok: false, code })
         .unwrap_or_else(|_| b"{\"ok\":false,\"code\":\"INTERNAL_ERROR\"}".to_vec());
     response(status, body, "application/json; charset=utf-8")
-}
-
-fn static_response(body: &str, content_type: &str) -> HttpResponse {
-    // Browser ES modules use many simultaneous GETs. Do not keep a static
-    // response's HTTP/1.1 connection alive across module requests: a stalled
-    // reused socket can otherwise pin one of Chromium's limited connections
-    // while the canonical app waits for its import graph. API requests keep
-    // their existing transport behavior; only bundled assets close.
-    let mut reply = response(200, body.as_bytes().to_vec(), content_type);
-    if let Ok(header) = Header::from_bytes("Connection", "close") {
-        reply.add_header(header);
-    }
-    reply
 }
 
 fn response(status: u16, body: Vec<u8>, content_type: &str) -> HttpResponse {
