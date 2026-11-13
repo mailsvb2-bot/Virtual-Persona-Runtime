@@ -2,8 +2,9 @@
 """Safely retire branches that are provably preserved in main.
 
 No inference from cherry-pick counts, patch IDs, or filenames. A different
-complete tree is eligible ONLY when its exact branch tip is a Git ancestor
-of main. The remote ref is re-read before each lease-guarded push.
+complete tree is eligible ONLY when its exact tip is a Git ancestor of main
+OR a clean three-way Git merge yields the exact current main tree. The remote
+ref is re-read before each lease-guarded push.
 All branch decisions are exported before deletion for independent review.
 """
 from __future__ import annotations
@@ -61,6 +62,21 @@ def exact_ancestor(head_sha: str, main_sha: str) -> bool:
     return result.returncode == 0
 
 
+def exact_noop_merge(main_sha: str, head_sha: str) -> bool:
+    """Only a clean, exact Git three-way merge yielding main's tree is safe.
+
+    This checks the *entire resulting tree* (files, modes, deletions and
+    binaries), rather than looking for similar lines or matching commit
+    messages. A conflict, unsupported Git operation or failed merge fails
+    closed and retains the branch.
+    """
+    result = git("merge-tree", "--write-tree", main_sha, head_sha, check=False)
+    if result.returncode != 0:
+        return False
+    first_line = result.stdout.splitlines()
+    return bool(first_line) and first_line[0].strip() == tree(main_sha)
+
+
 def classify(main_sha: str, name: str, head_sha: str, protected: set[str]) -> dict:
     item = {"name": name, "sha": head_sha, "decision": "retain"}
     if name in protected:
@@ -77,9 +93,14 @@ def classify(main_sha: str, name: str, head_sha: str, protected: set[str]) -> di
         item["reason"] = "identical_complete_tree"
     elif exact_ancestor(head_sha, main_sha):
         # Every reachable commit is already in current main history.
-        # No extra code or historical commit can be lost by deleting its ref.
         item["decision"] = "eligible"
         item["reason"] = "exact_branch_tip_ancestor_of_main"
+    elif exact_noop_merge(main_sha, head_sha):
+        # Git's *actual merge algorithm* would leave every main file
+        # unchanged. Unlike patch similarity, this proves the branch is
+        # functionally redundant for the current main tree.
+        item["decision"] = "eligible"
+        item["reason"] = "clean_merge_exactly_preserves_main_tree"
     return item
 
 
@@ -172,6 +193,7 @@ def run(output: Path, execute: bool) -> dict:
         "total": len(branches),
         "identical": sum(x["reason"] == "identical_complete_tree" for x in branches),
         "ancestor": sum(x["reason"] == "exact_branch_tip_ancestor_of_main" for x in branches),
+        "merge_noop": sum(x["reason"] == "clean_merge_exactly_preserves_main_tree" for x in branches),
         "deleted": sum(x.get("outcome") == "deleted" for x in branches),
         "different_tree": sum(x["reason"] == "different_complete_tree" for x in branches),
     }))
