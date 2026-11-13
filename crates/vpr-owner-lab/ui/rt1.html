@@ -14,13 +14,13 @@
 <section>
 <h2>Владелец</h2>
 <p>Создайте доступ один раз после проверки Persona. Сохраните ключ владельца в надёжном месте — он не сохраняется в браузере.</p>
-<button id="provision" type="button">Создать кабинет владельца</button>
+<button id="provision" type="button" disabled>Создать кабинет владельца</button>
 <label>Ключ владельца <input id="owner-token" type="password" autocomplete="off" placeholder="Ключ владельца"></label>
 <label>Версия проверенной Persona <input id="persona-version" type="number" min="1" step="1" value="1"></label>
 <div class="actions">
-<button id="publish" type="button">Опубликовать и получить приглашение</button>
-<button id="pause" type="button">Приостановить</button>
-<button id="unpublish" type="button">Снять с публикации</button>
+<button id="publish" type="button" disabled>Опубликовать и получить приглашение</button>
+<button id="pause" type="button" disabled>Приостановить</button>
+<button id="unpublish" type="button" disabled>Снять с публикации</button>
 </div>
 <label>Код приглашения <input id="invite-token" readonly placeholder="Появится после публикации"></label>
 </section>
@@ -30,9 +30,9 @@
 <label>Код приглашения <input id="visitor-token" autocomplete="off" placeholder="Введите код приглашения"></label>
 <label class="check"><input id="consent" type="checkbox"> Я согласен(на) начать аудио- и видеосессию</label>
 <div class="actions">
-<button id="join" type="button">Начать разговор</button>
+<button id="join" type="button" disabled>Начать разговор</button>
 <button id="leave" type="button" disabled>Завершить разговор</button>
-<button id="unlock-audio" type="button">Включить звук</button>
+<button id="unlock-audio" type="button" disabled>Включить звук</button>
 <button id="speak" type="button" disabled>Говорить</button>
 <button id="interrupt" type="button" disabled>Прервать ответ</button>
 </div>
@@ -44,7 +44,7 @@
 <button id="send-text" type="button" disabled>Отправить вопрос</button>
 <p id="speech-result" aria-live="polite"></p>
 </section>
-<section aria-live="polite"><h2>Состояние</h2><p id="status">Не подключено</p></section>
+<section aria-live="polite"><h2>Состояние</h2><p id="status" data-rt1-ready="false">Не подключено</p></section>
 </main>
 </body>
 </html>
