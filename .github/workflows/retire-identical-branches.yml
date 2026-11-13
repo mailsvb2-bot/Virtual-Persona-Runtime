@@ -1,12 +1,12 @@
 name: Retire content-identical historical branches
 
 on:
-  push:
+  # Delete only after the actual current main passes all CI gates, not when
+  # an unrelated cleanup file changes or a PR proves only its own checks.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - scripts/retire_identical_branches.py
-      - tests/architecture/test_branch_retirement.py
-      - .github/workflows/retire-identical-branches.yml
   workflow_dispatch:
 
 permissions:
@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   retire-identical:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -27,9 +27,31 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
+      - name: Require exact current main SHA from successful CI
+        id: current
+        env:
+          VERIFIED_CI_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_sha="$(git ls-remote --heads origin refs/heads/main | cut -f1)"
+          checked_out="$(git rev-parse HEAD)"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]] && \
+             { [[ "${VERIFIED_CI_SHA}" != "${live_sha}" ]] || \
+               [[ "${VERIFIED_CI_SHA}" != "${checked_out}" ]]; }; then
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::A newer main superseded the successful CI; do not retire branches"
+          elif [[ "${checked_out}" != "${live_sha}" ]]; then
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::The checked-out main differs from remote main"
+          else
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Test fail-closed branch retirement invariants
+        if: steps.current.outputs.run == 'true'
         run: python3 -m unittest discover -s tests/architecture -p 'test_branch_retirement.py'
       - name: Verify exact main SHA and retire identical branch trees
+        if: steps.current.outputs.run == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
