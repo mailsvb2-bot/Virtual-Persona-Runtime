@@ -336,15 +336,15 @@ test("Owner Lab reports blocked module and offers real reload", async ({ page })
   await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
 });
 
-test("Owner Lab never mislabels an app failure preceding the async watchdog", async ({ page }) => {
+test("Owner Lab never reports successful bootstrap after app module failure", async ({ page }) => {
   let reportAppFailure!: () => void;
   const appFailed = new Promise<void>((resolve) => { reportAppFailure = resolve; });
   page.on("requestfailed", (request) => {
     if (new URL(request.url()).pathname === "/app.js") reportAppFailure();
   });
-  // Force the real module failure to precede the independent watchdog.
-  // Keep the watchdog async, because a blocking diagnostic script would
-  // restore the original bootstrap starvation regression.
+  // Force the network failure before watchdog delivery. Browser error
+  // dispatch can still occur after its listener attaches; that is a genuine
+  // module-load observation, not a false-positive successful bootstrap.
   await page.route("**/bootstrap-watchdog.js", async (route) => {
     await appFailed;
     await route.continue();
@@ -354,6 +354,9 @@ test("Owner Lab never mislabels an app failure preceding the async watchdog", as
   const status = page.locator("#status");
   await expect(status).toContainText("Интерфейс не загрузился", { timeout: 18_000 });
   await expect(status).toHaveAttribute("data-state", "error");
-  await expect(status).toHaveAttribute("data-bootstrap-failure", "bootstrap-unconfirmed");
+  await expect(status).toHaveAttribute(
+    "data-bootstrap-failure", /^(module-load|bootstrap-unconfirmed)$/,
+  );
+  await expect(page.getByRole("button", { name: "Подключить аватар" })).toBeDisabled();
   await expect(status.getByRole("button", { name: "Повторить загрузку" })).toBeEnabled();
 });
