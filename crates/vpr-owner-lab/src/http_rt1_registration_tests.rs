@@ -137,6 +137,55 @@ fn collision_never_invokes_provider_authorization() {
 }
 
 #[test]
+fn post_create_collision_quarantines_new_provider_without_erasing_incumbent() {
+    let sessions = Mutex::new(HashMap::new());
+    let incumbent = Arc::new(1_u8);
+    let candidate = Arc::new(2_u8);
+    sessions.lock().insert("public".into(), Arc::clone(&incumbent));
+    let quarantine = super::quarantine_collided_visitor(
+        &sessions,
+        &candidate,
+        ["public".to_owned(), "private-retry".to_owned()],
+    );
+    assert_eq!(quarantine.as_deref(), Some("private-retry"));
+    assert!(Arc::ptr_eq(sessions.lock().get("public").unwrap(), &incumbent));
+    assert!(Arc::ptr_eq(
+        sessions.lock().get("private-retry").unwrap(),
+        &candidate
+    ));
+    // Unconfirmed remote video STOP cannot release the retry handle.
+    assert!(finalize_registered_stop(
+        &sessions,
+        "private-retry",
+        &candidate,
+        Err("provider timeout".into()),
+        false,
+    ).is_err());
+    assert!(sessions.lock().contains_key("private-retry"));
+    finalize_registered_stop(&sessions, "private-retry", &candidate, Ok(()), true).unwrap();
+    assert!(!sessions.lock().contains_key("private-retry"));
+    assert!(sessions.lock().contains_key("public"));
+}
+
+#[test]
+fn quarantine_exhaustion_never_overwrites_existing_provider() {
+    let sessions = Mutex::new(HashMap::new());
+    let incumbent = Arc::new(1_u8);
+    let candidate = Arc::new(2_u8);
+    sessions.lock().insert("occupied".into(), Arc::clone(&incumbent));
+    assert_eq!(
+        super::quarantine_collided_visitor(
+            &sessions,
+            &candidate,
+            ["occupied".to_owned()],
+        ),
+        None
+    );
+    assert_eq!(sessions.lock().len(), 1);
+    assert!(Arc::ptr_eq(sessions.lock().get("occupied").unwrap(), &incumbent));
+}
+
+#[test]
 fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
     let routed = super::guarded_reply(Err(super::error_response(409, "RT1_VISITOR_TEXT_DENIED")));
     assert!(routed.delivery.is_none());
