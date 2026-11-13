@@ -64,3 +64,6 @@ async function mountTtsSelector(): Promise<void> {
 }
 
 void mountTtsSelector();
+
+// Independent feature controller is also a dynamically imported ES module.
+export {};

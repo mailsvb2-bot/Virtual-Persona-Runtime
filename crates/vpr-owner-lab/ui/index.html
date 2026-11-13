@@ -5,13 +5,9 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VPR Owner Lab</title>
   <link rel="stylesheet" href="/styles.css">
-  <!-- Only the canonical owner app owns bootstrap. Keep browser preload
-       priority for its entry and necessary owner state; do not compete with
-       it using independent feature entrypoints (TTS/reference capture).
-       The browser resolves the remaining imports from app.js itself. -->
-  <link rel="modulepreload" href="/app.js" fetchpriority="high">
-  <link rel="modulepreload" href="/bootstrap-context.js" fetchpriority="high">
-  <link rel="modulepreload" href="/owner-capture.js" fetchpriority="high">
+  <!-- Bootstrap assets are discovered from the canonical entry module.
+       Do not issue competing speculative modulepreload requests on the
+       bounded local HTTP listener. -->
 </head>
 <body>
   <main class="shell">
@@ -226,10 +222,11 @@
       <pre id="evidence">Ожидание…</pre>
     </section>
   </main>
-  <script async src="/bootstrap-watchdog.js"></script>
+  <script defer src="/bootstrap-watchdog.js"></script>
+  <!-- The canonical app boots first. Noncritical feature entrypoints are
+       imported after owner status is ready so they cannot starve startup. -->
   <script type="module" src="/app.js"></script>
-  <script type="module" src="/tts-selector.js"></script>
+  <!-- Independent exact-byte evidence export is a protected browser contract. -->
   <script type="module" src="/evidence-export.js"></script>
-  <script type="module" src="/reference-capture.js"></script>
 </body>
 </html>

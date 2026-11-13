@@ -2763,5 +2763,21 @@ void api("/api/bootstrap")
     }
     updateControls();
     bootstrapComplete = true;
+    void import("./tts-selector.js").catch(() => {
+        const feedback = document.getElementById("tts-switch-status");
+        if (feedback)
+            feedback.textContent = "Не удалось загрузить настройки озвучивания.";
+    });
+    const referenceCaptureModuleUrl = "/reference-capture.js";
+    void import(referenceCaptureModuleUrl).catch(() => {
+        const voice = document.getElementById("voice-reference-status");
+        const appearance = document.getElementById("appearance-reference-status");
+        for (const field of [voice, appearance]) {
+            if (field) {
+                field.textContent = "Не удалось загрузить обработчик reference.";
+                field.dataset.state = "error";
+            }
+        }
+    });
 })
     .catch((error) => setStatus(error instanceof Error ? error.message : "Ошибка bootstrap", "error"));

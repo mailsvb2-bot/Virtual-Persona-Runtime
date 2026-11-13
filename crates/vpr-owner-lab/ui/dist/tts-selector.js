@@ -1,4 +1,3 @@
-"use strict";
 const panel = document.getElementById("tts-switch-panel");
 const selector = document.getElementById("tts-switch-provider");
 const submit = document.getElementById("tts-switch-apply");
@@ -66,3 +65,4 @@ async function mountTtsSelector() {
     });
 }
 void mountTtsSelector();
+export {};
