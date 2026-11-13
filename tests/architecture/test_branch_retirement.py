@@ -150,6 +150,28 @@ class BranchRetirementTests(TestCase):
             self.assertEqual(audit["branches"][1]["outcome"], "verification_failed")
             self.assertEqual(audit["branches"][1]["error_type"], "RuntimeError")
 
+    def test_retirement_is_driven_by_successful_main_ci_not_arbitrary_push(self):
+        workflow = (
+            MODULE.parents[2] / ".github/workflows/retire-identical-branches.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn('workflows: ["CI"]', workflow)
+        self.assertIn("types: [completed]", workflow)
+        self.assertIn("branches: [main]", workflow)
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn("github.event.workflow_run.head_branch == 'main'", workflow)
+        self.assertNotIn("  push:", workflow)
+
+    def test_retirement_skips_stale_ci_sha_without_losing_retry_inventory(self):
+        workflow = (
+            MODULE.parents[2] / ".github/workflows/retire-identical-branches.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("git ls-remote --heads origin refs/heads/main", workflow)
+        self.assertIn("VERIFIED_CI_SHA", workflow)
+        self.assertIn('run=false', workflow)
+        self.assertIn("if: steps.current.outputs.run == 'true'", workflow)
+        self.assertIn("if: always()", workflow)
+        self.assertIn("branch-retirement-inventory", workflow)
+
     def test_missing_remote_main_fails_closed(self):
         process = mock.Mock(stdout="")
         with mock.patch.object(retirement, "git", return_value=process):
