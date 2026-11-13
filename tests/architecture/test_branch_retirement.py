@@ -65,12 +65,12 @@ class BranchRetirementTests(TestCase):
     def test_noop_merge_exact_tree_proof_not_just_clean_merge(self):
         with mock.patch.object(retirement, "tree", return_value="main-tree"):
             with mock.patch.object(retirement, "git", return_value=mock.Mock(
-                returncode=0, stdout="different-tree\\n",
+                returncode=0, stdout="different-tree",
             )):
                 self.assertFalse(retirement.exact_noop_merge("main", "branch"))
         with mock.patch.object(retirement, "tree", return_value="main-tree"):
             with mock.patch.object(retirement, "git", return_value=mock.Mock(
-                returncode=0, stdout="main-tree\\n",
+                returncode=0, stdout="main-tree",
             )):
                 self.assertTrue(retirement.exact_noop_merge("main", "branch"))
 
