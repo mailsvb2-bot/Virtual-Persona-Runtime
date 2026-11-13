@@ -168,7 +168,7 @@ def run(
             "branches": [],
             "skipped": "verified_ci_main_changed",
         }
-        payload = json.dumps(summary, indent=2, ensure_ascii=False) + "\\n"
+        payload = json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
         (output / "inventory-before.json").write_text(payload, encoding="utf-8")
         (output / "inventory-after.json").write_text(payload, encoding="utf-8")
         print(json.dumps({"main_sha": main_sha, "skipped": summary["skipped"], "deleted": 0}))
