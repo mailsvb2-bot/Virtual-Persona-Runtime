@@ -31,6 +31,35 @@ class EntryReadinessTests(unittest.TestCase):
             self.assertFalse(result["rt1_release_spec_consistent"])
             self.assertEqual(result["allowed_now"], [])
 
+    def test_rt1_owner_visitor_controls_wait_for_real_handler_bootstrap(self):
+        root = Path(__file__).resolve().parents[2]
+        html = (root / "crates/vpr-owner-lab/ui/rt1.html").read_text(encoding="utf-8")
+        script = (root / "crates/vpr-owner-lab/ui/rt1.js").read_text(encoding="utf-8")
+        self.assertIn('<script src="/rt1.js" defer></script>', html)
+        self.assertEqual(html.count('<script src="/rt1.js" defer></script>'), 1)
+        self.assertIn('id="status" data-rt1-ready="false"', html)
+        for name in ("provision", "publish", "pause", "unpublish", "join", "unlock-audio"):
+            self.assertIn(f'id="{name}" type="button" disabled', html)
+            self.assertIn(f'el("{name}")', script)
+        self.assertIn('status.dataset.rt1Ready = "true";', script)
+        self.assertLess(
+            script.index('window.addEventListener("pagehide"'),
+            script.index('status.dataset.rt1Ready = "true";'),
+        )
+        self.assertEqual(script.count('status.dataset.rt1Ready = "true";'), 1)
+
+    def test_rt1_real_rtp_canary_checks_ready_handlers_not_only_loading_text(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (
+            root / "crates/vpr-owner-lab/ui/e2e/rt1-local-canary.spec.ts"
+        ).read_text(encoding="utf-8")
+        self.assertIn('data-rt1-ready", "true"', source)
+        self.assertIn('toContainText("Ожидает проверки владельцем"', source)
+        self.assertIn('waitUntil: "commit"', source)
+        self.assertNotIn('not.toHaveText("Загрузка…"', source)
+        self.assertIn('Chromium must receive actual inbound audio RTP packets', source)
+        self.assertIn('revoked visitor must reject a valid late SDP answer', source)
+
     def test_owner_record_alone_does_not_grant_rt1_entry(self):
         with tempfile.TemporaryDirectory() as location:
             root = Path(location)
