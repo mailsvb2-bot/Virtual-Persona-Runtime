@@ -5,10 +5,21 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VPR Owner Lab</title>
   <link rel="stylesheet" href="/styles.css">
-  <!-- Fetch late-discovered, same-origin critical modules during HTML parse.
-       modulepreload only fetches; the canonical script/module execution order
-       and existing CSP remain unchanged. -->
+  <!-- Preload the FULL initial same-origin ES-module graph before the body.
+       Unlike isolated late-module hints this prevents cascading discoveries
+       under the real bounded Rust HTTP server. No module is executed here:
+       the existing entry scripts below retain sole execution authority.
+       Leave lazy mic-worklet and LiveKit SDK out of bootstrap and keep CSP. -->
+  <link rel="modulepreload" href="/app.js">
+  <link rel="modulepreload" href="/bootstrap-context.js">
+  <link rel="modulepreload" href="/evidence-export.js">
+  <link rel="modulepreload" href="/interrupted-answer.js">
   <link rel="modulepreload" href="/owner-capture.js">
+  <link rel="modulepreload" href="/provider-event-fence.js">
+  <link rel="modulepreload" href="/voice-command-scheduler.js">
+  <link rel="modulepreload" href="/media-runtime.js">
+  <link rel="modulepreload" href="/session-runtime-state.js">
+  <link rel="modulepreload" href="/tts-selector.js">
   <link rel="modulepreload" href="/reference-capture.js">
 </head>
 <body>
