@@ -3325,7 +3325,9 @@ void api<Bootstrap>("/api/bootstrap")
       const feedback = document.getElementById("tts-switch-status");
       if (feedback) feedback.textContent = "Не удалось загрузить настройки озвучивания.";
     });
-    void import("/reference-capture.js").catch(() => {
+    // This asset is shipped verbatim from ui/, outside TypeScript src/.
+    const referenceCaptureModuleUrl = "/reference-capture.js";
+    void import(referenceCaptureModuleUrl).catch(() => {
       const voice = document.getElementById("voice-reference-status");
       const appearance = document.getElementById("appearance-reference-status");
       for (const field of [voice, appearance]) {
