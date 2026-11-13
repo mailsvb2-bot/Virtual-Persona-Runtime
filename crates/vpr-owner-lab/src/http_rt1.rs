@@ -473,8 +473,39 @@ fn visitor_start(
     ) {
         Ok(()) => {}
         Err(RegistrationFailure::Collision) => {
-            if conversation.close().is_err() {
-                return Err(error_response(502, "RT1_REMOTE_STOP_UNCONFIRMED"));
+            // A provider may already have created remote media. Never discard
+            // its only STOP handle just because the public ID was occupied.
+            // Allocate a separate server-only quarantine identity, without
+            // replacing the existing visitor or exposing this ID to a browser.
+            let quarantine_id = (0..8)
+                .filter_map(|_| new_visitor_session_id().ok())
+                .find(|id| {
+                    let mut sessions = state.rt1.conversations.lock();
+                    match sessions.entry(id.clone()) {
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(Arc::clone(&conversation));
+                            true
+                        }
+                        std::collections::hash_map::Entry::Occupied(_) => false,
+                    }
+                });
+            let Some(quarantine_id) = quarantine_id else {
+                // Fail closed: never claim a successful STOP or deliver SDP.
+                // This path still requires durable out-of-band reconciliation.
+                let _ = conversation.close();
+                return Err(error_response(503, "RT1_STOP_QUARANTINE_UNAVAILABLE"));
+            };
+            let receipt_path = conversation.has_remote_video_stop_receipt_path();
+            if finalize_registered_stop(
+                &state.rt1.conversations,
+                &quarantine_id,
+                &conversation,
+                conversation.close(),
+                receipt_path,
+            )
+            .is_err()
+            {
+                return Err(error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"));
             }
             return Err(error_response(409, "RT1_SESSION_COLLISION"));
         }
