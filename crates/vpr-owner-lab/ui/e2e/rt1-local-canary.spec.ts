@@ -37,13 +37,17 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     });
     await owner.goto("/", { waitUntil: "commit", timeout: 25_000 });
     try {
-      await expect(owner.locator("#status")).not.toHaveText("Загрузка…", { timeout: 20_000 });
+      await expect(owner.locator("#workflow-state"))
+        .toContainText("Ожидает проверки владельцем", { timeout: 20_000 });
+      await expect(owner.locator("#status")).not.toContainText("Интерфейс не загрузился");
     } catch (firstFailure) {
       const bootstrap = await owner.request.get("/api/bootstrap", { timeout: 10_000 });
       expect(bootstrap.ok(), `Owner Lab backend unavailable: ${bootstrap.status()}`).toBeTruthy();
       await owner.reload({ waitUntil: "commit", timeout: 25_000 });
       try {
-        await expect(owner.locator("#status")).not.toHaveText("Загрузка…", { timeout: 25_000 });
+        await expect(owner.locator("#workflow-state"))
+          .toContainText("Ожидает проверки владельцем", { timeout: 25_000 });
+        await expect(owner.locator("#status")).not.toContainText("Интерфейс не загрузился");
       } catch (secondFailure) {
         throw new Error(
           `Owner Lab bootstrap failed after a real navigation retry; ` +
@@ -71,7 +75,11 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     await expect(owner.locator("#persona-progress")).toContainText("версия 2");
 
     // Publication is issued only after canonical server-side Persona review.
-    await owner.goto("/rt1");
+    console.log("[rt1-canary] owner persona ready; opening authentic RT1 UI");
+    await owner.goto("/rt1", { waitUntil: "commit", timeout: 25_000 });
+    await expect(owner.locator("#status")).toHaveAttribute(
+      "data-rt1-ready", "true", { timeout: 20_000 },
+    );
     await expect(owner.getByRole("heading", { name: "Persona · RT1" })).toBeVisible();
     await owner.locator("#provision").click();
     await expect(owner.locator("#status")).toContainText("Кабинет создан");
@@ -84,7 +92,11 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
     expect(invite.length).toBeGreaterThan(30);
 
     // Distinct browser context, no shared cookie or owner identity.
-    await visitor.goto("/rt1");
+    console.log("[rt1-canary] owner publication acknowledged; starting visitor browser");
+    await visitor.goto("/rt1", { waitUntil: "commit", timeout: 25_000 });
+    await expect(visitor.locator("#status")).toHaveAttribute(
+      "data-rt1-ready", "true", { timeout: 20_000 },
+    );
     await visitor.locator("#visitor-token").fill(invite);
     await visitor.locator("#consent").check();
     await visitor.locator("#join").click();
@@ -123,6 +135,7 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
       return packets;
     }), { timeout: 30_000, message: "Chromium must receive actual inbound audio RTP packets" }).toBeGreaterThan(0);
 
+    console.log("[rt1-canary] real incoming audio/video RTP confirmed; revoking publication");
     await owner.locator("#pause").click();
     await expect(owner.locator("#status")).toContainText("Публикация отозвана");
     await expect(visitor.locator("#status")).toContainText(
@@ -147,6 +160,7 @@ test("reviewed owner publishes, separate visitor receives real RTP, owner revoke
       "x-vpr-csrf": csrf,
       origin: new URL(owner.url()).origin,
     };
+    console.log("[rt1-canary] remote dual-track STOP confirmed; checking stale credentials");
     const staleJoin = await owner.request.post("/api/rt1/visitor/start", {
       headers,
       data: { visitor_token: invite, consent: true },
