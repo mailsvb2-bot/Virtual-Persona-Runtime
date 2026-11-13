@@ -16,7 +16,8 @@ class BranchRetirementTests(TestCase):
     def test_different_tree_cannot_be_retired(self):
         with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
             with mock.patch.object(retirement, "exact_ancestor", return_value=False):
-                item = retirement.classify("main", "old", "other", set())
+                with mock.patch.object(retirement, "exact_noop_merge", return_value=False):
+                    item = retirement.classify("main", "old", "other", set())
         self.assertEqual(item["decision"], "retain")
         self.assertEqual(item["reason"], "different_complete_tree")
 
@@ -35,7 +36,8 @@ class BranchRetirementTests(TestCase):
     def test_unique_differing_branch_is_never_eligible(self):
         with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
             with mock.patch.object(retirement, "exact_ancestor", return_value=False):
-                item = retirement.classify("main", "unique-code", "different-head", set())
+                with mock.patch.object(retirement, "exact_noop_merge", return_value=False):
+                    item = retirement.classify("main", "unique-code", "different-head", set())
         self.assertEqual(item["decision"], "retain")
         self.assertEqual(item["reason"], "different_complete_tree")
 
@@ -51,6 +53,44 @@ class BranchRetirementTests(TestCase):
                 item = retirement.classify("main", "draft-pr", "ancestor-head", {"draft-pr"})
         self.assertEqual(item["decision"], "retain")
         self.assertEqual(item["reason"], "open_pull_request")
+
+    def test_clean_noop_merge_is_eligible_for_retirement(self):
+        with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
+            with mock.patch.object(retirement, "exact_ancestor", return_value=False):
+                with mock.patch.object(retirement, "exact_noop_merge", return_value=True):
+                    item = retirement.classify("main", "already-merged-code", "old-head", set())
+        self.assertEqual(item["decision"], "eligible")
+        self.assertEqual(item["reason"], "clean_merge_exactly_preserves_main_tree")
+
+    def test_noop_merge_exact_tree_proof_not_just_clean_merge(self):
+        with mock.patch.object(retirement, "tree", return_value="main-tree"):
+            with mock.patch.object(retirement, "git", return_value=mock.Mock(
+                returncode=0, stdout="different-tree",
+            )):
+                self.assertFalse(retirement.exact_noop_merge("main", "branch"))
+        with mock.patch.object(retirement, "tree", return_value="main-tree"):
+            with mock.patch.object(retirement, "git", return_value=mock.Mock(
+                returncode=0, stdout="main-tree",
+            )):
+                self.assertTrue(retirement.exact_noop_merge("main", "branch"))
+
+    def test_conflicting_and_failed_git_merge_retain_branch(self):
+        for exit_code in (1, 2, 128):
+            with self.subTest(exit_code=exit_code):
+                with mock.patch.object(retirement, "git", return_value=mock.Mock(
+                    returncode=exit_code, stdout="main-tree\\n",
+                )):
+                    with mock.patch.object(retirement, "tree", side_effect=AssertionError(
+                        "no tree verification after failed merge",
+                    )):
+                        self.assertFalse(retirement.exact_noop_merge("main", "branch"))
+
+    def test_open_pr_never_checks_merge_equivalence(self):
+        with mock.patch.object(retirement, "exact_noop_merge", side_effect=AssertionError(
+            "protected head cannot enter merge gate",
+        )):
+            item = retirement.classify("main", "draft-protected", "head", {"draft-protected"})
+        self.assertEqual(item["decision"], "retain")
 
     def test_open_pull_request_never_eligible(self):
         with mock.patch.object(retirement, "tree", side_effect=AssertionError("must not inspect")):
