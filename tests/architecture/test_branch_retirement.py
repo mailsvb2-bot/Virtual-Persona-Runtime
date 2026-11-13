@@ -15,7 +15,8 @@ spec.loader.exec_module(retirement)
 class BranchRetirementTests(TestCase):
     def test_different_tree_cannot_be_retired(self):
         with mock.patch.object(retirement, "tree", side_effect=lambda sha: sha):
-            item = retirement.classify("main", "old", "other", set())
+            with mock.patch.object(retirement, "exact_ancestor", return_value=False):
+                item = retirement.classify("main", "old", "other", set())
         self.assertEqual(item["decision"], "retain")
         self.assertEqual(item["reason"], "different_complete_tree")
 
