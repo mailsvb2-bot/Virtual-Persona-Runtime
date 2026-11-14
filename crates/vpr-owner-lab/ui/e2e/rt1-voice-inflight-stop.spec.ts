@@ -270,7 +270,14 @@ test("RT1 text validation and late-response fence survive owner revoke", async (
   await page.locator("#send-text").click();
   await expect(page.locator("#status")).toContainText("Введите вопрос");
   expect(textRequests).toBe(0);
-  await page.locator("#visitor-text").fill("x".repeat(8193));
+  // The HTML maxlength prevents ordinary typing beyond 8192. Bypass only
+  // that DOM attribute to exercise the independent JavaScript validation
+  // against a programmatically populated input.
+  await page.locator("#visitor-text").evaluate((input) => {
+    const field = input as HTMLInputElement;
+    field.removeAttribute("maxlength");
+    field.value = "x".repeat(8193);
+  });
   await page.locator("#send-text").click();
   await expect(page.locator("#status")).toContainText("до 8192 символов");
   expect(textRequests).toBe(0);
