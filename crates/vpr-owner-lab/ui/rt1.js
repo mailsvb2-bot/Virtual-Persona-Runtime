@@ -73,8 +73,8 @@
       el("leave").disabled = !sessionId;
       // A concurrent owner action must not re-enable capture while a voice turn is pending.
       el("speak").disabled = !sessionId || stopping || !voiceEnabled || voiceInFlight || microphonePending;
-      el("interrupt").disabled = !sessionId || stopping || !voiceEnabled || microphonePending;
-      el("send-text").disabled = !sessionId || stopping || textInFlight;
+      el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
+      el("send-text").disabled = !sessionId || stopping || pageHidden || textInFlight;
     }
   }
 
@@ -339,7 +339,7 @@
     if (!sessionId || stopping || (!voiceEnabled && !textInFlight)) return;
     invalidatePendingText();
     if (!voiceEnabled) {
-      message("Текстовый запрос прерван.");
+      message("Показ ответа отменён. Уже начатая обработка на сервере может завершиться.");
       return;
     }
     const id = sessionId;
