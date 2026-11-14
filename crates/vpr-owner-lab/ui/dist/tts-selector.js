@@ -36,7 +36,9 @@ async function mountTtsSelector() {
     submit.addEventListener("click", async () => {
         if (!selector.value || submit.disabled)
             return;
+        const requested = selector.value;
         submit.disabled = true;
+        selector.disabled = true;
         try {
             const response = await fetch("/api/tts/select", {
                 method: "POST",
@@ -45,7 +47,7 @@ async function mountTtsSelector() {
                     "Content-Type": "application/json",
                     "X-VPR-CSRF": bootstrap.csrf_token,
                 },
-                body: JSON.stringify({ provider: selector.value }),
+                body: JSON.stringify({ provider: requested }),
             });
             if (!response.ok) {
                 feedback.textContent = response.status === 409
@@ -54,7 +56,7 @@ async function mountTtsSelector() {
                 return;
             }
             const current = await response.json();
-            if (current.active !== selector.value) {
+            if (current.active !== requested) {
                 feedback.textContent = "Сервер не подтвердил выбранный голос. Обновите настройки.";
                 return;
             }
@@ -64,6 +66,7 @@ async function mountTtsSelector() {
             feedback.textContent = "Не удалось связаться с локальным сервером.";
         }
         finally {
+            selector.disabled = false;
             submit.disabled = false;
         }
     });
