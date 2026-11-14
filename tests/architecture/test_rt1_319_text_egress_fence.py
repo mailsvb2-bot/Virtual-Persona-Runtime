@@ -53,8 +53,20 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertNotIn("state.engine.lock()", body)
         self.assertIn('api("/api/rt1/visitor/text", { session_id: id, text }, controller.signal)', browser)
         self.assertIn('const controller = new AbortController()', browser)
-        self.assertIn('if (sessionId !== id || stopping) return;', browser)
-        self.assertIn('if (sessionId !== id || stopping) return;', browser)
+        # The client-side delivery fence is now stricter than session identity:
+        # owner revoke, pagehide and interrupt invalidate a monotonic epoch.
+        # An old buffered reply must not render after any of those events.
+        self.assertIn("let textRequestEpoch = 0;", browser)
+        self.assertIn("function invalidatePendingText()", browser)
+        self.assertIn("textRequestEpoch += 1;", browser)
+        self.assertIn("if (textController) textController.abort();", browser)
+        self.assertIn("const epoch = ++textRequestEpoch;", browser)
+        self.assertIn(
+            "if (sessionId !== id || stopping || pageHidden || epoch !== textRequestEpoch) return;",
+            browser,
+        )
+        self.assertIn("invalidatePendingText();", browser)
+        self.assertIn('message("Введите вопрос до 8192 символов.", true)', browser)
         self.assertIn('id="visitor-text"', html)
         self.assertIn('id="send-text"', html)
 
