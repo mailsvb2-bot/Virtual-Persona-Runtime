@@ -8,6 +8,7 @@ const files = new Map([
   ["/", "index.html"],
   ["/styles.css", "styles.css"],
   ["/app.js", "dist/app.js"],
+  ["/tts-selector.js", "dist/tts-selector.js"],
   ["/interrupted-answer.js", "dist/interrupted-answer.js"],
   ["/owner-capture.js", "dist/owner-capture.js"],
   ["/voice-command-scheduler.js", "dist/voice-command-scheduler.js"],
