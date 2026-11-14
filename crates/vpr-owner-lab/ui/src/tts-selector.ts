@@ -36,7 +36,9 @@ async function mountTtsSelector(): Promise<void> {
   feedback.textContent = "Голос можно сменить только после завершения текущего сеанса аватара.";
   submit.addEventListener("click", async () => {
     if (!selector.value || submit.disabled) return;
+    const requested = selector.value;
     submit.disabled = true;
+    selector.disabled = true;
     try {
       const response = await fetch("/api/tts/select", {
         method: "POST",
@@ -45,7 +47,7 @@ async function mountTtsSelector(): Promise<void> {
           "Content-Type": "application/json",
           "X-VPR-CSRF": bootstrap.csrf_token,
         },
-        body: JSON.stringify({ provider: selector.value }),
+        body: JSON.stringify({ provider: requested }),
       });
       if (!response.ok) {
         feedback.textContent = response.status === 409
@@ -54,7 +56,7 @@ async function mountTtsSelector(): Promise<void> {
         return;
       }
       const current = await response.json() as TtsRoutes;
-      if (current.active !== selector.value) {
+      if (current.active !== requested) {
         feedback.textContent = "Сервер не подтвердил выбранный голос. Обновите настройки.";
         return;
       }
@@ -62,6 +64,7 @@ async function mountTtsSelector(): Promise<void> {
     } catch {
       feedback.textContent = "Не удалось связаться с локальным сервером.";
     } finally {
+      selector.disabled = false;
       submit.disabled = false;
     }
   });
