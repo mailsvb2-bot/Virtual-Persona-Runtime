@@ -128,10 +128,10 @@ class HttpLifecycleTests(unittest.TestCase):
 
         self.server.RequestHandlerClass = KeepAliveHandler
         bad_headers = (
-            "Content-Length: 16\\r\\nContent-Length: 16\\r\\n",
-            "Transfer-Encoding: chunked\\r\\nContent-Length: 16\\r\\n",
-            "Content-Length: invalid\\r\\n",
-            "Content-Length: 999999\\r\\n",
+            "Content-Length: 16\r\nContent-Length: 16\r\n",
+            "Transfer-Encoding: chunked\r\nContent-Length: 16\r\n",
+            "Content-Length: invalid\r\n",
+            "Content-Length: 999999\r\n",
         )
         for headers in bad_headers:
             with self.subTest(headers=headers):
@@ -142,16 +142,16 @@ class HttpLifecycleTests(unittest.TestCase):
                     # Even valid-looking, authenticated pipelined commands
                     # MUST NOT run after a malformed body-framing rejection.
                     request = (
-                        "PUT /v1/avatar/operations/operation-1 HTTP/1.1\\r\\n"
-                        "Host: localhost\\r\\n"
-                        "Authorization: Bearer test-secret\\r\\n"
+                        "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                        "Host: localhost\r\n"
+                        "Authorization: Bearer test-secret\r\n"
                         + headers
-                        + "Connection: keep-alive\\r\\n\\r\\n"
+                        + "Connection: keep-alive\r\n\r\n"
                         + '{"generation":1}'
-                        + "PUT /v1/avatar/operations/operation-1 HTTP/1.1\\r\\n"
-                        + "Host: localhost\\r\\n"
-                        + "Authorization: Bearer test-secret\\r\\n"
-                        + "Content-Length: 16\\r\\n\\r\\n"
+                        + "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                        + "Host: localhost\r\n"
+                        + "Authorization: Bearer test-secret\r\n"
+                        + "Content-Length: 16\r\n\r\n"
                         + '{"generation":1}'
                     )
                     conn.sendall(request.encode("ascii"))
@@ -162,7 +162,7 @@ class HttpLifecycleTests(unittest.TestCase):
                             break
                         response.extend(chunk)
                         self.assertLess(len(response), 65536)
-                    self.assertIn(b" 400 ", response.split(b"\\r\\n", 1)[0])
+                    self.assertIn(b" 400 ", response.split(b"\r\n", 1)[0])
                 self.assertEqual(self.backend.allocations, 0)
                 self.assertIsNone(self.lifecycle.status("operation-1"))
 
