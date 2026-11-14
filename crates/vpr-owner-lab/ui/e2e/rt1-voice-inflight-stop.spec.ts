@@ -223,3 +223,68 @@ test("pagehide while START is pending attempts late sender STOP without connecti
   expect(answers).toBe(0);
   await expect(page.locator("#speak")).toBeDisabled();
 });
+
+
+test("RT1 text validation and late-response fence survive owner revoke", async ({ page }) => {
+  await page.addInitScript(() => {
+    const win = window as typeof window & { LivekitClient?: unknown };
+    class FakeRoom {
+      on(): FakeRoom { return this; }
+      async connect(): Promise<void> {}
+      async disconnect(): Promise<void> {}
+    }
+    win.LivekitClient = { Room: FakeRoom, RoomEvent: {} };
+  });
+  await page.route("**/api/bootstrap", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ csrf_token: "test" }) }));
+  await page.route("**/api/rt1/visitor/start", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      session_id: "text-revoke", voice_enabled: true,
+      signal: { transport: { kind: "live_kit", server_url: "wss://example.test", token: "scoped" } },
+    }) }));
+  await page.route("**/api/rt1/visitor/status", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ active: true }) }));
+  await page.route("**/api/rt1/visitor/close", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ remote_stop_confirmed: true }) }));
+  await page.route("**/api/rt1/owner/pause", route =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }));
+  let releaseReply: (() => void) | null = null;
+  let textRequests = 0;
+  await page.route("**/api/rt1/visitor/text", async route => {
+    textRequests += 1;
+    await new Promise<void>(resolve => { releaseReply = resolve; });
+    await route.fulfill({
+      status: 200, contentType: "application/json",
+      body: JSON.stringify({ reply: "This stale reply must never render" }),
+    }).catch(() => {}); // The browser intentionally aborts this request.
+  });
+
+  const pageErrors: string[] = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  await page.goto("/rt1");
+  await page.locator("#visitor-token").fill("invite");
+  await page.locator("#consent").check();
+  await page.locator("#join").click();
+  await expect(page.locator("#send-text")).toBeEnabled();
+
+  await page.locator("#send-text").click();
+  await expect(page.locator("#status")).toContainText("Введите вопрос");
+  expect(textRequests).toBe(0);
+  await page.locator("#visitor-text").fill("x".repeat(8193));
+  await page.locator("#send-text").click();
+  await expect(page.locator("#status")).toContainText("до 8192 символов");
+  expect(textRequests).toBe(0);
+  expect(pageErrors).toEqual([]);
+
+  await page.locator("#visitor-text").fill("Что нового?");
+  await page.locator("#send-text").click();
+  await expect.poll(() => textRequests).toBe(1);
+  await expect(page.locator("#send-text")).toBeDisabled();
+  await page.locator("#owner-token").fill("owner-key");
+  await page.locator("#pause").click();
+  await expect(page.locator("#status")).toContainText("Публикация отозвана");
+  (releaseReply as (() => void) | null)?.();
+  await expect(page.locator("#status")).toContainText("Публикация отозвана");
+  await expect(page.locator("#speech-result")).not.toContainText("stale reply");
+  expect(pageErrors).toEqual([]);
+});
