@@ -33,7 +33,7 @@ async function mountTtsSelector(): Promise<void> {
   }
   selector.value = routes.active;
   panel.hidden = false;
-  feedback.textContent = "Смена применяется к следующей реплике, без смены сеанса аватара.";
+  feedback.textContent = "Голос можно сменить только после завершения текущего сеанса аватара.";
   submit.addEventListener("click", async () => {
     if (!selector.value || submit.disabled) return;
     submit.disabled = true;
@@ -49,12 +49,16 @@ async function mountTtsSelector(): Promise<void> {
       });
       if (!response.ok) {
         feedback.textContent = response.status === 409
-          ? "Дождитесь завершения текущей реплики и повторите переключение."
+          ? "Завершите текущий сеанс аватара, затем повторите переключение."
           : "Переключение отклонено сервером.";
         return;
       }
       const current = await response.json() as TtsRoutes;
-      feedback.textContent = "Теперь активен: " + (current.active ?? "неизвестно");
+      if (current.active !== selector.value) {
+        feedback.textContent = "Сервер не подтвердил выбранный голос. Обновите настройки.";
+        return;
+      }
+      feedback.textContent = "Теперь активен: " + current.active;
     } catch {
       feedback.textContent = "Не удалось связаться с локальным сервером.";
     } finally {
