@@ -33,10 +33,12 @@ async function mountTtsSelector(): Promise<void> {
   }
   selector.value = routes.active;
   panel.hidden = false;
-  feedback.textContent = "Смена применяется к следующей реплике, без смены сеанса аватара.";
+  feedback.textContent = "Голос можно сменить только после завершения текущего сеанса аватара.";
   submit.addEventListener("click", async () => {
     if (!selector.value || submit.disabled) return;
+    const requested = selector.value;
     submit.disabled = true;
+    selector.disabled = true;
     try {
       const response = await fetch("/api/tts/select", {
         method: "POST",
@@ -45,19 +47,24 @@ async function mountTtsSelector(): Promise<void> {
           "Content-Type": "application/json",
           "X-VPR-CSRF": bootstrap.csrf_token,
         },
-        body: JSON.stringify({ provider: selector.value }),
+        body: JSON.stringify({ provider: requested }),
       });
       if (!response.ok) {
         feedback.textContent = response.status === 409
-          ? "Дождитесь завершения текущей реплики и повторите переключение."
+          ? "Завершите текущий сеанс аватара, затем повторите переключение."
           : "Переключение отклонено сервером.";
         return;
       }
       const current = await response.json() as TtsRoutes;
-      feedback.textContent = "Теперь активен: " + (current.active ?? "неизвестно");
+      if (current.active !== requested) {
+        feedback.textContent = "Сервер не подтвердил выбранный голос. Обновите настройки.";
+        return;
+      }
+      feedback.textContent = "Теперь активен: " + current.active;
     } catch {
       feedback.textContent = "Не удалось связаться с локальным сервером.";
     } finally {
+      selector.disabled = false;
       submit.disabled = false;
     }
   });
