@@ -17,6 +17,7 @@
   let voiceInFlight = false;
   let textInFlight = false;
   let textController = null;
+  let textRequestEpoch = 0;
   let microphonePending = false;
   let microphoneRequest = 0;
   let voiceRequestEpoch = 0;
@@ -102,8 +103,13 @@
     message("Persona опубликована. Отправьте посетителю код приглашения.");
   }));
 
-  async function ownerRevoke(path) {
+  function invalidatePendingText() {
+    textRequestEpoch += 1;
     if (textController) textController.abort();
+  }
+
+  async function ownerRevoke(path) {
+    invalidatePendingText();
     await api(path, { owner_token: ownerToken() });
     message("Публикация отозвана. Удалённая остановка должна подтверждаться отдельно.");
   }
@@ -331,7 +337,7 @@
 
   el("interrupt").addEventListener("click", () => busy(async () => {
     if (!sessionId || stopping || (!voiceEnabled && !textInFlight)) return;
-    if (textController) textController.abort();
+    invalidatePendingText();
     if (!voiceEnabled) {
       message("Текстовый запрос прерван.");
       return;
@@ -366,10 +372,14 @@
   });
 
   el("send-text").addEventListener("click", async () => {
-    if (!sessionId || stopping || textInFlight) return;
+    if (!sessionId || stopping || pageHidden || textInFlight) return;
     const text = el("visitor-text").value.trim();
-    if (!text || text.length > 8192) throw new Error("Введите вопрос до 8192 символов.");
+    if (!text || text.length > 8192) {
+      message("Введите вопрос до 8192 символов.", true);
+      return;
+    }
     const id = sessionId;
+    const epoch = ++textRequestEpoch;
     textInFlight = true;
     const controller = new AbortController();
     textController = controller;
@@ -378,20 +388,22 @@
     el("interrupt").disabled = !sessionId || stopping || microphonePending;
     try {
       const result = await api("/api/rt1/visitor/text", { session_id: id, text }, controller.signal);
-      if (sessionId !== id || stopping) return;
+      if (sessionId !== id || stopping || pageHidden || epoch !== textRequestEpoch) return;
       el("speech-result").textContent = "Вы: " + text + " · Persona: " + result.reply;
       el("visitor-text").value = "";
       message("Persona ответила на текстовый вопрос.");
     } catch (error) {
-      if (sessionId === id && !stopping) {
+      if (sessionId === id && !stopping && !pageHidden && epoch === textRequestEpoch) {
         message(error.name === "AbortError" ? "Текстовый запрос прерван." : String(error.message || error), error.name !== "AbortError");
       }
     } finally {
       clearTimeout(timeout);
-      if (textController === controller) textController = null;
-      textInFlight = false;
-      el("send-text").disabled = !sessionId || stopping;
-      el("interrupt").disabled = !sessionId || stopping || !voiceEnabled || microphonePending;
+      if (textController === controller) {
+        textController = null;
+        textInFlight = false;
+        el("send-text").disabled = !sessionId || stopping || pageHidden;
+        el("interrupt").disabled = !sessionId || stopping || pageHidden || (!voiceEnabled && !textInFlight) || microphonePending;
+      }
     }
   });
 
@@ -424,7 +436,7 @@
 
   async function leave() {
     if (!sessionId || stopping) return;
-    if (textController) textController.abort();
+    invalidatePendingText();
     stopping = true;
     // A failed remote STOP must remain retryable, but cannot authorize new speech.
     voiceEnabled = false;
@@ -618,6 +630,7 @@
   }));
 
   window.addEventListener("pagehide", () => {
+    invalidatePendingText();
     // Invalidate *pending* START as well: its session ID may arrive only
     // after this callback, when no earlier STOP request could name it.
     pageHidden = true;
