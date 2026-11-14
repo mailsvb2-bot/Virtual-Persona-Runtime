@@ -163,6 +163,11 @@ class HttpLifecycleTests(unittest.TestCase):
                         response.extend(chunk)
                         self.assertLess(len(response), 65536)
                     self.assertIn(b" 400 ", response.split(b"\r\n", 1)[0])
+                    # A buggy keep-alive handler emits a second HTTP 501
+                    # while trying to parse unread body bytes as a request.
+                    # Rejecting the first request is not sufficient: the
+                    # connection MUST close without another HTTP response.
+                    self.assertEqual(response.count(b"HTTP/1.1 "), 1)
                 self.assertEqual(self.backend.allocations, 0)
                 self.assertIsNone(self.lifecycle.status("operation-1"))
 
