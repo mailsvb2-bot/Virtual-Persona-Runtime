@@ -118,6 +118,59 @@ class HttpLifecycleTests(unittest.TestCase):
             self.assertIn(b" 400 ", conn.recv(4096).split(b"\r\n", 1)[0])
         self.assertEqual(self.backend.allocations, 0)
 
+    def test_invalid_http11_framing_closes_socket_before_pipelined_create(self):
+        # A deliberately HTTP/1.1 worker verifies the safety property even if
+        # the adapter's default HTTP protocol is upgraded in the future.
+        base_handler = handler_for(self.lifecycle, "test-secret")
+
+        class KeepAliveHandler(base_handler):
+            protocol_version = "HTTP/1.1"
+
+        self.server.RequestHandlerClass = KeepAliveHandler
+        bad_headers = (
+            "Content-Length: 16\r\nContent-Length: 16\r\n",
+            "Transfer-Encoding: chunked\r\nContent-Length: 16\r\n",
+            "Content-Length: invalid\r\n",
+            "Content-Length: 999999\r\n",
+        )
+        for headers in bad_headers:
+            with self.subTest(headers=headers):
+                with socket.create_connection(
+                    ("127.0.0.1", self.server.server_port), timeout=2
+                ) as conn:
+                    conn.settimeout(2)
+                    # Even valid-looking, authenticated pipelined commands
+                    # MUST NOT run after a malformed body-framing rejection.
+                    request = (
+                        "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                        "Host: localhost\r\n"
+                        "Authorization: Bearer test-secret\r\n"
+                        + headers
+                        + "Connection: keep-alive\r\n\r\n"
+                        + '{"generation":1}'
+                        + "PUT /v1/avatar/operations/operation-1 HTTP/1.1\r\n"
+                        + "Host: localhost\r\n"
+                        + "Authorization: Bearer test-secret\r\n"
+                        + "Content-Length: 16\r\n\r\n"
+                        + '{"generation":1}'
+                    )
+                    conn.sendall(request.encode("ascii"))
+                    response = bytearray()
+                    while True:
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        response.extend(chunk)
+                        self.assertLess(len(response), 65536)
+                    self.assertIn(b" 400 ", response.split(b"\r\n", 1)[0])
+                    # A buggy keep-alive handler emits a second HTTP 501
+                    # while trying to parse unread body bytes as a request.
+                    # Rejecting the first request is not sufficient: the
+                    # connection MUST close without another HTTP response.
+                    self.assertEqual(response.count(b"HTTP/1.1 "), 1)
+                self.assertEqual(self.backend.allocations, 0)
+                self.assertIsNone(self.lifecycle.status("operation-1"))
+
     def test_stalled_partial_http_body_fails_closed_for_all_mutations(self):
         self.server.RequestHandlerClass = handler_for(
             self.lifecycle, "test-secret", body_timeout_seconds=0.20

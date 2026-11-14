@@ -115,16 +115,23 @@ def handler_for(
             forever after a prefix. Do not let that hold a worker thread or
             accidentally parse a later request as the remainder of this one.
             """
-            if len(self.headers.get_all("Content-Length", [])) != 1:
-                raise ValueError("one Content-Length required")
-            if self.headers.get("Transfer-Encoding") is not None:
-                raise ValueError("chunked/ambiguous body not supported")
+            # On invalid framing, consume no further bytes on this socket.
+            # Otherwise unread body bytes could be interpreted as a second
+            # authenticated request if an HTTP/1.1 client uses keep-alive.
             try:
-                length = int(self.headers["Content-Length"])
-            except (ValueError, TypeError) as error:
-                raise ValueError("invalid Content-Length") from error
-            if not 1 <= length <= limit:
-                raise ValueError("invalid request length")
+                if len(self.headers.get_all("Content-Length", [])) != 1:
+                    raise ValueError("one Content-Length required")
+                if self.headers.get("Transfer-Encoding") is not None:
+                    raise ValueError("chunked/ambiguous body not supported")
+                try:
+                    length = int(self.headers["Content-Length"])
+                except (ValueError, TypeError) as error:
+                    raise ValueError("invalid Content-Length") from error
+                if not 1 <= length <= limit:
+                    raise ValueError("invalid request length")
+            except ValueError:
+                self.close_connection = True
+                raise
             previous_timeout = self.connection.gettimeout()
             deadline = time.monotonic() + body_timeout_seconds
             raw = bytearray()
