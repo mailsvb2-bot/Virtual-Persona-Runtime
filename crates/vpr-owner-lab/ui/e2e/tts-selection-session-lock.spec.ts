@@ -3,6 +3,8 @@ import { expect, test } from "@playwright/test";
 test("TTS selection honors the canonical session lock and confirmed provider", async ({ page }) => {
   let sessionActive = true;
   const submitted: string[] = [];
+  let releaseFirst = () => {};
+  const firstResponse = new Promise<void>(resolve => { releaseFirst = resolve; });
 
   await page.route("**/app.js", async route => {
     await route.fulfill({ status: 200, contentType: "text/javascript", body: "export {};" });
@@ -17,6 +19,7 @@ test("TTS selection honors the canonical session lock and confirmed provider", a
     const request = route.request();
     expect(request.headers()["x-vpr-csrf"]).toBe("test-csrf");
     submitted.push(request.postDataJSON().provider);
+    if (sessionActive) await firstResponse;
     await route.fulfill({
       status: sessionActive ? 409 : 200,
       contentType: "application/json",
@@ -33,6 +36,9 @@ test("TTS selection honors the canonical session lock and confirmed provider", a
   await expect(status).toContainText("после завершения текущего сеанса");
   await page.locator("#tts-switch-provider").selectOption("openai-speech");
   await page.locator("#tts-switch-apply").click();
+  await expect(page.locator("#tts-switch-provider")).toBeDisabled();
+  await expect(page.locator("#tts-switch-apply")).toBeDisabled();
+  releaseFirst();
   await expect(status).toContainText("Завершите текущий сеанс");
   expect(submitted).toEqual(["openai-speech"]);
 
