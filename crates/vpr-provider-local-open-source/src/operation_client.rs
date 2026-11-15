@@ -23,8 +23,10 @@ struct Generation {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PublicationReadiness {
     ready: bool,
+    persona_video_ready: bool,
 }
 
 #[derive(Debug, Deserialize)]
