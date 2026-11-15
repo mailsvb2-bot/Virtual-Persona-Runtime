@@ -1,4 +1,4 @@
-//! Pure RT1 operation identity, failure prioritization and PCM validation.
+//! RT1 visitor admission, operation identity, failure prioritization and PCM validation.
 use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
 
@@ -36,6 +36,20 @@ pub(super) fn finish_close(
 ) -> Result<(), String> {
     remote_stop?;
     local_stop
+}
+
+
+/// Recheck the authenticated worker after visitor authorization and close the
+/// just-opened local session if the renderer or worker admission is unavailable.
+pub(super) fn require_worker_ready(
+    manager: &VisitorSessionManager,
+    id: &str,
+    remote: Option<&Rt1RemoteMediaRevocation>,
+) -> Result<(), String> {
+    if let Some(reason) = remote.and_then(|worker| worker.publication_ready().err()) {
+        return manager.close(id).and(Err(reason.to_owned()));
+    }
+    Ok(())
 }
 
 pub(super) fn validate_microphone_audio(pcm: &[u8]) -> Result<(), String> {
