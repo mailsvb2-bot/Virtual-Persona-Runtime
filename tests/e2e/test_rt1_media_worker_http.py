@@ -101,6 +101,16 @@ class HttpLifecycleTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, json.load(error)
 
+    def test_authenticated_transport_create_remains_renderer_agnostic(self):
+        # The worker API is a server-authenticated transport primitive. Only
+        # the canonical Rust visitor client may gate Persona publication.
+        self.backend.video_renderer_ready = False
+        self.assertEqual(self.request("PUT", token="wrong")[0], 401)
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(self.backend.stops, 1)
+
     def test_authenticated_publication_preflight_is_read_only_and_fenced(self):
         """A live /healthz cannot authorize a broken or busy worker."""
         def probe(token):
