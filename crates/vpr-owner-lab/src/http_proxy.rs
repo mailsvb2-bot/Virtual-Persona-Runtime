@@ -87,6 +87,7 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
     if let Some(id) = request_id.as_deref() {
         let (mut writer, cancellation) = match CancellableTcpWriter::new(stream, RESPONSE_DEADLINE)
         {
+
                 Ok(writer) => writer,
                 Err(error) => {
                     log_proxy_error("RT1 writer creation failed", &method, &path, &error);
@@ -108,9 +109,17 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
             log_proxy_error("RT1 response relay failed", &method, &path, &error);
         }
         state.rt1.finish_transport_delivery(id, delivered);
-    } else if let Err(error) = response::relay_ordinary_response(upstream, &forwarded, &mut stream)
-    {
-        log_proxy_error("response relay failed", &method, &path, &error);
+    } else {
+        match response::relay_ordinary_response(upstream, &forwarded, &mut stream) {
+            Ok(status) if status >= 400 => {
+                let path = path.split('?').next().unwrap_or("/");
+                eprintln!(
+                    "owner-lab HTTP proxy upstream status method={method} path={path} status={status}"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => log_proxy_error("response relay failed", &method, &path, &error),
+        }
     }
 }
 

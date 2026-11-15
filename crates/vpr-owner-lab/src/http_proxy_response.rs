@@ -20,7 +20,7 @@ pub(super) fn relay_ordinary_response(
     upstream_address: SocketAddr,
     request: &[u8],
     client: &mut TcpStream,
-) -> io::Result<()> {
+) -> io::Result<u16> {
     let mut upstream = TcpStream::connect_timeout(&upstream_address, UPSTREAM_CONNECT_TIMEOUT)?;
     upstream.set_write_timeout(Some(UPSTREAM_WRITE_TIMEOUT))?;
     upstream.set_read_timeout(Some(RT1_READ_POLL))?;
@@ -45,8 +45,9 @@ pub(super) fn relay_ordinary_response(
         }
     }
 
-    let framing = parse_response_framing(&header)?;
-    client.write_all(&header)?;
+    let (status, framing) = parse_response_framing(&header)?;
+    let client_header = response_header_with_close(&header)?;
+    client.write_all(&client_header)?;
     match framing {
         ResponseFraming::ContentLength(length) => {
             copy_exact_response_body(&mut upstream, client, length, deadline)
@@ -55,10 +56,44 @@ pub(super) fn relay_ordinary_response(
         ResponseFraming::CloseDelimited => {
             relay_close_delimited_response_body(&mut upstream, client, deadline)
         }
-    }
+    }?;
+    Ok(status)
 }
 
-fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
+fn response_header_with_close(header: &[u8]) -> io::Result<Vec<u8>> {
+    let text = std::str::from_utf8(header)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
+    if !text.ends_with("\r\n\r\n") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incomplete HTTP response headers",
+        ));
+    }
+    let mut lines = text[..text.len() - 4].split("\r\n");
+    let status = lines.next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status")
+    })?;
+    let mut normalized = Vec::with_capacity(header.len() + 24);
+    normalized.extend_from_slice(status.as_bytes());
+    normalized.extend_from_slice(b"\r\n");
+    for line in lines {
+        let (name, _) = line.split_once(':').ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header")
+        })?;
+        if name.eq_ignore_ascii_case("connection")
+            || name.eq_ignore_ascii_case("keep-alive")
+            || name.eq_ignore_ascii_case("proxy-connection")
+        {
+            continue;
+        }
+        normalized.extend_from_slice(line.as_bytes());
+        normalized.extend_from_slice(b"\r\n");
+    }
+    normalized.extend_from_slice(b"Connection: close\r\n\r\n");
+    Ok(normalized)
+}
+
+fn parse_response_framing(header: &[u8]) -> io::Result<(u16, ResponseFraming)> {
     let text = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
     if !text.ends_with("\r\n\r\n") {
@@ -74,16 +109,24 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
         io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status")
     })?;
     let mut status_parts = status.split_whitespace();
-    if status_parts.next() != Some("HTTP/1.1")
-        || status_parts
-            .next()
-            .is_none_or(|code| code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()))
-    {
+    if status_parts.next() != Some("HTTP/1.1") {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "unsupported HTTP response status",
         ));
     }
+    let status_code = status_parts.next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status code")
+    })?;
+    if status_code.len() != 3 || !status_code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported HTTP response status",
+        ));
+    }
+    let status_code = status_code.parse::<u16>().map_err(|_| {
+        io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response status code")
+    })?;
 
     let mut content_length = None;
     let mut chunked = false;
@@ -128,7 +171,7 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
         ));
     }
     if chunked {
-        return Ok(ResponseFraming::Chunked);
+        return Ok((status_code, ResponseFraming::Chunked));
     }
     if let Some(length) = content_length {
         if length > MAX_RESPONSE_BODY_BYTES {
@@ -137,9 +180,9 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
                 "ordinary HTTP response body too large",
             ));
         }
-        return Ok(ResponseFraming::ContentLength(length));
+        return Ok((status_code, ResponseFraming::ContentLength(length)));
     }
-    Ok(ResponseFraming::CloseDelimited)
+    Ok((status_code, ResponseFraming::CloseDelimited))
 }
 
 fn read_exact_until_deadline(
@@ -314,16 +357,19 @@ mod tests {
         let content_length =
             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n";
         assert_eq!(
-            parse_response_framing(content_length).unwrap(),
+            parse_response_framing(content_length).unwrap().1,
             ResponseFraming::ContentLength(2)
         );
         assert_eq!(
             parse_response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-                .unwrap(),
+                .unwrap()
+                .1,
             ResponseFraming::Chunked
         );
         assert_eq!(
-            parse_response_framing(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n").unwrap(),
+            parse_response_framing(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n")
+                .unwrap()
+                .1,
             ResponseFraming::CloseDelimited
         );
         for invalid in [
@@ -376,7 +422,7 @@ mod tests {
         .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
 
-        let expected = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Receipt: test\r\n\r\n";
+        let expected = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Receipt: test\r\n\r\n";
         let mut actual = vec![0_u8; expected.len()];
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
@@ -420,10 +466,14 @@ mod tests {
             .position(|window| window == b"\r\n\r\n")
             .expect("tiny_http response header");
         assert_eq!(
-            parse_response_framing(&response[..header_end + 4]).unwrap(),
+            parse_response_framing(&response[..header_end + 4]).unwrap().1,
             ResponseFraming::ContentLength(6)
         );
         assert!(response.ends_with(b"app.js"));
+        let response_header = std::str::from_utf8(&response[..header_end + 4]).unwrap();
+        assert!(response_header.contains("Connection: close\r\n"));
+        assert!(!response_header.contains("Connection: keep-alive"));
+        assert!(!response_header.contains("Keep-Alive:"));
         upstream.join().unwrap();
     }
 
