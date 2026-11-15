@@ -283,7 +283,11 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
             endpoint.as_deref(),
             token.as_deref(),
         )
-        .map_err(str::to_owned)
+        .map_err(str::to_owned)?;
+        // The presence of worker credentials alone does not guarantee that
+        // the SAME canonical STT/LLM/TTS path used by visitor START can run.
+        // Check it before issuing a public invitation, without remote CREATE.
+        start::publication_voice_provider_ready().map_err(str::to_owned)
     };
     let visitor_token = Rt1OwnerController::new()
         .publish(&body.owner_token, body.expected_persona_version, readiness)
