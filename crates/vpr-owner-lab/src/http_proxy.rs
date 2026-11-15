@@ -2,7 +2,7 @@
 //! RT1 browser responses keep their actual socket registered with the same
 //! runtime session that revokes provider egress; no second HTTP router exists.
 use super::{AppState, HTTP_WORKERS, http_rt1::Rt1HttpState};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -133,7 +133,13 @@ fn log_proxy_error(stage: &str, method: &str, path: &str, error: &io::Error) {
 }
 
 fn read_request(stream: &mut TcpStream) -> io::Result<(Vec<u8>, String, String)> {
-    let mut reader = BufReader::new(stream);
+    read_request_until(stream, Instant::now() + REQUEST_READ_TIMEOUT)
+}
+
+fn read_request_until(
+    stream: &mut TcpStream,
+    deadline: Instant,
+) -> io::Result<(Vec<u8>, String, String)> {
     let mut header = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
     loop {
@@ -143,18 +149,55 @@ fn read_request(stream: &mut TcpStream) -> io::Result<(Vec<u8>, String, String)>
                 "HTTP headers too large",
             ));
         }
-        reader.read_exact(&mut byte)?;
+        read_exact_before_deadline(stream, &mut byte, deadline)?;
         header.push(byte[0]);
-        if header.ends_with(b"\r\n\r\n") {
+        if header.ends_with(b"\\r\\n\\r\\n") {
             break;
         }
     }
     let (method, path, body_length) = parse_request_header(&header)?;
     let mut body = vec![0_u8; body_length];
-    reader.read_exact(&mut body)?;
+    read_exact_before_deadline(stream, &mut body, deadline)?;
     let mut request = header;
     request.extend_from_slice(&body);
     Ok((request, method, path))
+}
+
+fn read_exact_before_deadline(
+    stream: &mut TcpStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP request deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining))?;
+        match stream.read(bytes) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "incomplete HTTP request",
+                ));
+            }
+            Ok(count) => {
+                if Instant::now() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "HTTP request deadline exceeded",
+                    ));
+                }
+                bytes = &mut bytes[count..];
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn parse_request_header(header: &[u8]) -> io::Result<(String, String, usize)> {
@@ -382,7 +425,11 @@ fn error_response(status: u16, code: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_request_header, rewrite_request};
+    use super::{parse_request_header, read_request_until, rewrite_request};
+    use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn proxy_injects_unspoofable_transport_identity_and_closes_upstream() {
@@ -499,6 +546,59 @@ mod tests {
         }
         assert!(!response.windows(5).any(|window| window == b"-tail"));
         assert!(rt1.take_transport_writer(&transport_id).is_none());
+    }
+
+    #[test]
+    fn request_header_and_body_share_one_deadline_against_slow_drip() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let sender = thread::spawn(move || {
+            client.write_all(b"P").unwrap();
+            thread::sleep(Duration::from_millis(80));
+            let _ = client.write_all(b"OST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{");
+            thread::sleep(Duration::from_millis(120));
+            let _ = client.write_all(b"}");
+        });
+        let started = Instant::now();
+        let error = read_request_until(
+            &mut server,
+            started + Duration::from_millis(150),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        sender.join().unwrap();
+    }
+
+    #[test]
+    fn slow_header_bytes_cannot_reset_the_total_request_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let sender = thread::spawn(move || {
+            for byte in b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 0\\r\\n\\r\\n" {
+                if client.write_all(&[*byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let started = Instant::now();
+        let error = read_request_until(
+            &mut server,
+            started + Duration::from_millis(120),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ));
+        assert!(started.elapsed() < Duration::from_millis(500));
+        sender.join().unwrap();
     }
 
     #[test]
