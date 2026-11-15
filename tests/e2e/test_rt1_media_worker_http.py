@@ -72,6 +72,9 @@ class HttpLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = Backend()
+        # Most HTTP tests exercise sender lifecycle with an explicitly ready
+        # test renderer; the fail-closed test below turns this off.
+        self.backend.video_renderer_ready = True
         self.lifecycle = MediaLifecycle(Path(self.temp.name) / "ledger.sqlite", self.backend)
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
@@ -113,9 +116,18 @@ class HttpLifecycleTests(unittest.TestCase):
 
         self.assertEqual(probe("wrong")[0], 401)
         # A live worker with only transport tracks cannot publish a Persona.
+        self.backend.video_renderer_ready = False
         self.assertEqual(
             probe("test-secret"),
             (503, {"ready": False, "persona_video_ready": False}),
+        )
+        self.assertEqual(self.backend.allocations, 0)
+        self.assertIsNone(self.lifecycle.status("operation-1"))
+        # A stale client with the worker token cannot bypass the authoritative
+        # worker-side CREATE check by skipping the read-only preflight.
+        self.assertEqual(
+            self.request("PUT"),
+            (503, {"error": "RT1_VIDEO_RENDERER_UNAVAILABLE", "stop_confirmed": False}),
         )
         self.assertEqual(self.backend.allocations, 0)
         self.assertIsNone(self.lifecycle.status("operation-1"))
