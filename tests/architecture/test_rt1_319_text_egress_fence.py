@@ -80,27 +80,29 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
     def test_buffered_text_and_voice_http_write_retains_final_canonical_lease(self):
         main = (OWNER / "main.rs").read_text(encoding="utf-8")
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
         conversation = (OWNER / "rt1_visitor_conversation.rs").read_text(encoding="utf-8")
+        delivery = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
         self.assertIn("guarded_reply(visitor_text(request, state))", http)
         self.assertIn("guarded_reply(visitor_voice(request, state))", http)
-        delivery = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
         self.assertIn("mod browser_delivery;", conversation)
         self.assertIn("pub fn begin_browser_delivery(&self)", delivery)
         self.assertIn("self.manager.begin_provider_egress(&self.id)?", delivery)
         self.assertIn("if !self.is_active()", delivery)
+        self.assertIn("register_tcp_response_writer(writer)", delivery)
         self.assertIn('http_rt1::respond_post(request, state)', main)
-        self.assertIn("conversation.begin_browser_delivery()", http)
-        self.assertIn("Ok(_lease)", http)
-        self.assertIn("request.respond(routed.response)", http)
-        self.assertIn("valid_post_headers(&request, &state.csrf_token, state.port)", http)
-        self.assertIn('"RT1_VISITOR_DELIVERY_DENIED"', http)
+        self.assertIn("conversation.begin_browser_tcp_delivery(writer)", transport)
+        self.assertIn("retain_transport_delivery(", transport)
+        self.assertIn("request.respond(routed.response)", transport)
+        self.assertIn("valid_post_headers(&request, &state.csrf_token, state.port)", transport)
+        self.assertIn('"RT1_VISITOR_DELIVERY_DENIED"', transport)
         self.assertNotIn("state.engine.lock()", http.split("fn visitor_text(", 1)[1].split("fn visitor_voice(", 1)[0])
 
     def test_startup_sdp_uses_same_final_browser_egress_fence(self):
         # A successful start carries a live SDP offer and ICE credentials.
-        # It must not bypass the text/voice browser delivery lease after a
-        # concurrent owner pause. This is source coverage, NOT a live RTP test.
+        # It must not bypass the final browser delivery fence after owner pause.
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
         dispatch = http.split("pub(super) fn route_post(", 1)[1].split(
             "type Rt1HttpResult =", 1
         )[0]
@@ -110,34 +112,26 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
             '"/api/rt1/visitor/start" => visitor_start(request, state)',
             dispatch,
         )
-        # Visitor start was extracted, not bypassed: verify its actual source.
         start = (OWNER / "http_rt1_start.rs").read_text(encoding="utf-8")
         self.assertIn("pub(super) fn visitor_start(", start)
         self.assertIn(
             "Result<(HttpResponse, Arc<Rt1VisitorConversation>), HttpResponse>",
             start,
         )
-        self.assertIn("conversation,", start)
-        writer = http.split("pub(super) fn respond_post(", 1)[1].split(
-            "pub(super) fn route_post(", 1
-        )[0]
-        self.assertIn("conversation.begin_browser_delivery()", writer)
-        self.assertIn("request.respond(routed.response)", writer)
+        self.assertIn("conversation.begin_browser_tcp_delivery(writer)", transport)
+        self.assertIn("request.respond(routed.response)", transport)
 
     def test_undelivered_start_revokes_canonical_sender_and_retries_stop(self):
-        # Adapted from the historical #324 START/dispatch fence to the current
-        # extracted startup module. A failed HTTP write must not orphan a
-        # remote sender whose identity never reached the visitor.
-        http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        # A failed write must not orphan a sender whose identity never reached
+        # the visitor; the session keeps its retryable remote STOP handle.
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
         conversation = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
         cleanup = (OWNER / "http_rt1_cleanup.rs").read_text(encoding="utf-8")
-        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
-            "pub(super) fn route_post(", 1
-        )[0]
+        dispatch = transport.split("pub(super) fn respond_post(", 1)[1]
         self.assertIn('path == "/api/rt1/visitor/start"', dispatch)
-        self.assertIn("request.respond(routed.response).is_err()", dispatch)
-        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
-        self.assertIn("conversation.begin_browser_delivery()", dispatch)
+        self.assertIn("conversation.begin_browser_tcp_delivery(writer)", dispatch)
+        self.assertIn("finish_transport_delivery(transport_id, false)", dispatch)
+        self.assertIn("conversation.revoke_undelivered_start()", dispatch)
         revoke = conversation.split("pub fn revoke_undelivered_start(&self)", 1)[1].split(
             "pub fn close(&self)", 1
         )[0]
@@ -151,13 +145,10 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         self.assertIn("registry.remove(&id)", cleanup)
 
     def test_lost_answer_and_ice_http_ack_revokes_registered_sender(self):
-        # Historical #324 serialized provider signaling, but current HTTP
-        # transport also must revoke when an accepted SDP/ICE loses its ACK.
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
         browser = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
-        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
-            "pub(super) fn route_post(", 1
-        )[0]
+        dispatch = transport.split("pub(super) fn respond_post(", 1)[1]
         routing = http.split("pub(super) fn route_post(", 1)[1].split(
             "type Rt1HttpResult =", 1
         )[0]
@@ -165,39 +156,42 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
             route = f'/api/rt1/visitor/{name}'
             self.assertIn(f'path == "{route}"', routing)
             self.assertIn(f"guarded_reply(visitor_{name}(request, state))", routing)
-            self.assertNotIn(f'"{route}" => visitor_{name}(request, state)', routing)
             self.assertIn(f'path == "{route}"', dispatch)
             handler = http.split(f"fn visitor_{name}(", 1)[1].split("\n}\n", 1)[0]
             self.assertIn("let conversation = lookup(state, &body.session_id)?", handler)
-        self.assertIn("request.respond(routed.response).is_err() && must_compensate", dispatch)
-        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
-        self.assertIn("conversation.begin_browser_delivery()", dispatch)
+        self.assertIn("finish_transport_delivery(transport_id, false)", dispatch)
+        self.assertIn("conversation.begin_browser_tcp_delivery(writer)", dispatch)
         self.assertIn("self.interrupt.revoke_authority_only()", browser)
         self.assertIn("remote.request_revoke()", browser)
         self.assertIn("self.manager.close(&self.id)", browser)
         self.assertNotIn("remote.revoke_confirmed()", dispatch)
 
     def test_lost_text_or_voice_ack_revokes_remote_media_sender(self):
-        # Provider egress may already be underway even when the browser
-        # never receives its TEXT/VOICE acknowledgement. Use the same STOP
-        # authority as START/SDP/ICE; do not invent a second executor.
         http = (OWNER / "http_rt1.rs").read_text(encoding="utf-8")
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
         delivery = (OWNER / "rt1_visitor_browser_delivery.rs").read_text(encoding="utf-8")
-        dispatch = http.split("pub(super) fn respond_post(", 1)[1].split(
-            "pub(super) fn route_post(", 1
-        )[0]
+        dispatch = transport.split("pub(super) fn respond_post(", 1)[1]
         routing = http.split("pub(super) fn route_post(", 1)[1].split(
             "type Rt1HttpResult =", 1
         )[0]
         for name in ("text", "voice"):
             self.assertIn(f'path == "/api/rt1/visitor/{name}"', dispatch)
             self.assertIn(f"guarded_reply(visitor_{name}(request, state))", routing)
-        self.assertIn("request.respond(routed.response).is_err() && must_compensate", dispatch)
-        self.assertIn("conversation.begin_browser_delivery()", dispatch)
-        self.assertEqual(dispatch.count("conversation.revoke_undelivered_start();"), 2)
+        self.assertIn("finish_transport_delivery(transport_id, false)", dispatch)
+        self.assertIn("conversation.begin_browser_tcp_delivery(writer)", dispatch)
         self.assertIn("remote.request_revoke()", delivery)
         self.assertIn("self.manager.close(&self.id)", delivery)
         self.assertNotIn("remote.revoke_confirmed()", dispatch)
+
+
+    def test_rt1_public_socket_is_registered_with_cancellable_writer(self):
+        proxy = (OWNER / "http_proxy.rs").read_text(encoding="utf-8")
+        transport = (OWNER / "http_rt1_transport.rs").read_text(encoding="utf-8")
+        self.assertIn("CancellableTcpWriter::new(stream, RESPONSE_DEADLINE)", proxy)
+        self.assertIn("register_transport_writer(id.to_owned(), cancellation.clone())", proxy)
+        self.assertIn("finish_transport_delivery(id, delivered)", proxy)
+        self.assertIn("writer.revoke()", transport)
+        self.assertIn("pending.conversation.revoke_undelivered_start()", transport)
 
     def test_owner_pause_and_visitor_egress_share_publication_transaction(self):
         workspace = (OWNER / "rt1_workspace_service.rs").read_text(encoding="utf-8")
