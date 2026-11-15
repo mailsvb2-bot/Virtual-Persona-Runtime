@@ -133,9 +133,9 @@ impl Rt1VisitorConversation {
             let _ = manager.close(&id);
             return Err(error);
         }
-        // Recheck after token/Persona authorization; old invites survive restarts.
-        if let Some(remote) = &remote
-            && let Err(reason) = remote.publication_ready()
+        if let Some(reason) = remote
+            .as_ref()
+            .and_then(|worker| worker.publication_ready().err())
         {
             let _ = manager.close(&id);
             return Err(reason.to_owned());
