@@ -22,6 +22,11 @@ struct Generation {
     generation: u64,
 }
 
+#[derive(Deserialize)]
+struct PublicationReadiness {
+    ready: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateReply {
     operation_id: String,
@@ -108,7 +113,7 @@ impl RemoteOperationClient {
 
     /// Authenticated, read-only worker admission preflight. This cannot
     /// allocate media or certify remote STOP, and CREATE always rechecks
-    /// durable admission under its own SQLite transaction.
+    /// durable admission under its own `SQLite` transaction.
     ///
     /// # Errors
     /// Rejects unreachable, unauthorized, busy or malformed worker replies.
@@ -126,11 +131,7 @@ impl RemoteOperationClient {
         if response.status() != reqwest::StatusCode::OK {
             return Err(denied());
         }
-        #[derive(Deserialize)]
-        struct Readiness {
-            ready: bool,
-        }
-        let result: Readiness =
+        let result: PublicationReadiness =
             super::decode_json_response(response, None).map_err(|_| denied())?;
         if !result.ready {
             return Err(denied());
