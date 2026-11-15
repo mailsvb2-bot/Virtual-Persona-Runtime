@@ -87,13 +87,12 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
     if let Some(id) = request_id.as_deref() {
         let (mut writer, cancellation) = match CancellableTcpWriter::new(stream, RESPONSE_DEADLINE)
         {
-
-                Ok(writer) => writer,
-                Err(error) => {
-                    log_proxy_error("RT1 writer creation failed", &method, &path, &error);
-                    return;
-                }
-            };
+            Ok(writer) => writer,
+            Err(error) => {
+                log_proxy_error("RT1 writer creation failed", &method, &path, &error);
+                return;
+            }
+        };
         if state
             .rt1
             .register_transport_writer(id.to_owned(), cancellation.clone())

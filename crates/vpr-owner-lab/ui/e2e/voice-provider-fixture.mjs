@@ -9,6 +9,8 @@ let streamSequence = 0;
 let expressiveSessionSequence = 0;
 let sttSequence = 0;
 let llmSequence = 0;
+let holdNextTtsResponse = false;
+let releaseHeldTtsResponse = null;
 
 const readBody = async (request) => {
   const chunks = [];
@@ -108,8 +110,23 @@ const server = http.createServer(async (request, response) => {
     requests.push({ kind: "echo", event: event.kind });
     return sendJson(response, 200, { ok: true });
   }
+  if (request.method === "POST" && url.pathname === "/__hold-next-tts") {
+    holdNextTtsResponse = true;
+    return sendJson(response, 200, { ok: true });
+  }
+  if (request.method === "POST" && url.pathname === "/__release-held-tts") {
+    holdNextTtsResponse = false;
+    const release = releaseHeldTtsResponse;
+    releaseHeldTtsResponse = null;
+    const released = release ? release() : true;
+    return sendJson(response, 200, { ok: true, released });
+  }
   if (request.method === "GET" && url.pathname === "/__state") {
-    return sendJson(response, 200, { requests });
+    return sendJson(response, 200, {
+      requests,
+      tts_hold_open: releaseHeldTtsResponse !== null,
+      hold_next_tts: holdNextTtsResponse,
+    });
   }
 
   if (request.method === "GET" && url.pathname === `/agents/${agentId}`) {
@@ -130,8 +147,13 @@ const server = http.createServer(async (request, response) => {
         || input.response_format !== "wav") {
       return sendJson(response, 400, { code: "INVALID_TTS_FIXTURE_INPUT" });
     }
-    // Uncompressed mono 16-bit PCM WAV (16 kHz), bounded fixture sample.
-    const pcm = Buffer.alloc(640);
+    // Uncompressed mono 16-bit PCM WAV (16 kHz). A one-shot hold mode emits
+    // a valid first 8 KiB chunk, then leaves the TTS response open so STOP can
+    // race a genuinely in-flight Echo sender. It is released explicitly by
+    // the E2E after STOP; normal tests retain the tiny immediate fixture.
+    const hold = holdNextTtsResponse;
+    holdNextTtsResponse = false;
+    const pcm = Buffer.alloc(hold ? 32 * 1024 : 640);
     // A deterministic audible tone is enabled only by the RT1 browser fixture.
     if (process.env.VPR_RT1_E2E_AUDIO_TONE === "true") {
       for (let sample = 0; sample < 320; sample += 1) {
@@ -153,6 +175,24 @@ const server = http.createServer(async (request, response) => {
     wav.write("data", 36);
     wav.writeUInt32LE(pcm.length, 40);
     pcm.copy(wav, 44);
+    if (hold) {
+      response.writeHead(200, {
+        "content-type": "audio/wav",
+        "transfer-encoding": "chunked",
+        "cache-control": "no-store",
+      });
+      response.write(wav.subarray(0, 8 * 1024));
+      const release = () => {
+        if (response.destroyed || response.writableEnded) return true;
+        response.end(wav.subarray(8 * 1024));
+        return true;
+      };
+      releaseHeldTtsResponse = release;
+      response.on("close", () => {
+        if (releaseHeldTtsResponse === release) releaseHeldTtsResponse = null;
+      });
+      return;
+    }
     response.writeHead(200, {
       "content-type": "audio/wav",
       "content-length": wav.length,

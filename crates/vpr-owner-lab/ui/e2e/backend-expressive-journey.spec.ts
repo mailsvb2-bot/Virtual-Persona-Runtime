@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import {
   expect,
   test,
@@ -148,17 +150,49 @@ const setupReviewedPersona = async (
 // does NOT release its strict evidence-export gate: the next real Connect
 // must not bypass or silently discard a previous session's proof. This
 // teardown closes and exports through the same canonical HTTP paths as UI.
-test.afterEach(async ({ request }) => {
+test.afterEach(async ({ request }, testInfo) => {
+  // Always release a held chunked TTS response, including when an assertion
+  // fails before the in-flight STOP scenario reaches its explicit release.
+  try {
+    await request.post(`${providerUrl}/__release-held-tts`);
+  } catch {
+    // The fixture may already be shutting down; teardown below remains authoritative.
+  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   if (!bootstrap.ok()) return;
   const csrf = String((await bootstrap.json()).csrf_token);
   const status = await request.get(`${ownerLabUrl}/api/status`);
   if (!status.ok()) return;
   const state = (await status.json() as { session_state: string }).session_state;
+  // This case deliberately leaves an unconfirmed provider STOP quarantined.
+  // Its browser viewer is closed, but the server session must remain revoked;
+  // forcing local teardown to call it closed would falsify remote STOP evidence.
+  if (
+    testInfo.title === "Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP"
+    || testInfo.title === "Expressive browser STOP failure revokes provider authority and closes viewer"
+  ) {
+    // These are deliberate negative cases. A revoked session is quarantined
+    // until the provider STOP receipt is confirmed; teardown must not rewrite
+    // that state as Closed or export it as a successful stop.
+    expect(state).toBe("revoked");
+    return;
+  }
   if (state === "none") return;
   if (state !== "closed") {
     const close = await postJson(request, csrf, "/api/session/close", {});
-    expect(close.ok(), "E2E teardown must close the provider before exporting").toBeTruthy();
+    if (!close.ok()) {
+      console.error("session close after expressive voice turn failed", close.status(), await close.text());
+      // A cancelled in-flight provider call may make Close return 504 after
+      // authority has already been revoked. The server schedules bounded
+      // cleanup for that exact generation; wait for the observable Closed/None
+      // state instead of leaking a revoked session into the next E2E case.
+      await expect.poll(async () => {
+        const current = await request.get(`${ownerLabUrl}/api/status`);
+        if (!current.ok()) return "unavailable";
+        const snapshot = await current.json() as { session_state: string };
+        return snapshot.session_state;
+      }, { timeout: 50000, intervals: [100, 250, 500, 1000] }).toMatch(/^(none|closed)$/);
+    }
   }
   const exported = await postJson(request, csrf, "/api/evidence/session/export", {});
   expect(exported.ok(), "E2E teardown must satisfy the next session's evidence export gate").toBeTruthy();
@@ -243,6 +277,51 @@ const submitOwnerTurn = async (
   return postJson(request, csrf, "/api/avatar/speak", { text: answer.reply });
 };
 
+const startVoiceTurn = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<void> => {
+  const started = await request.post(`${ownerLabUrl}/api/voice/turn`, {
+    headers: {
+      ...csrfHeaders(csrf),
+      "content-type": "application/octet-stream",
+      "X-VPR-Evidence-Request": String(requestSequence),
+      "X-VPR-Session-Sequence": String(sessionSequence),
+    },
+    data: Buffer.alloc(640),
+  });
+  expect(started.status()).toBe(202);
+};
+
+const waitForVoiceTurnTerminal = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<Array<{ kind: string }>> => {
+  const events: Array<{ kind: string }> = [];
+  let terminal = false;
+  for (let attempt = 0; attempt < 8 && !terminal; attempt += 1) {
+    const polled = await postJson(request, csrf, "/api/voice/events", {
+      session_sequence: sessionSequence,
+      request_sequence: requestSequence,
+    });
+    expect(polled.ok()).toBeTruthy();
+    const snapshot = await polled.json() as {
+      events: Array<{ kind: string }>;
+      terminal: boolean;
+    };
+    events.push(...snapshot.events);
+    terminal = snapshot.terminal;
+  }
+  expect(terminal, "canonical voice turn must reach a terminal event").toBe(true);
+  return events;
+};
+
+const submitVoiceTurn = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<void> => {
+  await startVoiceTurn(request, csrf, requestSequence, sessionSequence);
+  const events = await waitForVoiceTurnTerminal(request, csrf, requestSequence, sessionSequence);
+  expect(events.some((event) => event.kind === "complete"), "voice reply must be retained for authorized resume").toBe(true);
+};
+
 test("real browser owner voice reaches private server Echo audio", async ({ page, request }) => {
   test.setTimeout(120000);
   const cleared = await request.delete(mailboxUrl);
@@ -264,6 +343,206 @@ test("real browser owner voice reaches private server Echo audio", async ({ page
   const snapshot = await request.get(`${ownerLabUrl}/api/evidence/session`);
   expect(snapshot.ok()).toBeTruthy();
   expect(await snapshot.json()).toMatchObject({ canonical_playback_proven: false });
+});
+
+test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  // A stale tab cannot spend a request number against another session epoch.
+  const stale = await submitOwnerTurn(request, csrf, 1, sequence + 1, "Чужая сессия");
+  expect(stale.status()).toBe(409);
+  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
+  expect(reply.status()).toBe(200);
+  await expect.poll(async () => (await echoEvents(request)).slice(before), {
+    timeout: 30000,
+  }).toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
+  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(evidence.ok()).toBeTruthy();
+  expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
+});
+
+test("Expressive server STOP is sent from backend and prevents stale replay", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
+  expect(reply.status()).toBe(200);
+  const stopped = await postJson(request, csrf, "/api/avatar/interrupt", { expected_session_sequence: sequence });
+  expect(stopped.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoke.ok()).toBeTruthy();
+  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  expect(replay.status()).toBe(409);
+});
+
+test("Expressive server Echo closes privately on session revoke", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = (await echoEvents(request)).length;
+  const turn = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
+  expect(turn.ok()).toBeTruthy();
+  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoke.ok()).toBeTruthy();
+  // Canonical revoke deliberately kills the private subprocess after the
+  // provider STOP receipt. A killed process cannot report a graceful LiveKit
+  // disconnect, so asserting that event would falsely require unsafe delay.
+  // The safety property is a confirmed STOP plus no further audio publication.
+  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+  const fenced = await echoEvents(request);
+  const blocked = await submitOwnerTurn(request, csrf, 2, sequence, "Запрещённая речь после отзыва");
+  expect(blocked.ok()).toBeFalsy();
+  expect(await echoEvents(request)).toEqual(fenced);
+});
+
+test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
+  const { csrf, sequence } = await startEcho(request);
+  const revoked = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoked.ok()).toBeTruthy();
+  const before = await echoEvents(request);
+  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
+  expect(rejected.status()).toBe(409);
+  const rejectedTurn = await submitOwnerTurn(request, csrf, 1, sequence, "Несанкционированный ответ");
+  expect(rejectedTurn.ok()).toBeFalsy();
+  // A malicious or stale browser may bypass the LLM entirely and call the
+  // avatar endpoint directly. Revocation must fence that route too.
+  const directSpeak = await postJson(request, csrf, "/api/avatar/speak", {
+    text: "Прямая речь после отзыва доступа",
+  });
+  expect(directSpeak.status()).toBe(409);
+  expect(await echoEvents(request)).toEqual(before);
+});
+
+
+test("Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const beforeEvents = await echoEvents(request);
+  const beforeState = await request.get(`${providerUrl}/__state`);
+  expect(beforeState.ok()).toBeTruthy();
+  const beforeTtsCount = ((await beforeState.json() as { requests: Array<{ kind: string }> }).requests)
+    .filter((entry) => entry.kind === "tts").length;
+
+  const held = await request.post(`${providerUrl}/__hold-next-tts`);
+  expect(held.ok()).toBeTruthy();
+  await startVoiceTurn(request, csrf, 1, sequence);
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+  const activeEvents = (await echoEvents(request)).slice(beforeEvents.length);
+  expect(activeEvents).not.toContain("audio_stream_closed");
+
+  // The TTS fixture has sent its first valid PCM chunk but deliberately keeps
+  // the HTTP body open. STOP must cancel this live sender, not a completed one.
+  const interrupted = await postJson(request, csrf, "/api/avatar/interrupt", {
+    expected_session_sequence: sequence,
+  });
+  expect(interrupted.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 15000 })
+    .toContain("provider_stop_sent");
+
+  const released = await request.post(`${providerUrl}/__release-held-tts`);
+  expect(released.ok()).toBeTruthy();
+  expect(await released.json()).toMatchObject({ released: true });
+  const terminal = await waitForVoiceTurnTerminal(request, csrf, 1, sequence);
+  expect(terminal.some((event) => event.kind === "complete")).toBe(false);
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 15000 })
+    .toContain("audio_stream_closed");
+
+  // An incomplete/cancelled response is not replay authority and must not be
+  // regenerated as if it were the owner's completed answer.
+  const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    request_sequence: 1,
+  });
+  expect(confirmed.status()).toBe(409);
+  const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(resumed.status()).toBe(409);
+
+  const afterState = await request.get(`${providerUrl}/__state`);
+  expect(afterState.ok()).toBeTruthy();
+  const afterTtsCount = ((await afterState.json() as { requests: Array<{ kind: string }> }).requests)
+    .filter((entry) => entry.kind === "tts").length;
+  expect(afterTtsCount).toBe(beforeTtsCount + 1);
+  const finalEvents = (await echoEvents(request)).slice(beforeEvents.length);
+  expect(finalEvents.filter((event) => event === "audio_stream_opened")).toHaveLength(1);
+  expect(finalEvents).toContain("provider_stop_sent");
+
+  // "STOP sent" is not a remote STOP receipt. The current Echo fixture can
+  // leave the provider generation quarantined after cancelling an open TTS
+  // body; record that negative outcome instead of claiming Closed.
+  const close = await postJson(request, csrf, "/api/session/close", {});
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  const snapshot = await status.json() as { session_state: string };
+  if (close.ok()) {
+    expect(["none", "closed"]).toContain(snapshot.session_state);
+  } else {
+    expect(close.status()).toBe(502);
+    expect(await close.json()).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    expect(snapshot.session_state).toBe("revoked");
+  }
+});
+
+test("Expressive server resume is reauthorized and delivered through canonical Echo", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = await echoEvents(request);
+
+  // Replay authority is created only by a completed canonical voice request;
+  // a text-only /api/text/turn followed by /api/avatar/speak is not resumable.
+  await submitVoiceTurn(request, csrf, 1, sequence);
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
+
+  const interrupted = await postJson(request, csrf, "/api/avatar/interrupt", {
+    expected_session_sequence: sequence,
+  });
+  expect(interrupted.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+
+  const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    request_sequence: 1,
+  });
+  expect(confirmed.ok()).toBeTruthy();
+
+  // The browser supplies only a cursor. The server resolves the suffix from
+  // its retained authorized reply and prepares a fresh canonical output.
+  const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(resumed.status()).toBe(200);
+  const payload = await resumed.json() as {
+    client_command: unknown | null;
+    evidence_turn_sequence: number;
+    evidence_output_sequence: number;
+  };
+  expect(payload.client_command).toBeNull();
+  expect(payload.evidence_turn_sequence).toBeGreaterThan(0);
+  expect(payload.evidence_output_sequence).toBeGreaterThan(0);
+
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 30000 })
+    .toEqual(expect.arrayContaining([
+      "audio_stream_opened",
+      "audio_bytes_written",
+      "audio_stream_closed",
+      "provider_stop_sent",
+    ]));
+  const events = (await echoEvents(request)).slice(before.length);
+  expect(events.filter((event) => event === "audio_stream_opened").length).toBeGreaterThanOrEqual(2);
+  expect(events.filter((event) => event === "audio_bytes_written").length).toBeGreaterThanOrEqual(2);
+
+  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(evidence.ok()).toBeTruthy();
+  // This hermetic backend fixture proves authorized server delivery, not
+  // audible browser playout or provider-confirmed playback.
+  expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
 });
 
 test("Expressive browser STOP failure revokes provider authority and closes viewer", async ({ page, request }) => {
@@ -338,75 +617,4 @@ test("Expressive browser STOP failure revokes provider authority and closes view
   await expect.poll(async () => (await echoEvents(request)).slice(before), {
     timeout: 20000,
   }).toEqual(expect.arrayContaining(["provider_stop_sent"]));
-});
-
-test("Expressive server Echo publishes synthesized voice without browser did.speak", async ({ request }) => {
-  test.setTimeout(90000);
-  const { csrf, sequence } = await startEcho(request);
-  const before = (await echoEvents(request)).length;
-  // A stale tab cannot spend a request number against another session epoch.
-  const stale = await submitOwnerTurn(request, csrf, 1, sequence + 1, "Чужая сессия");
-  expect(stale.status()).toBe(409);
-  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
-  expect(reply.status()).toBe(200);
-  await expect.poll(async () => (await echoEvents(request)).slice(before), {
-    timeout: 30000,
-  }).toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
-  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
-  expect(evidence.ok()).toBeTruthy();
-  expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
-});
-
-test("Expressive server STOP is sent from backend and prevents stale replay", async ({ request }) => {
-  test.setTimeout(90000);
-  const { csrf, sequence } = await startEcho(request);
-  const before = (await echoEvents(request)).length;
-  const reply = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
-  expect(reply.status()).toBe(200);
-  const stopped = await postJson(request, csrf, "/api/avatar/interrupt", { expected_session_sequence: sequence });
-  expect(stopped.ok()).toBeTruthy();
-  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
-    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
-  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoke.ok()).toBeTruthy();
-  const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
-  expect(replay.status()).toBe(409);
-});
-
-test("Expressive server Echo closes privately on session revoke", async ({ request }) => {
-  test.setTimeout(90000);
-  const { csrf, sequence } = await startEcho(request);
-  const before = (await echoEvents(request)).length;
-  const turn = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
-  expect(turn.ok()).toBeTruthy();
-  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoke.ok()).toBeTruthy();
-  // Canonical revoke deliberately kills the private subprocess after the
-  // provider STOP receipt. A killed process cannot report a graceful LiveKit
-  // disconnect, so asserting that event would falsely require unsafe delay.
-  // The safety property is a confirmed STOP plus no further audio publication.
-  await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
-    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
-  const fenced = await echoEvents(request);
-  const blocked = await submitOwnerTurn(request, csrf, 2, sequence, "Запрещённая речь после отзыва");
-  expect(blocked.ok()).toBeFalsy();
-  expect(await echoEvents(request)).toEqual(fenced);
-});
-
-test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
-  const { csrf, sequence } = await startEcho(request);
-  const revoked = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoked.ok()).toBeTruthy();
-  const before = await echoEvents(request);
-  const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
-  expect(rejected.status()).toBe(409);
-  const rejectedTurn = await submitOwnerTurn(request, csrf, 1, sequence, "Несанкционированный ответ");
-  expect(rejectedTurn.ok()).toBeFalsy();
-  // A malicious or stale browser may bypass the LLM entirely and call the
-  // avatar endpoint directly. Revocation must fence that route too.
-  const directSpeak = await postJson(request, csrf, "/api/avatar/speak", {
-    text: "Прямая речь после отзыва доступа",
-  });
-  expect(directSpeak.status()).toBe(409);
-  expect(await echoEvents(request)).toEqual(before);
 });

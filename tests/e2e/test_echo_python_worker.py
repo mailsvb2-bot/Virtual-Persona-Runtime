@@ -375,6 +375,32 @@ class EchoWorkerTests(unittest.TestCase):
         self.assertFalse(any(r["id"] == 24 and r["ok"] for r in receipts))
         self.assertTrue(any(r["id"] == 23 and r["ok"] for r in receipts))
 
+    def test_pcm_abort_is_idempotent_after_session_interrupt(self):
+        first = bytes([1, 0] * 160)
+        second = bytes([2, 0] * 160)
+        records = [
+            {"id": 0, "command": "open",
+             "session_url": "wss://livekit.example.test/room/agent-1",
+             "echo_token": "private-echo-token"},
+            {"id": 81, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 82, "command": "pcm_chunk", "stream_id": 81, "pcm_hex": first.hex()},
+            # The HTTP interrupt path may reach the provider before the
+            # streaming TTS object's Drop sends its matching pcm_abort.
+            {"id": 83, "command": "interrupt"},
+            {"id": 84, "command": "pcm_abort", "stream_id": 81},
+            {"id": 85, "command": "pcm_begin", "sample_rate_hz": 16000, "channels": 1},
+            {"id": 86, "command": "pcm_chunk", "stream_id": 85, "pcm_hex": second.hex()},
+            {"id": 87, "command": "pcm_end", "stream_id": 85},
+            {"id": 88, "command": "close"},
+        ]
+        trace, receipts = run_worker(True, records=records, delay_before_close=0.2)
+        for identifier in (83, 84, 85, 86, 87, 88):
+            self.assertTrue(
+                any(receipt["id"] == identifier and receipt["ok"] for receipt in receipts),
+                f"expected successful receipt for command {identifier}: {receipts}",
+            )
+        self.assertIn(second, b"".join(trace["audio"]))
+
     def test_native_pcm16_stream_rejects_truncated_sample_and_mismatched_id(self):
         records = [
             {"id": 0, "command": "open",

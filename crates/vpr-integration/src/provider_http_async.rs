@@ -139,17 +139,30 @@ fn async_transport_error(error: &reqwest::Error) -> ProviderError {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
     use std::thread;
-
-    use super::*;
+    use std::time::Instant;
 
     struct NeverCancelled;
 
     impl CancellationProbe for NeverCancelled {
         fn is_cancelled(&self) -> bool {
             false
+        }
+    }
+
+    struct AtomicCancellationProbe(Arc<AtomicBool>);
+
+    impl CancellationProbe for AtomicCancellationProbe {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Acquire)
         }
     }
 
@@ -177,5 +190,92 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
         server.join().unwrap();
+    }
+
+    #[test]
+    fn send_cancels_while_provider_is_still_waiting_for_headers() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept provider request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).expect("read provider request");
+            accepted_tx.send(()).expect("signal accepted request");
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+        });
+
+        let http = CancellableProviderHttp::new(Duration::from_secs(10))
+            .expect("build cancellable provider client");
+        let flag = Arc::new(AtomicBool::new(false));
+        let cancellation = AtomicCancellationProbe(flag.clone());
+        let url = format!("http://{address}/speech");
+        let started = Instant::now();
+        let send_thread = thread::spawn(move || http.send(http.post(&url), &cancellation));
+        accepted_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("provider accepted request before cancellation");
+        thread::sleep(Duration::from_millis(50));
+        flag.store(true, Ordering::Release);
+        let result = send_thread.join().expect("join provider request");
+        assert!(matches!(result, Err(error) if error.kind == ProviderErrorKind::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let _ = release_tx.send(());
+        server.join().expect("join provider fixture");
+    }
+
+    #[test]
+    fn chunk_cancels_while_provider_body_is_still_open() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept provider request");
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).expect("read provider request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n5\r\nfirst\r\n",
+                )
+                .expect("write first response chunk");
+            stream.flush().expect("flush first response chunk");
+            ready_tx.send(()).expect("signal first chunk available");
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            let _ = stream.write_all(b"0\r\n\r\n");
+        });
+
+        let http = CancellableProviderHttp::new(Duration::from_secs(10))
+            .expect("build cancellable provider client");
+        let flag = Arc::new(AtomicBool::new(false));
+        let cancellation = AtomicCancellationProbe(flag.clone());
+        let url = format!("http://{address}/speech");
+        let mut response = http
+            .send(http.post(&url), &cancellation)
+            .expect("receive provider headers");
+        ready_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("provider wrote first chunk");
+        assert_eq!(
+            http.chunk(&mut response, &cancellation, 1024)
+                .expect("read first chunk")
+                .expect("first chunk exists"),
+            b"first"
+        );
+
+        let cancel_flag = flag.clone();
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            cancel_flag.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        let result = http.chunk(&mut response, &cancellation, 1024);
+        assert!(matches!(result, Err(error) if error.kind == ProviderErrorKind::Cancelled));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        cancel_thread.join().expect("join cancellation signal");
+        drop(response);
+        let _ = release_tx.send(());
+        server.join().expect("join provider fixture");
     }
 }

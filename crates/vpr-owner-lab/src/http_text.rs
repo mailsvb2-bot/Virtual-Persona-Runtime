@@ -77,7 +77,18 @@ pub(super) fn text_turn_response(
             .evidence
             .lock()
             .complete_text_request(request_sequence, &value)
-            .map(|()| json_response(200, &value))
+            .map(|()| {
+                // Retain the exact completed owner reply under the same
+                // request sequence so a later client-confirmed interruption
+                // can resume only this reply, never browser-supplied text.
+                super::http_client_control::retain_completed_reply(
+                    &state.replay_source,
+                    &state.session_end_requested,
+                    request_sequence,
+                    &value.reply,
+                );
+                json_response(200, &value)
+            })
             .map_err(|error| error_response(http_evidence::error_status(error), error.code())),
         Err(error) => {
             if let Err(evidence_error) = state
