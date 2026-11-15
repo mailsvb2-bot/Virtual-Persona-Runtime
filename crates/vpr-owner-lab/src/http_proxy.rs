@@ -32,12 +32,14 @@ pub(super) fn serve(
     for _ in 0..HTTP_WORKERS {
         let receiver = Arc::clone(&receiver);
         let state = Arc::clone(state);
-        thread::spawn(move || loop {
-            let next = receiver.lock().map(|queue| queue.recv());
-            let Ok(Ok(stream)) = next else {
-                break;
-            };
-            proxy_connection(stream, upstream, &state);
+        thread::spawn(move || {
+            loop {
+                let next = receiver.lock().map(|queue| queue.recv());
+                let Ok(Ok(stream)) = next else {
+                    break;
+                };
+                proxy_connection(stream, upstream, &state);
+            }
         });
     }
     for incoming in listener.incoming() {
@@ -55,62 +57,79 @@ pub(super) fn serve(
 
 fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<AppState>) {
     let _ = stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT));
-    let Ok((raw_request, method, path)) = read_request(&mut stream) else {
-        write_error(&mut stream, 400, "BAD_REQUEST");
-        return;
+    let (raw_request, method, path) = match read_request(&mut stream) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("owner-lab HTTP proxy request parse failed kind={:?}", error.kind());
+            write_error(&mut stream, 400, "BAD_REQUEST");
+            return;
+        }
     };
     let rt1_post = method == "POST"
         && path
             .split('?')
             .next()
             .is_some_and(|value| value.starts_with("/api/rt1/"));
-    let request_id = rt1_post.then(|| {
-        format!(
-            "rt1-{}",
-            NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
-        )
-    });
-    let Ok(forwarded) = rewrite_request(&raw_request, request_id.as_deref()) else {
-        write_error(&mut stream, 400, "BAD_REQUEST");
-        return;
+    let request_id =
+        rt1_post.then(|| format!("rt1-{}", NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)));
+    let forwarded = match rewrite_request(&raw_request, request_id.as_deref()) {
+        Ok(request) => request,
+        Err(error) => {
+            log_proxy_error("request normalization failed", &method, &path, &error);
+            write_error(&mut stream, 400, "BAD_REQUEST");
+            return;
+        }
     };
 
     if let Some(id) = request_id.as_deref() {
-        let Ok((mut writer, cancellation)) =
-            CancellableTcpWriter::new(stream, RESPONSE_DEADLINE)
-        else {
-            return;
-        };
+        let (mut writer, cancellation) =
+            match CancellableTcpWriter::new(stream, RESPONSE_DEADLINE) {
+                Ok(writer) => writer,
+                Err(error) => {
+                    log_proxy_error("RT1 writer creation failed", &method, &path, &error);
+                    return;
+                }
+            };
         if state
             .rt1
             .register_transport_writer(id.to_owned(), cancellation.clone())
             .is_err()
         {
-            let _ = writer.write_all_bounded(&error_response(503, "RT1_RESPONSE_WRITER_UNAVAILABLE"));
+            let _ =
+                writer.write_all_bounded(&error_response(503, "RT1_RESPONSE_WRITER_UNAVAILABLE"));
             return;
         }
-        let delivered = relay_rt1_response(
-            upstream,
-            &forwarded,
-            &mut writer,
-            &cancellation,
-        )
-        .is_ok();
+        let delivery = relay_rt1_response(upstream, &forwarded, &mut writer, &cancellation);
+        let delivered = delivery.is_ok();
+        if let Err(error) = delivery {
+            log_proxy_error("RT1 response relay failed", &method, &path, &error);
+        }
         state.rt1.finish_transport_delivery(id, delivered);
-    } else {
-        let _ = response::relay_ordinary_response(upstream, &forwarded, &mut stream);
+    } else if let Err(error) =
+        response::relay_ordinary_response(upstream, &forwarded, &mut stream)
+    {
+        log_proxy_error("response relay failed", &method, &path, &error);
     }
 }
 
-fn read_request(
-    stream: &mut TcpStream,
-) -> io::Result<(Vec<u8>, String, String)> {
+fn log_proxy_error(stage: &str, method: &str, path: &str, error: &io::Error) {
+    let path = path.split('?').next().unwrap_or("/");
+    eprintln!(
+        "owner-lab HTTP proxy {stage} method={method} path={path} kind={:?}",
+        error.kind()
+    );
+}
+
+fn read_request(stream: &mut TcpStream) -> io::Result<(Vec<u8>, String, String)> {
     let mut reader = BufReader::new(stream);
     let mut header = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
     loop {
         if header.len() >= MAX_HEADER_BYTES {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP headers too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP headers too large",
+            ));
         }
         reader.read_exact(&mut byte)?;
         header.push(byte[0]);
@@ -130,7 +149,10 @@ fn parse_request_header(header: &[u8]) -> io::Result<(String, String, usize)> {
     let text = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP header text"))?;
     if !text.ends_with("\r\n\r\n") {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "incomplete HTTP headers"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incomplete HTTP headers",
+        ));
     }
     let mut lines = text[..text.len() - 4]
         .split("\r\n")
@@ -154,7 +176,10 @@ fn parse_request_header(header: &[u8]) -> io::Result<(String, String, usize)> {
         || method.is_empty()
         || !method.bytes().all(|byte| byte.is_ascii_uppercase())
     {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP request line"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid HTTP request line",
+        ));
     }
     let mut content_length = None;
     let mut host_count = 0;
@@ -163,35 +188,47 @@ fn parse_request_header(header: &[u8]) -> io::Result<(String, String, usize)> {
             .split_once(':')
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP header"))?;
         if name.trim().is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "empty HTTP header name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty HTTP header name",
+            ));
         }
         if name.eq_ignore_ascii_case("content-length") {
             if content_length.is_some() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "duplicate content length"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate content length",
+                ));
             }
-            content_length = Some(
-                value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid content length"))?,
-            );
+            content_length = Some(value.trim().parse::<usize>().map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "invalid content length")
+            })?);
         }
         if name.eq_ignore_ascii_case("transfer-encoding")
             || name.eq_ignore_ascii_case("expect")
             || name.eq_ignore_ascii_case("upgrade")
         {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "unsupported HTTP framing"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported HTTP framing",
+            ));
         }
         if name.eq_ignore_ascii_case("host") {
             host_count += 1;
         }
     }
     if host_count != 1 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "one Host header required"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "one Host header required",
+        ));
     }
     let body_length = content_length.unwrap_or(0);
     if body_length > MAX_BODY_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP body too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP body too large",
+        ));
     }
     Ok((method.to_owned(), path.to_owned(), body_length))
 }
@@ -245,10 +282,16 @@ fn relay_rt1_response(
     let mut buffer = [0_u8; 16 * 1024];
     loop {
         if cancellation.is_revoked() {
-            return Err(io::Error::new(io::ErrorKind::Interrupted, "RT1 response revoked"));
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "RT1 response revoked",
+            ));
         }
         if Instant::now() >= deadline {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "HTTP response deadline exceeded"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP response deadline exceeded",
+            ));
         }
         match upstream.read(&mut buffer) {
             Ok(0) => return Ok(()),
@@ -292,7 +335,10 @@ mod tests {
     fn proxy_injects_unspoofable_transport_identity_and_closes_upstream() {
         let raw = b"POST /api/rt1/visitor/text HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nOrigin: http://127.0.0.1:8787\r\nConnection: keep-alive\r\nX-VPR-RT1-Transport-Id: spoof\r\nContent-Length: 2\r\n\r\n{}";
         let forwarded = rewrite_request(raw, Some("rt1-9")).unwrap();
-        let header_end = forwarded.windows(4).position(|window| window == b"\r\n\r\n").unwrap();
+        let header_end = forwarded
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .unwrap();
         let header = std::str::from_utf8(&forwarded[..header_end]).unwrap();
         assert_eq!(header.matches("X-VPR-RT1-Transport-Id").count(), 1);
         assert!(header.contains("X-VPR-RT1-Transport-Id: rt1-9"));
@@ -320,6 +366,4 @@ mod tests {
             assert!(parse_request_header(header).is_err());
         }
     }
-
-
 }

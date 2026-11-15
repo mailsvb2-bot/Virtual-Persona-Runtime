@@ -6,10 +6,9 @@ mod http_evidence;
 mod http_interrupt;
 mod http_json;
 mod http_owner_capture;
+mod http_proxy;
 mod http_references;
 mod http_rt1;
-mod http_proxy;
-mod startup;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
@@ -18,6 +17,7 @@ mod http_tts;
 mod http_voice;
 mod launch;
 mod rt1_startup;
+mod startup;
 
 use http_json::{parse_empty_json, parse_json, read_body};
 use http_session::reject_if_session_ending;

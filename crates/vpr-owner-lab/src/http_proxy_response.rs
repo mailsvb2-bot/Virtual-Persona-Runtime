@@ -70,9 +70,9 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
     let mut lines = text[..text.len() - 4]
         .split("\r\n")
         .filter(|line| !line.is_empty());
-    let status = lines
-        .next()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status"))?;
+    let status = lines.next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status")
+    })?;
     let mut status_parts = status.split_whitespace();
     if status_parts.next() != Some("HTTP/1.1")
         || status_parts
@@ -88,9 +88,9 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
     let mut content_length = None;
     let mut chunked = false;
     for line in lines {
-        let (name, value) = line
-            .split_once(':')
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header")
+        })?;
         if name.trim().is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -104,12 +104,12 @@ fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
                     "duplicate HTTP response content length",
                 ));
             }
-            content_length = Some(
-                value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response content length"))?,
-            );
+            content_length = Some(value.trim().parse::<usize>().map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid HTTP response content length",
+                )
+            })?);
         }
         if name.eq_ignore_ascii_case("transfer-encoding") {
             if chunked || !value.trim().eq_ignore_ascii_case("chunked") {
@@ -300,7 +300,6 @@ fn relay_close_delimited_response_body(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,7 +329,8 @@ mod tests {
         for invalid in [
             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n".as_slice(),
             b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".as_slice(),
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .as_slice(),
             b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n".as_slice(),
         ] {
             assert!(parse_response_framing(invalid).is_err());
@@ -364,7 +364,8 @@ mod tests {
         });
 
         let client_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
+        let mut client =
+            std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
         let (mut relay_socket, _) = client_listener.accept().unwrap();
         let started = Instant::now();
         relay_ordinary_response(
@@ -377,7 +378,9 @@ mod tests {
 
         let expected = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Receipt: test\r\n\r\n";
         let mut actual = vec![0_u8; expected.len()];
-        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
         client.read_exact(&mut actual).unwrap();
         assert_eq!(actual, expected);
         release_sender.send(()).unwrap();
@@ -442,9 +445,7 @@ mod tests {
             std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
         let (mut relay_socket, _) = client_listener.accept().unwrap();
         let mut upstream = std::net::TcpStream::connect(upstream_address).unwrap();
-        upstream
-            .set_read_timeout(Some(RT1_READ_POLL))
-            .unwrap();
+        upstream.set_read_timeout(Some(RT1_READ_POLL)).unwrap();
 
         let started = Instant::now();
         let error = relay_close_delimited_response_body(
@@ -502,8 +503,7 @@ mod tests {
         .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
 
-        let expected =
-            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+        let expected = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
         let mut actual = vec![0_u8; expected.len()];
         client
             .set_read_timeout(Some(Duration::from_secs(1)))

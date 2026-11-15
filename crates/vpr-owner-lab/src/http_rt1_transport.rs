@@ -68,10 +68,7 @@ impl Rt1HttpState {
 }
 
 
-pub(super) fn respond_post(
-    mut request: tiny_http::Request,
-    state: &Arc<super::AppState>,
-) {
+pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<super::AppState>) {
     let transport_id = request
         .headers()
         .iter()

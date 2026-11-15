@@ -45,7 +45,6 @@ impl Rt1VisitorConversation {
     }
 }
 
-
 /// Holds the visitor publication permit and the real browser TCP registration
 /// until the outer HTTP proxy finishes writing the response.
 pub struct Rt1BrowserDeliveryGuard {
@@ -78,12 +77,10 @@ impl Rt1VisitorConversation {
             abort.revoke();
             return Err("RT1_VISITOR_RUNTIME_SESSION_UNAVAILABLE".into());
         };
-        let registration = session
-            .register_tcp_response_writer(writer)
-            .map_err(|_| {
-                abort.revoke();
-                "RT1_VISITOR_DELIVERY_DENIED".to_owned()
-            })?;
+        let registration = session.register_tcp_response_writer(writer).map_err(|_| {
+            abort.revoke();
+            "RT1_VISITOR_DELIVERY_DENIED".to_owned()
+        })?;
         if !self.is_active() {
             abort.revoke();
             drop(registration);
