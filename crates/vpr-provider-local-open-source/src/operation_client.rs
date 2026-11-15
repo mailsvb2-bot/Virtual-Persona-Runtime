@@ -23,8 +23,10 @@ struct Generation {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PublicationReadiness {
     ready: bool,
+    persona_video_ready: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,24 +119,25 @@ impl RemoteOperationClient {
     ///
     /// # Errors
     /// Rejects unreachable, unauthorized, busy or malformed worker replies.
-    pub fn publication_ready(&self) -> Result<(), ProviderError> {
+    pub fn publication_ready(&self) -> Result<(), &'static str> {
         let mut url = self.base.clone();
         url.path_segments_mut()
-            .map_err(|()| denied())?
+            .map_err(|()| "RT1_WORKER_NOT_READY")?
             .extend(["v1", "avatar", "readiness"]);
         let response = self
             .client
             .get(url)
             .bearer_auth(&self.token)
             .send()
-            .map_err(|_| denied())?;
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(denied());
-        }
+            .map_err(|_| "RT1_WORKER_NOT_READY")?;
+        let status = response.status();
         let result: PublicationReadiness =
-            super::decode_json_response(response, None).map_err(|_| denied())?;
-        if !result.ready {
-            return Err(denied());
+            super::decode_json_response(response, None).map_err(|_| "RT1_WORKER_NOT_READY")?;
+        if !result.persona_video_ready {
+            return Err("RT1_VIDEO_RENDERER_UNAVAILABLE");
+        }
+        if status != reqwest::StatusCode::OK || !result.ready {
+            return Err("RT1_WORKER_NOT_READY");
         }
         Ok(())
     }
@@ -164,6 +167,10 @@ impl RemoteOperationClient {
         if generation == 0 {
             return Err(denied());
         }
+        // Keep the readiness fence inside the single client that owns CREATE:
+        // stale visitor tokens and alternate callers cannot allocate media
+        // while the real Persona renderer or durable worker admission is down.
+        self.publication_ready().map_err(|_| denied())?;
         let response = self
             .client
             .put(self.url(operation_id)?)

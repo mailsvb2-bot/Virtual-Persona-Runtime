@@ -1,4 +1,4 @@
-name: RT1 owner-visitor real RTP integration
+name: RT1 owner-visitor browser safety (local RTP fixtures)
 
 on:
   pull_request:
@@ -47,9 +47,9 @@ jobs:
       - name: Install Chromium
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright install chromium
-      - name: Real owner publication, separate visitor RTP, revoked dual-track STOP
+      - name: Browser owner publication rejects diagnostic video transport
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.config.ts
-      - name: Canonical D-ID WebRTC visitor safety and unconfirmed STOP
+      - name: D-ID-shaped provider fixture safety and unconfirmed STOP (not live D-ID)
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.canonical.config.ts

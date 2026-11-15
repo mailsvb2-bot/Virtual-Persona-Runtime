@@ -52,7 +52,13 @@ pub(super) fn publication_media_transport_ready(
     worker_endpoint: Option<&str>,
     worker_token: Option<&str>,
 ) -> Result<(), &'static str> {
-    if !verified_worker && !diagnostic_rtp {
+    // Diagnostic aiortc tracks prove transport only, never Persona video.
+    // They may remain available to local sender tests but cannot authorize a
+    // public visitor token, even when worker credentials are configured.
+    if diagnostic_rtp {
+        return Err("RT1_VIDEO_RENDERER_UNAVAILABLE");
+    }
+    if !verified_worker {
         return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
     }
     if worker_endpoint.is_none_or(|value| value.trim().is_empty())
@@ -66,7 +72,7 @@ pub(super) fn publication_media_transport_ready(
 /// Validate the canonical worker voice composition BEFORE publishing a
 /// token, using the same provider constructor as visitor START. This is a
 /// configuration preflight only: it never creates or starts remote media.
-/// Diagnostic RTP remains explicitly non-voice and uses its own START route.
+/// Diagnostic RTP remains a local transport fixture, never a public visitor route.
 pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     if !verified_worker::selected() {
         return Ok(());
@@ -80,9 +86,7 @@ pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     }
     // Only an authenticated ledger admission snapshot is meaningful.
     // A public /healthz result does not prove token validity or safe CREATE.
-    remote
-        .publication_ready()
-        .map_err(|_| "RT1_WORKER_NOT_READY")
+    remote.publication_ready()
 }
 
 pub(super) fn visitor_start(

@@ -43,7 +43,18 @@ class AllocatedSessionError(RuntimeError):
 
 class SenderBackend(Protocol):
     def allocate(self, operation_id: str, generation: int) -> str:
-        """Create one session; return its opaque id. Can block."""
+        """Create one session; recheck renderer readiness at allocation time.
+
+        Publication preflight is a snapshot, not a lease. Implementations must
+        fail closed if the real Persona renderer is no longer ready here.
+        """
+
+    def persona_video_ready(self) -> bool:
+        """True only when a real Persona renderer is loaded and ready.
+
+        A transport test-pattern video track is not a Persona renderer.
+        Missing or failing implementations are treated as not ready.
+        """
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         """Stop BOTH real senders, return a verified receipt after completion."""
@@ -106,24 +117,43 @@ class MediaLifecycle:
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
-    def publication_ready(self) -> bool:
+    def persona_video_ready(self) -> bool:
+        """Fail closed when the backend lacks a real Persona renderer."""
+        probe = getattr(self._backend, "persona_video_ready", None)
+        try:
+            return callable(probe) and probe() is True
+        except Exception:
+            return False
+
+    def publication_readiness(self) -> dict[str, bool]:
         """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
 
-        Worker restart quarantine, shutdown, or any unresolved sender must
-        deny new public invitations. CREATE rechecks this under SQLite's
-        BEGIN IMMEDIATE, so this snapshot does not replace admission fencing.
+        A real Persona video renderer is mandatory for public publication.
+        Missing, false, or failing backend capability probes deny publication.
+        The durable ledger independently denies unresolved senders/shutdown;
+        CREATE still rechecks that state under BEGIN IMMEDIATE.
         """
+        persona_video_ready = self.persona_video_ready()
         if self._closing.is_set():
-            return False
+            return {"ready": False, "persona_video_ready": persona_video_ready}
         with self._lock:
             if self._closing.is_set():
-                return False
-            return self._db.execute(
-                """SELECT 1 FROM media_operations
-                   WHERE phase != 'stopped'
-                      OR (session_id IS NOT NULL AND stop_verified=0)
-                   LIMIT 1"""
-            ).fetchone() is None
+                ledger_ready = False
+            else:
+                ledger_ready = self._db.execute(
+                    """SELECT 1 FROM media_operations
+                       WHERE phase != 'stopped'
+                          OR (session_id IS NOT NULL AND stop_verified=0)
+                       LIMIT 1"""
+                ).fetchone() is None
+        return {
+            "ready": ledger_ready and persona_video_ready,
+            "persona_video_ready": persona_video_ready,
+        }
+
+    def publication_ready(self) -> bool:
+        """Compatibility predicate for callers that need only the final gate."""
+        return self.publication_readiness()["ready"]
 
     def _get(self, operation_id: str):
         return self._db.execute(

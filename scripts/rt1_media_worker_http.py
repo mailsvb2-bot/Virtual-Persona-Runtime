@@ -503,10 +503,10 @@ def handler_for(
                     self._send(401, {"error": "unauthorized"})
                     return
                 try:
-                    ready = lifecycle.publication_ready()
+                    readiness = lifecycle.publication_readiness()
                 except Exception:
-                    ready = False
-                self._send(200 if ready else 503, {"ready": ready})
+                    readiness = {"ready": False, "persona_video_ready": False}
+                self._send(200 if readiness["ready"] else 503, readiness)
                 return
             # Readiness only: no media identity, operation state, or token.
             if self.path == "/healthz":

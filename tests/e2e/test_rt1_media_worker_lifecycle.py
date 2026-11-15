@@ -26,6 +26,9 @@ class Sender:
         self.wait_on_create = False
         self.partial = False
 
+    def persona_video_ready(self):
+        return True
+
     def allocate(self, operation_id, generation):
         self.created += 1
         self.started.set()

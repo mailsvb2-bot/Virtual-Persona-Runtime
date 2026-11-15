@@ -18,6 +18,17 @@ class SenderTimeoutTests(unittest.TestCase):
             "rt1-op-42-7",
         )
 
+    def test_diagnostic_aiortc_video_track_never_claims_persona_renderer_ready(self):
+        backend = AiortcSenderBackend(timeout=2.0)
+        try:
+            self.assertIs(
+                backend.persona_video_ready(),
+                False,
+                "the default aiortc VideoStreamTrack is not a Persona renderer",
+            )
+        finally:
+            backend.shutdown()
+
     def test_successful_loop_call(self):
         backend = AiortcSenderBackend(timeout=2.0)
         try:

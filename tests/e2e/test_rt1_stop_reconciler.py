@@ -19,6 +19,9 @@ class FlakySender:
         self.stops = 0
         self.active = False
 
+    def persona_video_ready(self):
+        return True
+
     def allocate(self, operation_id, generation):
         self.active = True
         return "flaky-session"

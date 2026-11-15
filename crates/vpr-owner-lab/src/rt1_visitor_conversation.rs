@@ -130,14 +130,13 @@ impl Rt1VisitorConversation {
             },
         )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
-            let _ = manager.close(&id);
-            return Err(error);
+            return manager.close(&id).and(Err(error));
         }
+        helpers::require_worker_ready(&manager, &id, remote.as_deref())?;
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
             && let Err(error) = register(remote)
         {
-            let _ = manager.close(&id);
-            return Err(error);
+            return manager.close(&id).and(Err(error));
         }
 
         let startup_interrupt = Arc::clone(&interrupt);

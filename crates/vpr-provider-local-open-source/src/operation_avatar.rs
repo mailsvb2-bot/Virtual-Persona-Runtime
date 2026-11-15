@@ -134,6 +134,9 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         &self,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(denied());
+        }
         if cancellation.is_cancelled() || self.create_attempted.swap(true, Ordering::AcqRel) {
             return Err(denied());
         }
@@ -257,6 +260,118 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
 #[cfg(test)]
 mod tests {
     use super::OperationWorkerAvatar;
+    use crate::operation_client::RemoteOperationClient;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
+
+    struct ActiveTurn;
+    impl CancellationProbe for ActiveTurn {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    fn read_request_line(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("set bounded test socket timeout");
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let count = stream.read(&mut chunk).expect("read test HTTP request");
+            assert_ne!(count, 0, "HTTP request ended before headers");
+            bytes.extend_from_slice(&chunk[..count]);
+            if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+            assert!(bytes.len() <= 16_384, "test request headers exceeded bound");
+        }
+        String::from_utf8(bytes)
+            .expect("HTTP request is ASCII")
+            .lines()
+            .next()
+            .expect("HTTP request line")
+            .to_owned()
+    }
+
+    fn write_response(stream: &mut TcpStream, status: &str, body: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .expect("write test HTTP response");
+    }
+
+    #[test]
+    fn unavailable_persona_renderer_blocks_worker_create_for_existing_invites() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback test worker");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let address = listener.local_addr().expect("test worker address");
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let (mut first, _) = loop {
+                match listener.accept() {
+                    Ok(accepted) => break accepted,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "worker readiness request not received"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept readiness request: {error}"),
+                }
+            };
+            let mut requests = vec![read_request_line(&mut first)];
+            write_response(
+                &mut first,
+                "503 Service Unavailable",
+                r#"{"ready":false,"persona_video_ready":false}"#,
+            );
+            drop(first);
+
+            // Observe briefly for a forbidden follow-up PUT. A correct client
+            // stops after the renderer-readiness denial and never allocates.
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        requests.push(read_request_line(&mut stream));
+                        write_response(&mut stream, "409 Conflict", r#"{"error":"denied"}"#);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept follow-up request: {error}"),
+                }
+            }
+            requests
+        });
+
+        let client = RemoteOperationClient::new(
+            &format!("http://{address}"),
+            "test-secret",
+            Duration::from_secs(2),
+        )
+        .expect("build loopback worker client");
+        let avatar = OperationWorkerAvatar::new(client, "existing-invite".to_owned(), 1)
+            .expect("build canonical worker avatar");
+        assert!(
+            avatar.create_session(&ActiveTurn).is_err(),
+            "renderer-unready worker must deny visitor CREATE",
+        );
+        assert_eq!(
+            server.join().expect("worker test thread"),
+            vec!["GET /v1/avatar/readiness HTTP/1.1"],
+            "renderer denial must prevent the follow-up media CREATE",
+        );
+    }
 
     #[test]
     fn canonical_tts_pcm_resamples_to_bounded_worker_frames() {

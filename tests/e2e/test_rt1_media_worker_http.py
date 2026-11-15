@@ -4,6 +4,7 @@ A separate deployed test must inspect real sender RTP on revoke.
 """
 import base64
 import json
+from contextlib import contextmanager
 import sqlite3
 import socket
 import sys
@@ -28,6 +29,12 @@ class Backend:
         self.allocations = 0
         self.stops = 0
         self.pcm_pushes = []
+        self.video_renderer_ready = False
+
+    def persona_video_ready(self):
+        # This HTTP fixture tests the readiness contract only; it does not
+        # claim that a real renderer or human-visible avatar exists.
+        return self.video_renderer_ready
 
     def push_pcm(self, operation_id, session_id, generation, pcm):
         self.pcm_pushes.append((operation_id, session_id, generation, pcm))
@@ -41,10 +48,33 @@ class Backend:
         return StopReceipt(operation_id, session_id, generation, True, True)
 
 
+@contextmanager
+def exclusive_stop_when_idle(lifecycle, timeout=1.0):
+    """Wait for the preceding HTTP handler to release its nonblocking STOP lock."""
+    deadline = time.monotonic() + timeout
+    while True:
+        guard = lifecycle._exclusive_stop()
+        try:
+            guard.__enter__()
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+            continue
+        try:
+            yield
+        finally:
+            guard.__exit__(None, None, None)
+        return
+
+
 class HttpLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.backend = Backend()
+        # Most HTTP tests exercise sender lifecycle with an explicitly ready
+        # test renderer; the fail-closed test below turns this off.
+        self.backend.video_renderer_ready = True
         self.lifecycle = MediaLifecycle(Path(self.temp.name) / "ledger.sqlite", self.backend)
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
@@ -71,6 +101,16 @@ class HttpLifecycleTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, json.load(error)
 
+    def test_authenticated_transport_create_remains_renderer_agnostic(self):
+        # The worker API is a server-authenticated transport primitive. Only
+        # the canonical Rust visitor client may gate Persona publication.
+        self.backend.video_renderer_ready = False
+        self.assertEqual(self.request("PUT", token="wrong")[0], 401)
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(self.backend.stops, 1)
+
     def test_authenticated_publication_preflight_is_read_only_and_fenced(self):
         """A live /healthz cannot authorize a broken or busy worker."""
         def probe(token):
@@ -85,20 +125,38 @@ class HttpLifecycleTests(unittest.TestCase):
                 return error.code, json.load(error)
 
         self.assertEqual(probe("wrong")[0], 401)
-        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        # A live worker with only transport tracks cannot publish a Persona.
+        self.backend.video_renderer_ready = False
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": False}),
+        )
         self.assertEqual(self.backend.allocations, 0)
         self.assertIsNone(self.lifecycle.status("operation-1"))
-
-        # A durable active sender must fence future publication. The probe
-        # never creates, cancels, or claims to stop that sender.
+        # Only an explicit renderer-ready capability can pass the media gate.
+        self.backend.video_renderer_ready = True
+        self.assertEqual(
+            probe("test-secret"),
+            (200, {"ready": True, "persona_video_ready": True}),
+        )
+        # A durable active sender independently fences future publication.
         self.assertEqual(self.request("PUT")[0], 200)
-        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": True}),
+        )
         self.assertEqual(self.backend.allocations, 1)
         self.assertEqual(self.backend.stops, 0)
         self.assertEqual(self.request("DELETE")[0], 200)
-        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        self.assertEqual(
+            probe("test-secret"),
+            (200, {"ready": True, "persona_video_ready": True}),
+        )
         self.lifecycle.request_shutdown()
-        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": True}),
+        )
 
     def test_slow_drip_cannot_reset_total_body_deadline(self):
         self.server.RequestHandlerClass = handler_for(
@@ -572,7 +630,7 @@ class HttpLifecycleTests(unittest.TestCase):
         )
         # The HTTP handler runs in another thread, and the physical STOP
         # lock is already owned by a concurrent operation. No push began.
-        with self.lifecycle._exclusive_stop():
+        with exclusive_stop_when_idle(self.lifecycle):
             with self.assertRaises(HTTPError) as error:
                 urlopen(request, timeout=3)
             self.assertEqual(error.exception.code, 409)

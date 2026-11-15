@@ -8,7 +8,7 @@ const csrfHeaders = (csrf: string) => ({
   origin: base,
 });
 
-test("RT1 owner cannot publish D-ID invitation without confirmed remote video STOP", async ({ page, request }) => {
+test("RT1 owner cannot publish a D-ID fixture invitation without confirmed remote video STOP", async ({ page, request }) => {
   // Module scripts must execute before we interpret Owner Lab bootstrap status.
   // Keep the real browser/assets/backend path: no mocked bootstrap or retries.
   const browserErrors: string[] = [];
