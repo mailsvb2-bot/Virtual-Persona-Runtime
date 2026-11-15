@@ -287,7 +287,7 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     };
     let visitor_token = Rt1OwnerController::new()
         .publish(&body.owner_token, body.expected_persona_version, readiness)
-        .map_err(|_| error_response(409, "RT1_PUBLISH_DENIED"))?;
+        .map_err(|reason| startup_errors::publication_error_response(&reason))?;
     Ok(json_response(
         200,
         &serde_json::json!({"visitor_token": visitor_token}),
