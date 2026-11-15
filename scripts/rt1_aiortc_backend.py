@@ -155,6 +155,15 @@ class AiortcSenderBackend:
         self._completed_stops: dict[str, StopReceipt] = {}
         self._thread.start()
 
+    def persona_video_ready(self) -> bool:
+        """This backend has no Persona renderer.
+
+        _allocate currently attaches aiortc's default VideoStreamTrack solely
+        to exercise signaling/RTP lifecycle. It is a transport diagnostic, not
+        a generated Persona face, so public publication must remain blocked.
+        """
+        return False
+
     def _run_loop(self):
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
