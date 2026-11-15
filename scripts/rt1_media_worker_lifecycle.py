@@ -41,9 +41,17 @@ class AllocatedSessionError(RuntimeError):
         self.session_id = session_id
 
 
+class PersonaRendererUnavailable(RuntimeError):
+    """The worker has transport but no ready Persona video renderer."""
+
+
 class SenderBackend(Protocol):
     def allocate(self, operation_id: str, generation: int) -> str:
-        """Create one session; return its opaque id. Can block."""
+        """Create one session; recheck renderer readiness at allocation time.
+
+        Publication preflight is a snapshot, not a lease. Implementations must
+        fail closed if the real Persona renderer is no longer ready here.
+        """
 
     def persona_video_ready(self) -> bool:
         """True only when a real Persona renderer is loaded and ready.
@@ -113,6 +121,14 @@ class MediaLifecycle:
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
+    def persona_video_ready(self) -> bool:
+        """Fail closed when the backend lacks a real Persona renderer."""
+        probe = getattr(self._backend, "persona_video_ready", None)
+        try:
+            return callable(probe) and probe() is True
+        except Exception:
+            return False
+
     def publication_readiness(self) -> dict[str, bool]:
         """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
 
@@ -121,11 +137,7 @@ class MediaLifecycle:
         The durable ledger independently denies unresolved senders/shutdown;
         CREATE still rechecks that state under BEGIN IMMEDIATE.
         """
-        probe = getattr(self._backend, "persona_video_ready", None)
-        try:
-            persona_video_ready = callable(probe) and probe() is True
-        except Exception:
-            persona_video_ready = False
+        persona_video_ready = self.persona_video_ready()
         if self._closing.is_set():
             return {"ready": False, "persona_video_ready": persona_video_ready}
         with self._lock:
@@ -279,6 +291,10 @@ class MediaLifecycle:
     def create(self, operation_id: str, generation: int) -> str:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
+        # Enforce readiness at the durable owner, not only in the Rust client.
+        # Older callers with a valid worker token must not bypass this fence.
+        if not self.persona_video_ready():
+            raise PersonaRendererUnavailable("RT1_VIDEO_RENDERER_UNAVAILABLE")
         # Obtain the backend's *authoritative* preassigned identity before
         # allocation. Recording it only after a timeout misses process death
         # during CREATE, especially when CANCEL already committed. This is
