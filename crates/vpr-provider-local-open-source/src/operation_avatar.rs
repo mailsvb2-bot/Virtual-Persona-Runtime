@@ -288,7 +288,7 @@ mod tests {
             let count = stream.read(&mut chunk).expect("read test HTTP request");
             assert_ne!(count, 0, "HTTP request ended before headers");
             bytes.extend_from_slice(&chunk[..count]);
-            if bytes.windows(4).any(|window| window == b"\\r\\n\\r\\n") {
+            if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
                 break;
             }
             assert!(bytes.len() <= 16_384, "test request headers exceeded bound");
@@ -304,7 +304,7 @@ mod tests {
     fn write_response(stream: &mut TcpStream, status: &str, body: &str) {
         write!(
             stream,
-            "HTTP/1.1 {status}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         )
         .expect("write test HTTP response");
