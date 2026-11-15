@@ -119,23 +119,17 @@ impl SessionExecutionGate {
         &self,
         writer: TcpWriteRevocation,
     ) -> Result<TcpResponseRegistration, ()> {
-        let id = match self.tcp_responses.next_id.fetch_update(
+        let Ok(id) = self.tcp_responses.next_id.fetch_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |next| next.checked_add(1),
-        ) {
-            Ok(id) => id,
-            Err(_) => {
-                writer.revoke();
-                return Err(());
-            }
+        ) else {
+            writer.revoke();
+            return Err(());
         };
-        let mut writers = match self.tcp_responses.writers.lock() {
-            Ok(writers) => writers,
-            Err(_) => {
-                writer.revoke();
-                return Err(());
-            }
+        let Ok(mut writers) = self.tcp_responses.writers.lock() else {
+            writer.revoke();
+            return Err(());
         };
         writers.insert(id, writer);
         Ok(TcpResponseRegistration {

@@ -987,7 +987,9 @@ fn revoked_session_rejects_and_aborts_late_tcp_response_registration() {
             .is_err()
     );
     assert!(cancellation.is_revoked());
-    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let mut byte = [0_u8; 1];
     assert_eq!(client.read(&mut byte).unwrap(), 0);
 }

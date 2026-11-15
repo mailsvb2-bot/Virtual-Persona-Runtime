@@ -69,20 +69,14 @@ impl SessionRevocationHandle {
         &self,
         writer: TcpWriteRevocation,
     ) -> Result<TcpResponseRegistration, Rt0ReasonCode> {
-        let _admission = match self.gate.read() {
-            Ok(admission) => admission,
-            Err(()) => {
-                writer.revoke();
-                return Err(Rt0ReasonCode::InternalError);
-            }
+        let Ok(_admission) = self.gate.read() else {
+            writer.revoke();
+            return Err(Rt0ReasonCode::InternalError);
         };
-        let revoked = match self.authorization.is_revoked() {
-            Ok(revoked) => revoked,
-            Err(error) => {
-                writer.revoke();
-                return Err(RuntimeDenyReason::reason_code(error));
-            }
-        };
+        let revoked = self.authorization.is_revoked().map_err(|error| {
+            writer.revoke();
+            RuntimeDenyReason::reason_code(error)
+        })?;
         if revoked {
             writer.revoke();
             return Err(Rt0ReasonCode::InvalidStateTransition);
