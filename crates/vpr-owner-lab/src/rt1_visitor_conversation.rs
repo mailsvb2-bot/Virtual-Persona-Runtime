@@ -134,8 +134,7 @@ impl Rt1VisitorConversation {
             return Err(error);
         }
         if let Some(reason) = remote.as_ref().and_then(|worker| worker.publication_ready().err()) {
-            let _ = manager.close(&id);
-            return Err(reason.to_owned());
+            return manager.close(&id).and(Err(reason.to_owned()));
         }
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
             && let Err(error) = register(remote)
