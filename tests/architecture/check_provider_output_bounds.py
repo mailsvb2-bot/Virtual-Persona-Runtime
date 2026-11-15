@@ -121,7 +121,7 @@ for crate_name in json_body_crates | binary_body_crates:
         crate_name in binary_body_crates
         and "CancellableProviderHttp" in source
         and "MAX_PROVIDER_BINARY_BODY_BYTES" in source
-        and ".chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)" in source
+        and "client.chunk(" in source
     )
     # Media adapters may consume bounded chunks instead of waiting for EOF.
     # Both entry points enforce the same maximum observed response body size.
