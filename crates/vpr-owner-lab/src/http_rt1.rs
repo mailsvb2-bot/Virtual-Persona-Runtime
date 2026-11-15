@@ -270,6 +270,9 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
     let readiness = || -> Result<(), String> {
         let engine = state.engine.lock().map_err(|_| "RT1_ENGINE_UNAVAILABLE")?;
         let status = engine.status();
+        // Provider construction is independent of the owner engine; never
+        // hold its lock while validating publication dependencies.
+        drop(engine);
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
