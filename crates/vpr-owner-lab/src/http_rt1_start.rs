@@ -52,7 +52,13 @@ pub(super) fn publication_media_transport_ready(
     worker_endpoint: Option<&str>,
     worker_token: Option<&str>,
 ) -> Result<(), &'static str> {
-    if !verified_worker && !diagnostic_rtp {
+    // Diagnostic aiortc tracks prove transport only, never Persona video.
+    // They may remain available to local sender tests but cannot authorize a
+    // public visitor token, even when worker credentials are configured.
+    if diagnostic_rtp {
+        return Err("RT1_VIDEO_RENDERER_UNAVAILABLE");
+    }
+    if !verified_worker {
         return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
     }
     if worker_endpoint.is_none_or(|value| value.trim().is_empty())
