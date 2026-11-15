@@ -130,8 +130,7 @@ impl Rt1VisitorConversation {
             },
         )?;
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
-            let _ = manager.close(&id);
-            return Err(error);
+            return manager.close(&id).and(Err(error));
         }
         if let Some(reason) = remote
             .as_ref()
@@ -142,8 +141,7 @@ impl Rt1VisitorConversation {
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
             && let Err(error) = register(remote)
         {
-            let _ = manager.close(&id);
-            return Err(error);
+            return manager.close(&id).and(Err(error));
         }
 
         let startup_interrupt = Arc::clone(&interrupt);
@@ -189,8 +187,9 @@ impl Rt1VisitorConversation {
         if let Some(worker) = &remote
             && worker.synchronize_created_session().is_err()
         {
-            let _ = manager.close(&id);
-            return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
+            return manager
+                .close(&id)
+                .and(Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()));
         }
         *interrupt.session.lock() = engine.session_revocation_handle();
         *interrupt.backend_stop.lock() = engine.visitor_avatar_stop_handle();
