@@ -10,6 +10,12 @@ on:
       # cancellation, durable STOP reconciliation and dual-track RTP probe.
       - 'crates/vpr-owner-lab/src/rt1_*.rs'
       - 'crates/vpr-owner-lab/src/http_rt1*.rs'
+      # The public RT1 socket and the internal Owner Lab listener are one
+      # revocable transport boundary; changes here must rerun sender STOP.
+      - 'crates/vpr-owner-lab/src/http_proxy.rs'
+      - 'crates/vpr-owner-lab/src/startup.rs'
+      - 'crates/vpr-owner-lab/src/main.rs'
+      - 'crates/vpr-runtime/src/cancellable_tcp_writer.rs'
       - 'crates/vpr-provider-local-open-source/src/operation_client.rs'
       - '.github/workflows/rt1-local-sender.yml'
   workflow_dispatch:
