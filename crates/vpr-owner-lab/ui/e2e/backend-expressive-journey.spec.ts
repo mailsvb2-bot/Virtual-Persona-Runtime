@@ -175,6 +175,7 @@ test.afterEach(async ({ request }, testInfo) => {
   if (state !== "closed") {
     const close = await postJson(request, csrf, "/api/session/close", {});
     if (!close.ok()) {
+      console.error("session close after expressive voice turn failed", close.status(), await close.text());
       // A cancelled in-flight provider call may make Close return 504 after
       // authority has already been revoked. The server schedules bounded
       // cleanup for that exact generation; wait for the observable Closed/None
