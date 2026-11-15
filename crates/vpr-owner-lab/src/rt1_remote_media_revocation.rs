@@ -192,6 +192,12 @@ impl Rt1RemoteMediaRevocation {
             .cancel_confirmed(&self.operation_id, self.generation)
             .map_err(|_| "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())?;
         let _identity = self.identity_gate.lock();
+        // A conflicting late CREATE may arrive while the worker STOP request
+        // is in flight. Recheck under the identity fence before committing
+        // the receipt; an earlier check cannot authorize a stale sender.
+        if self.identity_conflict.load(Ordering::Acquire) {
+            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+        }
         if self
             .created_session_id
             .lock()

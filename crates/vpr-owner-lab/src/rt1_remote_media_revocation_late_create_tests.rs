@@ -79,7 +79,7 @@ fn spawn_late_create_worker(listener: TcpListener) -> std::thread::JoinHandle<()
 
 fn build_late_create_avatar(
     client: RemoteOperationClient,
-    remote: Arc<Rt1RemoteMediaRevocation>,
+    remote: &Arc<Rt1RemoteMediaRevocation>,
 ) -> OperationWorkerAvatar {
     let create_owner = Arc::clone(&remote);
     let stop_owner = Arc::clone(&remote);
@@ -130,7 +130,7 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
             .expect("owner revoke wakes the existing cleanup reconciler");
         cleanup_remote.revoke_confirmed().unwrap();
     });
-    let avatar = build_late_create_avatar(client, Arc::clone(&remote));
+    let avatar = build_late_create_avatar(client, &remote);
 
     assert!(avatar.create_session(&ActiveTurn).is_err());
     cleanup.join().unwrap();
@@ -187,5 +187,47 @@ fn late_create_identity_binding_does_not_wait_for_stop_network_io() {
     release_tx.send(()).unwrap();
     stop.join().unwrap().unwrap();
     assert!(remote.is_stop_confirmed());
+    worker.join().unwrap();
+}
+
+#[test]
+fn identity_conflict_during_stop_cannot_be_cleared_by_an_inflight_receipt() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let request = read_request_headers(&mut socket);
+        assert!(request.starts_with(b"DELETE /v1/avatar/operations/late-lock "));
+        accepted_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let body = r#"{"operation_id":"late-lock","generation":1,"session_id":"original-session","audio_stopped":true,"video_stopped":true}"#;
+        write_json_response(&mut socket, "200 OK", body);
+    });
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "late-lock".into(), 1).unwrap());
+    remote.record_created_session("original-session").unwrap();
+    remote.request_revoke();
+    let stop_remote = Arc::clone(&remote);
+    let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
+    accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+
+    assert_eq!(
+        remote.record_created_session("conflicting-session").unwrap_err(),
+        "RT1_REMOTE_SESSION_ID_CONFLICT"
+    );
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        stop.join().unwrap().unwrap_err(),
+        "RT1_REMOTE_SESSION_ID_CONFLICT"
+    );
+    assert!(!remote.is_stop_confirmed());
     worker.join().unwrap();
 }
