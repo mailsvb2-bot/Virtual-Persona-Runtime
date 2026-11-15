@@ -14,6 +14,7 @@ SOURCE = (
 )
 
 
+HTTP_SOURCE = SOURCE.with_name("http_rt1.rs")
 STREAMING_SOURCE = SOURCE.with_name("rt1_visitor_voice_streaming.rs")
 VOICE_CAPABILITY_SOURCE = SOURCE.with_name("rt1_visitor_voice_capability.rs")
 STOP_SOURCE = SOURCE.with_name("rt1_visitor_interrupt_stop.rs")
@@ -106,6 +107,11 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         self.assertIn("handle.interrupt()", body)
         self.assertNotIn("emit_segment(", body)
         self.assertNotIn("std::thread::spawn(", body)
+
+    def test_public_visitor_voice_route_uses_streaming_worker_engine(self):
+        http_source = HTTP_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(".voice_turn_streaming(body.pcm)", http_source)
+        self.assertNotIn(".voice_turn(body.pcm)", http_source)
 
     def test_streaming_voice_is_not_a_browser_command_or_second_runtime(self):
         body = method_body(
