@@ -80,9 +80,7 @@ pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     }
     // Only an authenticated ledger admission snapshot is meaningful.
     // A public /healthz result does not prove token validity or safe CREATE.
-    remote
-        .publication_ready()
-        .map_err(|_| "RT1_WORKER_NOT_READY")
+    remote.publication_ready()
 }
 
 pub(super) fn visitor_start(
