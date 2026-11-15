@@ -1,13 +1,12 @@
-use std::io::Read;
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use vpr_integration::{
-    AudioInput, CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
-    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest,
-    UsageEvidence, UsageUnit, build_provider_http_client, read_bounded_provider_body,
+    AudioInput, CancellationProbe, CancellableProviderHttp, GeneratedAudioSink,
+    MAX_PROVIDER_BINARY_BODY_BYTES, PcmSampleFormat, ProviderDescriptor, ProviderError,
+    ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -72,7 +71,7 @@ impl OpenAiSpeechConfig {
 }
 
 pub struct OpenAiSpeechTts {
-    client: Client,
+    client: CancellableProviderHttp,
     config: OpenAiSpeechConfig,
 }
 
@@ -94,8 +93,7 @@ impl OpenAiSpeechTts {
         {
             return Err(invalid_response());
         }
-        let client = build_provider_http_client(config.timeout)
-            .map_err(|error| map_transport_error(&error))?;
+        let client = CancellableProviderHttp::new(config.timeout)?;
         Ok(Self { client, config })
     }
 }
@@ -123,22 +121,13 @@ impl TtsPort for OpenAiSpeechTts {
             voice: &self.config.voice,
             response_format: if self.config.stream_pcm { "pcm" } else { "wav" },
         };
-        let response = self
+        let request = self
             .client
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("Bearer {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json")
-            .json(&body)
-            .send()
-            .map_err(|error| {
-                if self.config.stream_pcm {
-                    eprintln!(
-                        "VPR Piper stage=http_send failed timeout={}",
-                        error.is_timeout()
-                    );
-                }
-                map_transport_error(&error)
-            })?;
+            .json(&body);
+        let response = self.client.send(request, cancellation)?;
         if !response.status().is_success() {
             if self.config.stream_pcm {
                 eprintln!(
@@ -149,9 +138,15 @@ impl TtsPort for OpenAiSpeechTts {
             return Err(map_status(response.status().as_u16()));
         }
         if self.config.stream_pcm {
-            return stream_pcm_body(response, cancellation, sink, request.text.chars().count());
+            return stream_pcm_body(
+                &self.client,
+                response,
+                cancellation,
+                sink,
+                request.text.chars().count(),
+            );
         }
-        let wav = read_body(response, cancellation)?;
+        let wav = read_body(&self.client, response, cancellation)?;
         let audio = decode_pcm_wav(&wav)?;
         if cancellation.is_cancelled() {
             return Err(cancelled());
@@ -183,11 +178,11 @@ struct SpeechRequest<'a> {
 }
 
 fn read_body(
+    client: &CancellableProviderHttp,
     response: Response,
     cancellation: &dyn CancellationProbe,
 ) -> Result<Vec<u8>, ProviderError> {
-    let output =
-        read_bounded_provider_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, Some(cancellation))?;
+    let output = client.read_bounded_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, cancellation)?;
     if output.is_empty() {
         return Err(invalid_response());
     }
@@ -195,6 +190,7 @@ fn read_body(
 }
 
 fn stream_pcm_body(
+    client: &CancellableProviderHttp,
     mut response: Response,
     cancellation: &dyn CancellationProbe,
     sink: &mut dyn GeneratedAudioSink,
@@ -226,13 +222,10 @@ fn stream_pcm_body(
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        let size = response.read(&mut buffer).map_err(|error| {
-            eprintln!("VPR Piper stage=pcm_read failed kind={:?}", error.kind());
-            invalid_response()
-        })?;
-        if size == 0 {
+        let Some(bytes) = client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)? else {
             break;
-        }
+        };
+        let size = bytes.len();
         total = total
             .checked_add(size)
             .filter(|count| *count <= MAX_PROVIDER_BINARY_BODY_BYTES)
@@ -241,7 +234,7 @@ fn stream_pcm_body(
         if let Some(byte) = pending_byte.take() {
             chunk.push(byte);
         }
-        chunk.extend_from_slice(&buffer[..size]);
+        chunk.extend_from_slice(&bytes);
         if chunk.len() % 2 != 0 {
             pending_byte = chunk.pop();
         }
@@ -367,20 +360,6 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
         });
     }
     Ok(())
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        }
-    } else {
-        ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        }
-    }
 }
 
 fn map_status(status: u16) -> ProviderError {
