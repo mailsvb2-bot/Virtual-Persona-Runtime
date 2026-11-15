@@ -479,7 +479,10 @@ for required in ("JanusDataChannel", "stream/started", "stream/done", "stream/in
         raise SystemExit(f"D-ID client-control wire contract missing {required}")
 
 owner_lab_src = CRATES / "vpr-owner-lab" / "src"
-owner_lab_main = (owner_lab_src / "main.rs").read_text(encoding="utf-8")
+owner_lab_main = "\n".join(
+    (owner_lab_src / path).read_text(encoding="utf-8")
+    for path in ("main.rs", "startup.rs")
+)
 owner_lab_state = (owner_lab_src / "state.rs").read_text(encoding="utf-8")
 owner_lab_providers = "\n".join(
     (owner_lab_src / path).read_text(encoding="utf-8")
