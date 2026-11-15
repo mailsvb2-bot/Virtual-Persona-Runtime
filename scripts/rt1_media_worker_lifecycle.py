@@ -106,6 +106,25 @@ class MediaLifecycle:
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
+    def publication_ready(self) -> bool:
+        """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
+
+        Worker restart quarantine, shutdown, or any unresolved sender must
+        deny new public invitations. CREATE rechecks this under SQLite's
+        BEGIN IMMEDIATE, so this snapshot does not replace admission fencing.
+        """
+        if self._closing.is_set():
+            return False
+        with self._lock:
+            if self._closing.is_set():
+                return False
+            return self._db.execute(
+                """SELECT 1 FROM media_operations
+                   WHERE phase != 'stopped'
+                      OR (session_id IS NOT NULL AND stop_verified=0)
+                   LIMIT 1"""
+            ).fetchone() is None
+
     def _get(self, operation_id: str):
         return self._db.execute(
             "SELECT generation,phase,session_id FROM media_operations WHERE id=?",

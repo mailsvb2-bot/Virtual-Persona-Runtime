@@ -495,6 +495,19 @@ def handler_for(
                 self._send(503, {"error": "worker failure", "stop_confirmed": False})
 
         def do_GET(self):
+            # Public liveness is not proof of authenticated admission.
+            # This read-only probe uses the same token as CREATE and the
+            # canonical durable worker ledger; no fake STOP receipt.
+            if self.path == "/v1/avatar/readiness":
+                if not self._authorized():
+                    self._send(401, {"error": "unauthorized"})
+                    return
+                try:
+                    ready = lifecycle.publication_ready()
+                except Exception:
+                    ready = False
+                self._send(200 if ready else 503, {"ready": ready})
+                return
             # Readiness only: no media identity, operation state, or token.
             if self.path == "/healthz":
                 self._send(200, {"status": "ok"})

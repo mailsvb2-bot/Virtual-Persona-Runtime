@@ -26,6 +26,7 @@ pub(super) fn publication_error_response(reason: &str) -> HttpResponse {
             error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
         }
         "RT1_WORKER_NOT_CONFIGURED" => error_response(503, "RT1_WORKER_NOT_CONFIGURED"),
+        "RT1_WORKER_NOT_READY" => error_response(503, "RT1_WORKER_NOT_READY"),
         "RT1_PROVIDER_UNAVAILABLE" => error_response(503, "RT1_PROVIDER_UNAVAILABLE"),
         "RT1_TTS_NOT_CONFIGURED" => error_response(503, "RT1_TTS_NOT_CONFIGURED"),
         _ => error_response(409, "RT1_PUBLISH_DENIED"),
@@ -41,6 +42,7 @@ mod tests {
         for code in [
             "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED",
             "RT1_WORKER_NOT_CONFIGURED",
+            "RT1_WORKER_NOT_READY",
             "RT1_PROVIDER_UNAVAILABLE",
             "RT1_TTS_NOT_CONFIGURED",
         ] {

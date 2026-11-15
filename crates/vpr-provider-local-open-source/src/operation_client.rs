@@ -22,6 +22,11 @@ struct Generation {
     generation: u64,
 }
 
+#[derive(Deserialize)]
+struct PublicationReadiness {
+    ready: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateReply {
     operation_id: String,
@@ -104,6 +109,34 @@ impl RemoteOperationClient {
             base,
             token: token.to_owned(),
         })
+    }
+
+    /// Authenticated, read-only worker admission preflight. This cannot
+    /// allocate media or certify remote STOP, and CREATE always rechecks
+    /// durable admission under its own `SQLite` transaction.
+    ///
+    /// # Errors
+    /// Rejects unreachable, unauthorized, busy or malformed worker replies.
+    pub fn publication_ready(&self) -> Result<(), ProviderError> {
+        let mut url = self.base.clone();
+        url.path_segments_mut()
+            .map_err(|()| denied())?
+            .extend(["v1", "avatar", "readiness"]);
+        let response = self
+            .client
+            .get(url)
+            .bearer_auth(&self.token)
+            .send()
+            .map_err(|_| denied())?;
+        if response.status() != reqwest::StatusCode::OK {
+            return Err(denied());
+        }
+        let result: PublicationReadiness =
+            super::decode_json_response(response, None).map_err(|_| denied())?;
+        if !result.ready {
+            return Err(denied());
+        }
+        Ok(())
     }
 
     fn url(&self, operation_id: &str) -> Result<reqwest::Url, ProviderError> {

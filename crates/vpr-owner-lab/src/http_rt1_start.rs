@@ -71,14 +71,18 @@ pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     if !verified_worker::selected() {
         return Ok(());
     }
-    let (_, avatar) = verified_worker::prepare("rt1-publication-preflight")
+    let (remote, avatar) = verified_worker::prepare("rt1-publication-preflight")
         .map_err(|_| "RT1_WORKER_NOT_CONFIGURED")?;
     let providers = ProviderBundle::from_env_with_avatar(true, avatar)
         .map_err(|_| "RT1_PROVIDER_UNAVAILABLE")?;
     if providers.tts.is_none() {
         return Err("RT1_TTS_NOT_CONFIGURED");
     }
-    Ok(())
+    // Only an authenticated ledger admission snapshot is meaningful.
+    // A public /healthz result does not prove token validity or safe CREATE.
+    remote
+        .publication_ready()
+        .map_err(|_| "RT1_WORKER_NOT_READY")
 }
 
 pub(super) fn visitor_start(
