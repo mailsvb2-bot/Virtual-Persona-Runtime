@@ -561,7 +561,7 @@ mod tests {
         .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
 
-        let expected = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+        let expected = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
         let mut actual = vec![0_u8; expected.len()];
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
