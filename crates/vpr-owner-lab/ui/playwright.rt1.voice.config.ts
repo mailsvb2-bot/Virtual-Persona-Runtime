@@ -12,6 +12,7 @@ export default defineConfig({
     "rt1-worker-voice-journey.spec.ts",
     "rt1-late-livekit-connect.spec.ts",
     "rt1-late-microphone-revoke.spec.ts",
+    "rt1-voice-inflight-stop.spec.ts",
   ],
   timeout: 150_000,
   expect: { timeout: 20_000 },
