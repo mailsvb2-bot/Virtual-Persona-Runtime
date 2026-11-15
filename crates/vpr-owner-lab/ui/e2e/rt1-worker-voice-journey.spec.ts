@@ -233,9 +233,10 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     const interruptPromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/rt1/visitor/interrupt") && response.request().method() === "POST",
     );
-    const closePromise = page.waitForResponse((response) =>
-      response.url().endsWith("/api/rt1/visitor/close") && response.request().method() === "POST",
-    , { timeout: 30_000 }).catch(() => null);
+    const closePromise = page.waitForResponse(
+      (response) => response.url().endsWith("/api/rt1/visitor/close") && response.request().method() === "POST",
+      { timeout: 30_000 },
+    ).catch(() => null);
     await expect(page.locator("#interrupt")).toBeEnabled();
     await page.locator("#interrupt").click();
     const interruptResponse = await interruptPromise;
@@ -246,7 +247,7 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     const interruptedResponse = await interruptedVoice;
     expect(interruptedResponse.status()).toBe(409);
     if (await page.locator("#leave").isEnabled()) {
-      await page.locator("#leave").click().catch(() => {});
+      await page.locator("#leave").click({ timeout: 2_000 }).catch(() => {});
     }
     const closeResponse = await closePromise;
     if (!closeResponse) throw new Error("visitor close was not completed after confirmed interrupt");
@@ -283,9 +284,10 @@ test.describe.serial("RT1 verified worker visitor voice journey (synthetic local
     const pausePromise = page.waitForResponse((response) =>
       response.url().endsWith("/api/rt1/owner/pause") && response.request().method() === "POST",
     );
-    const closePromise = page.waitForResponse((response) =>
-      response.url().endsWith("/api/rt1/visitor/close") && response.request().method() === "POST",
-    , { timeout: 30_000 });
+    const closePromise = page.waitForResponse(
+      (response) => response.url().endsWith("/api/rt1/visitor/close") && response.request().method() === "POST",
+      { timeout: 30_000 },
+    );
     await page.locator("#pause").click();
     const pauseResponse = await pausePromise;
     expect(pauseResponse.status()).toBe(200);
