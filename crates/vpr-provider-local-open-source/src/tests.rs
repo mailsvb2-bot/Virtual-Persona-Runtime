@@ -369,7 +369,6 @@ fn post_allocation_live_authority_does_not_send_cleanup() {
     );
 }
 
-
 #[test]
 fn remote_operation_stop_retries_only_explicit_contention_and_pending_until_both_tracks_confirm() {
     let (endpoint, captured) = serve(vec![
