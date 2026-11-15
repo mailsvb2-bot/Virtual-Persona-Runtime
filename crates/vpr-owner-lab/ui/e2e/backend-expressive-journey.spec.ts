@@ -167,7 +167,13 @@ test.afterEach(async ({ request }, testInfo) => {
   // This case deliberately leaves an unconfirmed provider STOP quarantined.
   // Its browser viewer is closed, but the server session must remain revoked;
   // forcing local teardown to call it closed would falsify remote STOP evidence.
-  if (testInfo.title === "Expressive browser STOP failure revokes provider authority and closes viewer") {
+  if (
+    testInfo.title === "Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP"
+    || testInfo.title === "Expressive browser STOP failure revokes provider authority and closes viewer"
+  ) {
+    // These are deliberate negative cases. A revoked session is quarantined
+    // until the provider STOP receipt is confirmed; teardown must not rewrite
+    // that state as Closed or export it as a successful stop.
     expect(state).toBe("revoked");
     return;
   }
@@ -411,7 +417,7 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
 });
 
 
-test("Expressive server STOP cancels an in-flight TTS stream and refuses incomplete replay", async ({ request }) => {
+test("Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP", async ({ request }) => {
   test.setTimeout(90000);
   const { csrf, sequence } = await startEcho(request);
   const beforeEvents = await echoEvents(request);
@@ -465,6 +471,21 @@ test("Expressive server STOP cancels an in-flight TTS stream and refuses incompl
   const finalEvents = (await echoEvents(request)).slice(beforeEvents.length);
   expect(finalEvents.filter((event) => event === "audio_stream_opened")).toHaveLength(1);
   expect(finalEvents).toContain("provider_stop_sent");
+
+  // "STOP sent" is not a remote STOP receipt. The current Echo fixture can
+  // leave the provider generation quarantined after cancelling an open TTS
+  // body; record that negative outcome instead of claiming Closed.
+  const close = await postJson(request, csrf, "/api/session/close", {});
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  const snapshot = await status.json() as { session_state: string };
+  if (close.ok()) {
+    expect(["none", "closed"]).toContain(snapshot.session_state);
+  } else {
+    expect(close.status()).toBe(502);
+    expect(await close.json()).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    expect(snapshot.session_state).toBe("revoked");
+  }
 });
 
 test("Expressive server resume is reauthorized and delivered through canonical Echo", async ({ request }) => {
