@@ -29,7 +29,7 @@ pub(super) fn serve(
     let receiver = Arc::new(Mutex::new(receiver));
     for _ in 0..HTTP_WORKERS {
         let receiver = Arc::clone(&receiver);
-        let state = Arc::clone(&state);
+        let state = Arc::clone(state);
         thread::spawn(move || loop {
             let next = receiver.lock().map(|queue| queue.recv());
             let Ok(Ok(stream)) = next else {
@@ -263,6 +263,13 @@ fn relay_rt1_response(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResponseFraming {
+    ContentLength(usize),
+    Chunked,
+    CloseDelimited,
+}
+
 fn relay_ordinary_response(
     upstream_address: SocketAddr,
     request: &[u8],
@@ -279,76 +286,33 @@ fn relay_ordinary_response(
     let mut header = Vec::with_capacity(1024);
     let mut byte = [0_u8; 1];
     loop {
-        if Instant::now() >= deadline {
+        read_exact_until_deadline(&mut upstream, &mut byte, deadline)?;
+        header.push(byte[0]);
+        if header.len() > MAX_HEADER_BYTES {
             return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "ordinary HTTP response header deadline exceeded",
+                io::ErrorKind::InvalidData,
+                "ordinary HTTP response headers too large",
             ));
         }
-        match upstream.read_exact(&mut byte) {
-            Ok(()) => {
-                header.push(byte[0]);
-                if header.ends_with(b"\r\n\r\n") {
-                    break;
-                }
-                if header.len() > MAX_HEADER_BYTES {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "ordinary HTTP response headers too large",
-                    ));
-                }
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::Interrupted
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::WouldBlock
-                ) => {}
-            Err(error) => return Err(error),
+        if header.ends_with(b"\r\n\r\n") {
+            break;
         }
     }
 
-    // The internal Owner Lab server returns bounded Cursor-backed responses.
-    // Read exactly that framing instead of waiting for TCP EOF: a keep-alive
-    // connection must never pin one of the finite public proxy workers.
-    let body_length = parse_response_content_length(&header)?;
+    let framing = parse_response_framing(&header)?;
     client.write_all(&header)?;
-    let mut remaining = body_length;
-    let mut buffer = [0_u8; 16 * 1024];
-    while remaining > 0 {
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "ordinary HTTP response body deadline exceeded",
-            ));
+    match framing {
+        ResponseFraming::ContentLength(length) => {
+            copy_exact_response_body(&mut upstream, client, length, deadline)
         }
-        let limit = remaining.min(buffer.len());
-        match upstream.read(&mut buffer[..limit]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "ordinary HTTP response body truncated",
-                ));
-            }
-            Ok(count) => {
-                client.write_all(&buffer[..count])?;
-                remaining -= count;
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::Interrupted
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::WouldBlock
-                ) => {}
-            Err(error) => return Err(error),
+        ResponseFraming::Chunked => relay_chunked_response_body(&mut upstream, client, deadline),
+        ResponseFraming::CloseDelimited => {
+            relay_close_delimited_response_body(&mut upstream, client, deadline)
         }
     }
-    Ok(())
 }
 
-fn parse_response_content_length(header: &[u8]) -> io::Result<usize> {
+fn parse_response_framing(header: &[u8]) -> io::Result<ResponseFraming> {
     let text = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
     if !text.ends_with("\r\n\r\n") {
@@ -363,17 +327,30 @@ fn parse_response_content_length(header: &[u8]) -> io::Result<usize> {
     let status = lines
         .next()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status"))?;
-    if !status.starts_with("HTTP/1.1 ") {
+    let mut status_parts = status.split_whitespace();
+    if status_parts.next() != Some("HTTP/1.1")
+        || status_parts
+            .next()
+            .is_none_or(|code| code.len() != 3 || !code.bytes().all(|byte| byte.is_ascii_digit()))
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "unsupported HTTP response version",
+            "unsupported HTTP response status",
         ));
     }
+
     let mut content_length = None;
+    let mut chunked = false;
     for line in lines {
         let (name, value) = line
             .split_once(':')
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
+        if name.trim().is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "empty HTTP response header name",
+            ));
+        }
         if name.eq_ignore_ascii_case("content-length") {
             if content_length.is_some() {
                 return Err(io::Error::new(
@@ -389,25 +366,192 @@ fn parse_response_content_length(header: &[u8]) -> io::Result<usize> {
             );
         }
         if name.eq_ignore_ascii_case("transfer-encoding") {
+            if chunked || !value.trim().eq_ignore_ascii_case("chunked") {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsupported HTTP response transfer encoding",
+                ));
+            }
+            chunked = true;
+        }
+    }
+    if content_length.is_some() && chunked {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ambiguous HTTP response body framing",
+        ));
+    }
+    if chunked {
+        return Ok(ResponseFraming::Chunked);
+    }
+    if let Some(length) = content_length {
+        if length > MAX_RESPONSE_BODY_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "unsupported HTTP response transfer encoding",
+                "ordinary HTTP response body too large",
+            ));
+        }
+        return Ok(ResponseFraming::ContentLength(length));
+    }
+    Ok(ResponseFraming::CloseDelimited)
+}
+
+fn read_exact_until_deadline(
+    stream: &mut TcpStream,
+    output: &mut [u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    let mut offset = 0;
+    while offset < output.len() {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "ordinary HTTP response deadline exceeded",
+            ));
+        }
+        match stream.read(&mut output[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "ordinary HTTP response truncated",
+                ));
+            }
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn copy_exact_response_body(
+    upstream: &mut TcpStream,
+    client: &mut TcpStream,
+    length: usize,
+    deadline: Instant,
+) -> io::Result<()> {
+    let mut remaining = length;
+    let mut buffer = [0_u8; 16 * 1024];
+    while remaining > 0 {
+        let count = remaining.min(buffer.len());
+        read_exact_until_deadline(upstream, &mut buffer[..count], deadline)?;
+        client.write_all(&buffer[..count])?;
+        remaining -= count;
+    }
+    Ok(())
+}
+
+fn read_chunk_line(upstream: &mut TcpStream, deadline: Instant) -> io::Result<Vec<u8>> {
+    let mut line = Vec::with_capacity(32);
+    let mut byte = [0_u8; 1];
+    loop {
+        read_exact_until_deadline(upstream, &mut byte, deadline)?;
+        line.push(byte[0]);
+        if line.ends_with(b"\r\n") {
+            return Ok(line);
+        }
+        if line.len() > 8 * 1024 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP chunk line too large",
             ));
         }
     }
-    let length = content_length.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "bounded HTTP response content length required",
-        )
-    })?;
-    if length > MAX_RESPONSE_BODY_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "ordinary HTTP response body too large",
-        ));
+}
+
+fn relay_chunked_response_body(
+    upstream: &mut TcpStream,
+    client: &mut TcpStream,
+    deadline: Instant,
+) -> io::Result<()> {
+    let mut total = 0_usize;
+    loop {
+        let line = read_chunk_line(upstream, deadline)?;
+        let size_line = std::str::from_utf8(&line[..line.len() - 2])
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP chunk size"))?;
+        let size_text = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_text, 16)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP chunk size"))?;
+        if size > MAX_RESPONSE_BODY_BYTES.saturating_sub(total) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "ordinary HTTP response body too large",
+            ));
+        }
+        client.write_all(&line)?;
+        if size == 0 {
+            let mut trailer_bytes = 0;
+            loop {
+                let trailer = read_chunk_line(upstream, deadline)?;
+                trailer_bytes += trailer.len();
+                if trailer_bytes > MAX_HEADER_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "HTTP response trailers too large",
+                    ));
+                }
+                client.write_all(&trailer)?;
+                if trailer == b"\r\n" {
+                    return Ok(());
+                }
+            }
+        }
+        copy_exact_response_body(upstream, client, size, deadline)?;
+        total += size;
+        let mut terminator = [0_u8; 2];
+        read_exact_until_deadline(upstream, &mut terminator, deadline)?;
+        if terminator != *b"\r\n" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid HTTP chunk terminator",
+            ));
+        }
+        client.write_all(&terminator)?;
     }
-    Ok(length)
+}
+
+fn relay_close_delimited_response_body(
+    upstream: &mut TcpStream,
+    client: &mut TcpStream,
+    deadline: Instant,
+) -> io::Result<()> {
+    let mut total = 0_usize;
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "close-delimited HTTP response deadline exceeded",
+            ));
+        }
+        match upstream.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(count) => {
+                total = total.saturating_add(count);
+                if total > MAX_RESPONSE_BODY_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "ordinary HTTP response body too large",
+                    ));
+                }
+                client.write_all(&buffer[..count])?;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn write_error(stream: &mut TcpStream, status: u16, code: &str) {
@@ -431,7 +575,10 @@ fn error_response(status: u16, code: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_request_header, parse_response_content_length, relay_ordinary_response, rewrite_request};
+    use super::{
+        parse_request_header, parse_response_framing, relay_ordinary_response, rewrite_request,
+        ResponseFraming,
+    };
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -472,17 +619,77 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_response_requires_single_bounded_content_length() {
-        let valid = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n";
-        assert_eq!(parse_response_content_length(valid).unwrap(), 2);
+    fn ordinary_response_requires_unambiguous_bounded_framing() {
+        let content_length =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n";
+        assert_eq!(
+            parse_response_framing(content_length).unwrap(),
+            ResponseFraming::ContentLength(2)
+        );
+        assert_eq!(
+            parse_response_framing(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+                .unwrap(),
+            ResponseFraming::Chunked
+        );
+        assert_eq!(
+            parse_response_framing(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n").unwrap(),
+            ResponseFraming::CloseDelimited
+        );
         for invalid in [
             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n".as_slice(),
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
             b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n".as_slice(),
-            b"HTTP/1.1 200 OK\r\n\r\n".as_slice(),
         ] {
-            assert!(parse_response_content_length(invalid).is_err());
+            assert!(parse_response_framing(invalid).is_err() == !invalid.ends_with(b"HTTP/1.1 200 OK\r\n\r\n"));
         }
+    }
+
+    #[test]
+    fn ordinary_relay_returns_at_chunk_terminator_while_upstream_keeps_connection_open() {
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let upstream = thread::spawn(move || {
+            let (mut socket, _) = upstream_listener.accept().unwrap();
+            let mut request_header = Vec::new();
+            let mut byte = [0_u8; 1];
+            loop {
+                socket.read_exact(&mut byte).unwrap();
+                request_header.push(byte[0]);
+                if request_header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Receipt: test\r\n\r\n",
+                )
+                .unwrap();
+            release_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+        });
+
+        let client_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
+        let (mut relay_socket, _) = client_listener.accept().unwrap();
+        let started = Instant::now();
+        relay_ordinary_response(
+            upstream_address,
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            &mut relay_socket,
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        let expected = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Receipt: test\r\n\r\n";
+        let mut actual = vec![0_u8; expected.len()];
+        client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        client.read_exact(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        release_sender.send(()).unwrap();
+        upstream.join().unwrap();
     }
 
     #[test]

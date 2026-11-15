@@ -125,6 +125,7 @@ forbidden_markers = (
 local_lab_files = {
     Path("crates/vpr-owner-lab/src/main.rs"),
     Path("crates/vpr-owner-lab/src/http_rt1.rs"),
+    Path("crates/vpr-owner-lab/src/http_rt1_transport.rs"),
     Path("crates/vpr-owner-lab/src/http_proxy.rs"),
     Path("crates/vpr-owner-lab/ui/rt1.js"),
     # Test-only caller of the gated local RT1 route, never shipped as an API surface.
@@ -140,6 +141,7 @@ local_lab_files = {
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
+transport = (ROOT / "crates/vpr-owner-lab/src/http_rt1_transport.rs").read_text(encoding="utf-8")
 startup = (ROOT / "crates/vpr-owner-lab/src/startup.rs").read_text(encoding="utf-8")
 proxy = (ROOT / "crates/vpr-owner-lab/src/http_proxy.rs").read_text(encoding="utf-8")
 if (
@@ -149,8 +151,8 @@ if (
     # The extracted canonical RT1 HTTP owner must retain the original
     # loopback-only, opt-in, CSRF and same-origin boundaries.
     or 'if !enabled()' not in local_lab
-    or 'super::valid_post_headers(&request, &state.csrf_token, state.port)' not in local_lab
-    or '"CSRF_DENIED"' not in local_lab
+    or 'super::super::valid_post_headers(&request, &state.csrf_token, state.port)' not in transport
+    or '"CSRF_DENIED"' not in transport
     or 'http_rt1::static_get_response(path)' not in entry
     or 'std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in local_lab
     or 'if !enabled()' not in local_lab
