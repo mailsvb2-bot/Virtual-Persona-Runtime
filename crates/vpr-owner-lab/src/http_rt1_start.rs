@@ -63,6 +63,24 @@ pub(super) fn publication_media_transport_ready(
     Ok(())
 }
 
+/// Validate the canonical worker voice composition BEFORE publishing a
+/// token, using the same provider constructor as visitor START. This is a
+/// configuration preflight only: it never creates or starts remote media.
+/// Diagnostic RTP remains explicitly non-voice and uses its own START route.
+pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
+    if !verified_worker::selected() {
+        return Ok(());
+    }
+    let (_, avatar) = verified_worker::prepare("rt1-publication-preflight")
+        .map_err(|_| "RT1_WORKER_NOT_CONFIGURED")?;
+    let providers = ProviderBundle::from_env_with_avatar(true, avatar)
+        .map_err(|_| "RT1_PROVIDER_UNAVAILABLE")?;
+    if providers.tts.is_none() {
+        return Err("RT1_TTS_NOT_CONFIGURED");
+    }
+    Ok(())
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
