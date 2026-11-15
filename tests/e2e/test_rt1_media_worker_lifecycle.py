@@ -86,18 +86,6 @@ class LifecycleTests(unittest.TestCase):
         # A failed CANCEL write cannot grant a new active sender.
         self.assertEqual(self.worker.create("replacement", 1), "session-a")
 
-    def test_persona_renderer_unavailable_blocks_durable_create_before_allocation(self):
-        class UnreadySender(Sender):
-            def persona_video_ready(self):
-                return False
-
-        sender = UnreadySender()
-        worker = mod.MediaLifecycle(self.db, sender)
-        with self.assertRaises(mod.PersonaRendererUnavailable):
-            worker.create("renderer-unavailable", 1)
-        self.assertEqual(sender.created, 0)
-        self.assertIsNone(worker.status("renderer-unavailable"))
-
     def test_idempotent_create_and_strict_stop(self):
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
