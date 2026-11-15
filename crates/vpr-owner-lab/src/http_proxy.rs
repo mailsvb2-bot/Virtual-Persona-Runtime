@@ -18,14 +18,14 @@ pub(super) const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const UPSTREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const RT1_READ_POLL: Duration = Duration::from_millis(100);
 
+#[cfg(test)]
+#[path = "http_proxy_request_tests.rs"]
+mod request_tests;
 #[path = "http_proxy_response.rs"]
 mod response;
 #[cfg(test)]
 #[path = "http_proxy_rt1_response_tests.rs"]
 mod response_tests;
-#[cfg(test)]
-#[path = "http_proxy_request_tests.rs"]
-mod request_tests;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn serve(
