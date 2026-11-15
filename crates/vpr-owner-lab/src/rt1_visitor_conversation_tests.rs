@@ -62,11 +62,11 @@ mod rt1_voice_egress_tests {
 }
 
 #[test]
-fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
+fn text_and_streaming_voice_remain_denied_without_verified_worker_stop() {
     use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
 
-    // The configured adapter is real, but this negative test must never
-    // contact it: no independent STOP handle has been established.
+    // This configured adapter is deliberately unreachable. Both public
+    // visitor egress paths must deny before any STT/LLM/provider request.
     let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
         "http://127.0.0.1:1",
         "test-only",
@@ -84,18 +84,16 @@ fn staged_streaming_cannot_call_provider_or_enqueue_without_stop_capability() {
         remote: None,
         verified_worker_voice: false,
     };
-    // A session without an authenticated worker STOP receipt must not be
-    // reported as remotely closed, even if its local media is absent.
     assert!(!conversation.remote_media_stop_confirmed());
     assert!(!conversation.supports_private_voice());
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     assert_eq!(
-        conversation
-            .voice_turn_streaming_staged(vec![0_u8; 320], &sender)
-            .unwrap_err(),
+        conversation.text_turn("must not reach LLM").unwrap_err(),
+        "RT1_VISITOR_TEXT_EGRESS_NOT_AUTHORIZED"
+    );
+    assert_eq!(
+        conversation.voice_turn_streaming(vec![0_u8; 320]).unwrap_err(),
         "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
     );
-    assert!(receiver.try_recv().is_err());
 }
 
 #[test]
