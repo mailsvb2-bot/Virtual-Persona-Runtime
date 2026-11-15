@@ -1,7 +1,5 @@
 use super::*;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+use std::net::TcpStream;
 use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
 use vpr_provider_local_open_source::OperationWorkerAvatar;
 
@@ -14,7 +12,7 @@ fn read_request_headers(socket: &mut TcpStream) -> Vec<u8> {
             break;
         }
         request.extend_from_slice(&buffer[..read]);
-        if request.windows(4).any(|part| part == b"\\r\\n\\r\\n") {
+        if request.windows(4).any(|part| part == b"\r\n\r\n") {
             break;
         }
     }
@@ -23,7 +21,7 @@ fn read_request_headers(socket: &mut TcpStream) -> Vec<u8> {
 
 fn write_json_response(socket: &mut TcpStream, status: &str, body: &str) {
     let response = format!(
-        "HTTP/1.1 {status}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     socket.write_all(response.as_bytes()).unwrap();
