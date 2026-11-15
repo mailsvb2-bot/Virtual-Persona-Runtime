@@ -1387,5 +1387,19 @@ class HttpLifecycleTests(unittest.TestCase):
         self.assertEqual(self.backend.allocations, 0)
 
 
+    def test_stop_lock_contention_has_a_distinct_retryable_conflict(self):
+        self.assertEqual(self.request("PUT")[0], 200)
+        with exclusive_stop_when_idle(self.lifecycle):
+            status, body = self.request("DELETE")
+        self.assertEqual(status, 409)
+        self.assertEqual(body, {"error": "STOP_IN_PROGRESS", "stop_confirmed": False})
+
+        status, receipt = self.request("DELETE")
+        self.assertEqual(status, 200)
+        self.assertIs(receipt["audio_stopped"], True)
+        self.assertIs(receipt["video_stopped"], True)
+        self.assertEqual(self.backend.stops, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -119,11 +119,13 @@ impl SessionExecutionGate {
         &self,
         writer: TcpWriteRevocation,
     ) -> Result<TcpResponseRegistration, ()> {
-        let Ok(id) = self.tcp_responses.next_id.fetch_update(
-            Ordering::AcqRel,
-            Ordering::Acquire,
-            |next| next.checked_add(1),
-        ) else {
+        let Ok(id) = self
+            .tcp_responses
+            .next_id
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| {
+                next.checked_add(1)
+            })
+        else {
             writer.revoke();
             return Err(());
         };

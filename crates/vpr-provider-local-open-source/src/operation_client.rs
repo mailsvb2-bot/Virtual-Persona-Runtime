@@ -2,7 +2,8 @@
 //! This is the single client for the durable worker operation endpoint.
 //! It is not permission to enable public RT1 until an actual sender backend
 //! and a revocation-serialized visitor egress gate are verified.
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 
@@ -80,6 +81,21 @@ struct CancelReply {
     audio_stopped: bool,
     video_stopped: bool,
 }
+
+#[derive(Debug, Deserialize)]
+struct StopConflictReply {
+    error: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PendingStopReply {
+    operation_id: String,
+    stop_confirmed: bool,
+}
+
+const STOP_RETRY_WINDOW: Duration = Duration::from_secs(3);
+const STOP_RETRY_INITIAL_BACKOFF: Duration = Duration::from_millis(20);
+const STOP_RETRY_MAX_BACKOFF: Duration = Duration::from_millis(160);
 
 #[derive(Debug, Deserialize)]
 pub struct OperationStatus {
@@ -292,7 +308,9 @@ impl RemoteOperationClient {
     }
 
     /// # Errors
-    /// 202 means pending, never confirmed; requires both positive media receipts.
+    /// Pending allocation and explicit STOP-lock contention are retried only
+    /// within a fixed deadline. A successful response must still attest both
+    /// remote senders for this exact operation and generation.
     pub fn cancel_confirmed(
         &self,
         operation_id: &str,
@@ -301,27 +319,59 @@ impl RemoteOperationClient {
         if generation == 0 {
             return Err(denied());
         }
-        let response = self
-            .client
-            .delete(self.url(operation_id)?)
-            .bearer_auth(&self.token)
-            .json(&Generation { generation })
-            .send()
-            .map_err(|_| denied())?;
-        if !response.status().is_success() || response.status().as_u16() == 202 {
-            return Err(denied());
+        let url = self.url(operation_id)?;
+        let deadline = Instant::now() + STOP_RETRY_WINDOW;
+        let mut backoff = STOP_RETRY_INITIAL_BACKOFF;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(denied());
+            }
+            let response = self
+                .client
+                .delete(url.clone())
+                .bearer_auth(&self.token)
+                .json(&Generation { generation })
+                .timeout(remaining)
+                .send()
+                .map_err(|_| denied())?;
+            let status = response.status();
+            if status == reqwest::StatusCode::ACCEPTED {
+                let pending: PendingStopReply =
+                    super::decode_json_response(response, None).map_err(|_| denied())?;
+                if pending.operation_id != operation_id || pending.stop_confirmed {
+                    return Err(denied());
+                }
+            } else if status == reqwest::StatusCode::CONFLICT {
+                let conflict: StopConflictReply =
+                    super::decode_json_response(response, None).map_err(|_| denied())?;
+                if conflict.error != "STOP_IN_PROGRESS" {
+                    return Err(denied());
+                }
+            } else {
+                if !status.is_success() {
+                    return Err(denied());
+                }
+                let reply: CancelReply =
+                    super::decode_json_response(response, None).map_err(|_| denied())?;
+                if reply.operation_id != operation_id
+                    || reply.generation != generation
+                    || reply.session_id.is_empty()
+                    || !reply.audio_stopped
+                    || !reply.video_stopped
+                {
+                    return Err(denied());
+                }
+                return Ok(reply.session_id);
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(denied());
+            }
+            thread::sleep(backoff.min(remaining));
+            backoff = (backoff * 2).min(STOP_RETRY_MAX_BACKOFF);
         }
-        let reply: CancelReply =
-            super::decode_json_response(response, None).map_err(|_| denied())?;
-        if reply.operation_id != operation_id
-            || reply.generation != generation
-            || reply.session_id.is_empty()
-            || !reply.audio_stopped
-            || !reply.video_stopped
-        {
-            return Err(denied());
-        }
-        Ok(reply.session_id)
     }
 
     /// # Errors

@@ -368,3 +368,75 @@ fn post_allocation_live_authority_does_not_send_cleanup() {
         "local-1"
     );
 }
+
+
+#[test]
+fn remote_operation_stop_retries_only_explicit_contention_and_pending_until_both_tracks_confirm() {
+    let (endpoint, captured) = serve(vec![
+        (
+            "409 Conflict",
+            r#"{"error":"STOP_IN_PROGRESS","stop_confirmed":false}"#.to_owned(),
+        ),
+        (
+            "202 Accepted",
+            r#"{"operation_id":"op-1","stop_confirmed":false}"#.to_owned(),
+        ),
+        (
+            "200 OK",
+            r#"{"operation_id":"op-1","session_id":"media-1","generation":1,"audio_stopped":true,"video_stopped":true}"#.to_owned(),
+        ),
+    ]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(client.cancel_confirmed("op-1", 1).unwrap(), "media-1");
+    let requests: Vec<_> = (0..3).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests.iter().all(|request| {
+        request.starts_with("DELETE /v1/avatar/operations/op-1 ")
+            && request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer worker-secret")
+    }));
+}
+
+#[test]
+fn remote_operation_stop_does_not_retry_generic_conflict_or_accept_partial_receipt() {
+    let (endpoint, captured) = serve(vec![(
+        "409 Conflict",
+        r#"{"error":"unresolved media allocation","stop_confirmed":false}"#.to_owned(),
+    )]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert!(client.cancel_confirmed("op-1", 1).is_err());
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/operations/op-1 ")
+    );
+
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"operation_id":"op-1","session_id":"media-1","generation":1,"audio_stopped":true,"video_stopped":false}"#.to_owned(),
+    )]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert!(client.cancel_confirmed("op-1", 1).is_err());
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v1/avatar/operations/op-1 ")
+    );
+}

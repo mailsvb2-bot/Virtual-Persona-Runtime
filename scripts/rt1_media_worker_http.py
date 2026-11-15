@@ -489,7 +489,12 @@ def handler_for(
                             "audio_stopped": receipt.audio_stopped,
                             "video_stopped": receipt.video_stopped,
                         })
-            except (RuntimeError, KeyError):
+            except RuntimeError as error:
+                if str(error) == "remote STOP already in progress; shutdown not confirmed":
+                    self._send(409, {"error": "STOP_IN_PROGRESS", "stop_confirmed": False})
+                else:
+                    self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
+            except KeyError:
                 self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
             except Exception:
                 self._send(503, {"error": "worker failure", "stop_confirmed": False})
