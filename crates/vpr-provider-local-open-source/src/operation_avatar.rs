@@ -260,12 +260,12 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
 #[cfg(test)]
 mod tests {
     use super::OperationWorkerAvatar;
+    use crate::operation_client::RemoteOperationClient;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::thread;
     use std::time::{Duration, Instant};
     use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
-    use crate::operation_client::RemoteOperationClient;
 
     struct ActiveTurn;
     impl CancellationProbe for ActiveTurn {
@@ -309,7 +309,9 @@ mod tests {
     #[test]
     fn unavailable_persona_renderer_blocks_worker_create_for_existing_invites() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind loopback test worker");
-        listener.set_nonblocking(true).expect("nonblocking listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
         let address = listener.local_addr().expect("test worker address");
         let server = thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(2);
@@ -317,7 +319,10 @@ mod tests {
                 match listener.accept() {
                     Ok(accepted) => break accepted,
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline, "worker readiness request not received");
+                        assert!(
+                            Instant::now() < deadline,
+                            "worker readiness request not received"
+                        );
                         thread::sleep(Duration::from_millis(5));
                     }
                     Err(error) => panic!("accept readiness request: {error}"),
