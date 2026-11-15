@@ -15,9 +15,7 @@ pub(super) fn startup_error_response(reason: &str) -> HttpResponse {
             error_response(502, "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED")
         }
         "RT1_WORKER_NOT_READY" => error_response(503, "RT1_WORKER_NOT_READY"),
-        "RT1_VIDEO_RENDERER_UNAVAILABLE" => {
-            error_response(503, "RT1_VIDEO_RENDERER_UNAVAILABLE")
-        }
+        "RT1_VIDEO_RENDERER_UNAVAILABLE" => error_response(503, "RT1_VIDEO_RENDERER_UNAVAILABLE"),
         _ => error_response(409, "RT1_VISITOR_START_DENIED"),
     }
 }
