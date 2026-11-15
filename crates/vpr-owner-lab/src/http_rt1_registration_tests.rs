@@ -225,7 +225,10 @@ fn failed_startup_cleanup_retries_pending_stop_until_actual_receipt() {
     stop.join().unwrap().unwrap();
     assert!(retained.is_stop_confirmed());
     drop(retained);
-    assert!(weak.upgrade().is_some(), "confirmed operation lost before registry reconciliation");
+    assert!(
+        weak.upgrade().is_some(),
+        "confirmed operation lost before registry reconciliation"
+    );
     state.reconcile_remote_stops();
     assert!(
         weak.upgrade().is_none(),
