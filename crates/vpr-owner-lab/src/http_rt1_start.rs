@@ -72,7 +72,7 @@ pub(super) fn publication_media_transport_ready(
 /// Validate the canonical worker voice composition BEFORE publishing a
 /// token, using the same provider constructor as visitor START. This is a
 /// configuration preflight only: it never creates or starts remote media.
-/// Diagnostic RTP remains explicitly non-voice and uses its own START route.
+/// Diagnostic RTP remains a local transport fixture, never a public visitor route.
 pub(super) fn publication_voice_provider_ready() -> Result<(), &'static str> {
     if !verified_worker::selected() {
         return Ok(());
