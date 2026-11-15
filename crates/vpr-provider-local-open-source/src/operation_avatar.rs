@@ -134,6 +134,13 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         &self,
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
+        if cancellation.is_cancelled() {
+            return Err(denied());
+        }
+        // A visitor token can outlive the Owner Lab process that published it.
+        // Recheck renderer readiness immediately before CREATE as a second
+        // fence; a stale invitation must never allocate diagnostic video.
+        self.client.publication_ready().map_err(|_| denied())?;
         if cancellation.is_cancelled() || self.create_attempted.swap(true, Ordering::AcqRel) {
             return Err(denied());
         }
