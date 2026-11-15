@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use reqwest::blocking::{Client, Response};
+use reqwest::Response;
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
 use vpr_integration::{
-    CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES, PcmSampleFormat,
-    ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence,
-    UsageUnit, build_provider_http_client, read_bounded_provider_stream,
+    CancellationProbe, CancellableProviderHttp, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
+    PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest,
+    UsageEvidence, UsageUnit,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -63,7 +63,7 @@ impl ElevenLabsTtsConfig {
 }
 
 pub struct ElevenLabsTts {
-    client: Client,
+    client: CancellableProviderHttp,
     config: ElevenLabsTtsConfig,
 }
 
@@ -80,8 +80,7 @@ impl ElevenLabsTts {
         {
             return Err(invalid_response());
         }
-        let client = build_provider_http_client(config.timeout)
-            .map_err(|error| map_transport_error(&error))?;
+        let client = CancellableProviderHttp::new(config.timeout)?;
         Ok(Self { client, config })
     }
 
@@ -123,14 +122,13 @@ impl TtsPort for ElevenLabsTts {
             model_id: &self.config.model,
             language_code,
         };
-        let response = self
+        let request = self
             .client
             .post(self.request_url()?)
             .header("xi-api-key", &self.config.api_key)
             .header(CONTENT_TYPE, "application/json")
-            .json(&body)
-            .send()
-            .map_err(|error| map_transport_error(&error))?;
+            .json(&body);
+        let response = self.client.send(request, cancellation)?;
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
@@ -138,6 +136,7 @@ impl TtsPort for ElevenLabsTts {
         // generation sink, not a browser/private network publisher: runtime
         // authorization still gates avatar egress after synthesis.
         let generated_bytes = stream_pcm(
+            &self.client,
             response,
             cancellation,
             sink,
@@ -171,38 +170,44 @@ struct SpeechRequest<'a> {
 /// arbitrary HTTP read boundaries (including one-byte chunks). Neither a
 /// declared Content-Length nor a chunked transfer can bypass the hard limit.
 fn stream_pcm(
-    response: Response,
+    client: &CancellableProviderHttp,
+    mut response: Response,
     cancellation: &dyn CancellationProbe,
     sink: &mut dyn GeneratedAudioSink,
     sample_rate_hz: u32,
 ) -> Result<usize, ProviderError> {
     let mut pending = None::<u8>;
-    let total = read_bounded_provider_stream(
-        response,
-        MAX_PROVIDER_BINARY_BODY_BYTES,
-        Some(cancellation),
-        |bytes| {
-            let mut start = 0_usize;
-            if let Some(first) = pending.take() {
-                let pair = [first, bytes[0]];
-                sink.push_generated_audio(&pair, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
-                start = 1;
-            }
-            let aligned_end = start + ((bytes.len() - start) / 2) * 2;
-            if aligned_end > start {
-                sink.push_generated_audio(
-                    &bytes[start..aligned_end],
-                    sample_rate_hz,
-                    1,
-                    PcmSampleFormat::S16Le,
-                )?;
-            }
-            if aligned_end < bytes.len() {
-                pending = Some(bytes[aligned_end]);
-            }
-            Ok(())
-        },
-    )?;
+    let mut total = 0_usize;
+    loop {
+        let Some(bytes) = client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)? else {
+            break;
+        };
+        total = total
+            .checked_add(bytes.len())
+            .filter(|count| *count <= MAX_PROVIDER_BINARY_BODY_BYTES)
+            .ok_or_else(invalid_response)?;
+        let mut start = 0_usize;
+        if let Some(first) = pending.take() {
+            let Some(next) = bytes.first() else {
+                return Err(invalid_response());
+            };
+            let pair = [first, *next];
+            sink.push_generated_audio(&pair, sample_rate_hz, 1, PcmSampleFormat::S16Le)?;
+            start = 1;
+        }
+        let aligned_end = start + ((bytes.len() - start) / 2) * 2;
+        if aligned_end > start {
+            sink.push_generated_audio(
+                &bytes[start..aligned_end],
+                sample_rate_hz,
+                1,
+                PcmSampleFormat::S16Le,
+            )?;
+        }
+        if aligned_end < bytes.len() {
+            pending = Some(bytes[aligned_end]);
+        }
+    }
     if total == 0 || pending.is_some() {
         return Err(invalid_response());
     }
@@ -229,20 +234,6 @@ fn validate_endpoint(endpoint: &str) -> Result<(), ProviderError> {
         });
     }
     Ok(())
-}
-
-fn map_transport_error(error: &reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError {
-            kind: ProviderErrorKind::Timeout,
-            retryable: true,
-        }
-    } else {
-        ProviderError {
-            kind: ProviderErrorKind::Unavailable,
-            retryable: true,
-        }
-    }
 }
 
 fn map_status(status: u16) -> ProviderError {
