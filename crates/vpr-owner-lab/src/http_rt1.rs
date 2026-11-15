@@ -265,26 +265,6 @@ fn owner_provision(request: &mut tiny_http::Request) -> Rt1HttpResult {
     ))
 }
 
-/// Publication must only issue visitor tokens when the same authorized
-/// transport can subsequently start and supply auditable audio/video STOP.
-/// D-ID V2 LiveKit currently lacks a confirmed remote video STOP path.
-fn publication_media_transport_ready(
-    verified_worker: bool,
-    diagnostic_rtp: bool,
-    worker_endpoint: Option<&str>,
-    worker_token: Option<&str>,
-) -> Result<(), &'static str> {
-    if !verified_worker && !diagnostic_rtp {
-        return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
-    }
-    if worker_endpoint.is_none_or(|value| value.trim().is_empty())
-        || worker_token.is_none_or(|value| value.trim().is_empty())
-    {
-        return Err("RT1_WORKER_NOT_CONFIGURED");
-    }
-    Ok(())
-}
-
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
     let readiness = || -> Result<(), String> {
@@ -297,7 +277,7 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         // token; never publish an invitation guaranteed to fail on START.
         let endpoint = std::env::var("RT1_WORKER_ENDPOINT").ok();
         let token = std::env::var("RT1_WORKER_TOKEN").ok();
-        publication_media_transport_ready(
+        start::publication_media_transport_ready(
             verified_worker::selected(),
             std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
             endpoint.as_deref(),
