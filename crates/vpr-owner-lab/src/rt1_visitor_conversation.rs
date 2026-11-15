@@ -10,9 +10,7 @@ use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 use vpr_runtime::{RealtimeAvatarStopHandle, SessionRevocationHandle, TurnInterruptHandle};
 
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use crate::state::{
-    LabSignalBundle, LabVoiceResult, LabVoiceSegment, OwnerLabEngine, OwnerLabStartRequest,
-};
+use crate::state::{LabSignalBundle, LabVoiceResult, OwnerLabEngine, OwnerLabStartRequest};
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
@@ -26,8 +24,6 @@ mod signaling;
 mod text_egress;
 #[path = "rt1_visitor_voice_capability.rs"]
 mod voice_capability;
-#[path = "rt1_visitor_voice_stream_staging.rs"]
-mod voice_stream_staging;
 use helpers::{
     diagnostic_operation_id, diagnostic_signal_bundle, finish_close,
     revoked_diagnostic_offer_error, validate_microphone_audio,
@@ -488,17 +484,66 @@ impl Rt1VisitorConversation {
         Ok(())
     }
 
-    /// Streaming is fail-closed: pre/post checks cannot protect egress callbacks.
-    /// Buffered and streaming voice share the unsupported egress boundary.
+    /// Run the canonical pull-stream STT -> LLM -> TTS path for a verified
+    /// worker visitor. The existing OwnerLabEngine streams each synthesized
+    /// phrase to OperationWorkerAvatar, which hands PCM to the same durable
+    /// worker operation; this method creates no browser-side or second runtime.
+    ///
+    /// The callback is deliberately internal and accepts only segments without
+    /// client commands: audio must leave through the worker's authenticated
+    /// RTP senders, never through an untracked browser command.
     ///
     /// # Errors
-    /// Always denies unsupported visitor media delivery.
+    /// Denies diagnostic/unverified sessions, stale publication, cancellation,
+    /// invalid microphone audio, or any provider/client-control failure.
     pub fn voice_turn_streaming(
         &self,
-        _pcm_s16le_mono_16khz: Vec<u8>,
-        _emit_segment: impl FnMut(LabVoiceSegment) -> Result<(), String>,
+        pcm_s16le_mono_16khz: Vec<u8>,
     ) -> Result<LabVoiceResult, String> {
-        Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())
+        if !self.supports_private_voice() {
+            return unsupported_visitor_voice_egress();
+        }
+        // Stage the exact PCM under the canonical publication transaction.
+        // This is a bounded local handoff, not permission for provider egress.
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        self.stage_microphone_audio(&sender, pcm_s16le_mono_16khz)?;
+        let pcm_s16le_mono_16khz = receiver
+            .try_recv()
+            .map_err(|_| "RT1_MICROPHONE_QUEUE_UNAVAILABLE".to_owned())?;
+        // The same revocation-serialized permit protects every STT/LLM/TTS
+        // provider operation and the worker PCM delivery that follows it.
+        let _egress = self.manager.begin_provider_egress(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        let callback = Arc::clone(&self.interrupt);
+        let result = self
+            .engine
+            .lock()
+            .voice_turn_streaming(
+                pcm_s16le_mono_16khz,
+                move |handle| {
+                    *callback.turn.lock() = Some(handle.clone());
+                    if callback.cancelled.load(Ordering::Acquire) {
+                        let _ = handle.interrupt();
+                    }
+                },
+                |segment| {
+                    if segment.client_command.is_some() {
+                        Err(crate::state::LabError::InvalidState)
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .map_err(|error| error.code().to_owned());
+        *self.interrupt.turn.lock() = None;
+        // Publication revoke wins over a late successful stream completion.
+        self.manager.authorize(&self.id)?;
+        if self.interrupt.cancelled.load(Ordering::Acquire) {
+            return Err("RT1_VISITOR_REVOKED".into());
+        }
+        result
     }
 
     /// True only for the durable worker path that verifies both remote RTP
