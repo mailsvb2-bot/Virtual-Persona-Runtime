@@ -30,9 +30,17 @@ pub(super) fn prepare(
         Rt1RemoteMediaRevocation::new(client.clone(), operation_id.to_owned(), 1)
             .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
     );
+    let created_owner = Arc::clone(&remote);
+    let stop_owner = Arc::clone(&remote);
     let avatar = Box::new(
-        OperationWorkerAvatar::new(client, operation_id.to_owned(), 1)
-            .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
+        OperationWorkerAvatar::with_remote_owner(
+            client,
+            operation_id.to_owned(),
+            1,
+            move |session_id| created_owner.record_created_session(session_id),
+            move || stop_owner.revoke_confirmed(),
+        )
+        .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
     );
     Ok((remote, avatar))
 }

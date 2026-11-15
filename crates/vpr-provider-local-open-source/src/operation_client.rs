@@ -9,7 +9,7 @@ use base64::Engine;
 
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use vpr_integration::{ProviderError, ProviderErrorKind};
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind};
 
 #[derive(Clone)]
 pub struct RemoteOperationClient {
@@ -187,6 +187,44 @@ impl RemoteOperationClient {
         // stale visitor tokens and alternate callers cannot allocate media
         // while the real Persona renderer or durable worker admission is down.
         self.publication_ready().map_err(|_| denied())?;
+        self.create_after_readiness(operation_id, generation)
+    }
+
+    /// Cancellation-aware admission for the existing avatar adapter. A
+    /// cancellation before the durable PUT prevents CREATE; once PUT starts,
+    /// its late session id is returned so the canonical owner can compensate
+    /// it before any offer/answer is exposed.
+    ///
+    /// # Errors
+    /// Rejects cancellation before CREATE, unavailable readiness, or an
+    /// ambiguous/non-matching CREATE acknowledgement. Never retries PUT.
+    pub fn create_cancellable(
+        &self,
+        operation_id: &str,
+        generation: u64,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<String, ProviderError> {
+        if generation == 0 || cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        self.publication_ready().map_err(|_| denied())?;
+        if cancellation.is_cancelled() {
+            return Err(ProviderError {
+                kind: ProviderErrorKind::Cancelled,
+                retryable: false,
+            });
+        }
+        self.create_after_readiness(operation_id, generation)
+    }
+
+    fn create_after_readiness(
+        &self,
+        operation_id: &str,
+        generation: u64,
+    ) -> Result<String, ProviderError> {
         let response = self
             .client
             .put(self.url(operation_id)?)

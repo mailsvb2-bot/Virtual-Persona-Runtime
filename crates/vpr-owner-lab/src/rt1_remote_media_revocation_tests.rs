@@ -560,3 +560,106 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
 
 #[path = "rt1_remote_media_revocation_concurrency_tests.rs"]
 mod concurrency_tests;
+
+
+#[test]
+fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
+    use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
+    use vpr_provider_local_open_source::OperationWorkerAvatar;
+
+    struct ActiveTurn;
+    impl CancellationProbe for ActiveTurn {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let worker = std::thread::spawn(move || {
+        let responses = [
+            (
+                "GET /v1/avatar/readiness ",
+                "200 OK",
+                r#"{"ready":true,"persona_video_ready":true}"#,
+            ),
+            (
+                "PUT /v1/avatar/operations/late-create ",
+                "200 OK",
+                r#"{"operation_id":"late-create","session_id":"media-late"}"#,
+            ),
+            (
+                "DELETE /v1/avatar/operations/late-create ",
+                "200 OK",
+                r#"{"operation_id":"late-create","generation":1,"session_id":"media-late","audio_stopped":true,"video_stopped":true}"#,
+            ),
+        ];
+        for (expected, status, body) in responses {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 2048];
+            loop {
+                let read = socket.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(request.starts_with(expected.as_bytes()));
+            write!(
+                socket,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+        listener.set_nonblocking(true).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        while std::time::Instant::now() < deadline {
+            match listener.accept() {
+                Ok((mut socket, _)) => {
+                    let mut request = [0_u8; 1024];
+                    let read = socket.read(&mut request).unwrap_or(0);
+                    panic!(
+                        "late CREATE must be compensated before offer/answer; unexpected request: {}",
+                        String::from_utf8_lossy(&request[..read])
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept unexpected worker request: {error}"),
+            }
+        }
+    });
+
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+    let remote = Arc::new(
+        Rt1RemoteMediaRevocation::new(client.clone(), "late-create".into(), 1).unwrap(),
+    );
+    let create_owner = Arc::clone(&remote);
+    let stop_owner = Arc::clone(&remote);
+    let avatar = OperationWorkerAvatar::with_remote_owner(
+        client,
+        "late-create".to_owned(),
+        1,
+        move |session_id| {
+            create_owner.request_revoke();
+            create_owner.record_created_session(session_id)
+        },
+        move || stop_owner.revoke_confirmed(),
+    )
+    .unwrap();
+
+    assert!(avatar.create_session(&ActiveTurn).is_err());
+    assert!(remote.is_revoked());
+    assert!(remote.is_stop_confirmed());
+    worker.join().unwrap();
+}
