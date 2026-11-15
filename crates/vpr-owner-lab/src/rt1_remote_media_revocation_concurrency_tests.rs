@@ -86,7 +86,8 @@ fn partial_audio_stop_receipt_never_confirms_video_and_retries_same_sender() {
     });
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "partial-av-stop".into(), 11).unwrap());
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client, "partial-av-stop".into(), 11).unwrap());
     remote.record_created_session("sender-11").unwrap();
 
     let stopping = Arc::clone(&remote);
