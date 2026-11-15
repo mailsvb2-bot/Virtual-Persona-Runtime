@@ -41,6 +41,8 @@ mod tests {
         for code in [
             "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED",
             "RT1_WORKER_NOT_CONFIGURED",
+            "RT1_PROVIDER_UNAVAILABLE",
+            "RT1_TTS_NOT_CONFIGURED",
         ] {
             assert_eq!(publication_error_response(code).status_code().0, 503);
         }
