@@ -151,6 +151,13 @@ const setupReviewedPersona = async (
 // must not bypass or silently discard a previous session's proof. This
 // teardown closes and exports through the same canonical HTTP paths as UI.
 test.afterEach(async ({ request }) => {
+  // Always release a held chunked TTS response, including when an assertion
+  // fails before the in-flight STOP scenario reaches its explicit release.
+  try {
+    await request.post(`${providerUrl}/__release-held-tts`);
+  } catch {
+    // The fixture may already be shutting down; teardown below remains authoritative.
+  }
   const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
   if (!bootstrap.ok()) return;
   const csrf = String((await bootstrap.json()).csrf_token);
