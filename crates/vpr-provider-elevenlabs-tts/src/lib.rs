@@ -4,7 +4,7 @@ use reqwest::Response;
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
 use vpr_integration::{
-    CancellationProbe, CancellableProviderHttp, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
+    CancellableProviderHttp, CancellationProbe, GeneratedAudioSink, MAX_PROVIDER_BINARY_BODY_BYTES,
     PcmSampleFormat, ProviderDescriptor, ProviderError, ProviderErrorKind, TtsPort, TtsRequest,
     UsageEvidence, UsageUnit,
 };
@@ -179,11 +179,9 @@ fn stream_pcm(
     let mut pending = None::<u8>;
     let mut total = 0_usize;
     loop {
-        let Some(bytes) = client.chunk(
-            &mut response,
-            cancellation,
-            MAX_PROVIDER_BINARY_BODY_BYTES,
-        )? else {
+        let Some(bytes) =
+            client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)?
+        else {
             break;
         };
         total = total
