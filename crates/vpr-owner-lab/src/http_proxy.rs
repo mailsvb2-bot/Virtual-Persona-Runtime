@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn proxy_accepts_the_canonical_thirty_second_rt1_microphone_body() {
         // 960,000 PCM bytes encoded as a JSON u8 array can exceed 3 MiB.
-        let header = "POST /api/rt1/visitor/voice HTTP/1.1\\r\\nHost: localhost:8787\\r\\nContent-Length: 3844096\\r\\n\\r\\n";
+        let header = "POST /api/rt1/visitor/voice HTTP/1.1\r\nHost: localhost:8787\r\nContent-Length: 3844096\r\n\r\n";
         assert_eq!(
             parse_request_header(header.as_bytes()).unwrap().2,
             3_844_096
