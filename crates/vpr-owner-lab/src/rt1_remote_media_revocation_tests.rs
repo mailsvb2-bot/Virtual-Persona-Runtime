@@ -502,7 +502,7 @@ fn late_create_matching_early_stop_preserves_confirmed_shutdown() {
 }
 
 #[test]
-fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback() {
+fn late_create_after_uncertain_stop_wakes_reconciler_for_compensation() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let worker = std::thread::spawn(move || {
@@ -549,11 +549,19 @@ fn late_create_after_uncertain_stop_retries_compensation_without_owner_callback(
     );
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
-    // No second revoke call: the late CREATE callback must compensate itself.
+    let notifications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let notified = Arc::clone(&notifications);
+    remote.install_revoke_notifier(move || {
+        notified.fetch_add(1, Ordering::SeqCst);
+    });
+    // The late CREATE callback only binds the exact id and wakes the already
+    // running reconciler. It never blocks the engine mutex on network STOP.
     assert_eq!(
         remote.record_created_session("sender-12").unwrap_err(),
         "RT1_VISITOR_REVOKED"
     );
+    assert_eq!(notifications.load(Ordering::SeqCst), 2);
+    remote.revoke_confirmed().unwrap();
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
@@ -644,6 +652,18 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
     let remote = Arc::new(
         Rt1RemoteMediaRevocation::new(client.clone(), "late-create".into(), 1).unwrap(),
     );
+    let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+    let notify = notify_tx.clone();
+    remote.install_revoke_notifier(move || {
+        let _ = notify.send(());
+    });
+    let cleanup_remote = Arc::clone(&remote);
+    let cleanup = std::thread::spawn(move || {
+        notify_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("owner revoke wakes the existing cleanup reconciler");
+        cleanup_remote.revoke_confirmed().unwrap();
+    });
     let create_owner = Arc::clone(&remote);
     let stop_owner = Arc::clone(&remote);
     let avatar = OperationWorkerAvatar::with_remote_owner(
@@ -654,11 +674,19 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
             create_owner.request_revoke();
             create_owner.record_created_session(session_id)
         },
-        move || stop_owner.revoke_confirmed(),
+        move || {
+            stop_owner.request_revoke();
+            if stop_owner.is_stop_confirmed() {
+                Ok(())
+            } else {
+                Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())
+            }
+        },
     )
     .unwrap();
 
     assert!(avatar.create_session(&ActiveTurn).is_err());
+    cleanup.join().unwrap();
     assert!(remote.is_revoked());
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();

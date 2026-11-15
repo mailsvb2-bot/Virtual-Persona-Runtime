@@ -96,34 +96,40 @@ impl Rt1RemoteMediaRevocation {
         if session_id.trim().is_empty() {
             return Err("RT1_REMOTE_SESSION_ID_INVALID".into());
         }
-        let _serial = self.stop_gate.lock();
-        if self.identity_conflict.load(Ordering::Acquire) {
-            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
-        }
-        let mut created = self.created_session_id.lock();
-        if created
-            .as_deref()
-            .is_some_and(|previous| previous != session_id)
-            || self
-                .confirmed_session_id
-                .lock()
+        let revoked = {
+            let _serial = self.stop_gate.lock();
+            if self.identity_conflict.load(Ordering::Acquire) {
+                return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+            }
+            let mut created = self.created_session_id.lock();
+            if created
                 .as_deref()
-                .is_some_and(|confirmed| confirmed != session_id)
-        {
-            self.identity_conflict.store(true, Ordering::Release);
-            self.revoked.store(true, Ordering::Release);
-            self.confirmed.store(false, Ordering::Release);
-            return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
-        }
-        *created = Some(session_id.to_owned());
-        // CREATE may finish after owner revoke. Returning Ok here would allow
-        // the caller to publish media on an already revoked operation.
-        // A STOP that was previously uncertain must be compensated as soon
-        // as the actual remote session identity becomes known.
-        drop(created);
-        if self.revoked.load(Ordering::Acquire) {
+                .is_some_and(|previous| previous != session_id)
+                || self
+                    .confirmed_session_id
+                    .lock()
+                    .as_deref()
+                    .is_some_and(|confirmed| confirmed != session_id)
+            {
+                self.identity_conflict.store(true, Ordering::Release);
+                self.revoked.store(true, Ordering::Release);
+                self.confirmed.store(false, Ordering::Release);
+                return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
+            }
+            *created = Some(session_id.to_owned());
+            self.revoked.load(Ordering::Acquire)
+        };
+        if revoked {
+            // CREATE may finish while the engine mutex is held. Bind the late
+            // id, then wake the already-running reconciler; never perform
+            // network STOP from the provider adapter callback itself.
             if !self.confirmed.load(Ordering::Acquire) {
-                self.cancel_locked()?;
+                let notify = self.revoke_notifier.lock().clone();
+                if let Some(notify) = notify {
+                    notify();
+                } else {
+                    return Err("RT1_REMOTE_STOP_RECONCILER_UNAVAILABLE".into());
+                }
             }
             return Err("RT1_VISITOR_REVOKED".into());
         }

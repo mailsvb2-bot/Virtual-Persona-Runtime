@@ -38,7 +38,17 @@ pub(super) fn prepare(
             operation_id.to_owned(),
             1,
             move |session_id| created_owner.record_created_session(session_id),
-            move || stop_owner.revoke_confirmed(),
+            move || {
+                // The adapter can run while OwnerLabEngine is locked. It may
+                // only revoke authority and wake the existing reconciler here;
+                // remote STOP itself runs outside that mutex.
+                stop_owner.request_revoke();
+                if stop_owner.is_stop_confirmed() {
+                    Ok(())
+                } else {
+                    Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())
+                }
+            },
         )
         .map_err(|_| error_response(503, "RT1_WORKER_CONFIGURATION_INVALID"))?,
     );
