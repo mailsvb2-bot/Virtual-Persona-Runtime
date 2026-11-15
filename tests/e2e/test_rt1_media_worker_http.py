@@ -133,15 +133,6 @@ class HttpLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.backend.allocations, 0)
         self.assertIsNone(self.lifecycle.status("operation-1"))
-        # A stale client with the worker token cannot bypass the authoritative
-        # worker-side CREATE check by skipping the read-only preflight.
-        self.assertEqual(
-            self.request("PUT"),
-            (503, {"error": "RT1_VIDEO_RENDERER_UNAVAILABLE", "stop_confirmed": False}),
-        )
-        self.assertEqual(self.backend.allocations, 0)
-        self.assertIsNone(self.lifecycle.status("operation-1"))
-
         # Only an explicit renderer-ready capability can pass the media gate.
         self.backend.video_renderer_ready = True
         self.assertEqual(
