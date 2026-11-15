@@ -132,10 +132,9 @@ impl Rt1VisitorConversation {
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
             return manager.close(&id).and(Err(error));
         }
-        if let Some(reason) = remote
-            .as_ref()
-            .and_then(|worker| worker.publication_ready().err())
-        {
+        let readiness_error =
+            remote.as_ref().and_then(|worker| worker.publication_ready().err());
+        if let Some(reason) = readiness_error {
             return manager.close(&id).and(Err(reason.to_owned()));
         }
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
@@ -184,9 +183,7 @@ impl Rt1VisitorConversation {
                 return Err(error.code().to_owned());
             }
         };
-        if let Some(worker) = &remote
-            && worker.synchronize_created_session().is_err()
-        {
+        if remote.as_ref().is_some_and(|worker| worker.synchronize_created_session().is_err()) {
             return manager.close(&id).and(Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()));
         }
         *interrupt.session.lock() = engine.session_revocation_handle();
