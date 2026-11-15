@@ -256,10 +256,7 @@ fn raced_accepted_answer_retries_pending_stop_before_returning_revoked() {
     // request holds the signaling/STOP gate; do not start another runtime.
     remote.revoked.store(true, Ordering::Release);
     release_tx.send(()).unwrap();
-    assert_eq!(
-        answer.join().unwrap().unwrap_err(),
-        "RT1_VISITOR_REVOKED"
-    );
+    assert_eq!(answer.join().unwrap().unwrap_err(), "RT1_VISITOR_REVOKED");
     assert!(remote.is_revoked());
     assert!(
         remote.is_stop_confirmed(),
