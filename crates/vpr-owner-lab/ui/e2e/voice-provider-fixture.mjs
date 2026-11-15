@@ -115,6 +115,7 @@ const server = http.createServer(async (request, response) => {
     return sendJson(response, 200, { ok: true });
   }
   if (request.method === "POST" && url.pathname === "/__release-held-tts") {
+    holdNextTtsResponse = false;
     const release = releaseHeldTtsResponse;
     releaseHeldTtsResponse = null;
     const released = release ? release() : false;
