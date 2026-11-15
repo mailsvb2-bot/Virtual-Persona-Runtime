@@ -81,8 +81,8 @@ fn build_late_create_avatar(
     client: RemoteOperationClient,
     remote: &Arc<Rt1RemoteMediaRevocation>,
 ) -> OperationWorkerAvatar {
-    let create_owner = Arc::clone(&remote);
-    let stop_owner = Arc::clone(&remote);
+    let create_owner = Arc::clone(remote);
+    let stop_owner = Arc::clone(remote);
     OperationWorkerAvatar::with_remote_owner(
         client,
         "late-create".to_owned(),
@@ -123,7 +123,7 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
     remote.install_revoke_notifier(move || {
         let _ = notify_tx.send(());
     });
-    let cleanup_remote = Arc::clone(&remote);
+    let cleanup_remote = Arc::clone(remote);
     let cleanup = std::thread::spawn(move || {
         notify_rx
             .recv_timeout(Duration::from_secs(3))
@@ -164,7 +164,7 @@ fn late_create_identity_binding_does_not_wait_for_stop_network_io() {
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
     let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "late-lock".into(), 1).unwrap());
     remote.request_revoke();
-    let stop_remote = Arc::clone(&remote);
+    let stop_remote = Arc::clone(remote);
     let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
     accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
 
@@ -215,7 +215,7 @@ fn identity_conflict_during_stop_cannot_be_cleared_by_an_inflight_receipt() {
     let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "late-lock".into(), 1).unwrap());
     remote.record_created_session("original-session").unwrap();
     remote.request_revoke();
-    let stop_remote = Arc::clone(&remote);
+    let stop_remote = Arc::clone(remote);
     let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
     accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
 
