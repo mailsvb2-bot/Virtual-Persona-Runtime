@@ -273,23 +273,21 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
-        if verified_worker::selected()
-            || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true")
-        {
-            for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
-                if std::env::var(name)
-                    .ok()
-                    .is_none_or(|value| value.trim().is_empty())
-                {
-                    return Err("RT1_WORKER_NOT_CONFIGURED".into());
-                }
-            }
-        }
-        Ok(())
+        // Match visitor_start's allowlist before creating a public visitor
+        // token; never publish an invitation guaranteed to fail on START.
+        let endpoint = std::env::var("RT1_WORKER_ENDPOINT").ok();
+        let token = std::env::var("RT1_WORKER_TOKEN").ok();
+        start::publication_media_transport_ready(
+            verified_worker::selected(),
+            std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+            endpoint.as_deref(),
+            token.as_deref(),
+        )
+        .map_err(str::to_owned)
     };
     let visitor_token = Rt1OwnerController::new()
         .publish(&body.owner_token, body.expected_persona_version, readiness)
-        .map_err(|_| error_response(409, "RT1_PUBLISH_DENIED"))?;
+        .map_err(|reason| startup_errors::publication_error_response(&reason))?;
     Ok(json_response(
         200,
         &serde_json::json!({"visitor_token": visitor_token}),

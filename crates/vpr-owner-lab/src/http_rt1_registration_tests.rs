@@ -312,3 +312,53 @@ fn denied_delivery_with_verified_remote_stop_is_routine_visitor_denial() {
         409
     );
 }
+
+#[test]
+fn rt1_publication_cannot_issue_unusable_did_livekit_visitor_token() {
+    use super::start::publication_media_transport_ready as ready;
+    // D-ID V2 has no authenticated remote video STOP receipt, even when its
+    // account credentials and local Echo speaker are otherwise valid.
+    assert_eq!(
+        ready(false, false, Some("http://127.0.0.1:9000"), Some("token")),
+        Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
+    );
+    assert_eq!(
+        ready(false, false, None, None),
+        Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
+    );
+    // A diagnostic or canonical worker must have its actual transport
+    // configured before the owner can issue any visitor token.
+    for worker in [false, true] {
+        for diagnostic in [false, true] {
+            if !worker && !diagnostic {
+                continue;
+            }
+            assert_eq!(
+                ready(worker, diagnostic, None, Some("token")),
+                Err("RT1_WORKER_NOT_CONFIGURED")
+            );
+            assert_eq!(
+                ready(worker, diagnostic, Some("  "), Some("token")),
+                Err("RT1_WORKER_NOT_CONFIGURED")
+            );
+            assert_eq!(
+                ready(
+                    worker,
+                    diagnostic,
+                    Some("http://127.0.0.1:9000"),
+                    Some("  ")
+                ),
+                Err("RT1_WORKER_NOT_CONFIGURED")
+            );
+            assert_eq!(
+                ready(
+                    worker,
+                    diagnostic,
+                    Some("http://127.0.0.1:9000"),
+                    Some("token")
+                ),
+                Ok(())
+            );
+        }
+    }
+}

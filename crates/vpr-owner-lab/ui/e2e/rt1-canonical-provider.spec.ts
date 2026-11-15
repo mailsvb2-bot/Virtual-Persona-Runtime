@@ -8,7 +8,7 @@ const csrfHeaders = (csrf: string) => ({
   origin: base,
 });
 
-test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirmed remote close", async ({ page, request }) => {
+test("RT1 owner cannot publish D-ID invitation without confirmed remote video STOP", async ({ page, request }) => {
   // Module scripts must execute before we interpret Owner Lab bootstrap status.
   // Keep the real browser/assets/backend path: no mocked bootstrap or retries.
   const browserErrors: string[] = [];
@@ -69,14 +69,17 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
     owner_token,
     expected_persona_version: 2,
   });
-  expect(publish.status).toBe(200);
-  const visitor_token = String(publish.body.visitor_token);
+  // Publication itself must refuse an unusable invitation. The old sequence
+  // issued a token and only then blocked visitor START with 503.
+  expect(publish.status, JSON.stringify(publish.body)).toBe(503);
+  expect(publish.body.code).toBe("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+  expect(publish.body).not.toHaveProperty("visitor_token");
 
-  // D-ID cannot confirm independent remote video STOP. Never CREATE a remote
-  // session or issue visitor voice/text egress while this safety gate is unmet.
-  const start = await call("/api/rt1/visitor/start", { visitor_token, consent: true });
-  expect(start.status, JSON.stringify(start.body)).toBe(503);
-  expect(start.body.code).toBe("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+  // Even a forged visitor token must not allocate remote D-ID media.
+  const start = await call("/api/rt1/visitor/start", {
+    visitor_token: "unpublished-visitor-token", consent: true,
+  });
+  expect(start.status).not.toBe(200);
   expect(start.body).not.toHaveProperty("session_id");
 
   const forgedText = await request.post(`${base}/api/rt1/visitor/text`, {
@@ -104,10 +107,13 @@ test("RT1 visitor reuses canonical D-ID create/answer and quarantines unconfirme
   );
   expect(creates).toHaveLength(0);
 
-  const pause = await call("/api/rt1/owner/pause", { owner_token });
-  expect(pause.status).toBe(200);
-  const stale = await call("/api/rt1/visitor/start", { visitor_token, consent: true });
-  expect(stale.status).not.toBe(200);
+  // A second publish attempt still cannot turn invalid D-ID STOP evidence
+  // into a usable public invitation or trigger provider CREATE.
+  const retry = await call("/api/rt1/owner/publish", {
+    owner_token, expected_persona_version: 2,
+  });
+  expect(retry.status).toBe(503);
+  expect(retry.body).not.toHaveProperty("visitor_token");
   expect((await providerRequests()).filter(
     (item) => item.method === "POST" && item.path === "/agents/backend-e2e-agent/streams",
   )).toHaveLength(0);

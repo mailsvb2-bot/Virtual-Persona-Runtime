@@ -43,6 +43,26 @@ fn reserve_session_identity(
     Err(error_response(503, "RT1_SESSION_ID_RESERVATION_FAILED"))
 }
 
+/// Publication must only issue visitor tokens when the same authorized
+/// transport can subsequently start and supply auditable audio/video STOP.
+/// D-ID V2 `LiveKit` currently lacks a confirmed remote video STOP path.
+pub(super) fn publication_media_transport_ready(
+    verified_worker: bool,
+    diagnostic_rtp: bool,
+    worker_endpoint: Option<&str>,
+    worker_token: Option<&str>,
+) -> Result<(), &'static str> {
+    if !verified_worker && !diagnostic_rtp {
+        return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+    }
+    if worker_endpoint.is_none_or(|value| value.trim().is_empty())
+        || worker_token.is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("RT1_WORKER_NOT_CONFIGURED");
+    }
+    Ok(())
+}
+
 pub(super) fn visitor_start(
     request: &mut tiny_http::Request,
     state: &AppState,
