@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import {
   expect,
   test,
@@ -243,6 +245,39 @@ const submitOwnerTurn = async (
   return postJson(request, csrf, "/api/avatar/speak", { text: answer.reply });
 };
 
+const submitVoiceTurn = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<void> => {
+  const started = await request.post(`${ownerLabUrl}/api/voice/turn`, {
+    headers: {
+      ...csrfHeaders(csrf),
+      "content-type": "application/octet-stream",
+      "X-VPR-Evidence-Request": String(requestSequence),
+      "X-VPR-Session-Sequence": String(sessionSequence),
+    },
+    data: Buffer.alloc(640),
+  });
+  expect(started.status()).toBe(202);
+
+  const events: Array<{ kind: string }> = [];
+  let terminal = false;
+  for (let attempt = 0; attempt < 8 && !terminal; attempt += 1) {
+    const polled = await postJson(request, csrf, "/api/voice/events", {
+      session_sequence: sessionSequence,
+      request_sequence: requestSequence,
+    });
+    expect(polled.ok()).toBeTruthy();
+    const snapshot = await polled.json() as {
+      events: Array<{ kind: string }>;
+      terminal: boolean;
+    };
+    events.push(...snapshot.events);
+    terminal = snapshot.terminal;
+  }
+  expect(terminal, "canonical voice turn must reach a terminal event").toBe(true);
+  expect(events.some((event) => event.kind === "complete"), "voice reply must be retained for authorized resume").toBe(true);
+};
+
 test("real browser owner voice reaches private server Echo audio", async ({ page, request }) => {
   test.setTimeout(120000);
   const cleared = await request.delete(mailboxUrl);
@@ -417,8 +452,9 @@ test("Expressive server resume is reauthorized and delivered through canonical E
   const { csrf, sequence } = await startEcho(request);
   const before = await echoEvents(request);
 
-  const first = await submitOwnerTurn(request, csrf, 1, sequence, "Привет. Я расскажу о проекте.");
-  expect(first.status()).toBe(200);
+  // Replay authority is created only by a completed canonical voice request;
+  // a text-only /api/text/turn followed by /api/avatar/speak is not resumable.
+  await submitVoiceTurn(request, csrf, 1, sequence);
   await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 20000 })
     .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
 
