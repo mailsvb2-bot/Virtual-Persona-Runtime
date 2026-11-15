@@ -4,7 +4,7 @@ use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use vpr_integration::{
-    AudioInput, CancellationProbe, CancellableProviderHttp, GeneratedAudioSink,
+    AudioInput, CancellableProviderHttp, CancellationProbe, GeneratedAudioSink,
     MAX_PROVIDER_BINARY_BODY_BYTES, PcmSampleFormat, ProviderDescriptor, ProviderError,
     ProviderErrorKind, TtsPort, TtsRequest, UsageEvidence, UsageUnit,
 };
@@ -182,7 +182,8 @@ fn read_body(
     response: Response,
     cancellation: &dyn CancellationProbe,
 ) -> Result<Vec<u8>, ProviderError> {
-    let output = client.read_bounded_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, cancellation)?;
+    let output =
+        client.read_bounded_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, cancellation)?;
     if output.is_empty() {
         return Err(invalid_response());
     }
@@ -221,11 +222,9 @@ fn stream_pcm_body(
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        let Some(bytes) = client.chunk(
-            &mut response,
-            cancellation,
-            MAX_PROVIDER_BINARY_BODY_BYTES,
-        )? else {
+        let Some(bytes) =
+            client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)?
+        else {
             break;
         };
         let size = bytes.len();
