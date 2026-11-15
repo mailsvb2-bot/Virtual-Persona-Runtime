@@ -71,6 +71,35 @@ class HttpLifecycleTests(unittest.TestCase):
         except HTTPError as error:
             return error.code, json.load(error)
 
+    def test_authenticated_publication_preflight_is_read_only_and_fenced(self):
+        """A live /healthz cannot authorize a broken or busy worker."""
+        def probe(token):
+            request = Request(
+                f"http://127.0.0.1:{self.server.server_port}/v1/avatar/readiness",
+                headers={"Authorization": "Bearer " + token},
+            )
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        self.assertEqual(probe("wrong")[0], 401)
+        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        self.assertEqual(self.backend.allocations, 0)
+        self.assertIsNone(self.lifecycle.status("operation-1"))
+
+        # A durable active sender must fence future publication. The probe
+        # never creates, cancels, or claims to stop that sender.
+        self.assertEqual(self.request("PUT")[0], 200)
+        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+        self.assertEqual(self.backend.allocations, 1)
+        self.assertEqual(self.backend.stops, 0)
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        self.lifecycle.request_shutdown()
+        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+
     def test_slow_drip_cannot_reset_total_body_deadline(self):
         self.server.RequestHandlerClass = handler_for(
             self.lifecycle, "test-secret", body_timeout_seconds=0.25
