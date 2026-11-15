@@ -146,13 +146,16 @@ fn rejected_provider_result_cannot_be_tagged_as_authorized_http_delivery() {
 }
 
 #[test]
-fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
-    use std::io::{Read, Write};
+fn failed_startup_cleanup_retries_pending_stop_until_actual_receipt() {
     use std::net::TcpListener;
+    use std::sync::mpsc;
     use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (pending_tx, pending_rx) = mpsc::channel();
+    let (retry_tx, retry_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         for attempt in 0..2 {
             let (mut socket, _) = listener.accept().unwrap();
@@ -172,23 +175,26 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
                 }
             }
             assert!(request.starts_with(b"DELETE /v1/avatar/operations/lost-offer "));
-            let (status, body) = if attempt == 0 {
-                (
-                    "202 Accepted",
-                    r#"{"operation_id":"lost-offer","stop_confirmed":false}"#,
+            if attempt == 0 {
+                let body = r#"{"operation_id":"lost-offer","stop_confirmed":false}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
                 )
+                .unwrap();
+                pending_tx.send(()).unwrap();
             } else {
-                (
-                    "200 OK",
-                    r#"{"operation_id":"lost-offer","generation":1,"session_id":"real-worker-sender","audio_stopped":true,"video_stopped":true}"#,
+                retry_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                let body = r#"{"operation_id":"lost-offer","generation":1,"session_id":"real-worker-sender","audio_stopped":true,"video_stopped":true}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
                 )
-            };
-            write!(
-                socket,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+                .unwrap();
+            }
         }
     });
     let worker_client =
@@ -205,17 +211,27 @@ fn failed_startup_cleanup_survives_lost_stop_and_reconciles_actual_receipt() {
     // Only the HTTP-owned cleanup registry retains this operation after the
     // failed startup discards the visitor conversation and its session ID.
     let retained = weak.upgrade().expect("lost cleanup handle");
-    assert!(retained.revoke_confirmed().is_err(), "HTTP 202 is not STOP");
+    let stopping = Arc::clone(&retained);
+    let stop = std::thread::spawn(move || stopping.revoke_confirmed());
+    pending_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(!retained.is_stop_confirmed(), "HTTP 202 is not STOP");
+    retry_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(
+        !retained.is_stop_confirmed(),
+        "the registry must retain the operation until both RTP senders are confirmed"
+    );
+    release_tx.send(()).unwrap();
+    stop.join().unwrap().unwrap();
+    assert!(retained.is_stop_confirmed());
     drop(retained);
-    assert!(weak.upgrade().is_some(), "uncertain STOP lost retry handle");
+    assert!(weak.upgrade().is_some(), "confirmed operation lost before registry reconciliation");
     state.reconcile_remote_stops();
     assert!(
         weak.upgrade().is_none(),
-        "confirmed STOP retained stale handle"
+        "confirmed STOP retained stale cleanup handle"
     );
     worker.join().unwrap();
 }
-
 #[test]
 fn registered_remote_revoke_wakes_one_existing_cleanup_reconciler() {
     use std::net::TcpListener;
