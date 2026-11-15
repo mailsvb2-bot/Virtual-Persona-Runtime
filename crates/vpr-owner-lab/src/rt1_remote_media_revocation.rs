@@ -17,6 +17,8 @@ pub struct Rt1RemoteMediaRevocation {
     revoked: AtomicBool,
     confirmed: AtomicBool,
     stop_gate: Mutex<()>,
+    /// Short identity-only fence. Never held across worker network I/O.
+    identity_gate: Mutex<()>,
     revoke_notifier: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// CREATE can return after owner revoke/STOP. Correlate both outcomes to
     /// the exact remote sender, not just the operation/generation envelope.
@@ -51,6 +53,7 @@ impl Rt1RemoteMediaRevocation {
             revoked: AtomicBool::new(false),
             confirmed: AtomicBool::new(false),
             stop_gate: Mutex::new(()),
+            identity_gate: Mutex::new(()),
             revoke_notifier: Mutex::new(None),
             created_session_id: Mutex::new(None),
             confirmed_session_id: Mutex::new(None),
@@ -97,7 +100,9 @@ impl Rt1RemoteMediaRevocation {
             return Err("RT1_REMOTE_SESSION_ID_INVALID".into());
         }
         let revoked = {
-            let _serial = self.stop_gate.lock();
+            // This short local lock races safely with the receipt commit but
+            // never waits behind the STOP network request's serialization gate.
+            let _identity = self.identity_gate.lock();
             if self.identity_conflict.load(Ordering::Acquire) {
                 return Err("RT1_REMOTE_SESSION_ID_CONFLICT".into());
             }
@@ -184,6 +189,7 @@ impl Rt1RemoteMediaRevocation {
             .worker
             .cancel_confirmed(&self.operation_id, self.generation)
             .map_err(|_| "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".to_owned())?;
+        let _identity = self.identity_gate.lock();
         if self
             .created_session_id
             .lock()
