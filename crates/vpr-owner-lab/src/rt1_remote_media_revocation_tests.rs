@@ -105,6 +105,7 @@ fn remote_stop_pending_retries_until_both_tracks_are_confirmed() {
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
+
 #[test]
 fn owner_revoke_during_remote_answer_never_returns_stale_success() {
     use std::sync::mpsc;
@@ -266,6 +267,7 @@ fn raced_accepted_answer_retries_pending_stop_before_returning_revoked() {
     );
     worker.join().unwrap();
 }
+
 #[test]
 fn negative_answer_receipt_denies_signaling_and_still_allows_verified_revoke() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -394,6 +396,7 @@ fn failed_answer_retries_pending_stop_until_both_tracks_are_confirmed() {
     );
     worker.join().unwrap();
 }
+
 #[test]
 fn remote_operation_identity_must_be_valid_before_admission() {
     let client = RemoteOperationClient::new(
@@ -597,6 +600,7 @@ fn late_create_after_uncertain_stop_wakes_reconciler_without_waiting_for_network
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
+
 #[path = "rt1_remote_media_revocation_concurrency_tests.rs"]
 mod concurrency_tests;
 
