@@ -16,7 +16,6 @@ const RESPONSE_DEADLINE: Duration = Duration::from_secs(90);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const UPSTREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
-const UPSTREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const RT1_READ_POLL: Duration = Duration::from_millis(100);
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
