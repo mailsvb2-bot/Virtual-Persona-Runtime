@@ -215,7 +215,6 @@ fn stream_pcm_body(
         eprintln!("VPR Piper stage=pcm_headers failed reason=content_type");
         return Err(invalid_response());
     }
-    let mut buffer = [0_u8; 8192];
     let mut total = 0_usize;
     let mut pending_byte = None;
     loop {
