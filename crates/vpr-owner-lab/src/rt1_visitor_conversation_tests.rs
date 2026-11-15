@@ -107,7 +107,10 @@ fn drop_cleanup_never_waits_for_a_busy_provider_engine() {
     // A provider turn may hold this mutex while external I/O is stalled.
     let _busy = engine.lock();
     let before = Instant::now();
-    try_stop_uncontended(&engine);
+    assert_eq!(
+        stop_if_uncontended(&engine),
+        Err("RT1_PROVIDER_EGRESS_NOT_QUIESCENT".into())
+    );
     assert!(
         before.elapsed() < Duration::from_millis(250),
         "Drop cleanup must not wait for the provider engine mutex"
