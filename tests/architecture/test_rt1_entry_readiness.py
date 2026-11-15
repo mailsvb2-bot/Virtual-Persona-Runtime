@@ -48,7 +48,7 @@ class EntryReadinessTests(unittest.TestCase):
         )
         self.assertEqual(script.count('status.dataset.rt1Ready = "true";'), 1)
 
-    def test_rt1_real_rtp_canary_checks_ready_handlers_not_only_loading_text(self):
+    def test_rt1_browser_canary_refuses_diagnostic_publication_before_invite(self):
         root = Path(__file__).resolve().parents[2]
         source = (
             root / "crates/vpr-owner-lab/ui/e2e/rt1-local-canary.spec.ts"
@@ -57,8 +57,10 @@ class EntryReadinessTests(unittest.TestCase):
         self.assertIn('toContainText("Ожидает проверки владельцем"', source)
         self.assertIn('waitUntil: "commit"', source)
         self.assertNotIn('not.toHaveText("Загрузка…"', source)
-        self.assertIn('Chromium must receive actual inbound audio RTP packets', source)
-        self.assertIn('revoked visitor must reject a valid late SDP answer', source)
+        self.assertIn('RT1_VIDEO_RENDERER_UNAVAILABLE', source)
+        self.assertIn('toHaveValue("")', source)
+        self.assertIn('only diagnostic aiortc video', source)
+        self.assertNotIn('setRemoteDescription', source)
 
     def test_owner_record_alone_does_not_grant_rt1_entry(self):
         with tempfile.TemporaryDirectory() as location:
