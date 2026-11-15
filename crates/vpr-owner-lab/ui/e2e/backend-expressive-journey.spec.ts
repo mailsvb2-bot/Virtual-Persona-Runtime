@@ -410,3 +410,60 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
   expect(directSpeak.status()).toBe(409);
   expect(await echoEvents(request)).toEqual(before);
 });
+
+
+test("Expressive server resume is reauthorized and delivered through canonical Echo", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const before = await echoEvents(request);
+
+  const first = await submitOwnerTurn(request, csrf, 1, sequence, "Привет. Я расскажу о проекте.");
+  expect(first.status()).toBe(200);
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written", "audio_stream_closed"]));
+
+  const interrupted = await postJson(request, csrf, "/api/avatar/interrupt", {
+    expected_session_sequence: sequence,
+  });
+  expect(interrupted.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 15000 })
+    .toEqual(expect.arrayContaining(["provider_stop_sent"]));
+
+  const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    request_sequence: 1,
+  });
+  expect(confirmed.ok()).toBeTruthy();
+
+  // The browser supplies only a cursor. The server resolves the suffix from
+  // its retained authorized reply and prepares a fresh canonical output.
+  const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(resumed.status()).toBe(200);
+  const payload = await resumed.json() as {
+    client_command: unknown | null;
+    evidence_turn_sequence: number;
+    evidence_output_sequence: number;
+  };
+  expect(payload.client_command).toBeNull();
+  expect(payload.evidence_turn_sequence).toBeGreaterThan(0);
+  expect(payload.evidence_output_sequence).toBeGreaterThan(0);
+
+  await expect.poll(async () => (await echoEvents(request)).slice(before.length), { timeout: 30000 })
+    .toEqual(expect.arrayContaining([
+      "audio_stream_opened",
+      "audio_bytes_written",
+      "audio_stream_closed",
+      "provider_stop_sent",
+    ]));
+  const events = (await echoEvents(request)).slice(before.length);
+  expect(events.filter((event) => event === "audio_stream_opened").length).toBeGreaterThanOrEqual(2);
+  expect(events.filter((event) => event === "audio_bytes_written").length).toBeGreaterThanOrEqual(2);
+
+  const evidence = await request.get(`${ownerLabUrl}/api/evidence/session`);
+  expect(evidence.ok()).toBeTruthy();
+  // This hermetic backend fixture proves authorized server delivery, not
+  // audible browser playout or provider-confirmed playback.
+  expect(await evidence.json()).toMatchObject({ canonical_playback_proven: false });
+});
