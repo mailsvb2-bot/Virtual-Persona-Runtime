@@ -28,6 +28,12 @@ class Backend:
         self.allocations = 0
         self.stops = 0
         self.pcm_pushes = []
+        self.video_renderer_ready = False
+
+    def persona_video_ready(self):
+        # This HTTP fixture tests the readiness contract only; it does not
+        # claim that a real renderer or human-visible avatar exists.
+        return self.video_renderer_ready
 
     def push_pcm(self, operation_id, session_id, generation, pcm):
         self.pcm_pushes.append((operation_id, session_id, generation, pcm))
