@@ -1,7 +1,7 @@
 //! Public localhost TCP owner for the existing `tiny_http` application.
 //! RT1 browser responses keep their actual socket registered with the same
 //! runtime session that revokes provider egress; no second HTTP router exists.
-use super::{AppState, HTTP_WORKERS};
+use super::{http_rt1::Rt1HttpState, AppState, HTTP_WORKERS};
 use std::io::{self, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,7 +38,7 @@ pub(super) fn serve(
                 let Ok(Ok(stream)) = next else {
                     break;
                 };
-                proxy_connection(stream, upstream, &state);
+                proxy_connection(stream, upstream, &state.rt1);
             }
         });
     }
@@ -55,7 +55,7 @@ pub(super) fn serve(
     Ok(())
 }
 
-fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<AppState>) {
+fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, rt1: &Rt1HttpState) {
     let _ = stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT));
     let (raw_request, method, path) = match read_request(&mut stream) {
         Ok(request) => request,
@@ -93,9 +93,7 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
                 return;
             }
         };
-        if state
-            .rt1
-            .register_transport_writer(id.to_owned(), cancellation.clone())
+        if rt1.register_transport_writer(id.to_owned(), cancellation.clone())
             .is_err()
         {
             let _ =
@@ -107,7 +105,7 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
         if let Err(error) = delivery {
             log_proxy_error("RT1 response relay failed", &method, &path, &error);
         }
-        state.rt1.finish_transport_delivery(id, delivered);
+        rt1.finish_transport_delivery(id, delivered);
     } else {
         match response::relay_ordinary_response(upstream, &forwarded, &mut stream) {
             Ok(status) if status >= 400 => {
@@ -364,6 +362,99 @@ mod tests {
             parse_request_header(header.as_bytes()).unwrap().2,
             3_844_096
         );
+    }
+
+
+
+    #[test]
+    fn real_rt1_public_socket_closes_when_registered_writer_is_revoked_mid_response() {
+        use super::{proxy_connection, Rt1HttpState};
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::{mpsc, Arc};
+        use std::thread;
+        use std::time::Duration;
+
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let (transport_id_tx, transport_id_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let upstream_thread = thread::spawn(move || {
+            let (mut upstream, _) = upstream_listener.accept().unwrap();
+            upstream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = Vec::new();
+            upstream.read_to_end(&mut request).unwrap();
+            let transport_id = request
+                .split(|byte| *byte == b'\\n')
+                .find_map(|line| {
+                    let line = std::str::from_utf8(line).ok()?.trim_end_matches('\\r');
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("X-VPR-RT1-Transport-Id")
+                        .then(|| value.trim().to_owned())
+                })
+                .expect("public proxy injects transport identity");
+            transport_id_tx.send(transport_id).unwrap();
+            upstream
+                .write_all(
+                    b"HTTP/1.1 200 OK\\r\\nContent-Length: 12\\r\\nConnection: close\\r\\n\\r\\npartial",
+                )
+                .unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            let _ = upstream.write_all(b"-tail");
+        });
+
+        let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut browser = TcpStream::connect(public_listener.local_addr().unwrap()).unwrap();
+        let (public_socket, _) = public_listener.accept().unwrap();
+        browser
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let rt1 = Arc::new(Rt1HttpState::default());
+        let worker_state = Arc::clone(&rt1);
+        let proxy_thread =
+            thread::spawn(move || proxy_connection(public_socket, upstream_address, &worker_state));
+
+        browser
+            .write_all(
+                b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: 127.0.0.1:18789\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+            )
+            .unwrap();
+        let transport_id = transport_id_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("proxy forwards RT1 request");
+        let mut response = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !response.windows(7).any(|window| window == b"partial") {
+            let count = browser.read(&mut buffer).unwrap();
+            assert_ne!(count, 0, "partial response reached the public socket");
+            response.extend_from_slice(&buffer[..count]);
+        }
+        assert!(response.starts_with(b"HTTP/1.1 200 OK"));
+        assert!(rt1.take_transport_writer(&transport_id).is_some());
+        // This is the same handle installed by proxy_connection before it
+        // forwarded the request to tiny_http's internal listener.
+        let writer = rt1.take_transport_writer(&transport_id);
+        assert!(writer.is_none(), "writer registration is consumed once");
+        release_tx.send(()).unwrap();
+        proxy_thread.join().unwrap();
+        upstream_thread.join().unwrap();
+
+        let mut tail = [0_u8; 16];
+        match browser.read(&mut tail) {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::TimedOut
+                ) => {}
+            other => panic!("revoked public socket remained writable: {other:?}"),
+        }
+        assert!(!response.windows(5).any(|window| window == b"-tail"));
+        assert!(rt1.take_transport_writer(&transport_id).is_none());
     }
 
     #[test]
