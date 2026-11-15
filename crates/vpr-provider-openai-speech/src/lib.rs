@@ -121,13 +121,13 @@ impl TtsPort for OpenAiSpeechTts {
             voice: &self.config.voice,
             response_format: if self.config.stream_pcm { "pcm" } else { "wav" },
         };
-        let request = self
+        let provider_request = self
             .client
             .post(&self.config.endpoint)
             .header(AUTHORIZATION, format!("Bearer {}", self.config.api_key))
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
-        let response = self.client.send(request, cancellation)?;
+        let response = self.client.send(provider_request, cancellation)?;
         if !response.status().is_success() {
             if self.config.stream_pcm {
                 eprintln!(
