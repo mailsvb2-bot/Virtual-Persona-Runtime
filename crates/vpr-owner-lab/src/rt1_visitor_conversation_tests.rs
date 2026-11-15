@@ -91,7 +91,9 @@ fn text_and_streaming_voice_remain_denied_without_verified_worker_stop() {
         "RT1_VISITOR_TEXT_EGRESS_NOT_AUTHORIZED"
     );
     assert_eq!(
-        conversation.voice_turn_streaming(vec![0_u8; 320]).unwrap_err(),
+        conversation
+            .voice_turn_streaming(vec![0_u8; 320])
+            .unwrap_err(),
         "RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED"
     );
 }
