@@ -287,9 +287,42 @@ fn relay_rt1_response(
     upstream.set_read_timeout(Some(RT1_READ_POLL))?;
     upstream.write_all(request)?;
     upstream.shutdown(Shutdown::Write)?;
+
+    // The internal tiny_http response is a bounded in-memory body. Validate
+    // its framing before treating the browser delivery as complete: EOF after
+    // a partial Content-Length must trigger the existing revoke/STOP
+    // compensation instead of being reported as a successful delivery.
     let deadline = Instant::now() + RESPONSE_DEADLINE;
-    let mut buffer = [0_u8; 16 * 1024];
+    let mut header = Vec::with_capacity(1024);
+    let mut byte = [0_u8; 1];
     loop {
+        read_rt1_response_exact(&mut upstream, &mut byte, deadline, cancellation)?;
+        header.push(byte[0]);
+        if header.len() > MAX_HEADER_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "RT1 response headers too large",
+            ));
+        }
+        if header.ends_with(b"\\r\\n\\r\\n") {
+            break;
+        }
+    }
+    let (_, framing) = response::parse_response_framing(&header)?;
+    let mut remaining = match framing {
+        response::ResponseFraming::ContentLength(length) => length,
+        response::ResponseFraming::Chunked | response::ResponseFraming::CloseDelimited => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "RT1 response requires bounded Content-Length framing",
+            ));
+        }
+    };
+    let normalized_header = response::response_header_with_close(&header)?;
+    writer.write_all_bounded(&normalized_header)?;
+
+    let mut buffer = [0_u8; 16 * 1024];
+    while remaining > 0 {
         if cancellation.is_revoked() {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
@@ -302,9 +335,18 @@ fn relay_rt1_response(
                 "HTTP response deadline exceeded",
             ));
         }
-        match upstream.read(&mut buffer) {
-            Ok(0) => return Ok(()),
-            Ok(count) => writer.write_all_bounded(&buffer[..count])?,
+        let limit = remaining.min(buffer.len());
+        match upstream.read(&mut buffer[..limit]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "RT1 response body shorter than Content-Length",
+                ));
+            }
+            Ok(count) => {
+                writer.write_all_bounded(&buffer[..count])?;
+                remaining -= count;
+            }
             Err(error)
                 if matches!(
                     error.kind(),
@@ -315,6 +357,48 @@ fn relay_rt1_response(
             Err(error) => return Err(error),
         }
     }
+    Ok(())
+}
+
+fn read_rt1_response_exact(
+    stream: &mut TcpStream,
+    output: &mut [u8],
+    deadline: Instant,
+    cancellation: &vpr_runtime::TcpWriteRevocation,
+) -> io::Result<()> {
+    let mut offset = 0;
+    while offset < output.len() {
+        if cancellation.is_revoked() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "RT1 response revoked",
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP response deadline exceeded",
+            ));
+        }
+        match stream.read(&mut output[offset..]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "RT1 response headers truncated",
+                ));
+            }
+            Ok(count) => offset += count,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 fn write_error(stream: &mut TcpStream, status: u16, code: &str) {
@@ -455,6 +539,102 @@ mod tests {
         }
         assert!(!response.windows(5).any(|window| window == b"-tail"));
         assert!(rt1.take_transport_writer(&transport_id).is_none());
+    }
+
+    #[test]
+    fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_open() {
+        use super::relay_rt1_response;
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        use std::time::{Duration, Instant};
+        use vpr_runtime::CancellableTcpWriter;
+
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let (release_sender, release_receiver) = std::sync::mpsc::channel();
+        let upstream_thread = thread::spawn(move || {
+            let (mut socket, _) = upstream_listener.accept().unwrap();
+            let mut request = Vec::new();
+            socket.read_to_end(&mut request).unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: keep-alive\\r\\n\\r\\nok",
+                )
+                .unwrap();
+            release_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+        });
+
+        let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut browser = TcpStream::connect(public_listener.local_addr().unwrap()).unwrap();
+        let (public_socket, _) = public_listener.accept().unwrap();
+        browser.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let (mut writer, cancellation) =
+            CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
+        let started = Instant::now();
+        relay_rt1_response(
+            upstream_address,
+            b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+            &mut writer,
+            &cancellation,
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        let expected = b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok";
+        let mut actual = vec![0_u8; expected.len()];
+        browser.read_exact(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        drop(writer);
+        release_sender.send(()).unwrap();
+        upstream_thread.join().unwrap();
+    }
+
+    #[test]
+    fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation() {
+        use super::relay_rt1_response;
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::thread;
+        use std::time::Duration;
+        use vpr_runtime::CancellableTcpWriter;
+
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let upstream_thread = thread::spawn(move || {
+            let (mut socket, _) = upstream_listener.accept().unwrap();
+            let mut request = Vec::new();
+            socket.read_to_end(&mut request).unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\\r\\nContent-Length: 12\\r\\nConnection: close\\r\\n\\r\\npartial",
+                )
+                .unwrap();
+            socket.shutdown(Shutdown::Write).unwrap();
+        });
+
+        let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut browser = TcpStream::connect(public_listener.local_addr().unwrap()).unwrap();
+        let (public_socket, _) = public_listener.accept().unwrap();
+        browser.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+        let (mut writer, cancellation) =
+            CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
+        let error = relay_rt1_response(
+            upstream_address,
+            b"POST /api/rt1/visitor/start HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+            &mut writer,
+            &cancellation,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        drop(writer);
+
+        let mut received = Vec::new();
+        browser.read_to_end(&mut received).unwrap();
+        assert!(received.ends_with(b"partial"));
+        upstream_thread.join().unwrap();
     }
 
     #[test]

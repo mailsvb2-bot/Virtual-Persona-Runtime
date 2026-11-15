@@ -10,7 +10,7 @@ use std::time::Instant;
 const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ResponseFraming {
+pub(super) enum ResponseFraming {
     ContentLength(usize),
     Chunked,
     CloseDelimited,
@@ -60,7 +60,7 @@ pub(super) fn relay_ordinary_response(
     Ok(status)
 }
 
-fn response_header_with_close(header: &[u8]) -> io::Result<Vec<u8>> {
+pub(super) fn response_header_with_close(header: &[u8]) -> io::Result<Vec<u8>> {
     let text = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
     if !text.ends_with("\r\n\r\n") {
@@ -93,7 +93,7 @@ fn response_header_with_close(header: &[u8]) -> io::Result<Vec<u8>> {
     Ok(normalized)
 }
 
-fn parse_response_framing(header: &[u8]) -> io::Result<(u16, ResponseFraming)> {
+pub(super) fn parse_response_framing(header: &[u8]) -> io::Result<(u16, ResponseFraming)> {
     let text = std::str::from_utf8(header)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
     if !text.ends_with("\r\n\r\n") {
