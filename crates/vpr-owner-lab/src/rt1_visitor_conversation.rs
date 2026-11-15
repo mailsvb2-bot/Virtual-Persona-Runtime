@@ -133,6 +133,15 @@ impl Rt1VisitorConversation {
             let _ = manager.close(&id);
             return Err(error);
         }
+        // Validate the existing invitation first, then recheck the exact
+        // worker/renderer before engine START. Old visitor tokens survive
+        // Owner Lab restarts; publication-time readiness is not sufficient.
+        if let Some(remote) = &remote
+            && let Err(reason) = remote.publication_ready()
+        {
+            let _ = manager.close(&id);
+            return Err(reason.to_owned());
+        }
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
             && let Err(error) = register(remote)
         {
