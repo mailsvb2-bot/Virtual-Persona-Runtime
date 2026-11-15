@@ -34,7 +34,7 @@ fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_
     let started = Instant::now();
     relay_rt1_response(
         upstream_address,
-        b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+        b"POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
         &mut writer,
         &cancellation,
     )
@@ -74,7 +74,7 @@ fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation
         CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
     let error = relay_rt1_response(
         upstream_address,
-        b"POST /api/rt1/visitor/start HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+        b"POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
         &mut writer,
         &cancellation,
     )
