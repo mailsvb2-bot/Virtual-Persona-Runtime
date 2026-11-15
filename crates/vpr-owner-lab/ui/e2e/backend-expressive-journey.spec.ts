@@ -167,7 +167,18 @@ test.afterEach(async ({ request }) => {
   if (state === "none") return;
   if (state !== "closed") {
     const close = await postJson(request, csrf, "/api/session/close", {});
-    expect(close.ok(), "E2E teardown must close the provider before exporting").toBeTruthy();
+    if (!close.ok()) {
+      // A cancelled in-flight provider call may make Close return 504 after
+      // authority has already been revoked. The server schedules bounded
+      // cleanup for that exact generation; wait for the observable Closed/None
+      // state instead of leaking a revoked session into the next E2E case.
+      await expect.poll(async () => {
+        const current = await request.get(`${ownerLabUrl}/api/bootstrap`);
+        if (!current.ok()) return "unavailable";
+        const snapshot = await current.json() as { session_state: string };
+        return snapshot.session_state;
+      }, { timeout: 50000, intervals: [100, 250, 500, 1000] }).toMatch(/^(none|closed)$/);
+    }
   }
   const exported = await postJson(request, csrf, "/api/evidence/session/export", {});
   expect(exported.ok(), "E2E teardown must satisfy the next session's evidence export gate").toBeTruthy();
