@@ -16,9 +16,7 @@ fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_
         let mut request = Vec::new();
         socket.read_to_end(&mut request).unwrap();
         socket
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok")
             .unwrap();
         release_receiver
             .recv_timeout(Duration::from_secs(2))
@@ -61,9 +59,7 @@ fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation
         let mut request = Vec::new();
         socket.read_to_end(&mut request).unwrap();
         socket
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\npartial",
-            )
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\npartial")
             .unwrap();
         socket.shutdown(std::net::Shutdown::Write).unwrap();
     });
@@ -90,7 +86,8 @@ fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation
     browser.read_to_end(&mut received).unwrap();
     assert!(received.ends_with(b"partial"));
     upstream_thread.join().unwrap();
-}#[test]
+}
+#[test]
 fn rt1_response_relay_accepts_close_delimited_tiny_http_response() {
     let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let upstream_address = upstream_listener.local_addr().unwrap();
@@ -126,4 +123,3 @@ fn rt1_response_relay_accepts_close_delimited_tiny_http_response() {
     drop(writer);
     upstream_thread.join().unwrap();
 }
-
