@@ -22,8 +22,8 @@ pub use avatar_runtime::{RealtimeAvatarHandle, RealtimeAvatarStopHandle};
 pub use cancellable_tcp_writer::{CancellableTcpWriter, TcpWriteRevocation};
 pub use delivery::{OutputDeliveryError, OutputDeliveryHandle};
 pub use error::{ProviderExecutionError, RuntimeDenyReason, provider_reason_code};
-pub use output::{OutputSegmentEvidence, OutputSegmentId};
 pub use execution_gate::TcpResponseRegistration;
+pub use output::{OutputSegmentEvidence, OutputSegmentId};
 pub use session::{ActiveSession, SessionRevocationHandle, SessionSecurityConfig};
 pub use turn::{ActiveTurn, AuthorizedLlmStream, AuthorizedSttStream, TurnInterruptHandle};
 

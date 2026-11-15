@@ -45,8 +45,13 @@ pub struct TcpResponseRegistration {
 
 impl Drop for TcpResponseRegistration {
     fn drop(&mut self) {
-        if let Ok(mut writers) = self.pending.writers.lock() {
-            writers.remove(&self.id);
+        match self.pending.writers.lock() {
+            Ok(mut writers) => {
+                writers.remove(&self.id);
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().remove(&self.id);
+            }
         }
     }
 }
@@ -114,12 +119,24 @@ impl SessionExecutionGate {
         &self,
         writer: TcpWriteRevocation,
     ) -> Result<TcpResponseRegistration, ()> {
-        let id = self
-            .tcp_responses
-            .next_id
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |next| next.checked_add(1))
-            .map_err(|_| ())?;
-        let mut writers = self.tcp_responses.writers.lock().map_err(|_| ())?;
+        let id = match self.tcp_responses.next_id.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |next| next.checked_add(1),
+        ) {
+            Ok(id) => id,
+            Err(_) => {
+                writer.revoke();
+                return Err(());
+            }
+        };
+        let mut writers = match self.tcp_responses.writers.lock() {
+            Ok(writers) => writers,
+            Err(_) => {
+                writer.revoke();
+                return Err(());
+            }
+        };
         writers.insert(id, writer);
         Ok(TcpResponseRegistration {
             pending: Arc::clone(&self.tcp_responses),
@@ -131,18 +148,19 @@ impl SessionExecutionGate {
     /// authority/policy mutation. Socket shutdown is local and bounded; it is
     /// not a remote audio/video sender STOP receipt.
     pub(crate) fn revoke_tcp_response_writers_locked(&self) -> Result<(), ()> {
-        let writers = self
-            .tcp_responses
-            .writers
-            .lock()
-            .map_err(|_| ())?
+        let (mut registered, poisoned) = match self.tcp_responses.writers.lock() {
+            Ok(registered) => (registered, false),
+            Err(poisoned) => (poisoned.into_inner(), true),
+        };
+        let writers = registered
             .drain()
             .map(|(_, writer)| writer)
             .collect::<Vec<_>>();
+        drop(registered);
         for writer in writers {
             writer.revoke();
         }
-        Ok(())
+        if poisoned { Err(()) } else { Ok(()) }
     }
 
     /// A local transport drain receipt, not a remote RTP STOP receipt.

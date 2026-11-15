@@ -932,7 +932,6 @@ fn late_llm_stream_chunk_cannot_escape_cancelled_canonical_turn() {
     assert_eq!(turn.state(), TurnState::Cancelled);
 }
 
-
 fn tcp_response_pair() -> (std::net::TcpStream, std::net::TcpStream) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -956,11 +955,16 @@ fn session_revoke_aborts_registered_tcp_response_writer() {
     revoker.revoke_authority().unwrap();
 
     assert!(cancellation.is_revoked());
-    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let mut byte = [0_u8; 1];
     assert_eq!(client.read(&mut byte).unwrap(), 0);
     assert_eq!(
-        writer.write_all_bounded(b"late response").unwrap_err().kind(),
+        writer
+            .write_all_bounded(b"late response")
+            .unwrap_err()
+            .kind(),
         std::io::ErrorKind::Interrupted
     );
     drop(registration);
@@ -977,9 +981,11 @@ fn revoked_session_rejects_and_aborts_late_tcp_response_registration() {
     let (_writer, cancellation) =
         CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
 
-    assert!(revoker
-        .register_tcp_response_writer(cancellation.clone())
-        .is_err());
+    assert!(
+        revoker
+            .register_tcp_response_writer(cancellation.clone())
+            .is_err()
+    );
     assert!(cancellation.is_revoked());
     client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
     let mut byte = [0_u8; 1];

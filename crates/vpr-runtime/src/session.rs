@@ -5,10 +5,10 @@ use vpr_domain::{PersonaId, RealtimeSession, RealtimeSessionState, Rt0ReasonCode
 use vpr_policy::{ConsentState, EffectiveAuthority};
 
 use crate::authority::{AuthorizationController, EgressPolicyController};
+use crate::cancellable_tcp_writer::TcpWriteRevocation;
 use crate::clock::{RuntimeClock, SystemClock};
 use crate::error::RuntimeDenyReason;
 use crate::execution_gate::{SessionExecutionGate, TcpResponseRegistration};
-use crate::cancellable_tcp_writer::TcpWriteRevocation;
 use crate::media_timeline::MediaTimeline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,12 +69,21 @@ impl SessionRevocationHandle {
         &self,
         writer: TcpWriteRevocation,
     ) -> Result<TcpResponseRegistration, Rt0ReasonCode> {
-        let _admission = self.gate.read().map_err(|()| Rt0ReasonCode::InternalError)?;
-        if self
-            .authorization
-            .is_revoked()
-            .map_err(RuntimeDenyReason::reason_code)?
-        {
+        let _admission = match self.gate.read() {
+            Ok(admission) => admission,
+            Err(()) => {
+                writer.revoke();
+                return Err(Rt0ReasonCode::InternalError);
+            }
+        };
+        let revoked = match self.authorization.is_revoked() {
+            Ok(revoked) => revoked,
+            Err(error) => {
+                writer.revoke();
+                return Err(RuntimeDenyReason::reason_code(error));
+            }
+        };
+        if revoked {
             writer.revoke();
             return Err(Rt0ReasonCode::InvalidStateTransition);
         }
