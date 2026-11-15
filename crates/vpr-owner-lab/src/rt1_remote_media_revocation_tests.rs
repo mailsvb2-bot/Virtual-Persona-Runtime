@@ -691,3 +691,71 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
+
+
+#[test]
+fn late_create_identity_binding_does_not_wait_for_stop_network_io() {
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 2048];
+        loop {
+            let read = socket.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                break;
+            }
+        }
+        assert!(request.starts_with(b"DELETE /v1/avatar/operations/late-lock "));
+        accepted_tx.send(()).unwrap();
+        release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let body = r#"{"operation_id":"late-lock","generation":1,"session_id":"late-session","audio_stopped":true,"video_stopped":true}"#;
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    });
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
+    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "late-lock".into(), 1).unwrap());
+    remote.request_revoke();
+    let stop_remote = Arc::clone(&remote);
+    let stop = std::thread::spawn(move || stop_remote.revoke_confirmed());
+    accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+
+    let notifications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let notified = Arc::clone(&notifications);
+    remote.install_revoke_notifier(move || {
+        notified.fetch_add(1, Ordering::SeqCst);
+    });
+    let began = Instant::now();
+    assert_eq!(
+        remote.record_created_session("late-session").unwrap_err(),
+        "RT1_VISITOR_REVOKED"
+    );
+    assert!(
+        began.elapsed() < Duration::from_millis(250),
+        "late CREATE identity binding waited for the in-flight STOP network request"
+    );
+    assert_eq!(notifications.load(Ordering::SeqCst), 2);
+
+    release_tx.send(()).unwrap();
+    stop.join().unwrap().unwrap();
+    assert!(remote.is_stop_confirmed());
+    worker.join().unwrap();
+}

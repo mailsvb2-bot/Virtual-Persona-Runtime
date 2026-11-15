@@ -91,7 +91,9 @@ impl Rt1RemoteMediaRevocation {
 
     /// Bind a late CREATE reply to the operation before publishing its SDP.
     /// A STOP receipt for a different sender cannot authorize that CREATE.
-    /// The STOP gate serializes this binding against remote cancellation.
+    /// A short identity gate serializes this binding against the final STOP
+    /// receipt. A revoked late CREATE only wakes the existing reconciler;
+    /// this callback never performs network I/O while the engine is locked.
     ///
     /// # Errors
     /// Refuses conflicting identities, including STOP-before-CREATE races.
