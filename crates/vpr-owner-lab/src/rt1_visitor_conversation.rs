@@ -173,7 +173,12 @@ impl Rt1VisitorConversation {
                     None
                 };
                 let _ = manager.close(&id);
-                if matches!(cleanup, Some(Err(_))) {
+                // An unknown CREATE outcome without an addressable STOP handle
+                // is NOT evidence that the remote sender never started.
+                // Preserve the original provider error only when an actual
+                // STOP receipt has been obtained; never silently downgrade
+                // an uncertain remote shutdown to an ordinary start failure.
+                if !matches!(cleanup, Some(Ok(()))) {
                     return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
                 }
                 return Err(error.code().to_owned());
