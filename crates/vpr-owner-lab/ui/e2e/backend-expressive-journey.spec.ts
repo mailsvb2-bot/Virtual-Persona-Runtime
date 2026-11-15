@@ -245,7 +245,7 @@ const submitOwnerTurn = async (
   return postJson(request, csrf, "/api/avatar/speak", { text: answer.reply });
 };
 
-const submitVoiceTurn = async (
+const startVoiceTurn = async (
   request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
 ): Promise<void> => {
   const started = await request.post(`${ownerLabUrl}/api/voice/turn`, {
@@ -258,7 +258,11 @@ const submitVoiceTurn = async (
     data: Buffer.alloc(640),
   });
   expect(started.status()).toBe(202);
+};
 
+const waitForVoiceTurnTerminal = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<Array<{ kind: string }>> => {
   const events: Array<{ kind: string }> = [];
   let terminal = false;
   for (let attempt = 0; attempt < 8 && !terminal; attempt += 1) {
@@ -275,6 +279,14 @@ const submitVoiceTurn = async (
     terminal = snapshot.terminal;
   }
   expect(terminal, "canonical voice turn must reach a terminal event").toBe(true);
+  return events;
+};
+
+const submitVoiceTurn = async (
+  request: APIRequestContext, csrf: string, requestSequence: number, sessionSequence: number,
+): Promise<void> => {
+  await startVoiceTurn(request, csrf, requestSequence, sessionSequence);
+  const events = await waitForVoiceTurnTerminal(request, csrf, requestSequence, sessionSequence);
   expect(events.some((event) => event.kind === "complete"), "voice reply must be retained for authorized resume").toBe(true);
 };
 
@@ -446,6 +458,62 @@ test("second caller cannot restart speech after canonical revoke", async ({ requ
   expect(await echoEvents(request)).toEqual(before);
 });
 
+
+test("Expressive server STOP cancels an in-flight TTS stream and refuses incomplete replay", async ({ request }) => {
+  test.setTimeout(90000);
+  const { csrf, sequence } = await startEcho(request);
+  const beforeEvents = await echoEvents(request);
+  const beforeState = await request.get(`${providerUrl}/__state`);
+  expect(beforeState.ok()).toBeTruthy();
+  const beforeTtsCount = ((await beforeState.json() as { requests: Array<{ kind: string }> }).requests)
+    .filter((entry) => entry.kind === "tts").length;
+
+  const held = await request.post(`${providerUrl}/__hold-next-tts`);
+  expect(held.ok()).toBeTruthy();
+  await startVoiceTurn(request, csrf, 1, sequence);
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 20000 })
+    .toEqual(expect.arrayContaining(["audio_stream_opened", "audio_bytes_written"]));
+  const activeEvents = (await echoEvents(request)).slice(beforeEvents.length);
+  expect(activeEvents).not.toContain("audio_stream_closed");
+
+  // The TTS fixture has sent its first valid PCM chunk but deliberately keeps
+  // the HTTP body open. STOP must cancel this live sender, not a completed one.
+  const interrupted = await postJson(request, csrf, "/api/avatar/interrupt", {
+    expected_session_sequence: sequence,
+  });
+  expect(interrupted.ok()).toBeTruthy();
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 15000 })
+    .toContain("provider_stop_sent");
+
+  const released = await request.post(`${providerUrl}/__release-held-tts`);
+  expect(released.ok()).toBeTruthy();
+  expect(await released.json()).toMatchObject({ released: true });
+  const terminal = await waitForVoiceTurnTerminal(request, csrf, 1, sequence);
+  expect(terminal.some((event) => event.kind === "complete")).toBe(false);
+  await expect.poll(async () => (await echoEvents(request)).slice(beforeEvents.length), { timeout: 15000 })
+    .toContain("audio_stream_closed");
+
+  // An incomplete/cancelled response is not replay authority and must not be
+  // regenerated as if it were the owner's completed answer.
+  const confirmed = await postJson(request, csrf, "/api/avatar/confirm-interruption", {
+    request_sequence: 1,
+  });
+  expect(confirmed.status()).toBe(409);
+  const resumed = await postJson(request, csrf, "/api/avatar/resume-answer", {
+    request_sequence: 1,
+    sentence_index: 0,
+  });
+  expect(resumed.status()).toBe(409);
+
+  const afterState = await request.get(`${providerUrl}/__state`);
+  expect(afterState.ok()).toBeTruthy();
+  const afterTtsCount = ((await afterState.json() as { requests: Array<{ kind: string }> }).requests)
+    .filter((entry) => entry.kind === "tts").length;
+  expect(afterTtsCount).toBe(beforeTtsCount + 1);
+  const finalEvents = (await echoEvents(request)).slice(beforeEvents.length);
+  expect(finalEvents.filter((event) => event === "audio_stream_opened")).toHaveLength(1);
+  expect(finalEvents).toContain("provider_stop_sent");
+});
 
 test("Expressive server resume is reauthorized and delivered through canonical Echo", async ({ request }) => {
   test.setTimeout(90000);
