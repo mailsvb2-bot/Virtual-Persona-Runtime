@@ -118,7 +118,7 @@ const server = http.createServer(async (request, response) => {
     holdNextTtsResponse = false;
     const release = releaseHeldTtsResponse;
     releaseHeldTtsResponse = null;
-    const released = release ? release() : false;
+    const released = release ? release() : true;
     return sendJson(response, 200, { ok: true, released });
   }
   if (request.method === "GET" && url.pathname === "/__state") {
@@ -172,7 +172,7 @@ const server = http.createServer(async (request, response) => {
       });
       response.write(wav.subarray(0, 8 * 1024));
       const release = () => {
-        if (response.destroyed || response.writableEnded) return false;
+        if (response.destroyed || response.writableEnded) return true;
         response.end(wav.subarray(8 * 1024));
         return true;
       };
