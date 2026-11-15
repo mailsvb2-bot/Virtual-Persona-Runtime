@@ -5,7 +5,7 @@ use super::{
 };
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
 
@@ -304,7 +304,6 @@ fn relay_close_delimited_response_body(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self, Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use std::thread;
