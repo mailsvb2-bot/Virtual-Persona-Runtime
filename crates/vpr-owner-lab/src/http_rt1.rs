@@ -12,6 +12,9 @@ use vpr_owner_lab::{
 
 use super::{AppState, HttpResponse, error_response, json_response, parse_json};
 
+#[path = "http_rt1_transport.rs"]
+mod transport;
+
 /// This local-only diagnostic journey is not a released RT1 API.
 pub(super) fn enabled() -> bool {
     std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")
@@ -48,6 +51,8 @@ pub(super) struct Rt1HttpState {
     // Never hold this registry lock while doing provider network I/O.
     remote_cleanup: Mutex<HashMap<String, Arc<Rt1RemoteMediaRevocation>>>,
     cleanup_notify: Arc<(Mutex<u64>, Condvar)>,
+    transport_writers: Mutex<HashMap<String, vpr_runtime::TcpWriteRevocation>>,
+    pending_deliveries: Mutex<HashMap<String, transport::PendingDelivery>>,
 }
 
 #[path = "http_rt1_cleanup.rs"]
@@ -161,6 +166,11 @@ fn guarded_reply(
 /// response write. Keeping this here avoids a second path around the CSRF
 /// checks and preserves the main server's architectural module-size limit.
 pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState>) {
+    let transport_id = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("X-VPR-RT1-Transport-Id"))
+        .map(|header| header.value.as_str().to_owned());
     if !super::valid_post_headers(&request, &state.csrf_token, state.port) {
         let _ = request.respond(error_response(403, "CSRF_DENIED"));
         return;
@@ -175,25 +185,62 @@ pub(super) fn respond_post(mut request: tiny_http::Request, state: &Arc<AppState
         return;
     };
     if let Some(conversation) = routed.delivery {
-        // START and SDP/ICE may create or activate remote media. TEXT and
-        // VOICE can also dispatch provider speech before the final browser
-        // acknowledgement. If that acknowledgement is lost, quarantine the
-        // exact sender through the SAME canonical revocation reconciler.
-        // Only successful visitor routes provide this delivery lease.
         let must_compensate = path == "/api/rt1/visitor/start"
             || path == "/api/rt1/visitor/answer"
             || path == "/api/rt1/visitor/ice"
             || path == "/api/rt1/visitor/text"
             || path == "/api/rt1/visitor/voice";
+        if let Some(transport_id) = transport_id.as_deref() {
+            let Some(writer) = state.rt1.take_transport_writer(transport_id) else {
+                conversation.revoke_undelivered_start();
+                let response = delivery_denied_after_revoke(
+                    conversation.has_remote_video_stop_receipt_path(),
+                    conversation.remote_media_stop_confirmed(),
+                );
+                let _ = request.respond(response);
+                return;
+            };
+            let abort = writer.clone();
+            match conversation.begin_browser_tcp_delivery(writer) {
+                Ok(guard) => {
+                    if !state.rt1.retain_transport_delivery(
+                        transport_id.to_owned(),
+                        Arc::clone(&conversation),
+                        guard,
+                        must_compensate,
+                    ) {
+                        abort.revoke();
+                        conversation.revoke_undelivered_start();
+                        let _ = request.respond(error_response(
+                            503,
+                            "RT1_RESPONSE_WRITER_UNAVAILABLE",
+                        ));
+                        return;
+                    }
+                    if request.respond(routed.response).is_err() {
+                        state.rt1.finish_transport_delivery(transport_id, false);
+                    }
+                }
+                Err(_) => {
+                    abort.revoke();
+                    conversation.revoke_undelivered_start();
+                    let response = delivery_denied_after_revoke(
+                        conversation.has_remote_video_stop_receipt_path(),
+                        conversation.remote_media_stop_confirmed(),
+                    );
+                    let _ = request.respond(response);
+                }
+            }
+            return;
+        }
+        // Direct tiny_http test requests have no outer socket registration.
+        // Production browser traffic always uses the cancellable public listener.
         if let Ok(_lease) = conversation.begin_browser_delivery() {
             if request.respond(routed.response).is_err() && must_compensate {
                 conversation.revoke_undelivered_start();
             }
         } else if must_compensate {
             conversation.revoke_undelivered_start();
-            // Revocation intent is not a remote audio/video STOP receipt.
-            // Report the exact unconfirmed outcome without exposing the
-            // provider's private error payload to the visitor.
             let response = delivery_denied_after_revoke(
                 conversation.has_remote_video_stop_receipt_path(),
                 conversation.remote_media_stop_confirmed(),

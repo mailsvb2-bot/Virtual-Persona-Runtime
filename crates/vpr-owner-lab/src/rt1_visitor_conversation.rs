@@ -14,6 +14,7 @@ use crate::state::{LabSignalBundle, LabVoiceResult, OwnerLabEngine, OwnerLabStar
 
 #[path = "rt1_visitor_browser_delivery.rs"]
 mod browser_delivery;
+pub use browser_delivery::Rt1BrowserDeliveryGuard;
 #[path = "rt1_visitor_conversation_helpers.rs"]
 mod helpers;
 #[path = "rt1_visitor_interrupt_stop.rs"]

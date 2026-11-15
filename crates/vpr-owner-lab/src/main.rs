@@ -8,6 +8,7 @@ mod http_json;
 mod http_owner_capture;
 mod http_references;
 mod http_rt1;
+mod http_proxy;
 #[cfg(test)]
 mod http_security_tests;
 mod http_session;
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::error::Error;
 use std::io::Cursor;
+use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -189,7 +191,14 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         port,
     });
     let address = format!("127.0.0.1:{port}");
-    let server = Arc::new(Server::http(&address)?);
+    // Own the public socket before tiny_http can hide it inside Request::respond.
+    // The existing tiny_http application remains the single parser and router.
+    let listener = TcpListener::bind(&address)?;
+    let server = Arc::new(Server::http("127.0.0.1:0")?);
+    let upstream = server
+        .server_addr()
+        .to_ip()
+        .ok_or("owner-lab internal HTTP listener is not TCP")?;
     println!("VPR Owner Lab: http://{address}");
     if http_rt1::enabled() {
         http_rt1::spawn_cleanup_reconciler(&state);
@@ -208,9 +217,12 @@ fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
             })
         })
         .collect();
+    let proxy_state = Arc::clone(&state);
+    let proxy = thread::spawn(move || http_proxy::serve(listener, upstream, proxy_state));
     for worker in workers {
         worker.join().map_err(|_| "owner-lab HTTP worker failed")?;
     }
+    proxy.join().map_err(|_| "owner-lab HTTP proxy failed")??;
     Ok(())
 }
 
