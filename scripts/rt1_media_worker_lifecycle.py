@@ -41,10 +41,6 @@ class AllocatedSessionError(RuntimeError):
         self.session_id = session_id
 
 
-class PersonaRendererUnavailable(RuntimeError):
-    """The worker has transport but no ready Persona video renderer."""
-
-
 class SenderBackend(Protocol):
     def allocate(self, operation_id: str, generation: int) -> str:
         """Create one session; recheck renderer readiness at allocation time.
@@ -291,10 +287,6 @@ class MediaLifecycle:
     def create(self, operation_id: str, generation: int) -> str:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
-        # Enforce readiness at the durable owner, not only in the Rust client.
-        # Older callers with a valid worker token must not bypass this fence.
-        if not self.persona_video_ready():
-            raise PersonaRendererUnavailable("RT1_VIDEO_RENDERER_UNAVAILABLE")
         # Obtain the backend's *authoritative* preassigned identity before
         # allocation. Recording it only after a timeout misses process death
         # during CREATE, especially when CANCEL already committed. This is
