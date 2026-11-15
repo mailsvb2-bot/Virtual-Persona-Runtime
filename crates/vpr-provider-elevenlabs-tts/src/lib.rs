@@ -122,13 +122,13 @@ impl TtsPort for ElevenLabsTts {
             model_id: &self.config.model,
             language_code,
         };
-        let request = self
+        let provider_request = self
             .client
             .post(self.request_url()?)
             .header("xi-api-key", &self.config.api_key)
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
-        let response = self.client.send(request, cancellation)?;
+        let response = self.client.send(provider_request, cancellation)?;
         if !response.status().is_success() {
             return Err(map_status(response.status().as_u16()));
         }
