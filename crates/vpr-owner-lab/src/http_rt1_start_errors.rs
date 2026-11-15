@@ -64,6 +64,13 @@ mod tests {
     }
 
     #[test]
+    fn stale_visitor_tokens_are_denied_when_worker_or_renderer_is_not_ready() {
+        for code in ["RT1_WORKER_NOT_READY", "RT1_VIDEO_RENDERER_UNAVAILABLE"] {
+            assert_eq!(startup_error_response(code).status_code().0, 503);
+        }
+    }
+
+    #[test]
     fn unresolved_remote_create_requires_reconciliation_not_client_retry() {
         assert_eq!(
             startup_error_response("RT1_REMOTE_CREATE_UNCONFIRMED")
