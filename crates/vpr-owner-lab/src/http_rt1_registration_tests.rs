@@ -3,6 +3,7 @@ use super::{
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
