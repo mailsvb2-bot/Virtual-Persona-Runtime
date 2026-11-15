@@ -14,7 +14,7 @@ SOURCE = (
 )
 
 
-STAGING_SOURCE = SOURCE.with_name("rt1_visitor_voice_stream_staging.rs")
+STREAMING_SOURCE = SOURCE.with_name("rt1_visitor_voice_streaming.rs")
 VOICE_CAPABILITY_SOURCE = SOURCE.with_name("rt1_visitor_voice_capability.rs")
 STOP_SOURCE = SOURCE.with_name("rt1_visitor_interrupt_stop.rs")
 
@@ -92,25 +92,30 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         self.assertIn("stop.stop()", dispatch)
         self.assertIn("in_flight.store(false, Ordering::Release)", dispatch)
 
-    def test_internal_streaming_reuses_engine_but_only_stages_bounded_local_events(self):
-        body = method_body(STAGING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming_staged")
-        self.assertIn("self.remote.is_some()", body)
-        self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
-        self.assertIn("self.stage_microphone_audio(&input_sender, pcm_s16le_mono_16khz)?", body)
+    def test_streaming_voice_reuses_canonical_engine_under_worker_gate(self):
+        body = method_body(
+            STREAMING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming"
+        )
+        self.assertIn("if !self.supports_private_voice()", body)
+        self.assertIn("self.stage_microphone_audio(&sender, pcm_s16le_mono_16khz)?", body)
         self.assertIn("self.manager.begin_provider_egress(&self.id)?", body)
         self.assertIn(".voice_turn_streaming(", body)
-        self.assertIn(".enqueue_media_fragment(&self.id, sender, segment)", body)
-        self.assertIn("crate::state::LabError::InvalidState", body)
+        self.assertIn("segment.client_command.is_some()", body)
+        self.assertIn("Err(LabError::InvalidState)", body)
         self.assertIn("self.manager.authorize(&self.id)?", body)
         self.assertIn("handle.interrupt()", body)
         self.assertNotIn("emit_segment(", body)
         self.assertNotIn("std::thread::spawn(", body)
 
-    def test_streaming_voice_entrypoint_cannot_invoke_callback_or_provider(self):
-        self.assertEqual(
-            method_body(self.source, "voice_turn_streaming"),
-            'Err("RT1_VOICE_PROVIDER_EGRESS_NOT_AUTHORIZED".into())',
+    def test_streaming_voice_is_not_a_browser_command_or_second_runtime(self):
+        body = method_body(
+            STREAMING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming"
         )
+        self.assertIn("self.engine", body)
+        self.assertIn("OperationWorkerAvatar", STREAMING_SOURCE.read_text(encoding="utf-8"))
+        self.assertIn("segment.client_command.is_some()", body)
+        self.assertNotIn("did.speak", body)
+        self.assertNotIn("emit_segment(", body)
 
     def test_browser_late_voice_failure_cannot_override_stop_state(self):
         browser = (
