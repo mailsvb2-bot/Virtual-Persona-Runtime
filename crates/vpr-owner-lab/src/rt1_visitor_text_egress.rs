@@ -1,6 +1,6 @@
 //! Canonical RT1 visitor LLM dispatch under the shared publication gate.
 //! No separate LLM runtime, provider adapter or owner identity is created.
-use super::{Arc, Rt1VisitorConversation};
+use super::{Arc, Ordering, Rt1VisitorConversation};
 use crate::state::LabTextResult;
 
 impl Rt1VisitorConversation {
