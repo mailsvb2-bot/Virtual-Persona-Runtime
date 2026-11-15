@@ -612,7 +612,7 @@ mod tests {
                     b"HTTP/1.1 200 OK\\r\\nContent-Length: 12\\r\\nConnection: close\\r\\n\\r\\npartial",
                 )
                 .unwrap();
-            socket.shutdown(Shutdown::Write).unwrap();
+            socket.shutdown(std::net::Shutdown::Write).unwrap();
         });
 
         let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
