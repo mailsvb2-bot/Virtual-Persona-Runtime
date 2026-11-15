@@ -45,6 +45,13 @@ class SenderBackend(Protocol):
     def allocate(self, operation_id: str, generation: int) -> str:
         """Create one session; return its opaque id. Can block."""
 
+    def persona_video_ready(self) -> bool:
+        """True only when a real Persona renderer is loaded and ready.
+
+        A transport test-pattern video track is not a Persona renderer.
+        Missing or failing implementations are treated as not ready.
+        """
+
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         """Stop BOTH real senders, return a verified receipt after completion."""
 
