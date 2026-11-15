@@ -421,15 +421,6 @@ def handler_for(
                 return
             try:
                 if method == "PUT":
-                    # The worker is the authoritative admission boundary:
-                    # stale clients cannot skip the Rust preflight and allocate
-                    # a diagnostic transport track as if it were Persona video.
-                    if not lifecycle.persona_video_ready():
-                        self._send(503, {
-                            "error": "RT1_VIDEO_RENDERER_UNAVAILABLE",
-                            "stop_confirmed": False,
-                        })
-                        return
                     session_id = lifecycle.create_bounded(
                         operation_id, generation, create_timeout_seconds
                     )
