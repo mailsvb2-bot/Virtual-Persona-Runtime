@@ -184,7 +184,8 @@ impl Rt1VisitorConversation {
             }
         };
         if remote.as_ref().is_some_and(|worker| worker.synchronize_created_session().is_err()) {
-            return manager.close(&id).and(Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into()));
+            let _ = manager.close(&id);
+            return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
         }
         *interrupt.session.lock() = engine.session_revocation_handle();
         *interrupt.backend_stop.lock() = engine.visitor_avatar_stop_handle();
