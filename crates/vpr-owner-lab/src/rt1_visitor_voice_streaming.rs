@@ -7,8 +7,8 @@ use crate::state::{LabVoiceResult, LabError};
 
 impl Rt1VisitorConversation {
     /// Run the canonical pull-stream STT -> LLM -> TTS path for a verified
-    /// worker visitor. The existing OwnerLabEngine streams each synthesized
-    /// phrase to OperationWorkerAvatar, which hands PCM to the same durable
+    /// worker visitor. The existing `OwnerLabEngine` streams each synthesized
+    /// phrase to `OperationWorkerAvatar`, which hands PCM to the same durable
     /// worker operation; this method creates no browser-side or second runtime.
     ///
     /// The callback is deliberately internal and accepts only segments without
