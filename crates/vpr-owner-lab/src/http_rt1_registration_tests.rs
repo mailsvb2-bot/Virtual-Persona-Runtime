@@ -313,7 +313,6 @@ fn denied_delivery_with_verified_remote_stop_is_routine_visitor_denial() {
     );
 }
 
-
 #[test]
 fn rt1_publication_cannot_issue_unusable_did_livekit_visitor_token() {
     use super::start::publication_media_transport_ready as ready;
@@ -331,7 +330,9 @@ fn rt1_publication_cannot_issue_unusable_did_livekit_visitor_token() {
     // configured before the owner can issue any visitor token.
     for worker in [false, true] {
         for diagnostic in [false, true] {
-            if !worker && !diagnostic { continue; }
+            if !worker && !diagnostic {
+                continue;
+            }
             assert_eq!(
                 ready(worker, diagnostic, None, Some("token")),
                 Err("RT1_WORKER_NOT_CONFIGURED")
@@ -341,11 +342,21 @@ fn rt1_publication_cannot_issue_unusable_did_livekit_visitor_token() {
                 Err("RT1_WORKER_NOT_CONFIGURED")
             );
             assert_eq!(
-                ready(worker, diagnostic, Some("http://127.0.0.1:9000"), Some("  ")),
+                ready(
+                    worker,
+                    diagnostic,
+                    Some("http://127.0.0.1:9000"),
+                    Some("  ")
+                ),
                 Err("RT1_WORKER_NOT_CONFIGURED")
             );
             assert_eq!(
-                ready(worker, diagnostic, Some("http://127.0.0.1:9000"), Some("token")),
+                ready(
+                    worker,
+                    diagnostic,
+                    Some("http://127.0.0.1:9000"),
+                    Some("token")
+                ),
                 Ok(())
             );
         }
