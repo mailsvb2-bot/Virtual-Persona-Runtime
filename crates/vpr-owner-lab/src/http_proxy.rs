@@ -23,6 +23,9 @@ mod response;
 #[cfg(test)]
 #[path = "http_proxy_rt1_response_tests.rs"]
 mod response_tests;
+#[cfg(test)]
+#[path = "http_proxy_request_tests.rs"]
+mod request_tests;
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn serve(
@@ -425,11 +428,7 @@ fn error_response(status: u16, code: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_request_header, read_request_until, rewrite_request};
-    use std::io::Write;
-    use std::net::{TcpListener, TcpStream};
-    use std::thread;
-    use std::time::{Duration, Instant};
+    use super::{parse_request_header, rewrite_request};
 
     #[test]
     fn proxy_injects_unspoofable_transport_identity_and_closes_upstream() {
@@ -546,59 +545,6 @@ mod tests {
         }
         assert!(!response.windows(5).any(|window| window == b"-tail"));
         assert!(rt1.take_transport_writer(&transport_id).is_none());
-    }
-
-    #[test]
-    fn request_header_and_body_share_one_deadline_against_slow_drip() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-        let sender = thread::spawn(move || {
-            client.write_all(b"P").unwrap();
-            thread::sleep(Duration::from_millis(80));
-            let _ = client.write_all(b"OST /api/rt1/visitor/text HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{");
-            thread::sleep(Duration::from_millis(120));
-            let _ = client.write_all(b"}");
-        });
-        let started = Instant::now();
-        let error = read_request_until(
-            &mut server,
-            started + Duration::from_millis(150),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-        ));
-        assert!(started.elapsed() < Duration::from_millis(500));
-        sender.join().unwrap();
-    }
-
-    #[test]
-    fn slow_header_bytes_cannot_reset_the_total_request_deadline() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (mut server, _) = listener.accept().unwrap();
-        let sender = thread::spawn(move || {
-            for byte in b"POST /api/rt1/visitor/text HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n" {
-                if client.write_all(&[*byte]).is_err() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-        });
-        let started = Instant::now();
-        let error = read_request_until(
-            &mut server,
-            started + Duration::from_millis(120),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            error.kind(),
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-        ));
-        assert!(started.elapsed() < Duration::from_millis(500));
-        sender.join().unwrap();
     }
 
     #[test]
