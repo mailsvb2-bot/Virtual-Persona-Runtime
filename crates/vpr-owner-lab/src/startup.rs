@@ -97,10 +97,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .collect();
     let proxy_state = Arc::clone(&state);
     let proxy = thread::spawn(move || http_proxy::serve(listener, upstream, proxy_state));
+    // The public listener owns process lifetime. If it fails, return the
+    // error instead of waiting forever on internal tiny_http consumers.
+    proxy.join().map_err(|_| "owner-lab HTTP proxy failed")??;
     for worker in workers {
         worker.join().map_err(|_| "owner-lab HTTP worker failed")?;
     }
-    proxy.join().map_err(|_| "owner-lab HTTP proxy failed")??;
     Ok(())
 }
 
