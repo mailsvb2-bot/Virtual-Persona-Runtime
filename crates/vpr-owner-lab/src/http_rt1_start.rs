@@ -45,7 +45,7 @@ fn reserve_session_identity(
 
 /// Publication must only issue visitor tokens when the same authorized
 /// transport can subsequently start and supply auditable audio/video STOP.
-/// D-ID V2 LiveKit currently lacks a confirmed remote video STOP path.
+/// D-ID V2 `LiveKit` currently lacks a confirmed remote video STOP path.
 pub(super) fn publication_media_transport_ready(
     verified_worker: bool,
     diagnostic_rtp: bool,
