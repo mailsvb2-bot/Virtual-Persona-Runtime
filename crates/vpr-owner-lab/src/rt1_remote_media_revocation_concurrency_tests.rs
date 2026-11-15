@@ -34,12 +34,15 @@ fn concurrent_owner_revokes_share_one_confirmed_remote_stop() {
 
 #[test]
 fn partial_audio_stop_receipt_never_confirms_video_and_retries_same_sender() {
+    use std::sync::mpsc;
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (pending_tx, pending_rx) = mpsc::channel();
+    let (retry_tx, retry_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
-        for (status, audio_stopped, video_stopped) in
-            [("202 Accepted", true, false), ("200 OK", true, true)]
-        {
+        for attempt in 0..2 {
             let (mut socket, _) = listener.accept().unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(3)))
@@ -57,33 +60,47 @@ fn partial_audio_stop_receipt_never_confirms_video_and_retries_same_sender() {
                 }
             }
             assert!(request.starts_with(b"DELETE /v1/avatar/operations/partial-av-stop "));
-            let body = serde_json::json!({
-                "operation_id": "partial-av-stop",
-                "generation": 11,
-                "session_id": "sender-11",
-                "audio_stopped": audio_stopped,
-                "video_stopped": video_stopped,
-            })
-            .to_string();
-            write!(
-                socket,
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+            if attempt == 0 {
+                // Audio may already be stopped while video is still live.
+                // The worker must return pending, never a partial success receipt.
+                let body = r#"{"operation_id":"partial-av-stop","stop_confirmed":false}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                pending_tx.send(()).unwrap();
+            } else {
+                retry_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                let body = r#"{"operation_id":"partial-av-stop","generation":11,"session_id":"sender-11","audio_stopped":true,"video_stopped":true}"#;
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
         }
     });
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Rt1RemoteMediaRevocation::new(client, "partial-av-stop".into(), 11).unwrap();
+    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "partial-av-stop".into(), 11).unwrap());
     remote.record_created_session("sender-11").unwrap();
-    assert_eq!(
-        remote.revoke_confirmed().unwrap_err(),
-        "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED"
-    );
+
+    let stopping = Arc::clone(&remote);
+    let stop = std::thread::spawn(move || stopping.revoke_confirmed());
+    pending_rx.recv_timeout(Duration::from_secs(3)).unwrap();
     assert!(remote.is_revoked());
     assert!(!remote.is_stop_confirmed());
-    remote.revoke_confirmed().unwrap();
+    retry_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(
+        !remote.is_stop_confirmed(),
+        "audio-only completion cannot be reported as dual-track STOP"
+    );
+    release_tx.send(()).unwrap();
+    stop.join().unwrap().unwrap();
     assert!(remote.is_stop_confirmed());
     worker.join().unwrap();
 }
