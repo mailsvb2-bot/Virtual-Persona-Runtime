@@ -517,8 +517,11 @@ fn visitor_voice(
         return Err(error_response(400, "RT1_INVALID_MICROPHONE_AUDIO"));
     }
     let conversation = lookup(state, &body.session_id)?;
+    // Use the canonical pull-stream engine: STT/LLM/TTS phrases are
+    // delivered incrementally through the verified worker's authenticated
+    // PCM sender, not through browser-controlled speech commands.
     let result = conversation
-        .voice_turn(body.pcm)
+        .voice_turn_streaming(body.pcm)
         .map_err(|_| error_response(409, "RT1_VISITOR_VOICE_DENIED"))?;
     if !conversation.is_active() {
         return Err(error_response(409, "RT1_VISITOR_VOICE_DENIED"));
