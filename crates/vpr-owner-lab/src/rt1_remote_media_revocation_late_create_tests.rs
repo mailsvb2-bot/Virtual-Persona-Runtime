@@ -287,7 +287,8 @@ fn late_create_after_uncertain_stop_wakes_reconciler_without_waiting_for_network
     });
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Arc::new(Rt1RemoteMediaRevocation::new(client, "late-uncertain".into(), 12).unwrap());
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client, "late-uncertain".into(), 12).unwrap());
     let notifications = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let notified = Arc::clone(&notifications);
     remote.install_revoke_notifier(move || {
