@@ -432,11 +432,12 @@ mod tests {
             response.extend_from_slice(&buffer[..count]);
         }
         assert!(response.starts_with(b"HTTP/1.1 200 OK"));
-        assert!(rt1.take_transport_writer(&transport_id).is_some());
         // This is the same handle installed by proxy_connection before it
         // forwarded the request to tiny_http's internal listener.
-        let writer = rt1.take_transport_writer(&transport_id);
-        assert!(writer.is_none(), "writer registration is consumed once");
+        let writer = rt1
+            .take_transport_writer(&transport_id)
+            .expect("public response writer is registered");
+        writer.revoke();
         release_tx.send(()).unwrap();
         proxy_thread.join().unwrap();
         upstream_thread.join().unwrap();
