@@ -220,7 +220,9 @@ fn identity_conflict_during_stop_cannot_be_cleared_by_an_inflight_receipt() {
     accepted_rx.recv_timeout(Duration::from_secs(3)).unwrap();
 
     assert_eq!(
-        remote.record_created_session("conflicting-session").unwrap_err(),
+        remote
+            .record_created_session("conflicting-session")
+            .unwrap_err(),
         "RT1_REMOTE_SESSION_ID_CONFLICT"
     );
     release_tx.send(()).unwrap();
