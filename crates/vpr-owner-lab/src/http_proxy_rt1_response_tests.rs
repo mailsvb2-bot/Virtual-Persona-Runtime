@@ -28,7 +28,9 @@ fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_
     let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let mut browser = TcpStream::connect(public_listener.local_addr().unwrap()).unwrap();
     let (public_socket, _) = public_listener.accept().unwrap();
-    browser\n        .set_read_timeout(Some(Duration::from_secs(1)))\n        .unwrap();
+    browser
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let (mut writer, cancellation) =
         CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
     let started = Instant::now();
