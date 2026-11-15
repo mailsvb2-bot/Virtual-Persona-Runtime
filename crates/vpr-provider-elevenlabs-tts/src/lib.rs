@@ -179,7 +179,11 @@ fn stream_pcm(
     let mut pending = None::<u8>;
     let mut total = 0_usize;
     loop {
-        let Some(bytes) = client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)? else {
+        let Some(bytes) = client.chunk(
+            &mut response,
+            cancellation,
+            MAX_PROVIDER_BINARY_BODY_BYTES,
+        )? else {
             break;
         };
         total = total
