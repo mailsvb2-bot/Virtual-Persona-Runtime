@@ -65,9 +65,7 @@ impl Rt1RemoteMediaRevocation {
     /// # Errors
     /// Rejects an unreachable, unauthorized or fenced worker.
     pub fn publication_ready(&self) -> Result<(), String> {
-        self.worker
-            .publication_ready()
-            .map_err(|_| "RT1_WORKER_NOT_READY".to_owned())
+        self.worker.publication_ready().map_err(str::to_owned)
     }
 
     /// Bind a canonical worker CREATE to the worker's authenticated durable
