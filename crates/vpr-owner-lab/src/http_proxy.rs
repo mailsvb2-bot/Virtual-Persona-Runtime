@@ -151,7 +151,7 @@ fn read_request_until(
         }
         read_exact_before_deadline(stream, &mut byte, deadline)?;
         header.push(byte[0]);
-        if header.ends_with(b"\\r\\n\\r\\n") {
+        if header.ends_with(b"\r\n\r\n") {
             break;
         }
     }
@@ -556,7 +556,7 @@ mod tests {
         let sender = thread::spawn(move || {
             client.write_all(b"P").unwrap();
             thread::sleep(Duration::from_millis(80));
-            let _ = client.write_all(b"OST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{");
+            let _ = client.write_all(b"OST /api/rt1/visitor/text HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{");
             thread::sleep(Duration::from_millis(120));
             let _ = client.write_all(b"}");
         });
@@ -580,7 +580,7 @@ mod tests {
         let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
         let (mut server, _) = listener.accept().unwrap();
         let sender = thread::spawn(move || {
-            for byte in b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 0\\r\\n\\r\\n" {
+            for byte in b"POST /api/rt1/visitor/text HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\n\r\n" {
                 if client.write_all(&[*byte]).is_err() {
                     break;
                 }
