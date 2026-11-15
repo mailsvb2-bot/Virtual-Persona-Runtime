@@ -91,20 +91,38 @@ class HttpLifecycleTests(unittest.TestCase):
                 return error.code, json.load(error)
 
         self.assertEqual(probe("wrong")[0], 401)
-        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        # A live worker with only transport tracks cannot publish a Persona.
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": False}),
+        )
         self.assertEqual(self.backend.allocations, 0)
         self.assertIsNone(self.lifecycle.status("operation-1"))
 
-        # A durable active sender must fence future publication. The probe
-        # never creates, cancels, or claims to stop that sender.
+        # Only an explicit renderer-ready capability can pass the media gate.
+        self.backend.video_renderer_ready = True
+        self.assertEqual(
+            probe("test-secret"),
+            (200, {"ready": True, "persona_video_ready": True}),
+        )
+        # A durable active sender independently fences future publication.
         self.assertEqual(self.request("PUT")[0], 200)
-        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": True}),
+        )
         self.assertEqual(self.backend.allocations, 1)
         self.assertEqual(self.backend.stops, 0)
         self.assertEqual(self.request("DELETE")[0], 200)
-        self.assertEqual(probe("test-secret"), (200, {"ready": True}))
+        self.assertEqual(
+            probe("test-secret"),
+            (200, {"ready": True, "persona_video_ready": True}),
+        )
         self.lifecycle.request_shutdown()
-        self.assertEqual(probe("test-secret"), (503, {"ready": False}))
+        self.assertEqual(
+            probe("test-secret"),
+            (503, {"ready": False, "persona_video_ready": True}),
+        )
 
     def test_slow_drip_cannot_reset_total_body_deadline(self):
         self.server.RequestHandlerClass = handler_for(
