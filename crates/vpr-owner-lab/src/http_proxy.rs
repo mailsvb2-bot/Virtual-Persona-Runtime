@@ -260,7 +260,7 @@ fn relay_rt1_response(
                         | io::ErrorKind::TimedOut
                         | io::ErrorKind::WouldBlock
                 ) => {}
-            Err((error) => return Err(error),
+            Err(error) => return Err(error),
         }
     }
 }
