@@ -265,6 +265,26 @@ fn owner_provision(request: &mut tiny_http::Request) -> Rt1HttpResult {
     ))
 }
 
+/// Publication must only issue visitor tokens when the same authorized
+/// transport can subsequently start and supply auditable audio/video STOP.
+/// D-ID V2 LiveKit currently lacks a confirmed remote video STOP path.
+fn publication_media_transport_ready(
+    verified_worker: bool,
+    diagnostic_rtp: bool,
+    worker_endpoint: Option<&str>,
+    worker_token: Option<&str>,
+) -> Result<(), &'static str> {
+    if !verified_worker && !diagnostic_rtp {
+        return Err("RT1_REMOTE_VIDEO_STOP_UNCONFIRMED");
+    }
+    if worker_endpoint.is_none_or(|value| value.trim().is_empty())
+        || worker_token.is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("RT1_WORKER_NOT_CONFIGURED");
+    }
+    Ok(())
+}
+
 fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpResult {
     let body: OwnerPublish = parse_json(request)?;
     let readiness = || -> Result<(), String> {
@@ -273,19 +293,17 @@ fn owner_publish(request: &mut tiny_http::Request, state: &AppState) -> Rt1HttpR
         if !status.egress_enabled || status.owner_context_state != OwnerContextState::Reviewed {
             return Err("RT1_REVIEWED_PERSONA_AND_EGRESS_REQUIRED".into());
         }
-        if verified_worker::selected()
-            || std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true")
-        {
-            for name in ["RT1_WORKER_ENDPOINT", "RT1_WORKER_TOKEN"] {
-                if std::env::var(name)
-                    .ok()
-                    .is_none_or(|value| value.trim().is_empty())
-                {
-                    return Err("RT1_WORKER_NOT_CONFIGURED".into());
-                }
-            }
-        }
-        Ok(())
+        // Match visitor_start's allowlist before creating a public visitor
+        // token; never publish an invitation guaranteed to fail on START.
+        let endpoint = std::env::var("RT1_WORKER_ENDPOINT").ok();
+        let token = std::env::var("RT1_WORKER_TOKEN").ok();
+        publication_media_transport_ready(
+            verified_worker::selected(),
+            std::env::var("VPR_RT1_DIAGNOSTIC_RTP").as_deref() == Ok("true"),
+            endpoint.as_deref(),
+            token.as_deref(),
+        )
+        .map_err(str::to_owned)
     };
     let visitor_token = Rt1OwnerController::new()
         .publish(&body.owner_token, body.expected_persona_version, readiness)
