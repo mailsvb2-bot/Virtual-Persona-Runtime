@@ -93,6 +93,14 @@ pub(super) fn visitor_start(
     }
     let (session_id, _reservation) = reserve_session_identity(state)?;
     let (providers, worker) = selected_provider_bundle(&session_id)?;
+    // Published visitor tokens may outlive an Owner Lab process restart.
+    // Recheck the authenticated worker and real Persona renderer at START;
+    // publication-time readiness alone must never authorize a stale invite.
+    if let Some(worker) = worker.as_ref() {
+        worker
+            .publication_ready()
+            .map_err(startup_errors::publication_error_response)?;
+    }
     let mut engine = super::super::engine_bootstrap::assemble(providers, true)
         .map_err(|_| error_response(503, "RT1_ENGINE_UNAVAILABLE"))?;
     if !matches!(restore_reviewed_persona(&mut engine), Ok(true)) {
