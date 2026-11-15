@@ -221,7 +221,11 @@ fn stream_pcm_body(
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        let Some(bytes) = client.chunk(&mut response, cancellation, MAX_PROVIDER_BINARY_BODY_BYTES)? else {
+        let Some(bytes) = client.chunk(
+            &mut response,
+            cancellation,
+            MAX_PROVIDER_BINARY_BODY_BYTES,
+        )? else {
             break;
         };
         let size = bytes.len();
