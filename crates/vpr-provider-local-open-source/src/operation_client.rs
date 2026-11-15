@@ -167,6 +167,10 @@ impl RemoteOperationClient {
         if generation == 0 {
             return Err(denied());
         }
+        // Keep the readiness fence inside the single client that owns CREATE:
+        // stale visitor tokens and alternate callers cannot allocate media
+        // while the real Persona renderer or durable worker admission is down.
+        self.publication_ready().map_err(|_| denied())?;
         let response = self
             .client
             .put(self.url(operation_id)?)
