@@ -206,7 +206,7 @@ const server = http.createServer(async (request, response) => {
         "Этот ответ ",
         "должен начаться, но хвост обязан отмениться.",
         " Эта фраза не должна дойти до аватара.",
-        Number(process.env.VPR_RT1_E2E_INTERRUPT_DELAY_MS ?? "5000"),
+        Number(process.env.VPR_RT1_E2E_INTERRUPT_DELAY_MS ?? 5_000),
         250,
       );
     }
