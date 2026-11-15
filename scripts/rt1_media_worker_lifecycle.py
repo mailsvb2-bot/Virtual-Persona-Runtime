@@ -113,24 +113,39 @@ class MediaLifecycle:
         self._stop_lock_path = str(path) + ".stop.lock"
         self._backend = backend
 
-    def publication_ready(self) -> bool:
+    def publication_readiness(self) -> dict[str, bool]:
         """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
 
-        Worker restart quarantine, shutdown, or any unresolved sender must
-        deny new public invitations. CREATE rechecks this under SQLite's
-        BEGIN IMMEDIATE, so this snapshot does not replace admission fencing.
+        A real Persona video renderer is mandatory for public publication.
+        Missing, false, or failing backend capability probes deny publication.
+        The durable ledger independently denies unresolved senders/shutdown;
+        CREATE still rechecks that state under BEGIN IMMEDIATE.
         """
+        probe = getattr(self._backend, "persona_video_ready", None)
+        try:
+            persona_video_ready = callable(probe) and probe() is True
+        except Exception:
+            persona_video_ready = False
         if self._closing.is_set():
-            return False
+            return {"ready": False, "persona_video_ready": persona_video_ready}
         with self._lock:
             if self._closing.is_set():
-                return False
-            return self._db.execute(
-                """SELECT 1 FROM media_operations
-                   WHERE phase != 'stopped'
-                      OR (session_id IS NOT NULL AND stop_verified=0)
-                   LIMIT 1"""
-            ).fetchone() is None
+                ledger_ready = False
+            else:
+                ledger_ready = self._db.execute(
+                    """SELECT 1 FROM media_operations
+                       WHERE phase != 'stopped'
+                          OR (session_id IS NOT NULL AND stop_verified=0)
+                       LIMIT 1"""
+                ).fetchone() is None
+        return {
+            "ready": ledger_ready and persona_video_ready,
+            "persona_video_ready": persona_video_ready,
+        }
+
+    def publication_ready(self) -> bool:
+        """Compatibility predicate for callers that need only the final gate."""
+        return self.publication_readiness()["ready"]
 
     def _get(self, operation_id: str):
         return self._db.execute(
