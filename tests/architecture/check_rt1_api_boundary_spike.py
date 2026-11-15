@@ -125,6 +125,7 @@ forbidden_markers = (
 local_lab_files = {
     Path("crates/vpr-owner-lab/src/main.rs"),
     Path("crates/vpr-owner-lab/src/http_rt1.rs"),
+    Path("crates/vpr-owner-lab/src/http_proxy.rs"),
     Path("crates/vpr-owner-lab/ui/rt1.js"),
     # Test-only caller of the gated local RT1 route, never shipped as an API surface.
     Path("crates/vpr-owner-lab/ui/e2e/rt1-canonical-provider.spec.ts"),
@@ -139,6 +140,8 @@ local_lab_files = {
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
+startup = (ROOT / "crates/vpr-owner-lab/src/startup.rs").read_text(encoding="utf-8")
+proxy = (ROOT / "crates/vpr-owner-lab/src/http_proxy.rs").read_text(encoding="utf-8")
 if (
     'format!("127.0.0.1:{port}")' not in entry
     or 'if method == Method::Post && path.starts_with("/api/rt1/")' not in entry
@@ -152,6 +155,12 @@ if (
     or 'std::env::var("VPR_RT1_LOCAL_EXPERIMENT").as_deref() == Ok("true")' not in local_lab
     or 'if !enabled()' not in local_lab
     or '"/rt1" =>' not in local_lab
+    # The actual public socket is a separate loopback-only owner; tiny_http
+    # remains the single parser/router behind it, including RT1 transport IDs.
+    or 'let address = format!("127.0.0.1:{port}")' not in startup
+    or 'TcpListener::bind(&address)' not in startup
+    or 'http_proxy::serve(&listener, upstream, &proxy_state)' not in startup
+    or 'for incoming in listener.incoming()' not in proxy
 ):
     raise SystemExit("RT1 local experiment must be loopback-only and default-denied")
 

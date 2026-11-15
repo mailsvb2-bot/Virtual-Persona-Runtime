@@ -1,5 +1,5 @@
 //! Lifecycle for real browser TCP response registrations.
-//! The writer handle is installed before the request reaches tiny_http; the
+//! The writer handle is installed before the request reaches `tiny_http`; the
 //! visitor session adopts it only after the canonical route returns its lease.
 use super::Rt1HttpState;
 use std::sync::Arc;
@@ -107,35 +107,32 @@ pub(super) fn respond_post(
                 return;
             };
             let abort = writer.clone();
-            match conversation.begin_browser_tcp_delivery(writer) {
-                Ok(guard) => {
-                    if !state.rt1.retain_transport_delivery(
-                        transport_id.to_owned(),
-                        Arc::clone(&conversation),
-                        guard,
-                        must_compensate,
-                    ) {
-                        abort.revoke();
-                        conversation.revoke_undelivered_start();
-                        let _ = request.respond(super::error_response(
-                            503,
-                            "RT1_RESPONSE_WRITER_UNAVAILABLE",
-                        ));
-                        return;
-                    }
-                    if request.respond(routed.response).is_err() {
-                        state.rt1.finish_transport_delivery(transport_id, false);
-                    }
-                }
-                Err(_) => {
+            if let Ok(guard) = conversation.begin_browser_tcp_delivery(writer) {
+                if !state.rt1.retain_transport_delivery(
+                    transport_id.to_owned(),
+                    Arc::clone(&conversation),
+                    guard,
+                    must_compensate,
+                ) {
                     abort.revoke();
                     conversation.revoke_undelivered_start();
-                    let response = super::delivery_denied_after_revoke(
-                        conversation.has_remote_video_stop_receipt_path(),
-                        conversation.remote_media_stop_confirmed(),
-                    );
-                    let _ = request.respond(response);
+                    let _ = request.respond(super::error_response(
+                        503,
+                        "RT1_RESPONSE_WRITER_UNAVAILABLE",
+                    ));
+                    return;
                 }
+                if request.respond(routed.response).is_err() {
+                    state.rt1.finish_transport_delivery(transport_id, false);
+                }
+            } else {
+                abort.revoke();
+                conversation.revoke_undelivered_start();
+                let response = super::delivery_denied_after_revoke(
+                    conversation.has_remote_video_stop_receipt_path(),
+                    conversation.remote_media_stop_confirmed(),
+                );
+                let _ = request.respond(response);
             }
             return;
         }

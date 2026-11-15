@@ -1,4 +1,4 @@
-//! Public localhost TCP owner for the existing tiny_http application.
+//! Public localhost TCP owner for the existing `tiny_http` application.
 //! RT1 browser responses keep their actual socket registered with the same
 //! runtime session that revokes provider egress; no second HTTP router exists.
 use super::{AppState, HTTP_WORKERS};
@@ -12,6 +12,7 @@ use vpr_runtime::CancellableTcpWriter;
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+const MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024 * 1024;
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(90);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -20,9 +21,9 @@ const RT1_READ_POLL: Duration = Duration::from_millis(100);
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) fn serve(
-    listener: TcpListener,
+    listener: &TcpListener,
     upstream: SocketAddr,
-    state: Arc<AppState>,
+    state: &Arc<AppState>,
 ) -> io::Result<()> {
     let (sender, receiver) = mpsc::sync_channel::<TcpStream>(64);
     let receiver = Arc::new(Mutex::new(receiver));
@@ -31,9 +32,8 @@ pub(super) fn serve(
         let state = Arc::clone(&state);
         thread::spawn(move || loop {
             let next = receiver.lock().map(|queue| queue.recv());
-            let stream = match next {
-                Ok(Ok(stream)) => stream,
-                _ => break,
+            let Ok(Ok(stream)) = next else {
+                break;
             };
             proxy_connection(stream, upstream, &state);
         });
@@ -53,12 +53,9 @@ pub(super) fn serve(
 
 fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<AppState>) {
     let _ = stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT));
-    let (raw_request, method, path) = match read_request(&mut stream) {
-        Ok(request) => request,
-        Err(_) => {
-            write_error(&mut stream, 400, "BAD_REQUEST");
-            return;
-        }
+    let Ok((raw_request, method, path)) = read_request(&mut stream) else {
+        write_error(&mut stream, 400, "BAD_REQUEST");
+        return;
     };
     let rt1_post = method == "POST"
         && path
@@ -71,20 +68,17 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, state: &Arc<App
             NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
         )
     });
-    let forwarded = match rewrite_request(&raw_request, request_id.as_deref()) {
-        Ok(request) => request,
-        Err(_) => {
-            write_error(&mut stream, 400, "BAD_REQUEST");
-            return;
-        }
+    let Ok(forwarded) = rewrite_request(&raw_request, request_id.as_deref()) else {
+        write_error(&mut stream, 400, "BAD_REQUEST");
+        return;
     };
 
     if let Some(id) = request_id.as_deref() {
-        let (mut writer, cancellation) =
-            match CancellableTcpWriter::new(stream, RESPONSE_DEADLINE) {
-                Ok(writer) => writer,
-                Err(_) => return,
-            };
+        let Ok((mut writer, cancellation)) =
+            CancellableTcpWriter::new(stream, RESPONSE_DEADLINE)
+        else {
+            return;
+        };
         if state
             .rt1
             .register_transport_writer(id.to_owned(), cancellation.clone())
@@ -216,7 +210,7 @@ fn rewrite_request(raw: &[u8], transport_id: Option<&str>) -> io::Result<Vec<u8>
     forwarded.extend_from_slice(request_line.as_bytes());
     forwarded.extend_from_slice(b"\r\n");
     for line in lines {
-        let name = line.split_once(':').map(|(name, _)| name.trim()).unwrap_or("");
+        let name = line.split_once(':').map_or("", |(name, _)| name.trim());
         if name.eq_ignore_ascii_case("connection")
             || name.eq_ignore_ascii_case("x-vpr-rt1-transport-id")
         {
@@ -263,10 +257,7 @@ fn relay_rt1_response(
                     io::ErrorKind::Interrupted
                         | io::ErrorKind::TimedOut
                         | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                continue;
-            }
+                ) => {}
             Err(error) => return Err(error),
         }
     }
@@ -279,10 +270,144 @@ fn relay_ordinary_response(
 ) -> io::Result<()> {
     let mut upstream = TcpStream::connect_timeout(&upstream_address, UPSTREAM_CONNECT_TIMEOUT)?;
     upstream.set_write_timeout(Some(UPSTREAM_WRITE_TIMEOUT))?;
+    upstream.set_read_timeout(Some(RT1_READ_POLL))?;
+    client.set_write_timeout(Some(RESPONSE_DEADLINE))?;
     upstream.write_all(request)?;
     upstream.shutdown(Shutdown::Write)?;
-    io::copy(&mut upstream, client)?;
+
+    let deadline = Instant::now() + RESPONSE_DEADLINE;
+    let mut header = Vec::with_capacity(1024);
+    let mut byte = [0_u8; 1];
+    loop {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "ordinary HTTP response header deadline exceeded",
+            ));
+        }
+        match upstream.read_exact(&mut byte) {
+            Ok(()) => {
+                header.push(byte[0]);
+                if header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if header.len() > MAX_HEADER_BYTES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "ordinary HTTP response headers too large",
+                    ));
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    // The internal Owner Lab server returns bounded Cursor-backed responses.
+    // Read exactly that framing instead of waiting for TCP EOF: a keep-alive
+    // connection must never pin one of the finite public proxy workers.
+    let body_length = parse_response_content_length(&header)?;
+    client.write_all(&header)?;
+    let mut remaining = body_length;
+    let mut buffer = [0_u8; 16 * 1024];
+    while remaining > 0 {
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "ordinary HTTP response body deadline exceeded",
+            ));
+        }
+        let limit = remaining.min(buffer.len());
+        match upstream.read(&mut buffer[..limit]) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "ordinary HTTP response body truncated",
+                ));
+            }
+            Ok(count) => {
+                client.write_all(&buffer[..count])?;
+                remaining -= count;
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::Interrupted
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
     Ok(())
+}
+
+fn parse_response_content_length(header: &[u8]) -> io::Result<usize> {
+    let text = std::str::from_utf8(header)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
+    if !text.ends_with("\r\n\r\n") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incomplete HTTP response headers",
+        ));
+    }
+    let mut lines = text[..text.len() - 4]
+        .split("\r\n")
+        .filter(|line| !line.is_empty());
+    let status = lines
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status"))?;
+    if !status.starts_with("HTTP/1.1 ") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsupported HTTP response version",
+        ));
+    }
+    let mut content_length = None;
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response header"))?;
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "duplicate HTTP response content length",
+                ));
+            }
+            content_length = Some(
+                value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response content length"))?,
+            );
+        }
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported HTTP response transfer encoding",
+            ));
+        }
+    }
+    let length = content_length.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bounded HTTP response content length required",
+        )
+    })?;
+    if length > MAX_RESPONSE_BODY_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "ordinary HTTP response body too large",
+        ));
+    }
+    Ok(length)
 }
 
 fn write_error(stream: &mut TcpStream, status: u16, code: &str) {
@@ -306,7 +431,12 @@ fn error_response(status: u16, code: &str) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_request_header, rewrite_request};
+    use super::{parse_request_header, parse_response_content_length, relay_ordinary_response, rewrite_request};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn proxy_injects_unspoofable_transport_identity_and_closes_upstream() {
@@ -339,5 +469,70 @@ mod tests {
         ] {
             assert!(parse_request_header(header).is_err());
         }
+    }
+
+    #[test]
+    fn ordinary_response_requires_single_bounded_content_length() {
+        let valid = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\n";
+        assert_eq!(parse_response_content_length(valid).unwrap(), 2);
+        for invalid in [
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n".as_slice(),
+            b"HTTP/1.1 200 OK\r\n\r\n".as_slice(),
+        ] {
+            assert!(parse_response_content_length(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn ordinary_relay_returns_at_content_length_while_upstream_keeps_connection_open() {
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let upstream = thread::spawn(move || {
+            let (mut socket, _) = upstream_listener.accept().unwrap();
+            let mut request_header = Vec::new();
+            let mut byte = [0_u8; 1];
+            loop {
+                socket.read_exact(&mut byte).unwrap();
+                request_header.push(byte[0]);
+                if request_header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok",
+                )
+                .unwrap();
+            release_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+        });
+
+        let client_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client_address = client_listener.local_addr().unwrap();
+        let mut client = std::net::TcpStream::connect(client_address).unwrap();
+        let (mut relay_socket, _) = client_listener.accept().unwrap();
+        let started = Instant::now();
+        relay_ordinary_response(
+            upstream_address,
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            &mut relay_socket,
+        )
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        let expected =
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok";
+        let mut actual = vec![0_u8; expected.len()];
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        client.read_exact(&mut actual).unwrap();
+        assert_eq!(actual, expected);
+        release_sender.send(()).unwrap();
+        upstream.join().unwrap();
     }
 }
