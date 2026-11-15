@@ -173,7 +173,7 @@ test.afterEach(async ({ request }) => {
       // cleanup for that exact generation; wait for the observable Closed/None
       // state instead of leaking a revoked session into the next E2E case.
       await expect.poll(async () => {
-        const current = await request.get(`${ownerLabUrl}/api/bootstrap`);
+        const current = await request.get(`${ownerLabUrl}/api/status`);
         if (!current.ok()) return "unavailable";
         const snapshot = await current.json() as { session_state: string };
         return snapshot.session_state;
