@@ -175,11 +175,11 @@ mod tests {
             let mut request = [0_u8; 4096];
             assert!(stream.read(&mut request).unwrap() > 0);
             stream
-                .write_all(b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n")
+                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
                 .unwrap();
-            stream.write_all(b"c8\\r\\n").unwrap();
+            stream.write_all(b"c8\r\n").unwrap();
             stream.write_all(&[b'a'; 200]).unwrap();
-            stream.write_all(b"\\r\\n0\\r\\n\\r\\n").unwrap();
+            stream.write_all(b"\r\n0\r\n\r\n").unwrap();
         });
         let http = CancellableProviderHttp::new(Duration::from_secs(2)).unwrap();
         let response = http
@@ -237,13 +237,13 @@ mod tests {
             let _ = stream.read(&mut request).expect("read provider request");
             stream
                 .write_all(
-                    b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: keep-alive\\r\\n\\r\\n5\\r\\nfirst\\r\\n",
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n5\r\nfirst\r\n",
                 )
                 .expect("write first response chunk");
             stream.flush().expect("flush first response chunk");
             ready_tx.send(()).expect("signal first chunk available");
             let _ = release_rx.recv_timeout(Duration::from_secs(2));
-            let _ = stream.write_all(b"0\\r\\n\\r\\n");
+            let _ = stream.write_all(b"0\r\n\r\n");
         });
 
         let http = CancellableProviderHttp::new(Duration::from_secs(10))
