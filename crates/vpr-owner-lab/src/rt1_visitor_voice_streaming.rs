@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::{Rt1VisitorConversation, unsupported_visitor_voice_egress};
-use crate::state::{LabVoiceResult, LabError};
+use crate::state::{LabError, LabVoiceResult};
 
 impl Rt1VisitorConversation {
     /// Run the canonical pull-stream STT -> LLM -> TTS path for a verified
