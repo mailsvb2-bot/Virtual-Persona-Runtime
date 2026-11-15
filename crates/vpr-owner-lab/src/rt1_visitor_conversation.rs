@@ -132,11 +132,7 @@ impl Rt1VisitorConversation {
         if let Err(error) = manager.authorize_persona(&id, &persona_id, persona_version) {
             return manager.close(&id).and(Err(error));
         }
-        let readiness_error =
-            remote.as_ref().and_then(|worker| worker.publication_ready().err());
-        if let Some(reason) = readiness_error {
-            return manager.close(&id).and(Err(reason.to_owned()));
-        }
+        helpers::require_worker_ready(&manager, &id, remote.as_deref())?;
         if let (Some(remote), Some(register)) = (&remote, register_cleanup)
             && let Err(error) = register(remote)
         {
@@ -183,7 +179,9 @@ impl Rt1VisitorConversation {
                 return Err(error.code().to_owned());
             }
         };
-        if remote.as_ref().is_some_and(|worker| worker.synchronize_created_session().is_err()) {
+        if let Some(worker) = &remote
+            && worker.synchronize_created_session().is_err()
+        {
             let _ = manager.close(&id);
             return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
         }
