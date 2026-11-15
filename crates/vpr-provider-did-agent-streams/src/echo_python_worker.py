@@ -497,7 +497,10 @@ async def run():
                         # stdin. A previously confirmed terminal stream is
                         # already aborted; do not terminate the worker on the
                         # harmless late duplicate.
-                        emit(identifier, stream_id == last_terminal_pcm_stream_id)
+                        emit(
+                            identifier,
+                            stream_id is not None and stream_id == last_terminal_pcm_stream_id,
+                        )
                         continue
                     generation += 1
                     active_pcm = None
