@@ -4,6 +4,7 @@ A separate deployed test must inspect real sender RTP on revoke.
 """
 import base64
 import json
+from contextlib import contextmanager
 import sqlite3
 import socket
 import sys
@@ -45,6 +46,26 @@ class Backend:
     def stop(self, operation_id, session_id, generation):
         self.stops += 1
         return StopReceipt(operation_id, session_id, generation, True, True)
+
+
+@contextmanager
+def exclusive_stop_when_idle(lifecycle, timeout=1.0):
+    """Wait for the preceding HTTP handler to release its nonblocking STOP lock."""
+    deadline = time.monotonic() + timeout
+    while True:
+        guard = lifecycle._exclusive_stop()
+        try:
+            guard.__enter__()
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+            continue
+        try:
+            yield
+        finally:
+            guard.__exit__(None, None, None)
+        return
 
 
 class HttpLifecycleTests(unittest.TestCase):
@@ -596,7 +617,7 @@ class HttpLifecycleTests(unittest.TestCase):
         )
         # The HTTP handler runs in another thread, and the physical STOP
         # lock is already owned by a concurrent operation. No push began.
-        with self.lifecycle._exclusive_stop():
+        with exclusive_stop_when_idle(self.lifecycle):
             with self.assertRaises(HTTPError) as error:
                 urlopen(request, timeout=3)
             self.assertEqual(error.exception.code, 409)
