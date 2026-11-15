@@ -37,7 +37,6 @@ pub(super) fn finish_close(
     remote_stop?;
     local_stop
 }
-
 /// Recheck the authenticated worker after visitor authorization and close the
 /// just-opened local session if the renderer or worker admission is unavailable.
 pub(super) fn require_worker_ready(
