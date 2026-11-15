@@ -114,6 +114,9 @@ impl AuthorizationController {
             .revoke()
             .map_err(|_| RuntimeDenyReason::InternalError)?;
         Self::cancel_stale_bound_turns(&mut state);
+        self.gate
+            .revoke_tcp_response_writers_locked()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         Ok(())
     }
 
@@ -135,6 +138,9 @@ impl AuthorizationController {
             .replace(expires_at_millis)
             .map_err(|_| RuntimeDenyReason::InternalError)?;
         Self::cancel_stale_bound_turns(&mut state);
+        self.gate
+            .revoke_tcp_response_writers_locked()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         Ok(())
     }
 
@@ -157,7 +163,17 @@ impl AuthorizationController {
             .map_err(|_| RuntimeDenyReason::InternalError)?;
         state.effective_authority = effective_authority;
         Self::cancel_stale_bound_turns(&mut state);
+        self.gate
+            .revoke_tcp_response_writers_locked()
+            .map_err(|()| RuntimeDenyReason::InternalError)?;
         Ok(())
+    }
+
+    pub(crate) fn is_revoked(&self) -> Result<bool, RuntimeDenyReason> {
+        self.state
+            .read()
+            .map(|state| state.authorization.is_revoked())
+            .map_err(|_| RuntimeDenyReason::InternalError)
     }
 
     pub(crate) fn validate_bound(
@@ -337,6 +353,9 @@ impl EgressPolicyController {
         if state.provider_policy_allows != allows {
             Self::advance_and_cancel(&mut state)?;
             state.provider_policy_allows = allows;
+            self.gate
+                .revoke_tcp_response_writers_locked()
+                .map_err(|()| RuntimeDenyReason::InternalError)?;
         }
         Ok(())
     }
@@ -357,6 +376,9 @@ impl EgressPolicyController {
         if state.consent != consent {
             Self::advance_and_cancel(&mut state)?;
             state.consent = consent;
+            self.gate
+                .revoke_tcp_response_writers_locked()
+                .map_err(|()| RuntimeDenyReason::InternalError)?;
         }
         Ok(())
     }
@@ -377,6 +399,9 @@ impl EgressPolicyController {
         if state.local_only_required != required {
             Self::advance_and_cancel(&mut state)?;
             state.local_only_required = required;
+            self.gate
+                .revoke_tcp_response_writers_locked()
+                .map_err(|()| RuntimeDenyReason::InternalError)?;
         }
         Ok(())
     }

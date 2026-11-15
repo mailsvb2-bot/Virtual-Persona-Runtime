@@ -7,7 +7,8 @@ use vpr_policy::{ConsentState, EffectiveAuthority};
 use crate::authority::{AuthorizationController, EgressPolicyController};
 use crate::clock::{RuntimeClock, SystemClock};
 use crate::error::RuntimeDenyReason;
-use crate::execution_gate::SessionExecutionGate;
+use crate::execution_gate::{SessionExecutionGate, TcpResponseRegistration};
+use crate::cancellable_tcp_writer::TcpWriteRevocation;
 use crate::media_timeline::MediaTimeline;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +56,31 @@ impl SessionRevocationHandle {
         self.authorization
             .revoke()
             .map_err(RuntimeDenyReason::reason_code)
+    }
+
+    /// Register the actual client TCP writer for an in-flight HTTP response.
+    /// A concurrent session revoke is serialized with this admission and
+    /// immediately shuts down every registered writer. This is LOCAL response
+    /// cancellation, not evidence of remote RTP sender termination.
+    ///
+    /// # Errors
+    /// Rejects a revoked session or an unavailable execution gate.
+    pub fn register_tcp_response_writer(
+        &self,
+        writer: TcpWriteRevocation,
+    ) -> Result<TcpResponseRegistration, Rt0ReasonCode> {
+        let _admission = self.gate.read().map_err(|()| Rt0ReasonCode::InternalError)?;
+        if self
+            .authorization
+            .is_revoked()
+            .map_err(RuntimeDenyReason::reason_code)?
+        {
+            writer.revoke();
+            return Err(Rt0ReasonCode::InvalidStateTransition);
+        }
+        self.gate
+            .register_tcp_response_writer_locked(writer)
+            .map_err(|()| Rt0ReasonCode::InternalError)
     }
 
     /// Bounded proof that locally admitted provider calls have returned.

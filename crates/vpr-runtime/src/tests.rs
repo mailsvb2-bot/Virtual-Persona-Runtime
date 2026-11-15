@@ -931,3 +931,74 @@ fn late_llm_stream_chunk_cannot_escape_cancelled_canonical_turn() {
     assert_eq!(error.reason_code(), Rt0ReasonCode::TurnCancelled);
     assert_eq!(turn.state(), TurnState::Cancelled);
 }
+
+
+fn tcp_response_pair() -> (std::net::TcpStream, std::net::TcpStream) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    (server, client)
+}
+
+#[test]
+fn session_revoke_aborts_registered_tcp_response_writer() {
+    use std::io::Read as _;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let (server, mut client) = tcp_response_pair();
+    let (mut writer, cancellation) =
+        CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+    let registration = revoker
+        .register_tcp_response_writer(cancellation.clone())
+        .unwrap();
+
+    revoker.revoke_authority().unwrap();
+
+    assert!(cancellation.is_revoked());
+    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let mut byte = [0_u8; 1];
+    assert_eq!(client.read(&mut byte).unwrap(), 0);
+    assert_eq!(
+        writer.write_all_bounded(b"late response").unwrap_err().kind(),
+        std::io::ErrorKind::Interrupted
+    );
+    drop(registration);
+}
+
+#[test]
+fn revoked_session_rejects_and_aborts_late_tcp_response_registration() {
+    use std::io::Read as _;
+
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    revoker.revoke_authority().unwrap();
+    let (server, mut client) = tcp_response_pair();
+    let (_writer, cancellation) =
+        CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+
+    assert!(revoker
+        .register_tcp_response_writer(cancellation.clone())
+        .is_err());
+    assert!(cancellation.is_revoked());
+    client.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    let mut byte = [0_u8; 1];
+    assert_eq!(client.read(&mut byte).unwrap(), 0);
+}
+
+#[test]
+fn completed_tcp_response_unregisters_before_later_session_revoke() {
+    let session = active_session();
+    let revoker = session.revocation_handle();
+    let (server, _client) = tcp_response_pair();
+    let (_writer, cancellation) =
+        CancellableTcpWriter::new(server, Duration::from_secs(2)).unwrap();
+    let registration = revoker
+        .register_tcp_response_writer(cancellation.clone())
+        .unwrap();
+
+    drop(registration);
+    revoker.revoke_authority().unwrap();
+
+    assert!(!cancellation.is_revoked());
+}
