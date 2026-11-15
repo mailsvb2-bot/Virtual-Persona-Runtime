@@ -196,7 +196,7 @@ fn read_exact_before_deadline(
                 }
                 bytes = &mut bytes[count..];
             }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {},
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => return Err(error),
         }
     }
