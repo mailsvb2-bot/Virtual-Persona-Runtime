@@ -6,6 +6,11 @@ on:
       - 'scripts/rt1_aiortc_backend.py'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
+      # RT1 conversation/egress changes must re-run the actual worker lifecycle,
+      # cancellation, durable STOP reconciliation and dual-track RTP probe.
+      - 'crates/vpr-owner-lab/src/rt1_*.rs'
+      - 'crates/vpr-owner-lab/src/http_rt1*.rs'
+      - 'crates/vpr-provider-local-open-source/src/operation_client.rs'
       - '.github/workflows/rt1-local-sender.yml'
   workflow_dispatch:
 
