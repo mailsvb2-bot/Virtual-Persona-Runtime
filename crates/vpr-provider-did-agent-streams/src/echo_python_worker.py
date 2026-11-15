@@ -169,6 +169,10 @@ async def run():
     tasks = {}
     generation = 0
     active_pcm = None
+    # A late pcm_abort may race a session-level interrupt that already
+    # cancelled this exact stream. Remember only the most recent terminal
+    # stream: the worker admits one PCM stream at a time.
+    last_terminal_pcm_stream_id = None
     close_identifier = None
     close_control_confirmed = True
     close_pcm_task = None
@@ -204,6 +208,7 @@ async def run():
 
     async def pump_pcm(state):
         nonlocal generation, active_pcm, terminal_media_failure, close_control_confirmed
+        nonlocal last_terminal_pcm_stream_id
         writer = None
         published = False
         failure_stage = "pcm_stream_open"
@@ -236,6 +241,9 @@ async def run():
                 if state["generation"] != generation:
                     raise asyncio.CancelledError()
                 if state["end_id"] is not None:
+                    # A later abort for an already closed stream is an
+                    # idempotent no-op, not a reason to kill the worker.
+                    last_terminal_pcm_stream_id = state["stream_id"]
                     emit(state["end_id"], True)
                     state["end_id"] = None
         except asyncio.CancelledError:
@@ -482,8 +490,14 @@ async def run():
                     # The pump acknowledges end ONLY after LiveKit stream close.
                 elif command == "pcm_abort":
                     state = active_pcm
-                    if state is None or state["stream_id"] != request.get("stream_id"):
-                        emit(identifier, False)
+                    stream_id = request.get("stream_id")
+                    if state is None or state["stream_id"] != stream_id:
+                        # The canonical interrupt endpoint can cancel this
+                        # stream before the TTS stream's Drop/abort reaches
+                        # stdin. A previously confirmed terminal stream is
+                        # already aborted; do not terminate the worker on the
+                        # harmless late duplicate.
+                        emit(identifier, stream_id == last_terminal_pcm_stream_id)
                         continue
                     generation += 1
                     active_pcm = None
@@ -493,6 +507,7 @@ async def run():
                         state["end_id"] = None
                     try:
                         await asyncio.wait_for(room.local_participant.send_text("{}", topic="did.interrupt"), timeout=0.35)
+                        last_terminal_pcm_stream_id = stream_id
                         emit(identifier, True)
                     except Exception:
                         # A failed PCM abort cannot be followed by another SPEAK.
@@ -501,8 +516,10 @@ async def run():
                         break
                 elif command == "interrupt":
                     generation += 1
+                    interrupted_stream_id = None
                     if active_pcm is not None:
                         state = active_pcm
+                        interrupted_stream_id = state["stream_id"]
                         active_pcm = None
                         state["task"].cancel()
                         if state["end_id"] is not None:
@@ -523,6 +540,8 @@ async def run():
                         close_identifier = identifier
                         close_control_confirmed = False
                         break
+                    if interrupted_stream_id is not None:
+                        last_terminal_pcm_stream_id = interrupted_stream_id
                     emit(identifier, True)
                 elif command == "close":
                     generation += 1
