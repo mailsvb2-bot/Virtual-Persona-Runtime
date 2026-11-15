@@ -42,6 +42,7 @@ mod tests {
         for code in [
             "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED",
             "RT1_WORKER_NOT_CONFIGURED",
+            "RT1_WORKER_NOT_READY",
             "RT1_PROVIDER_UNAVAILABLE",
             "RT1_TTS_NOT_CONFIGURED",
         ] {
