@@ -25,6 +25,9 @@ class SlowBackend:
         self.allocations = 0
         self.stops = 0
 
+    def persona_video_ready(self):
+        return True
+
     def allocate(self, operation_id, generation):
         self.allocations += 1
         self.entered.set()
