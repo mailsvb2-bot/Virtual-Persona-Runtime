@@ -66,3 +66,96 @@ impl Rt1HttpState {
         }
     }
 }
+
+
+pub(super) fn respond_post(
+    mut request: tiny_http::Request,
+    state: &Arc<super::AppState>,
+) {
+    let transport_id = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("X-VPR-RT1-Transport-Id"))
+        .map(|header| header.value.as_str().to_owned());
+    if !super::super::valid_post_headers(&request, &state.csrf_token, state.port) {
+        let _ = request.respond(super::error_response(403, "CSRF_DENIED"));
+        return;
+    }
+    if !super::enabled() {
+        let _ = request.respond(super::error_response(404, "NOT_FOUND"));
+        return;
+    }
+    let path = request.url().to_owned();
+    let Some(routed) = super::route_post(&path, &mut request, state) else {
+        let _ = request.respond(super::error_response(404, "NOT_FOUND"));
+        return;
+    };
+    if let Some(conversation) = routed.delivery {
+        let must_compensate = path == "/api/rt1/visitor/start"
+            || path == "/api/rt1/visitor/answer"
+            || path == "/api/rt1/visitor/ice"
+            || path == "/api/rt1/visitor/text"
+            || path == "/api/rt1/visitor/voice";
+        if let Some(transport_id) = transport_id.as_deref() {
+            let Some(writer) = state.rt1.take_transport_writer(transport_id) else {
+                conversation.revoke_undelivered_start();
+                let response = super::delivery_denied_after_revoke(
+                    conversation.has_remote_video_stop_receipt_path(),
+                    conversation.remote_media_stop_confirmed(),
+                );
+                let _ = request.respond(response);
+                return;
+            };
+            let abort = writer.clone();
+            match conversation.begin_browser_tcp_delivery(writer) {
+                Ok(guard) => {
+                    if !state.rt1.retain_transport_delivery(
+                        transport_id.to_owned(),
+                        Arc::clone(&conversation),
+                        guard,
+                        must_compensate,
+                    ) {
+                        abort.revoke();
+                        conversation.revoke_undelivered_start();
+                        let _ = request.respond(super::error_response(
+                            503,
+                            "RT1_RESPONSE_WRITER_UNAVAILABLE",
+                        ));
+                        return;
+                    }
+                    if request.respond(routed.response).is_err() {
+                        state.rt1.finish_transport_delivery(transport_id, false);
+                    }
+                }
+                Err(_) => {
+                    abort.revoke();
+                    conversation.revoke_undelivered_start();
+                    let response = super::delivery_denied_after_revoke(
+                        conversation.has_remote_video_stop_receipt_path(),
+                        conversation.remote_media_stop_confirmed(),
+                    );
+                    let _ = request.respond(response);
+                }
+            }
+            return;
+        }
+        // Direct tiny_http test requests have no outer socket registration.
+        // Production browser traffic always uses the cancellable public listener.
+        if let Ok(_lease) = conversation.begin_browser_delivery() {
+            if request.respond(routed.response).is_err() && must_compensate {
+                conversation.revoke_undelivered_start();
+            }
+        } else if must_compensate {
+            conversation.revoke_undelivered_start();
+            let response = super::delivery_denied_after_revoke(
+                conversation.has_remote_video_stop_receipt_path(),
+                conversation.remote_media_stop_confirmed(),
+            );
+            let _ = request.respond(response);
+        } else {
+            let _ = request.respond(super::error_response(409, "RT1_VISITOR_DELIVERY_DENIED"));
+        }
+    } else {
+        let _ = request.respond(routed.response);
+    }
+}
