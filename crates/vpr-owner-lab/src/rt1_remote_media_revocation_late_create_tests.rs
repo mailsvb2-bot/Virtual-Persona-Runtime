@@ -117,9 +117,8 @@ fn late_worker_create_id_is_compensated_by_the_registered_owner_before_offer() {
     let worker = spawn_late_create_worker(listener);
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(3)).unwrap();
-    let remote = Arc::new(
-        Rt1RemoteMediaRevocation::new(client.clone(), "late-create".into(), 1).unwrap(),
-    );
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client.clone(), "late-create".into(), 1).unwrap());
     let (notify_tx, notify_rx) = std::sync::mpsc::channel();
     remote.install_revoke_notifier(move || {
         let _ = notify_tx.send(());

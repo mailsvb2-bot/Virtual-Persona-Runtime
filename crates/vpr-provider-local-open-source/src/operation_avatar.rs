@@ -1,8 +1,8 @@
 //! The existing RT1 durable worker as a canonical `RealtimeAvatarPort`.
 //! It owns no publication authority: the caller pre-registers this operation
 //! under the existing RT1 owner/visitor revocation and STOP coordinator.
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -182,9 +182,9 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         // CREATE is never retried after an ambiguous remote outcome. If
         // cancellation races the durable PUT, return its late id to the same
         // registered owner before any SDP offer can be fetched or published.
-        let id = self
-            .client
-            .create_cancellable(&self.operation_id, self.generation, cancellation)?;
+        let id =
+            self.client
+                .create_cancellable(&self.operation_id, self.generation, cancellation)?;
         if let Some(observer) = &self.created_session_observer {
             observer(&id).map_err(|_| denied())?;
         }
@@ -316,9 +316,9 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
 mod tests {
     use super::OperationWorkerAvatar;
     use crate::operation_client::RemoteOperationClient;
-    use std::sync::Arc;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
     use vpr_integration::{CancellationProbe, RealtimeAvatarPort};
@@ -432,7 +432,9 @@ mod tests {
     #[test]
     fn close_session_delegates_to_the_registered_remote_stop_owner() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        use vpr_integration::{RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcSessionDescription};
+        use vpr_integration::{
+            RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcSessionDescription,
+        };
 
         let calls = Arc::new(AtomicUsize::new(0));
         let stop_calls = Arc::clone(&calls);
