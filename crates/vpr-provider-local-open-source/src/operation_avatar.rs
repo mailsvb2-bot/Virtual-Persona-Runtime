@@ -316,6 +316,7 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
 mod tests {
     use super::OperationWorkerAvatar;
     use crate::operation_client::RemoteOperationClient;
+    use std::sync::Arc;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::thread;

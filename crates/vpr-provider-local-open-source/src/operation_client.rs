@@ -90,6 +90,7 @@ struct StopConflictReply {
 #[derive(Debug, Deserialize)]
 struct PendingStopReply {
     operation_id: String,
+    #[serde(default)]
     stop_confirmed: bool,
 }
 
@@ -204,7 +205,10 @@ impl RemoteOperationClient {
         generation: u64,
         cancellation: &dyn CancellationProbe,
     ) -> Result<String, ProviderError> {
-        if generation == 0 || cancellation.is_cancelled() {
+        if generation == 0 {
+            return Err(denied());
+        }
+        if cancellation.is_cancelled() {
             return Err(ProviderError {
                 kind: ProviderErrorKind::Cancelled,
                 retryable: false,
