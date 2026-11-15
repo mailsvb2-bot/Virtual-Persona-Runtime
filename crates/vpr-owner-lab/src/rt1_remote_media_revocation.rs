@@ -58,6 +58,18 @@ impl Rt1RemoteMediaRevocation {
         })
     }
 
+    /// Verify that this authenticated worker is reachable and has no
+    /// unresolved media allocation before publication. This is advisory:
+    /// canonical CREATE still performs durable admission under its own lock.
+    ///
+    /// # Errors
+    /// Rejects an unreachable, unauthorized or fenced worker.
+    pub fn publication_ready(&self) -> Result<(), String> {
+        self.worker
+            .publication_ready()
+            .map_err(|_| "RT1_WORKER_NOT_READY".to_owned())
+    }
+
     /// Bind a canonical worker CREATE to the worker's authenticated durable
     /// identity before any visitor receives an SDP offer or private PCM.
     /// # Errors
