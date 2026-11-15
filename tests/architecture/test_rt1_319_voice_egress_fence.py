@@ -111,7 +111,7 @@ class VisitorVoiceEgressGate(unittest.TestCase):
         body = method_body(
             STREAMING_SOURCE.read_text(encoding="utf-8"), "voice_turn_streaming"
         )
-        self.assertRegex(body, r"self\\s*\\.engine")
+        self.assertRegex(body, r"self\s*\.engine")
         self.assertIn("OperationWorkerAvatar", STREAMING_SOURCE.read_text(encoding="utf-8"))
         self.assertIn("segment.client_command.is_some()", body)
         self.assertNotIn("did.speak", body)
