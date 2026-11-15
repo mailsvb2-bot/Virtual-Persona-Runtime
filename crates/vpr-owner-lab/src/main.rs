@@ -23,14 +23,11 @@ use http_json::{parse_empty_json, parse_json, read_body};
 use http_session::reject_if_session_ending;
 use parking_lot::Mutex as ParkingMutex;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::error::Error;
 use std::io::Cursor;
-use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Method, Request, Response, StatusCode};
 use vpr_domain::Rt0ReasonCode;
 use vpr_integration::{WebRtcIceCandidate, WebRtcSessionDescription};
 use vpr_owner_lab::{
