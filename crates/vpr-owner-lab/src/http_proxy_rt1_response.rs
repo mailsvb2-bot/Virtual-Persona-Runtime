@@ -4,7 +4,9 @@ use std::net::TcpStream;
 use std::time::Instant;
 use vpr_runtime::TcpWriteRevocation;
 
-use super::{MAX_RESPONSE_BODY_BYTES, ResponseFraming, parse_response_framing, response_header_with_close};
+use super::{
+    MAX_RESPONSE_BODY_BYTES, ResponseFraming, parse_response_framing, response_header_with_close,
+};
 
 pub(crate) fn relay_revocable_response_body(
     upstream: &mut TcpStream,
@@ -31,7 +33,10 @@ pub(crate) fn relay_revocable_response_body(
 
 fn ensure_live(deadline: Instant, cancellation: &TcpWriteRevocation) -> io::Result<()> {
     if cancellation.is_revoked() {
-        return Err(io::Error::new(io::ErrorKind::Interrupted, "RT1 response revoked"));
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "RT1 response revoked",
+        ));
     }
     if Instant::now() >= deadline {
         return Err(io::Error::new(
@@ -122,7 +127,10 @@ fn read_chunk_line(
             return Ok(line);
         }
         if line.len() > 8 * 1024 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "HTTP chunk line too large"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP chunk line too large",
+            ));
         }
     }
 }
