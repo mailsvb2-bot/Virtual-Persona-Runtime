@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlsplit
 
-from rt1_media_worker_lifecycle import MediaLifecycle, PersonaRendererUnavailable, StopReceipt
+from rt1_media_worker_lifecycle import MediaLifecycle, StopReceipt
 
 
 def _validated_offer_payload(operation_id: str, session_id: str, offer: dict) -> dict:
@@ -421,6 +421,15 @@ def handler_for(
                 return
             try:
                 if method == "PUT":
+                    # The worker is the authoritative admission boundary:
+                    # stale clients cannot skip the Rust preflight and allocate
+                    # a diagnostic transport track as if it were Persona video.
+                    if not lifecycle.persona_video_ready():
+                        self._send(503, {
+                            "error": "RT1_VIDEO_RENDERER_UNAVAILABLE",
+                            "stop_confirmed": False,
+                        })
+                        return
                     session_id = lifecycle.create_bounded(
                         operation_id, generation, create_timeout_seconds
                     )
@@ -489,8 +498,6 @@ def handler_for(
                             "audio_stopped": receipt.audio_stopped,
                             "video_stopped": receipt.video_stopped,
                         })
-            except PersonaRendererUnavailable:
-                self._send(503, {"error": "RT1_VIDEO_RENDERER_UNAVAILABLE", "stop_confirmed": False})
             except (RuntimeError, KeyError):
                 self._send(409, {"error": "unresolved media allocation", "stop_confirmed": False})
             except Exception:
