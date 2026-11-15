@@ -641,7 +641,7 @@ mod tests {
             b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nTransfer-Encoding: chunked\r\n\r\n".as_slice(),
             b"HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n".as_slice(),
         ] {
-            assert!(parse_response_framing(invalid).is_err() == !invalid.ends_with(b"HTTP/1.1 200 OK\r\n\r\n"));
+            assert!(parse_response_framing(invalid).is_err());
         }
     }
 
@@ -689,6 +689,46 @@ mod tests {
         client.read_exact(&mut actual).unwrap();
         assert_eq!(actual, expected);
         release_sender.send(()).unwrap();
+        upstream.join().unwrap();
+    }
+
+    #[test]
+    fn ordinary_relay_handles_the_actual_tiny_http_cursor_response() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let upstream_address = server.server_addr().to_ip().unwrap();
+        let upstream = thread::spawn(move || {
+            let request = server.recv().unwrap();
+            request
+                .respond(tiny_http::Response::from_data(b"app.js".to_vec()))
+                .unwrap();
+        });
+
+        let client_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client =
+            std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
+        let (mut relay_socket, _) = client_listener.accept().unwrap();
+        relay_ordinary_response(
+            upstream_address,
+            b"GET /app.js HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            &mut relay_socket,
+        )
+        .unwrap();
+        drop(relay_socket);
+
+        let mut response = Vec::new();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        client.read_to_end(&mut response).unwrap();
+        let header_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("tiny_http response header");
+        assert_eq!(
+            parse_response_framing(&response[..header_end + 4]).unwrap(),
+            ResponseFraming::ContentLength(6)
+        );
+        assert!(response.ends_with(b"app.js"));
         upstream.join().unwrap();
     }
 
