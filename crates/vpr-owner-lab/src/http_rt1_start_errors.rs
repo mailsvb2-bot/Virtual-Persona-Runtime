@@ -36,10 +36,17 @@ mod tests {
 
     #[test]
     fn publication_reports_verifiable_media_transport_blockers() {
-        for code in ["RT1_REMOTE_VIDEO_STOP_UNCONFIRMED", "RT1_WORKER_NOT_CONFIGURED"] {
+        for code in [
+            "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED",
+            "RT1_WORKER_NOT_CONFIGURED",
+        ] {
             assert_eq!(publication_error_response(code).status_code().0, 503);
         }
-        for code in ["STALE_PERSONA_VERSION", "invalid owner token", "unexpected provider detail"] {
+        for code in [
+            "STALE_PERSONA_VERSION",
+            "invalid owner token",
+            "unexpected provider detail",
+        ] {
             assert_eq!(publication_error_response(code).status_code().0, 409);
         }
     }
