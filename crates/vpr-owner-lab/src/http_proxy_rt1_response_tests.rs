@@ -17,7 +17,7 @@ fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_
         socket.read_to_end(&mut request).unwrap();
         socket
             .write_all(
-                b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: keep-alive\\r\\n\\r\\nok",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nok",
             )
             .unwrap();
         release_receiver
@@ -34,14 +34,14 @@ fn rt1_response_relay_returns_at_content_length_while_upstream_keeps_connection_
     let started = Instant::now();
     relay_rt1_response(
         upstream_address,
-        b"POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
         &mut writer,
         &cancellation,
     )
     .unwrap();
     assert!(started.elapsed() < Duration::from_secs(1));
 
-    let expected = b"HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok";
+    let expected = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
     let mut actual = vec![0_u8; expected.len()];
     browser.read_exact(&mut actual).unwrap();
     assert_eq!(actual, expected);
@@ -60,7 +60,7 @@ fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation
         socket.read_to_end(&mut request).unwrap();
         socket
             .write_all(
-                b"HTTP/1.1 200 OK\\r\\nContent-Length: 12\\r\\nConnection: close\\r\\n\\r\\npartial",
+                b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\npartial",
             )
             .unwrap();
         socket.shutdown(std::net::Shutdown::Write).unwrap();
@@ -69,12 +69,14 @@ fn rt1_response_relay_rejects_truncated_content_length_for_delivery_compensation
     let public_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let mut browser = TcpStream::connect(public_listener.local_addr().unwrap()).unwrap();
     let (public_socket, _) = public_listener.accept().unwrap();
-    browser.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+    browser
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let (mut writer, cancellation) =
         CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
     let error = relay_rt1_response(
         upstream_address,
-        b"POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
         &mut writer,
         &cancellation,
     )
@@ -95,7 +97,7 @@ fn rt1_response_relay_accepts_close_delimited_tiny_http_response() {
         let mut request = Vec::new();
         socket.read_to_end(&mut request).unwrap();
         socket
-            .write_all(b"HTTP/1.1 200 OK\\r\\nConnection: close\\r\\n\\r\\nok")
+            .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok")
             .unwrap();
     });
 
@@ -109,13 +111,13 @@ fn rt1_response_relay_accepts_close_delimited_tiny_http_response() {
         CancellableTcpWriter::new(public_socket, Duration::from_secs(2)).unwrap();
     relay_rt1_response(
         upstream_address,
-        b"POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+        b"POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}",
         &mut writer,
         &cancellation,
     )
     .unwrap();
 
-    let expected = b"HTTP/1.1 200 OK\\r\\nConnection: close\\r\\n\\r\\nok";
+    let expected = b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok";
     let mut actual = vec![0_u8; expected.len()];
     browser.read_exact(&mut actual).unwrap();
     assert_eq!(actual, expected);

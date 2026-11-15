@@ -307,7 +307,7 @@ fn relay_rt1_response(
                 "RT1 response headers too large",
             ));
         }
-        if header.ends_with(b"\\r\\n\\r\\n") {
+        if header.ends_with(b"\r\n\r\n") {
             break;
         }
     }

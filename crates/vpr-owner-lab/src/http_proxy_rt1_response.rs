@@ -6,7 +6,7 @@ use vpr_runtime::TcpWriteRevocation;
 
 use super::{MAX_RESPONSE_BODY_BYTES, ResponseFraming, parse_response_framing, response_header_with_close};
 
-pub(super) fn relay_revocable_response_body(
+pub(crate) fn relay_revocable_response_body(
     upstream: &mut TcpStream,
     header: &[u8],
     deadline: Instant,
@@ -118,7 +118,7 @@ fn read_chunk_line(
     loop {
         read_exact_revocable(upstream, &mut byte, deadline, cancellation)?;
         line.push(byte[0]);
-        if line.ends_with(b"\\r\\n") {
+        if line.ends_with(b"\r\n") {
             return Ok(line);
         }
         if line.len() > 8 * 1024 {
@@ -160,7 +160,7 @@ fn relay_chunked_body(
                     ));
                 }
                 write(&trailer)?;
-                if trailer == b"\\r\\n" {
+                if trailer == b"\r\n" {
                     return Ok(());
                 }
             }
@@ -169,7 +169,7 @@ fn relay_chunked_body(
         total += size;
         let mut terminator = [0_u8; 2];
         read_exact_revocable(upstream, &mut terminator, deadline, cancellation)?;
-        if terminator != *b"\\r\\n" {
+        if terminator != *b"\r\n" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid HTTP chunk terminator",
