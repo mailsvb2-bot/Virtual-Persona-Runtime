@@ -35,8 +35,24 @@
     });
   };
 
-  const waitForStatus = (expected) =>
-    waitFor(() => statusText().includes(expected), `status:${expected}`);
+  const waitForStatus = async (expected) => {
+    try {
+      await waitFor(() => statusText().includes(expected), `status:${expected}`);
+    } catch (error) {
+      const root = document.documentElement;
+      const connect = document.getElementById("connect");
+      const consent = document.getElementById("consent");
+      const actual = statusText().replace(/\s+/g, " ").trim().slice(0, 180);
+      const autoConnect = root.dataset.vprProviderAutoConnect ?? "unset";
+      const connectDisabled =
+        connect instanceof HTMLButtonElement ? String(connect.disabled) : "missing";
+      const consentChecked =
+        consent instanceof HTMLInputElement ? String(consent.checked) : "missing";
+      throw new Error(
+        `${error.message}:actual=${actual}:autoConnect=${autoConnect}:connectDisabled=${connectDisabled}:consentChecked=${consentChecked}`,
+      );
+    }
+  };
 
   const postJourney = async (update) => {
     await fetch(reportUrl, {
