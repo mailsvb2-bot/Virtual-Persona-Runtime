@@ -6,7 +6,13 @@ const workerUrl = "http://127.0.0.1:18789";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["rt1-worker-voice-journey.spec.ts"],
+  // These browser-only race tests use explicit fake SDK/media objects. They
+  // complement, but never substitute for, the local real-RTP worker journey.
+  testMatch: [
+    "rt1-worker-voice-journey.spec.ts",
+    "rt1-late-livekit-connect.spec.ts",
+    "rt1-late-microphone-revoke.spec.ts",
+  ],
   timeout: 150_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,
