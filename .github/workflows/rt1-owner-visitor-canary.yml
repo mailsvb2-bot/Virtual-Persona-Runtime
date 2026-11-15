@@ -55,6 +55,9 @@ jobs:
       - name: Browser owner publication rejects diagnostic video transport
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.config.ts
+      - name: RT1 visitor microphone to STT/LLM/TTS and RTP STOP (synthetic renderer; not D-ID)
+        working-directory: crates/vpr-owner-lab/ui
+        run: npx playwright test --config playwright.rt1.voice.config.ts
       - name: D-ID-shaped provider fixture safety and unconfirmed STOP (not live D-ID)
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.canonical.config.ts

@@ -132,6 +132,13 @@ const server = http.createServer(async (request, response) => {
     }
     // Uncompressed mono 16-bit PCM WAV (16 kHz), bounded fixture sample.
     const pcm = Buffer.alloc(640);
+    // A deterministic audible tone is enabled only by the RT1 browser fixture.
+    if (process.env.VPR_RT1_E2E_AUDIO_TONE === "true") {
+      for (let sample = 0; sample < 320; sample += 1) {
+        const value = Math.round(Math.sin((2 * Math.PI * 440 * sample) / 16000) * 6000);
+        pcm.writeInt16LE(value, sample * 2);
+      }
+    }
     const wav = Buffer.alloc(44 + pcm.length);
     wav.write("RIFF", 0);
     wav.writeUInt32LE(wav.length - 8, 4);
@@ -199,7 +206,7 @@ const server = http.createServer(async (request, response) => {
         "Этот ответ ",
         "должен начаться, но хвост обязан отмениться.",
         " Эта фраза не должна дойти до аватара.",
-        5_000,
+        Number(process.env.VPR_RT1_E2E_INTERRUPT_DELAY_MS ?? "5000"),
         250,
       );
     }
