@@ -1,7 +1,7 @@
 //! Public localhost TCP owner for the existing `tiny_http` application.
 //! RT1 browser responses keep their actual socket registered with the same
 //! runtime session that revokes provider egress; no second HTTP router exists.
-use super::{http_rt1::Rt1HttpState, AppState, HTTP_WORKERS};
+use super::{AppState, HTTP_WORKERS, http_rt1::Rt1HttpState};
 use std::io::{self, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -93,7 +93,8 @@ fn proxy_connection(mut stream: TcpStream, upstream: SocketAddr, rt1: &Rt1HttpSt
                 return;
             }
         };
-        if rt1.register_transport_writer(id.to_owned(), cancellation.clone())
+        if rt1
+            .register_transport_writer(id.to_owned(), cancellation.clone())
             .is_err()
         {
             let _ =
@@ -364,14 +365,12 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn real_rt1_public_socket_closes_when_registered_writer_is_revoked_mid_response() {
-        use super::{proxy_connection, Rt1HttpState};
+        use super::{Rt1HttpState, proxy_connection};
         use std::io::{Read, Write};
         use std::net::{TcpListener, TcpStream};
-        use std::sync::{mpsc, Arc};
+        use std::sync::{Arc, mpsc};
         use std::thread;
         use std::time::Duration;
 
