@@ -18,9 +18,31 @@ pub(super) fn startup_error_response(reason: &str) -> HttpResponse {
     }
 }
 
+/// Report a specific safe readiness blocker without exposing provider
+/// credentials, owner identity or other private publication failures.
+pub(super) fn publication_error_response(reason: &str) -> HttpResponse {
+    match reason {
+        "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED" => {
+            error_response(503, "RT1_REMOTE_VIDEO_STOP_UNCONFIRMED")
+        }
+        "RT1_WORKER_NOT_CONFIGURED" => error_response(503, "RT1_WORKER_NOT_CONFIGURED"),
+        _ => error_response(409, "RT1_PUBLISH_DENIED"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_reports_verifiable_media_transport_blockers() {
+        for code in ["RT1_REMOTE_VIDEO_STOP_UNCONFIRMED", "RT1_WORKER_NOT_CONFIGURED"] {
+            assert_eq!(publication_error_response(code).status_code().0, 503);
+        }
+        for code in ["STALE_PERSONA_VERSION", "invalid owner token", "unexpected provider detail"] {
+            assert_eq!(publication_error_response(code).status_code().0, 409);
+        }
+    }
 
     #[test]
     fn unresolved_remote_create_requires_reconciliation_not_client_retry() {
