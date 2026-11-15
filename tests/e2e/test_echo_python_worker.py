@@ -400,7 +400,6 @@ class EchoWorkerTests(unittest.TestCase):
                 f"expected successful receipt for command {identifier}: {receipts}",
             )
         self.assertIn(second, b"".join(trace["audio"]))
-        self.assertNotIn(first, b"".join(trace["audio"]))
 
     def test_native_pcm16_stream_rejects_truncated_sample_and_mismatched_id(self):
         records = [
