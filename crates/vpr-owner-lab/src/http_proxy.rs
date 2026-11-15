@@ -733,6 +733,45 @@ mod tests {
     }
 
     #[test]
+    fn close_delimited_relay_has_an_absolute_deadline_when_upstream_stays_open() {
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let upstream_server = thread::spawn(move || {
+            let (mut socket, _) = upstream_listener.accept().unwrap();
+            socket.write_all(b"partial").unwrap();
+            release_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap();
+        });
+
+        let client_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client =
+            std::net::TcpStream::connect(client_listener.local_addr().unwrap()).unwrap();
+        let (mut relay_socket, _) = client_listener.accept().unwrap();
+        let mut upstream = std::net::TcpStream::connect(upstream_address).unwrap();
+        upstream
+            .set_read_timeout(Some(RT1_READ_POLL))
+            .unwrap();
+
+        let started = Instant::now();
+        let error = relay_close_delimited_response_body(
+            &mut upstream,
+            &mut relay_socket,
+            started + Duration::from_millis(250),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let mut partial = [0_u8; 7];
+        client.read_exact(&mut partial).unwrap();
+        assert_eq!(&partial, b"partial");
+
+        release_sender.send(()).unwrap();
+        upstream_server.join().unwrap();
+    }
+
+    #[test]
     fn ordinary_relay_returns_at_content_length_while_upstream_keeps_connection_open() {
         let upstream_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let upstream_address = upstream_listener.local_addr().unwrap();
