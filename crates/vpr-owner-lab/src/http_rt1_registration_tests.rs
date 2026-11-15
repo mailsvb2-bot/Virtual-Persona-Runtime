@@ -316,7 +316,7 @@ fn denied_delivery_with_verified_remote_stop_is_routine_visitor_denial() {
 
 #[test]
 fn rt1_publication_cannot_issue_unusable_did_livekit_visitor_token() {
-    use super::publication_media_transport_ready as ready;
+    use super::start::publication_media_transport_ready as ready;
     // D-ID V2 has no authenticated remote video STOP receipt, even when its
     // account credentials and local Echo speaker are otherwise valid.
     assert_eq!(
