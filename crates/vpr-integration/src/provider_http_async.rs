@@ -135,41 +135,6 @@ fn async_transport_error(error: &reqwest::Error) -> ProviderError {
     } else {
         unavailable()
     }
-
-
-    struct NeverCancelled;
-
-    impl CancellationProbe for NeverCancelled {
-        fn is_cancelled(&self) -> bool {
-            false
-        }
-    }
-
-    #[test]
-    fn async_body_reader_rejects_unknown_length_above_hard_cap() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/provider", listener.local_addr().unwrap());
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 4096];
-            assert!(stream.read(&mut request).unwrap() > 0);
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
-                .unwrap();
-            stream.write_all(b"c8\r\n").unwrap();
-            stream.write_all(&[b'a'; 200]).unwrap();
-            stream.write_all(b"\r\n0\r\n\r\n").unwrap();
-        });
-        let http = CancellableProviderHttp::new(Duration::from_secs(2)).unwrap();
-        let response = http
-            .send(http.post(url).body("test"), &NeverCancelled)
-            .unwrap();
-        let error = http
-            .read_bounded_body(response, 64, &NeverCancelled)
-            .unwrap_err();
-        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
-        server.join().unwrap();
-    }
 }
 
 #[cfg(test)]
@@ -185,12 +150,46 @@ mod tests {
     use std::thread;
     use std::time::Instant;
 
+    struct NeverCancelled;
+
+    impl CancellationProbe for NeverCancelled {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
     struct AtomicCancellationProbe(Arc<AtomicBool>);
 
     impl CancellationProbe for AtomicCancellationProbe {
         fn is_cancelled(&self) -> bool {
             self.0.load(Ordering::Acquire)
         }
+    }
+
+    #[test]
+    fn async_body_reader_rejects_unknown_length_above_hard_cap() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/provider", listener.local_addr().unwrap());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n")
+                .unwrap();
+            stream.write_all(b"c8\\r\\n").unwrap();
+            stream.write_all(&[b'a'; 200]).unwrap();
+            stream.write_all(b"\\r\\n0\\r\\n\\r\\n").unwrap();
+        });
+        let http = CancellableProviderHttp::new(Duration::from_secs(2)).unwrap();
+        let response = http
+            .send(http.post(url).body("test"), &NeverCancelled)
+            .unwrap();
+        let error = http
+            .read_bounded_body(response, 64, &NeverCancelled)
+            .unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+        server.join().unwrap();
     }
 
     #[test]
@@ -238,13 +237,13 @@ mod tests {
             let _ = stream.read(&mut request).expect("read provider request");
             stream
                 .write_all(
-                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n5\r\nfirst\r\n",
+                    b"HTTP/1.1 200 OK\\r\\nTransfer-Encoding: chunked\\r\\nConnection: keep-alive\\r\\n\\r\\n5\\r\\nfirst\\r\\n",
                 )
                 .expect("write first response chunk");
             stream.flush().expect("flush first response chunk");
             ready_tx.send(()).expect("signal first chunk available");
             let _ = release_rx.recv_timeout(Duration::from_secs(2));
-            let _ = stream.write_all(b"0\r\n\r\n");
+            let _ = stream.write_all(b"0\\r\\n\\r\\n");
         });
 
         let http = CancellableProviderHttp::new(Duration::from_secs(10))
