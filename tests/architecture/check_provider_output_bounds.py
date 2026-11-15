@@ -112,8 +112,17 @@ for crate_name in json_body_crates | binary_body_crates:
         crate_name == "vpr-provider-deepgram-stt"
         and "CancellableProviderHttp" in source
         and ".read_bounded_body(response, MAX_PROVIDER_JSON_BODY_BYTES, cancellation)" in source
+    ) or (
+        crate_name == "vpr-provider-openai-speech"
+        and "CancellableProviderHttp" in source
+        and ".read_bounded_body(response, MAX_PROVIDER_BINARY_BODY_BYTES, cancellation)" in source
     )
-    bounded_stream = "read_bounded_provider_stream" in source
+    bounded_stream = "read_bounded_provider_stream" in source or (
+        crate_name in binary_body_crates
+        and "CancellableProviderHttp" in source
+        and "MAX_PROVIDER_BINARY_BODY_BYTES" in source
+        and "client.chunk(" in source
+    )
     # Media adapters may consume bounded chunks instead of waiting for EOF.
     # Both entry points enforce the same maximum observed response body size.
     if not (bounded_body or bounded_stream):
