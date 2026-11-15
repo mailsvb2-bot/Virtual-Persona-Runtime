@@ -116,7 +116,10 @@ fn parse_response_framing(header: &[u8]) -> io::Result<(u16, ResponseFraming)> {
         ));
     }
     let status_code = status_parts.next().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "missing HTTP response status code")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "missing HTTP response status code",
+        )
     })?;
     if status_code.len() != 3 || !status_code.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(io::Error::new(
@@ -125,7 +128,10 @@ fn parse_response_framing(header: &[u8]) -> io::Result<(u16, ResponseFraming)> {
         ));
     }
     let status_code = status_code.parse::<u16>().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "invalid HTTP response status code")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid HTTP response status code",
+        )
     })?;
 
     let mut content_length = None;
@@ -466,7 +472,9 @@ mod tests {
             .position(|window| window == b"\r\n\r\n")
             .expect("tiny_http response header");
         assert_eq!(
-            parse_response_framing(&response[..header_end + 4]).unwrap().1,
+            parse_response_framing(&response[..header_end + 4])
+                .unwrap()
+                .1,
             ResponseFraming::ContentLength(6)
         );
         assert!(response.ends_with(b"app.js"));
