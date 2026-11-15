@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use vpr_runtime::CancellableTcpWriter;
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
-const MAX_BODY_BYTES: usize = 3 * 1024 * 1024;
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(90);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -319,6 +319,18 @@ mod tests {
         assert!(header.contains("X-VPR-RT1-Transport-Id: rt1-9"));
         assert!(header.contains("Connection: close"));
         assert!(forwarded.ends_with(b"{}"));
+    }
+
+    #[test]
+    fn proxy_accepts_the_canonical_thirty_second_rt1_microphone_body() {
+        // 960,000 PCM bytes encoded as a JSON u8 array can exceed 3 MiB.
+        let header = format!(
+            "POST /api/rt1/visitor/voice HTTP/1.1\r\nHost: localhost:8787\r\nContent-Length: 3844096\r\n\r\n"
+        );
+        assert_eq!(
+            parse_request_header(header.as_bytes()).unwrap().2,
+            3_844_096
+        );
     }
 
     #[test]
