@@ -24,8 +24,15 @@ class Rt1TextEgressFenceTests(unittest.TestCase):
         )
         self.assertIsNotNone(match, "Visitor text entrypoint must exist")
         body = match.group("body")
-        self.assertIn("self.remote.is_some()", body)
-        self.assertIn("self.interrupt.backend_stop.lock().is_none()", body)
+        # The verified worker is the independent dual-track STOP owner.
+        # Do not require the LiveKit-only backend_stop handle or reject remote
+        # worker sessions; both text and voice share the exact worker gate.
+        self.assertIn("if !self.supports_private_voice()", body)
+        self.assertNotIn("self.remote.is_some()", body)
+        self.assertNotIn("self.interrupt.backend_stop.lock().is_none()", body)
+        capability = (OWNER / "rt1_visitor_voice_capability.rs").read_text(encoding="utf-8")
+        self.assertIn("verified_worker_voice_egress_active", capability)
+        self.assertIn("!worker.is_revoked()", capability)
         self.assertIn("self.manager.begin_provider_egress(&self.id)?", body)
         self.assertRegex(body, r"self\s*\.engine\s*\.lock\(\)\s*\.text_turn\(text, move \|handle\|")
         self.assertIn("handle.interrupt()", body)
