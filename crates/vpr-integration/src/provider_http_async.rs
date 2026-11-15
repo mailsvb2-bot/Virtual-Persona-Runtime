@@ -135,15 +135,7 @@ fn async_transport_error(error: &reqwest::Error) -> ProviderError {
     } else {
         unavailable()
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
-
-    use super::*;
 
     struct NeverCancelled;
 
