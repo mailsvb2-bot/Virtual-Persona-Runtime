@@ -387,9 +387,9 @@ mod tests {
             let mut request = Vec::new();
             upstream.read_to_end(&mut request).unwrap();
             let transport_id = request
-                .split(|byte| *byte == b'\\n')
+                .split(|byte| *byte == b'\n')
                 .find_map(|line| {
-                    let line = std::str::from_utf8(line).ok()?.trim_end_matches('\\r');
+                    let line = std::str::from_utf8(line).ok()?.trim_end_matches('\r');
                     let (name, value) = line.split_once(':')?;
                     name.eq_ignore_ascii_case("X-VPR-RT1-Transport-Id")
                         .then(|| value.trim().to_owned())
@@ -398,7 +398,7 @@ mod tests {
             transport_id_tx.send(transport_id).unwrap();
             upstream
                 .write_all(
-                    b"HTTP/1.1 200 OK\\r\\nContent-Length: 12\\r\\nConnection: close\\r\\n\\r\\npartial",
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\npartial",
                 )
                 .unwrap();
             let _ = release_rx.recv_timeout(Duration::from_secs(2));
@@ -418,7 +418,7 @@ mod tests {
 
         browser
             .write_all(
-                b"POST /api/rt1/visitor/text HTTP/1.1\\r\\nHost: 127.0.0.1:18789\\r\\nContent-Length: 2\\r\\n\\r\\n{}",
+                b"POST /api/rt1/visitor/text HTTP/1.1\r\nHost: 127.0.0.1:18789\r\nContent-Length: 2\r\n\r\n{}",
             )
             .unwrap();
         let transport_id = transport_id_rx
