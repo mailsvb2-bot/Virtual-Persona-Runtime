@@ -311,56 +311,13 @@ fn relay_rt1_response(
             break;
         }
     }
-    let (_, framing) = response::parse_response_framing(&header)?;
-    let mut remaining = match framing {
-        response::ResponseFraming::ContentLength(length) => length,
-        response::ResponseFraming::Chunked | response::ResponseFraming::CloseDelimited => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "RT1 response requires bounded Content-Length framing",
-            ));
-        }
-    };
-    let normalized_header = response::response_header_with_close(&header)?;
-    writer.write_all_bounded(&normalized_header)?;
-
-    let mut buffer = [0_u8; 16 * 1024];
-    while remaining > 0 {
-        if cancellation.is_revoked() {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "RT1 response revoked",
-            ));
-        }
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "HTTP response deadline exceeded",
-            ));
-        }
-        let limit = remaining.min(buffer.len());
-        match upstream.read(&mut buffer[..limit]) {
-            Ok(0) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "RT1 response body shorter than Content-Length",
-                ));
-            }
-            Ok(count) => {
-                writer.write_all_bounded(&buffer[..count])?;
-                remaining -= count;
-            }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::Interrupted
-                        | io::ErrorKind::TimedOut
-                        | io::ErrorKind::WouldBlock
-                ) => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
+    response::relay_revocable_response_body(
+        &mut upstream,
+        &header,
+        deadline,
+        cancellation,
+        |bytes| writer.write_all_bounded(bytes),
+    )
 }
 
 fn read_rt1_response_exact(
