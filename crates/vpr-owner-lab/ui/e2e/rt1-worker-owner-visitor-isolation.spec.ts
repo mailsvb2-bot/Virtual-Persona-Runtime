@@ -44,7 +44,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     await owner.goto(ownerLabUrl + "/", { waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(owner.locator("#workflow-state")).toContainText("Ожидает проверки владельцем", { timeout: 25_000 });
 
-    await owner.getByLabel("Идентификатор Persona").fill("rt1-local-canary-persona");
+    await owner.getByLabel("Идентификатор Persona").fill("rt1-worker-voice-browser-e2e");
     await owner.getByRole("button", { name: "Создать Persona" }).click();
     const answers = ["Слушаю внимательно", "Говорю спокойно", "Отвечаю кратко"];
     for (const [index, answer] of answers.entries()) {
