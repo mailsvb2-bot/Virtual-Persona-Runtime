@@ -22,6 +22,7 @@ impl DidAgentStreamsAvatar {
         secret: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
+        let backend = self.echo_backend.as_deref().ok_or_else(policy_denied)?;
         // A repeated provider session ID must not tear down an existing
         // Echo publisher. The registry's atomic insert remains the final
         // race fence after this read-only precheck.
@@ -34,7 +35,7 @@ impl DidAgentStreamsAvatar {
         }
 
         if let Err(error) = self.echo_sessions.open_session(
-            self.echo_backend.as_ref().ok_or_else(policy_denied)?.as_ref(),
+            backend,
             provider_session_id,
             session_url,
             secret,
@@ -59,7 +60,7 @@ impl DidAgentStreamsAvatar {
             // If local STOP is uncertain, preserve the registry identity.
             self.echo_sessions
                 .close_session(
-                    self.echo_backend.as_ref().ok_or_else(policy_denied)?.as_ref(),
+                    backend,
                     provider_session_id,
                 )
                 .map_err(|_| unavailable())?;
@@ -77,7 +78,6 @@ impl DidAgentStreamsAvatar {
         // A viewer-side LiveKit token cannot be atomically revoked with a
         // browser-published did.speak. No expressive session is issued without
         // a separately credentialed server-owned Echo audio publisher.
-        let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
         let response = self
             .authorized(self.client.post(self.v2_sessions_url()?))
             .json(&serde_json::json!({"session_type": "echo"}))
