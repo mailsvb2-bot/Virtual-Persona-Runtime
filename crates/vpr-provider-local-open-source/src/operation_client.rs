@@ -311,7 +311,10 @@ impl RemoteOperationClient {
     }
 
     fn push_pcm_fragment(
-        &self, operation_id: &str, pcm: &[u8], final_fragment: bool,
+        &self,
+        operation_id: &str,
+        pcm: &[u8],
+        final_fragment: bool,
     ) -> Result<(), ProviderError> {
         if pcm.len() < 640 || pcm.len() > 32_000 || pcm.len() % 640 != 0 {
             return Err(denied());
