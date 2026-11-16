@@ -441,6 +441,12 @@ class AiortcSenderBackend:
         # alone never authorize a durable STOP receipt.
         entry.audio.stop()
         entry.video.stop()
+        # A generated frame may still be running on CUDA after track.stop().
+        # Do not certify dual-track STOP until that worker has quiesced.
+        wait_quiesced = getattr(entry.video, "wait_quiesced", None)
+        if wait_quiesced is not None:
+            if not await asyncio.to_thread(wait_quiesced, self._timeout):
+                raise RuntimeError("Persona GPU video STOP unconfirmed")
         async with entry.gate:
             await entry.peer.close()
             if (

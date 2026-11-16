@@ -51,7 +51,11 @@ def drain_shutdown(lifecycle: MediaLifecycle, timeout: float = 4.0) -> bool:
 def main():
     token = os.environ["RT1_WORKER_TOKEN"]
     path = os.environ["RT1_WORKER_DB"]
-    backend = AiortcSenderBackend()
+    from rt1_musetalk_renderer import renderer_from_environment
+    # A configured but unavailable GPU/model is fatal during startup. Never
+    # silently substitute aiortc's test-pattern renderer.
+    renderer = renderer_from_environment()
+    backend = AiortcSenderBackend(video_renderer=renderer)
     lifecycle = MediaLifecycle(path, backend)
     # Restart is not a remote STOP receipt. Fence all inherited sessions
     # before exposing HTTP so an idempotent PUT cannot return a stale active

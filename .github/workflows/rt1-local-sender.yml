@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/rt1_aiortc_backend.py'
+      - 'scripts/rt1_musetalk_renderer.py'
       - 'scripts/rt1_media_worker_*.py'
       - 'tests/e2e/test_rt1_*.py'
       # RT1 conversation/egress changes must re-run the actual worker lifecycle,
@@ -46,6 +47,7 @@ jobs:
             test_rt1_stop_reconciler.py \
             test_rt1_ice_configuration.py \
             test_rt1_aiortc_backend_timeout.py \
+            test_rt1_musetalk_renderer.py \
             test_rt1_webrtc_rtp_revoke.py; do
             python "tests/e2e/$test" -v
           done
