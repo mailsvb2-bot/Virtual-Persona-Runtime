@@ -4,7 +4,8 @@ use std::time::Duration;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, RealtimeAvatarCapabilities,
+    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
+    RealtimeAvatarCapabilities,
     RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
     RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
     RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
@@ -164,6 +165,22 @@ impl DidAgentStreamsAvatar {
             let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
             segments.pop_if_empty();
             segments.extend(["v2", "agents", self.config.agent_id.as_str(), "sessions"]);
+        }
+        Ok(url)
+    }
+
+    /// Builds the documented V2 exact-session resource URL. This is distinct
+    /// from the legacy /agents/{agentId}/streams/{streamId} resource.
+    fn v2_session_url(&self, session_id: &str) -> Result<reqwest::Url, ProviderError> {
+        if session_id.trim().is_empty() {
+            return Err(invalid_response());
+        }
+        let mut url = self.base_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|()| invalid_response())?;
+            segments.pop_if_empty();
+            segments.extend(["v2", "agents", "sessions"]);
+            segments.push(session_id);
         }
         Ok(url)
     }
@@ -519,15 +536,44 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         Self::validate_session(session)?;
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
+                // V2 session conversion binds both identifiers to the same
+                // provider-issued session id. Refuse mismatched resource/session
+                // identities rather than deleting a caller-selected resource.
+                if session.provider_resource_id != session.provider_session_id {
+                    return Err(policy_denied());
+                }
+
+                // Fence the private Echo publisher first. Keep this local
+                // sender STOP separate from the provider-side session DELETE:
+                // a failure below must remain retryable by the canonical owner.
                 if let Some(backend) = &self.echo_backend {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
-                    return Ok(());
                 }
-                // D-ID V2 LiveKit does not provide an authenticated remote
-                // video STOP receipt here. Browser disconnect and inactivity
-                // timeout are not provider-side termination evidence.
-                Err(unavailable())
+
+                // D-ID documents DELETE /v2/agents/sessions/{sessionId} with
+                // 204 Deleted. Only that exact acknowledgement confirms the
+                // provider resource deletion. A 404 is deliberately NOT
+                // treated as idempotent success: the public contract does not
+                // define retry-after-lost-response semantics for that status.
+                let response = self
+                    .authorized(
+                        self.client
+                            .delete(self.v2_session_url(&session.provider_session_id)?),
+                    )
+                    .send()
+                    .map_err(|error| map_transport_error(&error))?;
+                let status = response.status();
+                if status.as_u16() == 204 {
+                    Ok(())
+                } else if status.as_u16() == 404 || status.is_success() {
+                    Err(ProviderError {
+                        kind: ProviderErrorKind::Unavailable,
+                        retryable: true,
+                    })
+                } else {
+                    expect_success(response).map(|_| ())
+                }
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self

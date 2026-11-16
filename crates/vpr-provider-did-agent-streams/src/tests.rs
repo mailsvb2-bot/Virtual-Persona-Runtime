@@ -507,26 +507,73 @@ fn expressive_without_server_echo_fails_closed_before_session_creation() {
 }
 
 #[test]
-fn did_v2_livekit_close_without_echo_never_claims_remote_stop() {
-    // A stale LiveKit session can still be reachable at D-ID after the
-    // viewer disconnects. No backend STOP exists to acknowledge here.
+fn did_v2_livekit_close_uses_authenticated_exact_session_delete() {
+    let (endpoint, captured) = serve(vec![("204 No Content", String::new())]);
+    let provider = adapter(endpoint);
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "session-7".to_owned(),
+        provider_session_id: "session-7".to_owned(),
+        transport: RealtimeAvatarTransport::LiveKit {
+            server_url: "wss://livekit.example.test".to_owned(),
+            token: "viewer-token-must-not-be-forwarded".to_owned(),
+        },
+    };
+
+    provider.close_session(&session).unwrap();
+
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("DELETE /v2/agents/sessions/session-7 "));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
+    assert!(!request.contains("viewer-token-must-not-be-forwarded"));
+}
+
+#[test]
+fn did_v2_livekit_close_keeps_404_and_non_204_success_unconfirmed() {
+    for (status, body) in [
+        ("404 Not Found", "{}"),
+        ("200 OK", "{}"),
+    ] {
+        let (endpoint, captured) = serve(vec![(status, body.to_owned())]);
+        let provider = adapter(endpoint);
+        let session = RealtimeAvatarSession {
+            provider_resource_id: "session-8".to_owned(),
+            provider_session_id: "session-8".to_owned(),
+            transport: RealtimeAvatarTransport::LiveKit {
+                server_url: "wss://livekit.example.test".to_owned(),
+                token: "viewer-token".to_owned(),
+            },
+        };
+
+        let error = provider.close_session(&session).unwrap_err();
+        assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+        assert!(error.retryable);
+        assert!(
+            captured
+                .recv()
+                .unwrap()
+                .starts_with("DELETE /v2/agents/sessions/session-8 ")
+        );
+    }
+}
+
+#[test]
+fn did_v2_livekit_close_rejects_mismatched_resource_and_session_ids() {
     let provider = adapter("http://127.0.0.1:1".to_owned());
-    let stale = RealtimeAvatarSession {
-        provider_resource_id: "old-livekit".to_owned(),
-        provider_session_id: "old-livekit".to_owned(),
+    let session = RealtimeAvatarSession {
+        provider_resource_id: "different-resource".to_owned(),
+        provider_session_id: "session-9".to_owned(),
         transport: RealtimeAvatarTransport::LiveKit {
             server_url: "wss://livekit.example.test".to_owned(),
             token: "viewer-token".to_owned(),
         },
     };
-    let result = provider.close_session(&stale).unwrap_err();
-    assert_eq!(result.kind, ProviderErrorKind::Unavailable);
-    assert!(!result.retryable);
-    // Repeat cannot silently convert an unconfirmed remote STOP to success.
-    assert_eq!(
-        provider.close_session(&stale).unwrap_err().kind,
-        ProviderErrorKind::Unavailable
-    );
+
+    let error = provider.close_session(&session).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::PolicyDenied);
 }
 
 #[test]
@@ -939,6 +986,7 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
+        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -988,6 +1036,13 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
     provider.close_session(&session).unwrap();
+    let deleted = captured.recv().unwrap();
+    assert!(deleted.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
+    assert!(
+        deleted
+            .to_ascii_lowercase()
+            .contains("authorization: basic secret-key")
+    );
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -998,6 +1053,41 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "interrupt", "stop"]
+    );
+}
+
+#[test]
+fn did_v2_echo_close_retries_provider_delete_after_local_sender_stop() {
+    use std::sync::Arc;
+
+    let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+        ("204 No Content", String::new()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+    let probe = Probe(AtomicBool::new(false));
+    let session = provider.create_session(&probe).unwrap();
+    let _ = captured.recv().unwrap();
+    let _ = captured.recv().unwrap();
+
+    let first = provider.close_session(&session).unwrap_err();
+    assert_eq!(first.kind, ProviderErrorKind::Unavailable);
+    assert!(first.retryable);
+
+    // Local Echo STOP already succeeded. A provider DELETE retry must still
+    // run, but must not reopen or stop the private sender a second time.
+    provider.close_session(&session).unwrap();
+    let first_delete = captured.recv().unwrap();
+    let retry_delete = captured.recv().unwrap();
+    assert!(first_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
+    assert!(retry_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
+    assert_eq!(
+        *backend.calls.lock().unwrap(),
+        vec!["open", "stop"]
     );
 }
 
