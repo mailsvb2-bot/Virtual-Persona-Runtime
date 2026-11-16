@@ -120,6 +120,9 @@ class MediaLifecycle:
         # Cancellation is delivered to the provider transport itself. No
         # detached CREATE waiter thread may outlive the HTTP request.
         self._create_cancellations: dict[tuple[str, int], threading.Event] = {}
+        # Kept separate from the SQLite RLock so shutdown can signal an in-flight
+        # provider call even while a durable writer is blocked.
+        self._create_cancellations_lock = threading.Lock()
         # A hung STOP owns one worker thread until the backend returns.
         # Repeated HTTP DELETEs must not accumulate unbounded STOP threads.
         self._stop_gate = threading.BoundedSemaphore(1)
@@ -216,11 +219,11 @@ class MediaLifecycle:
         cancellation = threading.Event()
         deadline = time.monotonic() + timeout
         try:
-            with self._lock:
+            with self._create_cancellations_lock:
                 self._create_cancellations[identity] = cancellation
             return self._create(operation_id, generation, deadline, cancellation)
         finally:
-            with self._lock:
+            with self._create_cancellations_lock:
                 self._create_cancellations.pop(identity, None)
             self._create_gate.release()
 
@@ -463,13 +466,13 @@ class MediaLifecycle:
     ) -> StopReceipt | None:
         if not operation_id or generation < 1:
             raise ValueError("invalid operation identity")
-        with self._lock:
-            # Signal the live provider transport before attempting SQLite.
-            # Even if durable CANCEL persistence fails, CREATE cannot later
-            # commit active after this in-process revoke.
+        # Signal before waiting for the SQLite RLock/transaction. This must
+        # remain prompt even when another in-process writer is stalled.
+        with self._create_cancellations_lock:
             pending_create = self._create_cancellations.get((operation_id, generation))
             if pending_create is not None:
                 pending_create.set()
+        with self._lock:
             # A CANCEL can arrive before CREATE, including from another worker
             # process. Reserve a durable tombstone atomically so that a late
             # CREATE can never allocate after the owner has revoked authority.
@@ -674,7 +677,7 @@ class MediaLifecycle:
     def request_shutdown(self) -> None:
         """Immediately fence new CREATE and signal every live provider transport."""
         self._closing.set()
-        with self._lock:
+        with self._create_cancellations_lock:
             for cancellation in self._create_cancellations.values():
                 cancellation.set()
 
