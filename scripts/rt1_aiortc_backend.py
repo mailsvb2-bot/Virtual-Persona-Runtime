@@ -334,6 +334,9 @@ class AiortcSenderBackend:
                 # promptly; inference must never run under the sender lock.
                 if not callable(getattr(video, "push_pcm", None)):
                     raise RuntimeError("Persona video track lacks PCM sync input")
+                if not callable(getattr(video, "bind_audio_track", None)):
+                    raise RuntimeError("Persona video track lacks audio synchronization")
+                video.bind_audio_track(audio)
             peer.addTrack(audio)
             peer.addTrack(video)
             await peer.setLocalDescription(await peer.createOffer())
@@ -410,12 +413,14 @@ class AiortcSenderBackend:
             if (entry is None or entry.closed or
                     (entry.operation_id, entry.generation) != (operation_id, generation)):
                 raise RuntimeError("remote audio sender revoked")
-            entry.audio.push_pcm(pcm)
             if self._video_renderer is not None:
-                # A failed video queue is a partial delivery, not success:
-                # the canonical HTTP worker quarantines this operation and
-                # reconciles its existing audio/video STOP receipt.
+                # Model inference releases the SAME PCM to audio only once
+                # matching face frames are queued. Never play audio early.
                 entry.video.push_pcm(pcm)
+            else:
+                # Legacy diagnostic RTP and test fixtures retain the original
+                # direct audio path, but cannot authorize public Persona links.
+                entry.audio.push_pcm(pcm)
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))

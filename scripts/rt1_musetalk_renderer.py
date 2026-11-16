@@ -100,6 +100,15 @@ class MuseTalkRenderer:
         self._prepare_sample = self._images[0].copy()
         if self._prepare_sample.ndim != 3 or self._prepare_sample.shape[2] != 3:
             raise RuntimeError("MuseTalk avatar must contain BGR frames")
+        # Real model inference, not a file-presence or CUDA-only readiness
+        # heuristic. Fail before serving HTTP if the prepared avatar cannot
+        # generate valid frames on the selected GPU.
+        import numpy as np
+        warmup = self._infer(
+            np.zeros(CHUNK_FRAMES * SAMPLES_PER_FRAME, dtype="<i2"), 0
+        )
+        if len(warmup) != CHUNK_FRAMES:
+            raise RuntimeError("MuseTalk GPU model warmup produced no video")
 
     def ready(self) -> bool:
         if not self._healthy:
@@ -197,12 +206,22 @@ class _MuseTalkVideoTrack:
                 self._stop = threading.Event()
                 self._failed = None
                 self._frame_index = 0
+                self._audio_track = None
                 self._current = renderer._prepare_sample.copy()
                 self._producer = threading.Thread(
                     target=self._process, name="musetalk-gpu-frame",
                     daemon=True,
                 )
                 self._producer.start()
+
+            def bind_audio_track(self, audio):
+                # Before the sender publishes any PCM, bind the single
+                # existing RTP audio track. Only model-rendered video frames
+                # can release their matching audio chunk into that sender.
+                with self._lock:
+                    if self._audio_track is not None:
+                        raise RuntimeError("MuseTalk audio sender already bound")
+                    self._audio_track = audio
 
             def push_pcm(self, pcm: bytes):
                 if not pcm or len(pcm) % 640:
@@ -240,6 +259,15 @@ class _MuseTalkVideoTrack:
                                 self._frames.put(frame, timeout=0.2)
                             except queue.Full:
                                 raise RuntimeError("MuseTalk frame backlog exceeded")
+                        if self._stop.is_set():
+                            return
+                        # Hold audio until its real inferred lip-sync frames
+                        # have been queued; audio/video now become available
+                        # to the EXISTING aiortc senders together.
+                        audio = self._audio_track
+                        if audio is None:
+                            raise RuntimeError("MuseTalk audio sender not bound")
+                        audio.push_pcm(payload)
                 except Exception as error:
                     self._failed = error
                     renderer._healthy = False

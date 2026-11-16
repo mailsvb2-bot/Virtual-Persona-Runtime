@@ -84,11 +84,16 @@ class SenderTimeoutTests(unittest.TestCase):
             def __init__(self):
                 super().__init__()
                 self.received_pcm = []
+                self.audio = None
+
+            def bind_audio_track(self, audio):
+                self.audio = audio
 
             def push_pcm(self, pcm):
                 if self.readyState != "live":
                     raise RuntimeError("video sender stopped")
                 self.received_pcm.append(pcm)
+                self.audio.push_pcm(pcm)
 
         class Renderer:
             def __init__(self):

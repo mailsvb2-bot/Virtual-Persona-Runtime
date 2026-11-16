@@ -48,9 +48,13 @@ authenticated TLS proxy and canonical worker operations for external traffic.
   model-inferred 25 fps face frames blended into that Persona's prepared
   image. An idle sender repeats the real prepared first frame, not a
   synthetic face.
-- The same authorized PCM goes to both the existing audio RTP sender and
-  the lip-sync inference queue. No browser speak, alternative TTS or duplicate
-  execution path. The model is never silently replaced with a test pattern.
+- The authorized PCM enters the MuseTalk queue once. Only after its inferred
+  face frames are queued does the renderer release that same PCM to the
+  existing audio RTP sender. This avoids audible speech getting ahead of lip
+  animation during GPU inference. No alternative TTS or browser speak.
+- Startup runs a real 400 ms silent-audio GPU inference warmup; missing or
+  incompatible model weights/asset tensors abort startup rather than
+  announcing a false-positive ready state.
 - STOP first fences the track, then requires the GPU producer thread to
   quiesce before the canonical sender certifies audio+video STOP. Timeout
   remains unconfirmed in the durable worker ledger.
@@ -67,8 +71,9 @@ the exact model/assets/GPU are installed and all requirements below pass:
 1. Measure warmed model load, first frame, PCM-to-first-inferred-frame latency,
    sustained 25 fps throughput, memory headroom and visible lip sync.
 2. Compare recorded RTP audio/video frame timing on a separate real browser;
-   400 ms inference windows introduce non-zero lip-sync delay and must be
-   characterized and, if needed, compensated before promotion.
+   400 ms inference windows delay *both* matching speech and video until
+   frames exist. Measure resulting user-perceived latency and actual A/V
+   offset under load before promotion.
 3. Test multiple visitors, GPU overload, interruption during CUDA inference,
    model error, forced restart, stale CREATE identity and independent verified
    dual-track STOP. Confirm no escaped CUDA producer after close.
