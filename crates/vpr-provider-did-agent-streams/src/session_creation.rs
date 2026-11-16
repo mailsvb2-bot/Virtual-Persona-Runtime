@@ -17,12 +17,12 @@ impl DidAgentStreamsAvatar {
 
     fn open_private_echo_sender(
         &self,
+        backend: &dyn crate::DidEchoBackend,
         provider_session_id: &str,
         session_url: &str,
         secret: &str,
         cancellation: &dyn CancellationProbe,
     ) -> Result<(), ProviderError> {
-        let backend = self.echo_backend.as_deref().ok_or_else(policy_denied)?;
         // A repeated provider session ID must not tear down an existing
         // Echo publisher. The registry's atomic insert remains the final
         // race fence after this read-only precheck.
@@ -72,6 +72,9 @@ impl DidAgentStreamsAvatar {
         cancellation: &dyn CancellationProbe,
     ) -> Result<RealtimeAvatarSession, ProviderError> {
         Self::ensure_active(cancellation)?;
+        // Fail closed before any billable provider CREATE. The server-owned
+        // Echo sender is a prerequisite, not a post-allocation fallback.
+        let backend = self.echo_backend.as_deref().ok_or_else(policy_denied)?;
         // A viewer-side LiveKit token cannot be atomically revoked with a
         // browser-published did.speak. No expressive session is issued without
         // a separately credentialed server-owned Echo audio publisher.
@@ -155,7 +158,7 @@ impl DidAgentStreamsAvatar {
             return Err(crate::cancelled());
         }
 
-        self.open_private_echo_sender(&provider_session_id, &session_url, &secret, cancellation)?;
+        self.open_private_echo_sender(backend, &provider_session_id, &session_url, &secret, cancellation)?;
         Ok(session)
     }
 }
