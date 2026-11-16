@@ -48,6 +48,17 @@ def drain_shutdown(lifecycle: MediaLifecycle, timeout: float = 4.0) -> bool:
     return confirmed
 
 
+def configure_worker_http_threads(server: ThreadingHTTPServer) -> None:
+    """Never let a blocked HTTP handler hold shutdown ahead of durable STOP.
+
+    Admitted requests still use the canonical SQLite and STOP fences.
+    A request thread cannot delay the server's control-thread close, but
+    no request thread may fabricate completion of an in-flight media send.
+    """
+    server.daemon_threads = True
+    server.block_on_close = False
+
+
 def main():
     token = os.environ["RT1_WORKER_TOKEN"]
     path = os.environ["RT1_WORKER_DB"]
@@ -70,6 +81,7 @@ def main():
             body_timeout_seconds=float(os.environ.get("RT1_WORKER_BODY_TIMEOUT_SECONDS", "5")),
         ),
     )
+    configure_worker_http_threads(server)
     shutdown = threading.Event()
     reconciler = threading.Thread(
         target=reconcile_until_shutdown,

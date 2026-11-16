@@ -42,6 +42,7 @@ jobs:
           for test in \
             test_rt1_media_worker_lifecycle.py \
             test_rt1_media_worker_http.py \
+            test_rt1_worker_http_shutdown.py \
             test_rt1_media_signaling_http.py \
             test_rt1_bounded_create.py \
             test_rt1_stop_reconciler.py \
