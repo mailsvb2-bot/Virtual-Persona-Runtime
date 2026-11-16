@@ -163,6 +163,44 @@ class HttpLifecycleTests(unittest.TestCase):
             (503, {"ready": False, "persona_video_ready": True}),
         )
 
+    def test_authenticated_unresolved_operation_listing_uses_durable_ledger(self):
+        def list_operations(token):
+            request = Request(
+                f"http://127.0.0.1:{self.server.server_port}/v1/avatar/operations",
+                headers={"Authorization": "Bearer " + token},
+            )
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        self.assertEqual(
+            list_operations("wrong"),
+            (401, {"error": "unauthorized"}),
+        )
+        self.assertEqual(
+            list_operations("test-secret"),
+            (200, {"operations": []}),
+        )
+        self.assertEqual(self.request("PUT")[0], 200)
+        status, body = list_operations("test-secret")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["operations"],
+            [{
+                "operation_id": "operation-1",
+                "generation": 1,
+                "phase": "active",
+            }],
+        )
+        self.assertNotIn("session_id", body["operations"][0])
+        self.assertEqual(self.request("DELETE")[0], 200)
+        self.assertEqual(
+            list_operations("test-secret"),
+            (200, {"operations": []}),
+        )
+
     def test_slow_drip_cannot_reset_total_body_deadline(self):
         self.server.RequestHandlerClass = handler_for(
             self.lifecycle, "test-secret", body_timeout_seconds=0.25

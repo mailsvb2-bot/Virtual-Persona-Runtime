@@ -439,3 +439,66 @@ fn remote_operation_stop_does_not_retry_generic_conflict_or_accept_partial_recei
             .starts_with("DELETE /v1/avatar/operations/op-1 ")
     );
 }
+
+#[test]
+fn remote_operation_startup_recovery_stops_listed_operations_and_rechecks_ledger() {
+    let (endpoint, captured) = serve(vec![
+        (
+            "200 OK",
+            r#"{"operations":[{"operation_id":"op-1","generation":1,"phase":"active"}]}"#
+                .to_owned(),
+        ),
+        (
+            "202 Accepted",
+            r#"{"operation_id":"op-1","stop_confirmed":false}"#.to_owned(),
+        ),
+        (
+            "200 OK",
+            r#"{"operation_id":"op-1","session_id":"media-1","generation":1,"audio_stopped":true,"video_stopped":true}"#
+                .to_owned(),
+        ),
+        ("200 OK", r#"{"operations":[]}"#.to_owned()),
+    ]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+
+    assert_eq!(client.revoke_unresolved().unwrap(), 1);
+    let requests: Vec<_> = (0..4).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /v1/avatar/operations "));
+    assert!(requests[1].starts_with("DELETE /v1/avatar/operations/op-1 "));
+    assert!(requests[2].starts_with("DELETE /v1/avatar/operations/op-1 "));
+    assert!(requests[3].starts_with("GET /v1/avatar/operations "));
+    assert!(requests.iter().all(|request| {
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer worker-secret")
+    }));
+}
+
+#[test]
+fn remote_operation_startup_recovery_rejects_invalid_inventory_before_stop() {
+    let (endpoint, captured) = serve(vec![(
+        "200 OK",
+        r#"{"operations":[{"operation_id":"op-1","generation":0,"phase":"active"}]}"#
+            .to_owned(),
+    )]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+
+    assert!(client.revoke_unresolved().is_err());
+    let request = captured.recv().unwrap();
+    assert!(request.starts_with("GET /v1/avatar/operations "));
+    assert!(
+        request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer worker-secret")
+    );
+}

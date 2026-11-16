@@ -815,6 +815,24 @@ class MediaLifecycle:
             # and recovery tests, after attempting every known STOP target.
             raise first_failure
 
+    def unresolved_operations(self) -> tuple[tuple[str, int, str], ...]:
+        """Return operation identities that still require verified remote STOP.
+
+        This reads the existing durable ledger. It is not a second registry and
+        deliberately omits provider session tokens or sender credentials.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                """SELECT id, generation, phase FROM media_operations
+                   WHERE phase != 'stopped'
+                      OR (session_id IS NOT NULL AND stop_verified=0)
+                   ORDER BY id"""
+            ).fetchall()
+        return tuple(
+            (operation_id, generation, phase)
+            for operation_id, generation, phase in rows
+        )
+
     def status(self, operation_id: str):
         with self._lock:
             return self._get(operation_id)

@@ -2,6 +2,9 @@
 //! The same canonical Persona store and its existing exclusive lease are used.
 use std::env;
 use std::ffi::OsStr;
+use std::time::Duration;
+
+use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 
 /// Invalidate persisted visitor session leases before binding the HTTP listener.
 /// Ephemeral non-Windows labs have no durable publication to recover.
@@ -14,7 +17,44 @@ pub(super) fn recover_before_listener() -> Result<(), String> {
             .recover_before_listener()
             .map_err(|_| "RT1 publication recovery failed before listener startup".to_owned())?;
     }
+    recover_worker_before_listener()
+}
+
+/// Reconcile the worker's durable operation inventory after Owner Lab loses
+/// its in-memory visitor registry. The worker remains the canonical STOP owner.
+fn recover_worker_before_listener() -> Result<(), String> {
+    let selected = env::var("VPR_RT1_CANONICAL_VOICE_WORKER").as_deref() == Ok("true");
+    let endpoint = env::var_os("RT1_WORKER_ENDPOINT");
+    let token = env::var_os("RT1_WORKER_TOKEN");
+    let required = worker_recovery_required(selected, endpoint.is_some(), token.is_some())
+        .map_err(str::to_owned)?;
+    if !required {
+        return Ok(());
+    }
+    let endpoint = endpoint
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| "RT1 worker recovery endpoint is invalid".to_owned())?;
+    let token = token
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(|| "RT1 worker recovery token is invalid".to_owned())?;
+    let client = RemoteOperationClient::new(&endpoint, &token, Duration::from_secs(5))
+        .map_err(|_| "RT1 worker recovery client unavailable".to_owned())?;
+    client.revoke_unresolved().map_err(|_| {
+        "RT1 worker audio/video STOP recovery is unconfirmed; listener startup denied".to_owned()
+    })?;
     Ok(())
+}
+
+fn worker_recovery_required(
+    selected: bool,
+    endpoint_present: bool,
+    token_present: bool,
+) -> Result<bool, &'static str> {
+    match (endpoint_present, token_present) {
+        (false, false) if !selected => Ok(false),
+        (true, true) => Ok(true),
+        _ => Err("RT1 worker recovery credentials are incomplete"),
+    }
 }
 
 /// Match `persona_persistence::explicit_store_path`: empty means unconfigured.
@@ -39,4 +79,16 @@ mod tests {
         assert!(recovery_required(true, None));
         assert!(recovery_required(true, Some(OsStr::new(""))));
     }
+
+    #[test]
+    fn worker_recovery_requires_both_credentials_when_selected_or_configured() {
+        use super::worker_recovery_required;
+
+        assert_eq!(worker_recovery_required(false, false, false), Ok(false));
+        assert_eq!(worker_recovery_required(false, true, true), Ok(true));
+        assert!(worker_recovery_required(true, false, false).is_err());
+        assert!(worker_recovery_required(false, true, false).is_err());
+        assert!(worker_recovery_required(false, false, true).is_err());
+    }
+
 }

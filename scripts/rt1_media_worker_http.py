@@ -169,6 +169,21 @@ def handler_for(
             if parts.query or parts.fragment:
                 self._send(400, {"error": "invalid request"})
                 return
+            if parts.path == "/v1/avatar/operations":
+                if method != "GET":
+                    self._send(405, {"error": "method not allowed"})
+                    return
+                operations = [
+                    {
+                        "operation_id": operation_id,
+                        "generation": generation,
+                        "phase": phase,
+                    }
+                    for operation_id, generation, phase
+                    in lifecycle.unresolved_operations()
+                ]
+                self._send(200, {"operations": operations})
+                return
             segments = parts.path.strip("/").split("/")
             if segments[:3] != ["v1", "avatar", "operations"] or (
                 len(segments) != 4 and not (len(segments) == 5 and segments[4] in ("offer", "answer", "pcm"))
