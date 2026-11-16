@@ -27,6 +27,27 @@ pub(super) fn start_engine_with_provider_egress(
     started.map_err(|error| error.code().to_owned())
 }
 
+/// Compensate a failed CREATE without claiming a local close is a remote receipt.
+pub(super) fn cleanup_failed_start(
+    manager: &VisitorSessionManager,
+    session_id: &str,
+    engine: &mut OwnerLabEngine,
+    remote: Option<&Rt1RemoteMediaRevocation>,
+    original_error: String,
+) -> String {
+    let cleanup = engine
+        .visitor_avatar_stop_handle()
+        .map(|_| engine.stop_visitor_provider_confirmed());
+    let _ = manager.close(session_id);
+    if remote.is_some_and(|worker| worker.revoke_confirmed().is_err()) {
+        return "RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into();
+    }
+    if matches!(cleanup, Some(Err(_))) {
+        return "RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into();
+    }
+    original_error
+}
+
 /// Generate the existing per-operation cancellation identity before admission.
 pub(super) fn diagnostic_operation_id() -> Result<String, String> {
     let mut nonce = [0_u8; 16];

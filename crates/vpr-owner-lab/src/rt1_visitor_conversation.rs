@@ -147,32 +147,13 @@ impl Rt1VisitorConversation {
         ) {
             Ok(bundle) => bundle,
             Err(error) => {
-                // A failed remote CREATE can still have allocated an avatar.
-                // Never treat manager.close() as proof that the remote sender
-                // stopped; explicitly require the canonical provider receipt.
-                // A provider error can precede establishment of the visitor
-                // session, so STOP may not yet have an addressable target.
-                // Report the cleanup uncertainty rather than claim a receipt.
-                // The canonical engine can fail after creating a provider
-                // session. If a real stop-only handle exists, failure to close
-                // it must be surfaced as unconfirmed remote shutdown.
-                let has_sender = engine.visitor_avatar_stop_handle().is_some();
-                let cleanup = if has_sender {
-                    Some(engine.stop_visitor_provider_confirmed())
-                } else {
-                    None
-                };
-                let _ = manager.close(&id);
-                if remote
-                    .as_ref()
-                    .is_some_and(|worker| worker.revoke_confirmed().is_err())
-                {
-                    return Err("RT1_REMOTE_MEDIA_STOP_UNCONFIRMED".into());
-                }
-                if matches!(cleanup, Some(Err(_))) {
-                    return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
-                }
-                return Err(error);
+                return Err(helpers::cleanup_failed_start(
+                    &manager,
+                    &id,
+                    &mut engine,
+                    remote.as_deref(),
+                    error,
+                ));
             }
         };
         if let Some(worker) = &remote
