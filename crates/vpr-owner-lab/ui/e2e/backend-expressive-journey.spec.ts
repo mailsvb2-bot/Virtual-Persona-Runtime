@@ -377,7 +377,7 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
   expect(replay.status()).toBe(409);
 });
 
-test("Expressive server Echo closes privately on session revoke", async ({ request }) => {
+test("Expressive server local Echo sender stops on revoke while D-ID remote STOP remains unconfirmed", async ({ request }) => {
   test.setTimeout(90000);
   const { csrf, sequence } = await startEcho(request);
   const before = (await echoEvents(request)).length;
@@ -386,9 +386,8 @@ test("Expressive server Echo closes privately on session revoke", async ({ reque
   const revoke = await postJson(request, csrf, "/api/session/revoke", {});
   expect(revoke.ok()).toBeTruthy();
   // Canonical revoke deliberately kills the private subprocess after the
-  // provider STOP receipt. A killed process cannot report a graceful LiveKit
-  // disconnect, so asserting that event would falsely require unsafe delay.
-  // The safety property is a confirmed STOP plus no further audio publication.
+  // local Echo sender STOP is dispatched. This is not a D-ID remote A/V receipt;
+  // the session must remain revoked and no further audio may be published.
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
   const fenced = await echoEvents(request);
