@@ -20,6 +20,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
   let originalIce: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null } | undefined;
   visitor.on("request", (request) => {
     const path = new URL(request.url()).pathname;
+    if (path !== "/api/rt1/visitor/answer" && path !== "/api/rt1/visitor/ice") return;
     const payload = request.postDataJSON() as { sdp?: unknown; candidate?: unknown; sdpMid?: unknown; sdpMLineIndex?: unknown };
     if (path === "/api/rt1/visitor/answer" && typeof payload.sdp === "string") originalAnswerSdp = payload.sdp;
     if (path === "/api/rt1/visitor/ice" && typeof payload.candidate === "string") {
