@@ -6,6 +6,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
   const visitorContext = await browser.newContext();
   const owner = await ownerContext.newPage();
   const visitor = await visitorContext.newPage();
+  const visitorRequest = visitorContext.request;
   // Observe the actual receiving RTCPeerConnection without mocking the
   // constructor, tracks, receiver, signaling, or underlying RTP transport.
   await visitor.addInitScript(() => {
@@ -113,7 +114,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     }), { timeout: 30_000, message: "Chromium must receive actual audio and video RTP packets" }).toBe(true);
 
     // The visitor has a separate cookie jar and no owner bearer token.
-    const visitorBootstrap = await visitor.request.get("/api/bootstrap");
+    const visitorBootstrap = await visitorRequest.get(ownerLabUrl + "/api/bootstrap");
     expect(visitorBootstrap.ok()).toBeTruthy();
     const visitorCsrf = String((await visitorBootstrap.json()).csrf_token);
     const visitorHeaders = {
@@ -121,7 +122,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
       "x-vpr-csrf": visitorCsrf,
       origin: new URL(visitor.url()).origin,
     };
-    const forgedPause = await visitor.request.post("/api/rt1/owner/pause", {
+    const forgedPause = await visitorRequest.post(ownerLabUrl + "/api/rt1/owner/pause", {
       headers: visitorHeaders,
       data: { owner_token: "forged-owner-token" },
     });
@@ -144,7 +145,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     // The same real browser-facing HTTP boundary must reject stale sessions
     // and publication tokens after owner revocation. STOP alone is not enough:
     // no late SDP or new visitor session may resurrect the media sender.
-    const staleJoin = await visitor.request.post("/api/rt1/visitor/start", {
+    const staleJoin = await visitorRequest.post(ownerLabUrl + "/api/rt1/visitor/start", {
       headers: visitorHeaders,
       data: { visitor_token: invite, consent: true },
     });
@@ -152,7 +153,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     const staleJoinBody = await staleJoin.json();
     expect(staleJoinBody).not.toHaveProperty("session_id");
     expect(visitorSessionId, "the browser must have received a real session id").toBeTruthy();
-    const activeAfterRevoke = await visitor.request.post("/api/rt1/visitor/status", {
+    const activeAfterRevoke = await visitorRequest.post(ownerLabUrl + "/api/rt1/visitor/status", {
       headers: visitorHeaders,
       data: { session_id: visitorSessionId },
     });
@@ -164,7 +165,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     // Replay the actual Chromium-generated SDP, not malformed placeholder text:
     // otherwise a validation error could falsely satisfy the revoke regression.
     expect(originalAnswerSdp, "Chromium must have sent a valid SDP answer").toMatch(/^v=0/);
-    const staleAnswer = await visitor.request.post("/api/rt1/visitor/answer", {
+    const staleAnswer = await visitorRequest.post(ownerLabUrl + "/api/rt1/visitor/answer", {
       headers: visitorHeaders,
       data: { session_id: visitorSessionId, sdp: originalAnswerSdp },
     });
@@ -172,7 +173,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     // session must reject the answer (409). Neither may reach the sender.
     expect([404, 409], "revoked visitor must reject a valid late SDP answer").toContain(staleAnswer.status());
     if (originalIce) {
-      const staleIce = await visitor.request.post("/api/rt1/visitor/ice", {
+      const staleIce = await visitorRequest.post(ownerLabUrl + "/api/rt1/visitor/ice", {
         headers: visitorHeaders,
         data: { session_id: visitorSessionId, ...originalIce },
       });
