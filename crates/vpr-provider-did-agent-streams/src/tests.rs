@@ -992,7 +992,12 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     let remote_stop = provider.close_session(&session).unwrap_err();
     assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
     assert!(!remote_stop.retryable);
-    assert!(!provider.echo_sessions.contains(&session.provider_session_id).unwrap());
+    assert!(
+        !provider
+            .echo_sessions
+            .contains(&session.provider_session_id)
+            .unwrap()
+    );
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -1039,7 +1044,12 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     let remote_stop = provider.close_session(&first).unwrap_err();
     assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
     assert!(!remote_stop.retryable);
-    assert!(!provider.echo_sessions.contains(&first.provider_session_id).unwrap());
+    assert!(
+        !provider
+            .echo_sessions
+            .contains(&first.provider_session_id)
+            .unwrap()
+    );
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "stop"]
