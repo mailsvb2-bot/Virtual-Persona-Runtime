@@ -328,6 +328,12 @@ class AiortcSenderBackend:
                 if (not isinstance(video, VideoStreamTrack)
                         or type(video) is VideoStreamTrack):
                     raise RuntimeError("Persona renderer returned a diagnostic video track")
+                # Real lip synchronization must consume the SAME authorized
+                # PCM that is queued on this session's audio RTP sender.
+                # The renderer method must enqueue bounded work and return
+                # promptly; inference must never run under the sender lock.
+                if not callable(getattr(video, "push_pcm", None)):
+                    raise RuntimeError("Persona video track lacks PCM sync input")
             peer.addTrack(audio)
             peer.addTrack(video)
             await peer.setLocalDescription(await peer.createOffer())
@@ -405,6 +411,11 @@ class AiortcSenderBackend:
                     (entry.operation_id, entry.generation) != (operation_id, generation)):
                 raise RuntimeError("remote audio sender revoked")
             entry.audio.push_pcm(pcm)
+            if self._video_renderer is not None:
+                # A failed video queue is a partial delivery, not success:
+                # the canonical HTTP worker quarantines this operation and
+                # reconciles its existing audio/video STOP receipt.
+                entry.video.push_pcm(pcm)
 
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))

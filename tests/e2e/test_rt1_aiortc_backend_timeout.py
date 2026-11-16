@@ -81,7 +81,14 @@ class SenderTimeoutTests(unittest.TestCase):
         from aiortc import VideoStreamTrack
 
         class RendererTrack(VideoStreamTrack):
-            pass
+            def __init__(self):
+                super().__init__()
+                self.received_pcm = []
+
+            def push_pcm(self, pcm):
+                if self.readyState != "live":
+                    raise RuntimeError("video sender stopped")
+                self.received_pcm.append(pcm)
 
         class Renderer:
             def __init__(self):
@@ -105,6 +112,9 @@ class SenderTimeoutTests(unittest.TestCase):
             with backend._lock:
                 entry = backend._sessions[session]
             self.assertIs(entry.video, renderer.created[0][2])
+            frame = bytes(640)
+            backend.push_pcm("renderer-allocated", session, 1, frame)
+            self.assertEqual(entry.video.received_pcm, [frame])
             receipt = backend.stop("renderer-allocated", session, 1)
             self.assertTrue(receipt.audio_stopped)
             self.assertTrue(receipt.video_stopped)
