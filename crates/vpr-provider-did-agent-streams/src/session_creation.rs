@@ -1,12 +1,8 @@
 //! D-ID Echo `LiveKit` session creation: private speaker opens before browser receives viewer grant.
 use crate::protocol::CreateV2SessionResponse;
 use crate::response_json::decode_json_response;
-use crate::{
-    DidAgentStreamsAvatar, expect_success, invalid_response, policy_denied,
-};
-use vpr_integration::{
-    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
-};
+use crate::{DidAgentStreamsAvatar, expect_success, invalid_response, policy_denied};
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession};
 
 impl DidAgentStreamsAvatar {
     pub(super) fn create_livekit_session(
@@ -61,8 +57,8 @@ impl DidAgentStreamsAvatar {
             return Err(invalid_response());
         }
 
-        let body: CreateV2SessionResponse =
-            decode_json_response(response, Some(cancellation)).map_err(|error| ProviderError {
+        let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))
+            .map_err(|error| ProviderError {
                 kind: error.kind,
                 retryable: false,
             })?;
@@ -73,12 +69,12 @@ impl DidAgentStreamsAvatar {
             .ok_or_else(invalid_response)?
             .to_owned();
         let session_url = body.session_url.clone();
-        let session: RealtimeAvatarSession = body.try_into().map_err(|error: ProviderError| {
-            ProviderError {
-                kind: error.kind,
-                retryable: false,
-            }
-        })?;
+        let session: RealtimeAvatarSession =
+            body.try_into()
+                .map_err(|error: ProviderError| ProviderError {
+                    kind: error.kind,
+                    retryable: false,
+                })?;
         self.echo_sessions
             .open_session(
                 backend.as_ref(),
