@@ -533,10 +533,7 @@ fn did_v2_livekit_close_uses_authenticated_exact_session_delete() {
 
 #[test]
 fn did_v2_livekit_close_keeps_404_and_non_204_success_unconfirmed() {
-    for (status, body) in [
-        ("404 Not Found", "{}"),
-        ("200 OK", "{}"),
-    ] {
+    for (status, body) in [("404 Not Found", "{}"), ("200 OK", "{}")] {
         let (endpoint, captured) = serve(vec![(status, body.to_owned())]);
         let provider = adapter(endpoint);
         let session = RealtimeAvatarSession {
@@ -1085,10 +1082,7 @@ fn did_v2_echo_close_retries_provider_delete_after_local_sender_stop() {
     let retry_delete = captured.recv().unwrap();
     assert!(first_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
     assert!(retry_delete.starts_with("DELETE /v2/agents/sessions/echo-session-1 "));
-    assert_eq!(
-        *backend.calls.lock().unwrap(),
-        vec!["open", "stop"]
-    );
+    assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "stop"]);
 }
 
 #[test]

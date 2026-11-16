@@ -5,11 +5,10 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
     CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
-    RealtimeAvatarCapabilities,
-    RealtimeAvatarClientCommand, RealtimeAvatarClientControl, RealtimeAvatarClientEvent,
-    RealtimeAvatarClientRoute, RealtimeAvatarPcmStream, RealtimeAvatarPort, RealtimeAvatarSession,
-    RealtimeAvatarTransport, WebRtcIceCandidate, WebRtcSessionDescription,
-    build_provider_http_client,
+    RealtimeAvatarCapabilities, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
+    RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPcmStream,
+    RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
+    WebRtcSessionDescription, build_provider_http_client,
 };
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
