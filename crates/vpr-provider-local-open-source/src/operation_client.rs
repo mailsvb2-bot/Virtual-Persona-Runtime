@@ -300,6 +300,19 @@ impl RemoteOperationClient {
     /// Denies stale operations, invalid audio, rejected acknowledgements and
     /// cancellations. No automatic retry of ambiguous provider writes.
     pub fn push_pcm(&self, operation_id: &str, pcm: &[u8]) -> Result<(), ProviderError> {
+        self.push_pcm_fragment(operation_id, pcm, false)
+    }
+
+    /// The final authorized fragment ends the current TTS utterance.
+    /// The existing worker may then flush its incomplete 400 ms lip-sync
+    /// window; it cannot guess the boundary from transport-idle timing.
+    pub fn push_pcm_final(&self, operation_id: &str, pcm: &[u8]) -> Result<(), ProviderError> {
+        self.push_pcm_fragment(operation_id, pcm, true)
+    }
+
+    fn push_pcm_fragment(
+        &self, operation_id: &str, pcm: &[u8], final_fragment: bool,
+    ) -> Result<(), ProviderError> {
         if pcm.len() < 640 || pcm.len() > 32_000 || pcm.len() % 640 != 0 {
             return Err(denied());
         }
@@ -313,6 +326,7 @@ impl RemoteOperationClient {
                 "pcm_base64": base64::engine::general_purpose::STANDARD.encode(pcm),
                 "sample_rate_hz": 16000,
                 "channels": 1,
+                "final": final_fragment,
             }))
             .send()
             .map_err(|_| denied())?;

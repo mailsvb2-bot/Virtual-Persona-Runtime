@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -60,6 +61,8 @@ class MuseTalkFactoryTest(unittest.TestCase):
         self.assertEqual(model.SAMPLES_PER_FRAME, 640)
         self.assertEqual(model.CHUNK_FRAMES, 10)
         self.assertEqual(model.CHUNK_FRAMES * model.SAMPLES_PER_FRAME, 6400)
+        self.assertEqual(model.PCM_WINDOW_SAMPLES, 6400)
+        self.assertEqual(model.PCM_WINDOW_BYTES, 12800)
         self.assertLessEqual(model.MAX_AUDIO_CHUNKS, 4)
         self.assertLessEqual(model.MAX_VIDEO_FRAMES, 25)
 
@@ -92,6 +95,72 @@ class MuseTalkRtpTimingTest(unittest.IsolatedAsyncioTestCase):
         finally:
             track.stop()
             self.assertTrue(track.wait_quiesced(1.0))
+
+
+class MuseTalkPcmWindowTest(unittest.TestCase):
+    def _track(self):
+        import numpy as np
+
+        class FakeGpu:
+            _prepare_sample = np.zeros((48, 64, 3), dtype=np.uint8)
+
+            def __init__(self):
+                self.sample_lengths = []
+
+            def ready(self):
+                return True
+
+            def _infer(self, samples, start_frame):
+                self.sample_lengths.append(len(samples))
+                if len(samples) != model.PCM_WINDOW_SAMPLES:
+                    raise ValueError("incorrect PCM window")
+                return [self._prepare_sample.copy() for _ in range(model.CHUNK_FRAMES)]
+
+        class Audio:
+            def __init__(self):
+                self.received = []
+                self.sent = threading.Event()
+
+            def push_pcm(self, pcm):
+                self.received.append(pcm)
+                self.sent.set()
+
+        gpu = FakeGpu()
+        audio = Audio()
+        track = model._MuseTalkVideoTrack(gpu, "pcm-window", 1)
+        track.bind_audio_track(audio)
+        return gpu, audio, track
+
+    def test_400ms_window_is_12800_bytes_not_6400(self):
+        gpu, audio, track = self._track()
+        try:
+            pcm = bytes([1, 0]) * model.PCM_WINDOW_SAMPLES
+            self.assertEqual(len(pcm), 12_800)
+            track.push_pcm(pcm)
+            self.assertTrue(audio.sent.wait(2.0))
+            self.assertEqual(gpu.sample_lengths, [6400])
+            self.assertEqual(audio.received, [pcm])
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
+
+    def test_final_short_fragment_is_padded_only_at_utterance_end(self):
+        gpu, audio, track = self._track()
+        try:
+            first = bytes([1, 0]) * 3200  # 200ms, not a full MuseTalk window
+            last = bytes([2, 0]) * 320     # 20ms: canonical final marker
+            track.push_pcm(first)
+            self.assertFalse(audio.sent.wait(0.05))
+            track.push_pcm(last, final=True)
+            self.assertTrue(audio.sent.wait(2.0))
+            self.assertEqual(gpu.sample_lengths, [6400])
+            expected = first + last
+            self.assertEqual(audio.received, [
+                expected + bytes(model.PCM_WINDOW_BYTES - len(expected))
+            ])
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(2.0))
 
 
 if __name__ == "__main__":

@@ -272,11 +272,19 @@ impl RealtimeAvatarPort for OperationWorkerAvatar {
         let audio = Self::normalize_pcm(pcm, sample_rate_hz, channels)?;
         // Match worker 2-second queue: send half-second chunks with bounded
         // pacing and recheck the SAME revocable canonical turn on every write.
-        for chunk in audio.chunks(16_000) {
+        let mut fragments = audio.chunks(16_000).peekable();
+        while let Some(chunk) = fragments.next() {
             if cancellation.is_cancelled() {
                 return Err(denied());
             }
-            self.client.push_pcm(&self.operation_id, chunk)?;
+            if fragments.peek().is_none() {
+                // This is the actual end of this canonical TTS utterance;
+                // flush the renderer's remaining 20-380 ms PCM as part of
+                // the SAME authenticated worker/media operation.
+                self.client.push_pcm_final(&self.operation_id, chunk)?;
+            } else {
+                self.client.push_pcm(&self.operation_id, chunk)?;
+            }
             if cancellation.is_cancelled() {
                 return Err(denied());
             }

@@ -249,7 +249,11 @@ def handler_for(
                 try:
                     payload = self._read_json_body(45000)
                     if (not isinstance(payload, dict) or
-                            set(payload) != {"pcm_base64", "sample_rate_hz", "channels"} or
+                            set(payload) not in (
+                                {"pcm_base64", "sample_rate_hz", "channels"},
+                                {"pcm_base64", "sample_rate_hz", "channels", "final"},
+                            ) or
+                            type(payload.get("final", False)) is not bool or
                             type(payload["sample_rate_hz"]) is not int or
                             payload["sample_rate_hz"] != 16000 or
                             type(payload["channels"]) is not int or
@@ -287,7 +291,14 @@ def handler_for(
                         else:
                             try:
                                 push_attempted = True
-                                lifecycle._backend.push_pcm(operation_id, row[2], row[0], pcm)
+                                if payload.get("final", False):
+                                    lifecycle._backend.push_pcm(
+                                        operation_id, row[2], row[0], pcm, final=True
+                                    )
+                                else:
+                                    lifecycle._backend.push_pcm(
+                                        operation_id, row[2], row[0], pcm
+                                    )
                             except Exception:
                                 # A failed ACK may follow partially queued PCM.
                                 pcm_failed = True

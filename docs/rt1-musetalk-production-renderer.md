@@ -44,10 +44,18 @@ authenticated TLS proxy and canonical worker operations for external traffic.
 - One loaded real CUDA Whisper / MuseTalk VAE / UNet / positional-encoding
   pipeline, one lock for GPU inference; sender/session ownership stays in the
   existing aiortc backend and durable SQLite lifecycle.
-- Per-session bounded 400 ms PCM windows. Each window produces ten actual
-  model-inferred 25 fps face frames blended into that Persona's prepared
-  image. An idle sender repeats the real prepared first frame, not a
-  synthetic face.
+- Per-session bounded **400 ms = 6,400 PCM16 mono samples = 12,800
+  bytes** windows. Each window produces ten model-inferred 25 fps face frames;
+  video uses 90 kHz RTP timestamps incrementing 3,600 ticks per frame (not
+  aiortc's default 30 fps). An idle sender shows the authorized prepared
+  frame, not a synthetic face.
+- The canonical Rust `speak_pcm` marks its last authenticated fragment
+  `final: true` on the **existing** worker PCM endpoint. Only that explicit
+  utterance boundary pads the last incomplete model window with PCM silence;
+  the streaming windows are never inferred from an idle timer. Without this
+  flag, the final 20–380 ms of the owner's authorized reply could remain
+  buffered forever. Legacy fragments without `final` retain their previous
+  semantics.
 - The authorized PCM enters the MuseTalk queue once. Only after its inferred
   face frames are queued does the renderer release that same PCM to the
   existing audio RTP sender. This avoids audible speech getting ahead of lip

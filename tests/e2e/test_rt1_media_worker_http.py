@@ -29,6 +29,7 @@ class Backend:
         self.allocations = 0
         self.stops = 0
         self.pcm_pushes = []
+        self.pcm_final_markers = []
         self.video_renderer_ready = False
 
     def persona_video_ready(self):
@@ -36,8 +37,9 @@ class Backend:
         # claim that a real renderer or human-visible avatar exists.
         return self.video_renderer_ready
 
-    def push_pcm(self, operation_id, session_id, generation, pcm):
+    def push_pcm(self, operation_id, session_id, generation, pcm, *, final=False):
         self.pcm_pushes.append((operation_id, session_id, generation, pcm))
+        self.pcm_final_markers.append(final)
 
     def allocate(self, operation_id, generation):
         self.allocations += 1
@@ -622,6 +624,49 @@ class HttpLifecycleTests(unittest.TestCase):
         self.url = self.url.replace("operation-1", "operation-2")
         self.assertEqual(self.request("PUT")[0], 200)
         self.assertEqual(self.backend.allocations, 2)
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_authenticated_final_pcm_marker_reaches_existing_worker_sender(self):
+        pcm = bytes([1, 0]) * 320
+        self.assertEqual(self.request("PUT")[0], 200)
+        url = self.url + "/pcm"
+        body = {
+            "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+            "sample_rate_hz": 16000,
+            "channels": 1,
+            "final": True,
+        }
+        req = Request(
+            url, data=json.dumps(body).encode(), method="POST",
+            headers={"Authorization": "Bearer test-secret",
+                     "Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=3) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.load(response)["accepted_bytes"], len(pcm))
+        self.assertEqual(self.backend.pcm_pushes, [
+            ("operation-1", "media-1", 1, pcm)
+        ])
+        self.assertEqual(self.backend.pcm_final_markers, [True])
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_non_boolean_final_marker_is_rejected_without_media_side_effect(self):
+        pcm = bytes([1, 0]) * 320
+        self.assertEqual(self.request("PUT")[0], 200)
+        req = Request(
+            self.url + "/pcm",
+            data=json.dumps({
+                "pcm_base64": base64.b64encode(pcm).decode("ascii"),
+                "sample_rate_hz": 16000, "channels": 1, "final": "true",
+            }).encode(),
+            method="POST",
+            headers={"Authorization": "Bearer test-secret",
+                     "Content-Type": "application/json"},
+        )
+        with self.assertRaises(HTTPError) as response:
+            urlopen(req, timeout=3)
+        self.assertEqual(response.exception.code, 400)
+        self.assertEqual(self.backend.pcm_pushes, [])
         self.assertEqual(self.request("DELETE")[0], 200)
 
     def test_pcm_uses_existing_authenticated_session_and_stops_after_revoke(self):

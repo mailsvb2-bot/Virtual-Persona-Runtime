@@ -23,7 +23,10 @@ VIDEO_RTP_CLOCK_HZ = 90000
 VIDEO_FRAME_PTS = VIDEO_RTP_CLOCK_HZ // VIDEO_FPS
 VIDEO_TIME_BASE = Fraction(1, VIDEO_RTP_CLOCK_HZ)
 SAMPLES_PER_FRAME = SAMPLE_RATE // VIDEO_FPS  # 40 ms / generated video frame
+PCM_BYTES_PER_SAMPLE = 2  # PCM16LE mono
 CHUNK_FRAMES = 10         # 400 ms of authorized PCM for Whisper context
+PCM_WINDOW_SAMPLES = CHUNK_FRAMES * SAMPLES_PER_FRAME
+PCM_WINDOW_BYTES = PCM_WINDOW_SAMPLES * PCM_BYTES_PER_SAMPLE
 MAX_AUDIO_CHUNKS = 4
 MAX_VIDEO_FRAMES = 25
 
@@ -110,7 +113,7 @@ class MuseTalkRenderer:
         # generate valid frames on the selected GPU.
         import numpy as np
         warmup = self._infer(
-            np.zeros(CHUNK_FRAMES * SAMPLES_PER_FRAME, dtype="<i2"), 0
+            np.zeros(PCM_WINDOW_SAMPLES, dtype="<i2"), 0
         )
         if len(warmup) != CHUNK_FRAMES:
             raise RuntimeError("MuseTalk GPU model warmup produced no video")
@@ -136,7 +139,7 @@ class MuseTalkRenderer:
         from musetalk.utils.blending import get_image_blending
         from musetalk.utils.utils import datagen
 
-        if len(samples) != CHUNK_FRAMES * SAMPLES_PER_FRAME:
+        if len(samples) != PCM_WINDOW_SAMPLES:
             raise ValueError("MuseTalk inference requires exactly 400ms PCM")
         with self._gpu_lock, self._torch.inference_mode():
             features = self._audio.feature_extractor(
@@ -228,9 +231,9 @@ class _MuseTalkVideoTrack:
                         raise RuntimeError("MuseTalk audio sender already bound")
                     self._audio_track = audio
 
-            def push_pcm(self, pcm: bytes):
-                if not pcm or len(pcm) % 640:
-                    raise ValueError("PCM must contain whole 20ms frames")
+            def push_pcm(self, pcm: bytes, *, final: bool = False):
+                if not pcm or len(pcm) % 640 or type(final) is not bool:
+                    raise ValueError("PCM must contain whole 20ms frames and a valid final marker")
                 with self._lock:
                     if self._stop.is_set() or self.readyState != "live":
                         raise RuntimeError("Persona video sender stopped")
@@ -238,13 +241,17 @@ class _MuseTalkVideoTrack:
                         raise RuntimeError("MuseTalk renderer failed") from self._failed
                     # No unbounded buffering and no silent discarded speech.
                     whole = bytes(self._pcm) + pcm
-                    chunks = len(whole) // (CHUNK_FRAMES * SAMPLES_PER_FRAME)
+                    if final and len(whole) % PCM_WINDOW_BYTES:
+                        # An explicit utterance boundary is the ONLY safe
+                        # time to pad. A timer would inject silence between
+                        # the canonical provider's paced streaming chunks.
+                        whole += bytes(PCM_WINDOW_BYTES - len(whole) % PCM_WINDOW_BYTES)
+                    chunks = len(whole) // PCM_WINDOW_BYTES
                     if self._chunks.qsize() + chunks > MAX_AUDIO_CHUNKS:
                         raise RuntimeError("MuseTalk PCM backlog exceeded")
-                    self._pcm = bytearray(whole[chunks * CHUNK_FRAMES * SAMPLES_PER_FRAME:])
-                    for start in range(0, chunks * CHUNK_FRAMES * SAMPLES_PER_FRAME,
-                                       CHUNK_FRAMES * SAMPLES_PER_FRAME):
-                        self._chunks.put_nowait(whole[start:start + CHUNK_FRAMES * SAMPLES_PER_FRAME])
+                    self._pcm = bytearray(whole[chunks * PCM_WINDOW_BYTES:])
+                    for start in range(0, chunks * PCM_WINDOW_BYTES, PCM_WINDOW_BYTES):
+                        self._chunks.put_nowait(whole[start:start + PCM_WINDOW_BYTES])
 
             def _process(self):
                 import numpy as np

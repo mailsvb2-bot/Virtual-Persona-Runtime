@@ -402,7 +402,10 @@ class AiortcSenderBackend:
             if entry.closed:
                 raise RuntimeError("WebRTC operation revoked during answer")
 
-    def push_pcm(self, operation_id: str, session_id: str, generation: int, pcm: bytes):
+    def push_pcm(
+        self, operation_id: str, session_id: str, generation: int,
+        pcm: bytes, *, final: bool = False,
+    ):
         """Queue bounded authorized TTS PCM on the existing RTP sender.
 
         The canonical durable worker HTTP boundary owns revocation
@@ -416,7 +419,12 @@ class AiortcSenderBackend:
             if self._video_renderer is not None:
                 # Model inference releases the SAME PCM to audio only once
                 # matching face frames are queued. Never play audio early.
-                entry.video.push_pcm(pcm)
+                # Explicit end-of-utterance flush prevents truncating the
+                # final sub-400ms authorized speech fragment.
+                if final:
+                    entry.video.push_pcm(pcm, final=True)
+                else:
+                    entry.video.push_pcm(pcm)
             else:
                 # Legacy diagnostic RTP and test fixtures retain the original
                 # direct audio path, but cannot authorize public Persona links.
