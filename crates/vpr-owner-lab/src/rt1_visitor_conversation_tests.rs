@@ -247,9 +247,7 @@ fn busy_engine_stop_releases_lease_and_does_not_fake_remote_confirmation() {
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
 
-
-#[test]
-fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
+#[test]_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
     use std::net::TcpListener;
     use std::sync::atomic::AtomicUsize;
     use std::time::{Duration, Instant};
@@ -261,9 +259,8 @@ fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let client =
         RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(5)).unwrap();
-    let remote = Arc::new(
-        Rt1RemoteMediaRevocation::new(client, "drop-nonblocking".into(), 1).unwrap(),
-    );
+    let remote =
+        Arc::new(Rt1RemoteMediaRevocation::new(client, "drop-nonblocking".into(), 1).unwrap());
     let wakes = Arc::new(AtomicUsize::new(0));
     let observed_wakes = Arc::clone(&wakes);
     remote.install_revoke_notifier(move || {
