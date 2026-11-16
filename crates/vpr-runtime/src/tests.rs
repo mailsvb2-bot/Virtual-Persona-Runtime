@@ -402,7 +402,10 @@ fn session_revoke_commits_state_after_revoke_only_handle_already_invalidated_aut
 
     session.revoke().unwrap();
     assert_eq!(session.state(), RealtimeSessionState::Revoked);
-    assert!(revoker.revoke_authority().is_ok(), "repeated revoke is idempotent");
+    assert!(
+        revoker.revoke_authority().is_ok(),
+        "repeated revoke is idempotent"
+    );
     assert!(matches!(
         turn.issue_provider_permit(&scope, DataClass::Public),
         Err(RuntimeDenyReason::AuthorizationStale)
