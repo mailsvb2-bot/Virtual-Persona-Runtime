@@ -15,6 +15,60 @@ impl DidAgentStreamsAvatar {
         self.delete_v2_session_identity(session_id)
     }
 
+    fn open_private_echo_sender(
+        &self,
+        provider_session_id: &str,
+        session_url: &str,
+        secret: &str,
+        cancellation: &dyn CancellationProbe,
+    ) -> Result<(), ProviderError> {
+        // A repeated provider session ID must not tear down an existing
+        // Echo publisher. The registry's atomic insert remains the final
+        // race fence after this read-only precheck.
+        if self
+            .echo_sessions
+            .contains(provider_session_id)
+            .map_err(|_| unavailable())?
+        {
+            return Err(invalid_response());
+        }
+
+        if let Err(error) = self.echo_sessions.open_session(
+            self.echo_backend.as_ref().ok_or_else(policy_denied)?.as_ref(),
+            provider_session_id,
+            session_url,
+            secret,
+            cancellation,
+        ) {
+            // open_session retains its only sender identity when local STOP
+            // is unconfirmed. Do not discard that state or race a provider
+            // DELETE whose acknowledgement could not be durably combined.
+            if self
+                .echo_sessions
+                .contains(provider_session_id)
+                .map_err(|_| unavailable())?
+            {
+                return Err(unavailable());
+            }
+            self.compensate_v2_create(Some(provider_session_id))?;
+            return Err(error);
+        }
+
+        if cancellation.is_cancelled() {
+            // Close the private publisher before deleting the provider session.
+            // If local STOP is uncertain, preserve the registry identity.
+            self.echo_sessions
+                .close_session(
+                    self.echo_backend.as_ref().ok_or_else(policy_denied)?.as_ref(),
+                    provider_session_id,
+                )
+                .map_err(|_| unavailable())?;
+            self.compensate_v2_create(Some(provider_session_id))?;
+            return Err(crate::cancelled());
+        }
+        Ok(())
+    }
+
     pub(super) fn create_livekit_session(
         &self,
         cancellation: &dyn CancellationProbe,
@@ -68,12 +122,11 @@ impl DidAgentStreamsAvatar {
         // probe so its exact session ID remains available for compensation.
         let raw: Value = decode_json_response(response, None).map_err(|_| unavailable())?;
         let allocated_id = raw.get("id").and_then(Value::as_str).map(str::to_owned);
-        let body: CreateV2SessionResponse = match serde_json::from_value(raw) {
-            Ok(body) => body,
-            Err(_) => {
-                self.compensate_v2_create(allocated_id.as_deref())?;
-                return Err(invalid_response());
-            }
+        let body: CreateV2SessionResponse = if let Ok(body) = serde_json::from_value(raw) {
+            body
+        } else {
+            self.compensate_v2_create(allocated_id.as_deref())?;
+            return Err(invalid_response());
         };
         let provider_session_id = body.id.clone();
         let session_url = body.session_url.clone();
@@ -105,48 +158,12 @@ impl DidAgentStreamsAvatar {
             return Err(crate::cancelled());
         }
 
-        // A repeated provider session ID must not tear down an existing
-        // Echo publisher. The registry's atomic insert remains the final
-        // race fence after this read-only precheck.
-        if self
-            .echo_sessions
-            .contains(&provider_session_id)
-            .map_err(|_| unavailable())?
-        {
-            return Err(invalid_response());
-        }
-
-        if let Err(error) = self.echo_sessions.open_session(
-            backend.as_ref(),
+        self.open_private_echo_sender(
             &provider_session_id,
             &session_url,
             &secret,
             cancellation,
-        ) {
-            // open_session retains its only sender identity when local STOP
-            // is unconfirmed. Do not discard that state or race a provider
-            // DELETE whose acknowledgement could not be durably combined.
-            let sender_pending = self
-                .echo_sessions
-                .contains(&provider_session_id)
-                .map_err(|_| unavailable())?;
-            if sender_pending {
-                return Err(unavailable());
-            }
-            self.compensate_v2_create(Some(&provider_session_id))?;
-            return Err(error);
-        }
-
-        if cancellation.is_cancelled() {
-            // Close the private publisher before deleting the provider session.
-            // If local STOP is uncertain, preserve the registry identity.
-            self.echo_sessions
-                .close_session(backend.as_ref(), &provider_session_id)
-                .map_err(|_| unavailable())?;
-            self.compensate_v2_create(Some(&provider_session_id))?;
-            return Err(crate::cancelled());
-        }
-
+        )?;
         Ok(session)
     }
 }
