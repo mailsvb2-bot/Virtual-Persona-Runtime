@@ -6,6 +6,8 @@ Requires an operator-prepared MuseTalk avatar and local CUDA model weights.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import asyncio
 from fractions import Fraction
 import logging
@@ -29,6 +31,38 @@ PCM_WINDOW_SAMPLES = CHUNK_FRAMES * SAMPLES_PER_FRAME
 PCM_WINDOW_BYTES = PCM_WINDOW_SAMPLES * PCM_BYTES_PER_SAMPLE
 MAX_AUDIO_CHUNKS = 4
 MAX_VIDEO_FRAMES = 25
+
+
+def prepared_avatar_digest(avatar_dir: str | Path) -> str:
+    """Digest exactly the prepared face data consumed by this renderer.
+
+    Caller pins the digest OUTSIDE the asset directory; a self-supplied
+    manifest cannot authorize itself. Reject symlinks before pickle loading.
+    No extra Persona owner, database or browser-provided asset selector.
+    """
+    avatar = Path(avatar_dir).resolve(strict=True)
+    paths = [avatar / name for name in ("latents.pt", "coords.pkl", "mask_coords.pkl")]
+    for directory in ("full_imgs", "mask"):
+        folder = avatar / directory
+        if folder.is_symlink() or not folder.is_dir():
+            raise RuntimeError("prepared avatar frame directory unavailable")
+        frames = sorted(folder.glob("*.png"))
+        if not frames:
+            raise RuntimeError("prepared avatar frames missing")
+        paths.extend(frames)
+    digest = hashlib.sha256(b"VPR-MuseTalk-prepared-avatar-v1\\0")
+    for path in sorted(paths, key=lambda candidate: candidate.relative_to(avatar).as_posix()):
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("prepared avatar file must be a regular non-symlink")
+        relative = path.relative_to(avatar).as_posix().encode("utf-8")
+        # Name and byte count delimit file boundaries; content is streamed.
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        digest.update(path.stat().st_size.to_bytes(8, "big"))
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+    return digest.hexdigest()
 
 
 class MuseTalkRenderer:
@@ -69,6 +103,15 @@ class MuseTalkRenderer:
             raise RuntimeError("MuseTalk avatar image frames missing")
         if not list((avatar / "mask").glob("*.png")):
             raise RuntimeError("MuseTalk avatar masks missing")
+        # The operator-approved digest is an independent deployment secret/
+        # configuration value, never computed from a visitor-supplied path.
+        # Fail before importing CUDA or deserializing trusted-only pickle data.
+        pinned = os.environ.get("RT1_MUSETALK_AVATAR_SHA256", "")
+        if len(pinned) != 64 or any(ch not in "0123456789abcdef" for ch in pinned):
+            raise RuntimeError("RT1_MUSETALK_AVATAR_SHA256 pin required")
+        actual = prepared_avatar_digest(avatar)
+        if not hmac.compare_digest(actual, pinned):
+            raise RuntimeError("prepared Persona avatar digest mismatch")
         # Load only after local path, weights and CUDA checks. No implicit downloads.
         import torch
         if not torch.cuda.is_available() or gpu_id >= torch.cuda.device_count() or gpu_id < 0:
