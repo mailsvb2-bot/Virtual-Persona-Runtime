@@ -1086,6 +1086,147 @@ fn did_v2_echo_close_retries_provider_delete_after_local_sender_stop() {
 }
 
 #[test]
+fn revoke_during_v2_create_body_read_compensates_exact_session_id() {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    struct RevokeAtFinalCheck(AtomicUsize);
+    impl CancellationProbe for RevokeAtFinalCheck {
+        fn is_cancelled(&self) -> bool {
+            self.0.fetch_add(1, Ordering::SeqCst) >= 2
+        }
+    }
+
+    let body = r#"{"id":"echo-late-session","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", body.to_owned()),
+        ("204 No Content", String::new()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+
+    let error = provider
+        .create_session(&RevokeAtFinalCheck(AtomicUsize::new(0)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Cancelled);
+    assert!(backend.calls.lock().unwrap().is_empty());
+
+    assert!(
+        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+            .starts_with("GET /agents/agent-7 ")
+    );
+    assert!(
+        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
+    assert!(
+        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+            .starts_with("DELETE /v2/agents/sessions/echo-late-session ")
+    );
+}
+
+#[test]
+fn malformed_v2_create_with_recoverable_id_is_compensated() {
+    use std::sync::Arc;
+
+    let malformed = r#"{"id":"echo-schema-orphan","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("204 No Content", String::new()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend.clone());
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    assert!(backend.calls.lock().unwrap().is_empty());
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(
+        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+            .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
+    );
+}
+
+#[test]
+fn failed_v2_create_compensation_remains_unconfirmed() {
+    use std::sync::Arc;
+
+    let malformed = r#"{"id":"echo-schema-orphan","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#;
+    let (endpoint, captured) = serve(vec![
+        ("200 OK", expressive_agent_body()),
+        ("201 Created", malformed.to_owned()),
+        ("503 Service Unavailable", "{}".to_owned()),
+    ]);
+    let backend = Arc::new(MockEchoBackend::default());
+    let provider = adapter(endpoint).with_echo_backend(backend);
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(error.retryable);
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    assert!(
+        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+            .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
+    );
+}
+
+#[test]
+fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let (tx, captured) = mpsc::channel();
+    thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        tx.send(read_request(&mut first)).unwrap();
+        let body = expressive_agent_body();
+        let headers = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        first.write_all(headers.as_bytes()).unwrap();
+        first.write_all(body.as_bytes()).unwrap();
+
+        let (mut second, _) = listener.accept().unwrap();
+        tx.send(read_request(&mut second)).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        let late = r#"{"id":"echo-created-after-timeout","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
+        let headers = format!(
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            late.len()
+        );
+        let _ = second.write_all(headers.as_bytes());
+        let _ = second.write_all(late.as_bytes());
+    });
+
+    let provider = DidAgentStreamsAvatar::new(
+        DidAgentStreamsConfig::new(endpoint, "secret-key", "agent-7")
+            .with_timeout(Duration::from_millis(100)),
+    )
+    .unwrap()
+    .with_echo_backend(Arc::new(MockEchoBackend::default()));
+
+    let error = provider
+        .create_session(&Probe(AtomicBool::new(false)))
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::Timeout);
+    assert!(!error.retryable);
+    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
+    let _ = captured.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(captured.try_recv().is_err());
+}
+
+#[test]
 fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first() {
     use std::sync::Arc;
 
@@ -1095,6 +1236,7 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
         ("201 Created", body.to_owned()),
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
+        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -1159,9 +1301,10 @@ fn echo_start_cancelled_during_open_stops_private_sender_and_returns_no_session(
     use std::sync::Arc;
 
     let body = r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token","echo_token":"server-ONLY-echo-token"}"#;
-    let (endpoint, _captured) = serve(vec![
+    let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", body.to_owned()),
+        ("204 No Content", String::new()),
     ]);
     let cancellation = Arc::new(Probe(AtomicBool::new(false)));
     let backend = Arc::new(CancelledDuringEchoOpen {
@@ -1174,6 +1317,24 @@ fn echo_start_cancelled_during_open_stops_private_sender_and_returns_no_session(
     assert_eq!(error.kind, ProviderErrorKind::Cancelled);
     assert_eq!(*backend.calls.lock().unwrap(), vec!["open", "stop"]);
     assert!(!provider.echo_sessions.contains("echo-session-1").unwrap());
+    assert!(
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .starts_with("GET /agents/agent-7 ")
+    );
+    assert!(
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .starts_with("POST /v2/agents/agent-7/sessions ")
+    );
+    assert!(
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .starts_with("DELETE /v2/agents/sessions/echo-session-1 ")
+    );
 }
 
 #[test]
@@ -1183,6 +1344,7 @@ fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
     let (endpoint, captured) = serve(vec![
         ("200 OK", expressive_agent_body()),
         ("201 Created", r#"{"id":"echo-session-1","session_url":"wss://livekit.example.test/room/agent-echo","session_token":"viewer-token"}"#.to_owned()),
+        ("204 No Content", String::new()),
     ]);
     let backend = Arc::new(MockEchoBackend::default());
     let provider = adapter(endpoint).with_echo_backend(backend.clone());
@@ -1197,6 +1359,12 @@ fn echo_requires_a_real_sender_token_and_never_falls_back_to_browser_speak() {
             .recv()
             .unwrap()
             .contains(r#""session_type":"echo""#)
+    );
+    assert!(
+        captured
+            .recv()
+            .unwrap()
+            .starts_with("DELETE /v2/agents/sessions/echo-session-1 ")
     );
 }
 

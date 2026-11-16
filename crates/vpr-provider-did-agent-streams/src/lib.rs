@@ -184,6 +184,32 @@ impl DidAgentStreamsAvatar {
         Ok(url)
     }
 
+    /// Deletes one exact V2 session. Only the documented 204 response is a
+    /// provider deletion receipt; 404 and other 2xx responses remain unknown.
+    pub(super) fn delete_v2_session_identity(
+        &self,
+        session_id: &str,
+    ) -> Result<(), ProviderError> {
+        let response = self
+            .authorized(
+                self.client
+                    .delete(self.v2_session_url(session_id)?),
+            )
+            .send()
+            .map_err(|error| map_transport_error(&error))?;
+        let status = response.status();
+        if status.as_u16() == 204 {
+            Ok(())
+        } else if status.as_u16() == 404 || status.is_success() {
+            Err(ProviderError {
+                kind: ProviderErrorKind::Unavailable,
+                retryable: true,
+            })
+        } else {
+            expect_success(response).map(|_| ())
+        }
+    }
+
     fn stream_url(&self, stream_id: &str) -> Result<reqwest::Url, ProviderError> {
         let mut url = self.streams_url()?;
         url.path_segments_mut()
@@ -552,27 +578,9 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
 
                 // D-ID documents DELETE /v2/agents/sessions/{sessionId} with
                 // 204 Deleted. Only that exact acknowledgement confirms the
-                // provider resource deletion. A 404 is deliberately NOT
-                // treated as idempotent success: the public contract does not
-                // define retry-after-lost-response semantics for that status.
-                let response = self
-                    .authorized(
-                        self.client
-                            .delete(self.v2_session_url(&session.provider_session_id)?),
-                    )
-                    .send()
-                    .map_err(|error| map_transport_error(&error))?;
-                let status = response.status();
-                if status.as_u16() == 204 {
-                    Ok(())
-                } else if status.as_u16() == 404 || status.is_success() {
-                    Err(ProviderError {
-                        kind: ProviderErrorKind::Unavailable,
-                        retryable: true,
-                    })
-                } else {
-                    expect_success(response).map(|_| ())
-                }
+                // provider resource deletion; ambiguous responses remain
+                // retryable and quarantined.
+                self.delete_v2_session_identity(&session.provider_session_id)
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
