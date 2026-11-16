@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use vpr_integration::ProviderError;
 
-use super::{Generation, RemoteOperationClient, denied};
+use super::{OperationRequest, RemoteOperationClient, denied};
 
 #[derive(Debug, Deserialize)]
 struct CancelReply {
@@ -116,7 +116,7 @@ fn cancel_confirmed_until(
             // STOP must survive Persona correction and owner rotation.
             // Only CREATE is bound to current face assets; the durable
             // operation/generation alone identifies the session to revoke.
-            .json(&Generation {
+            .json(&OperationRequest {
                 generation,
                 persona_id: None,
                 persona_version: None,

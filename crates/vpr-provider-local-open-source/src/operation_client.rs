@@ -23,7 +23,7 @@ pub struct RemoteOperationClient {
 }
 
 #[derive(Serialize)]
-struct Generation<'a> {
+struct OperationRequest<'a> {
     generation: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     persona_id: Option<&'a str>,
@@ -255,7 +255,7 @@ impl RemoteOperationClient {
             .client
             .put(self.url(operation_id)?)
             .bearer_auth(&self.token)
-            .json(&Generation {
+            .json(&OperationRequest {
                 generation,
                 persona_id: self.persona_id.as_deref(),
                 persona_version: self.persona_version,
