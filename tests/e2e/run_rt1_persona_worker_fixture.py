@@ -71,8 +71,15 @@ class SyntheticPersonaSenderBackend(AiortcSenderBackend):
     def persona_video_ready(self) -> bool:
         return True
 
-    def push_pcm(self, operation_id: str, session_id: str, generation: int, pcm: bytes):
-        super().push_pcm(operation_id, session_id, generation, pcm)
+    def push_pcm(
+        self, operation_id: str, session_id: str, generation: int,
+        pcm: bytes, *, final: bool = False,
+    ):
+        # Preserve the production worker's final-utterance contract. This
+        # synthetic video fixture must not reject a real canonical PCM tail.
+        super().push_pcm(
+            operation_id, session_id, generation, pcm, final=final
+        )
         with self._fixture_guard:
             self._pcm_pushes += 1
 
