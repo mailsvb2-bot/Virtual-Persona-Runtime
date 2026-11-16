@@ -43,6 +43,11 @@ class Backend:
         self.allocations += 1
         return "media-1"
 
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        if cancel_requested.is_set():
+            raise RuntimeError("CREATE cancelled")
+        return self.allocate(operation_id, generation)
+
     def stop(self, operation_id, session_id, generation):
         self.stops += 1
         return StopReceipt(operation_id, session_id, generation, True, True)

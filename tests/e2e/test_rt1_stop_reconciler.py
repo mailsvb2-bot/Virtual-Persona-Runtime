@@ -26,6 +26,11 @@ class FlakySender:
         self.active = True
         return "flaky-session"
 
+    def allocate_bounded(self, operation_id, generation, timeout, cancel_requested):
+        if cancel_requested.is_set():
+            raise RuntimeError("CREATE cancelled")
+        return self.allocate(operation_id, generation)
+
     def stop(self, operation_id, session_id, generation):
         self.stops += 1
         if self.stops == 1:

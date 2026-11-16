@@ -215,17 +215,44 @@ class AiortcSenderBackend:
         coroutine,
         cancel_requested: threading.Event | None = None,
         cancel_identity: tuple[str, int] | None = None,
+        timeout: float | None = None,
     ):
+        # Poll the owner cancellation event while the provider coroutine is
+        # in flight. The lifecycle passes its remaining budget; this adapter
+        # enforces it on the provider operation, not a detached waiter.
+        budget = self._timeout if timeout is None else timeout
+        if not 0 < budget <= 60:
+            coroutine.close()
+            raise ValueError("invalid WebRTC operation deadline")
         future = asyncio.run_coroutine_threadsafe(coroutine, self._loop)
-        try:
-            return future.result(self._timeout)
-        except concurrent.futures.TimeoutError as exc:
-            self._fence_cancelled_create(cancel_requested, cancel_identity)
-            future.cancel()
-            raise RuntimeError("WebRTC operation timed out; STOP unconfirmed") from exc
-        except concurrent.futures.CancelledError as exc:
-            self._fence_cancelled_create(cancel_requested, cancel_identity)
-            raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
+        deadline = time.monotonic() + budget
+        while True:
+            if cancel_requested is not None and cancel_requested.is_set():
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                future.cancel()
+                raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                future.cancel()
+                raise RuntimeError("WebRTC operation timed out; STOP unconfirmed")
+            try:
+                result = future.result(min(remaining, 0.05))
+                if cancel_requested is not None and cancel_requested.is_set():
+                    self._fence_cancelled_create(cancel_requested, cancel_identity)
+                    future.cancel()
+                    raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed")
+                if time.monotonic() >= deadline:
+                    self._fence_cancelled_create(cancel_requested, cancel_identity)
+                    future.cancel()
+                    raise RuntimeError("WebRTC operation timed out; STOP unconfirmed")
+                return result
+            except concurrent.futures.TimeoutError:
+                if future.done():
+                    raise
+            except concurrent.futures.CancelledError as exc:
+                self._fence_cancelled_create(cancel_requested, cancel_identity)
+                raise RuntimeError("WebRTC operation cancelled; STOP unconfirmed") from exc
 
     @staticmethod
     def recovery_session_id(operation_id: str, generation: int) -> str:
@@ -237,11 +264,25 @@ class AiortcSenderBackend:
         return f"rt1-{operation_id}-{generation}"
 
     def allocate(self, operation_id: str, generation: int) -> str:
-        cancel_requested = threading.Event()
+        return self.allocate_bounded(
+            operation_id, generation, self._timeout, threading.Event()
+        )
+
+    def allocate_bounded(
+        self,
+        operation_id: str,
+        generation: int,
+        timeout: float,
+        cancel_requested: threading.Event,
+    ) -> str:
+        """Allocate on the existing provider loop under caller deadline/revoke."""
+        if cancel_requested.is_set():
+            raise RuntimeError("WebRTC CREATE cancelled before dispatch")
         return self._call(
             self._allocate(operation_id, generation, cancel_requested),
             cancel_requested=cancel_requested,
             cancel_identity=(operation_id, generation),
+            timeout=timeout,
         )
 
     async def _allocate(

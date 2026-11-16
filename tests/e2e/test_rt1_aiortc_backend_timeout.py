@@ -36,6 +36,41 @@ class SenderTimeoutTests(unittest.TestCase):
         finally:
             backend.shutdown()
 
+    def test_owner_cancellation_interrupts_provider_wait_before_backend_deadline(self):
+        backend = AiortcSenderBackend(timeout=2.0)
+        started = threading.Event()
+        cancellation = threading.Event()
+        failures = []
+
+        async def pending_operation():
+            started.set()
+            await asyncio.sleep(5.0)
+
+        def run():
+            try:
+                backend._call(
+                    pending_operation(),
+                    cancel_requested=cancellation,
+                    cancel_identity=("cancelled-create", 1),
+                    timeout=2.0,
+                )
+            except Exception as error:
+                failures.append(error)
+
+        task = threading.Thread(target=run, name="test-aiortc-cancel")
+        try:
+            task.start()
+            self.assertTrue(started.wait(1), "provider coroutine did not start")
+            cancellation.set()
+            task.join(0.5)
+            self.assertFalse(task.is_alive(), "provider transport ignored owner cancellation")
+            self.assertEqual(len(failures), 1)
+            self.assertRegex(str(failures[0]), "cancelled; STOP unconfirmed")
+        finally:
+            cancellation.set()
+            task.join(1)
+            backend.shutdown()
+
     def test_cancelled_worker_future_does_not_confirm_stop(self):
         from concurrent.futures import Future
         from unittest.mock import patch
