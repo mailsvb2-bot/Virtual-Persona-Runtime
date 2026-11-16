@@ -12,7 +12,7 @@ pub(super) fn start_engine_with_provider_egress(
     session_id: &str,
     engine: &mut OwnerLabEngine,
     consent: bool,
-    interrupt: Arc<LiveVisitorInterrupt>,
+    interrupt: &Arc<LiveVisitorInterrupt>,
 ) -> Result<LabSignalBundle, String> {
     let _egress = manager.begin_provider_egress(session_id)?;
     let startup_interrupt = Arc::clone(&interrupt);
