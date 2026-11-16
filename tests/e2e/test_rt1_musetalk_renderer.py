@@ -20,6 +20,11 @@ class MuseTalkFactoryTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(model.renderer_from_environment())
 
+    def test_unknown_renderer_never_falls_back_to_diagnostic(self):
+        with patch.dict(os.environ, {"RT1_VIDEO_RENDERER": "unknown-model"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "unsupported"):
+                model.renderer_from_environment()
+
     def test_misconfigured_model_requires_paths(self):
         with patch.dict(os.environ, {"RT1_VIDEO_RENDERER": "musetalk-v15"}, clear=True):
             with self.assertRaises(KeyError):

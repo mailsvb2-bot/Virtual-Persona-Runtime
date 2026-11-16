@@ -307,8 +307,11 @@ class _MuseTalkVideoTrack:
 
 def renderer_from_environment():
     """Explicit opt-in only. Failure is fatal; no diagnostic fallback."""
-    if os.environ.get("RT1_VIDEO_RENDERER", "").strip() != "musetalk-v15":
+    choice = os.environ.get("RT1_VIDEO_RENDERER", "").strip()
+    if not choice:
         return None
+    if choice != "musetalk-v15":
+        raise ValueError("unsupported RT1_VIDEO_RENDERER configuration")
     root = os.environ["RT1_MUSETALK_ROOT"]
     avatar = os.environ["RT1_MUSETALK_AVATAR_DIR"]
     return MuseTalkRenderer(

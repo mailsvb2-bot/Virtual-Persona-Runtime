@@ -797,11 +797,28 @@ class MediaLifecycle:
         """
         if self._closing.is_set():
             self.quarantine_after_restart()
+        first_failure = None
+        # GPU inference may fail AFTER the worker has acknowledged PCM.
+        # Discover such live senders through the existing provider, then
+        # persist their CANCEL in this same SQLite owner before physical STOP.
+        # No second session registry or remote STOP authority is created.
+        observe_failed = getattr(self._backend, "failed_renderer_sessions", None)
+        if callable(observe_failed) and not self._closing.is_set():
+            try:
+                failed_sessions = observe_failed()
+            except Exception as error:
+                failed_sessions = ()
+                first_failure = error
+            for operation_id, generation in failed_sessions:
+                try:
+                    self.cancel(operation_id, generation, wait_for_stop=False)
+                except Exception as error:
+                    if first_failure is None:
+                        first_failure = error
         with self._lock:
             pending = self._db.execute(
                 "SELECT id,generation,session_id FROM media_operations WHERE phase IN ('stopping','uncertain')"
             ).fetchall()
-        first_failure = None
         for operation_id, generation, session_id in pending:
             if not session_id:
                 continue

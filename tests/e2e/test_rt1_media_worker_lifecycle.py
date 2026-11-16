@@ -93,6 +93,34 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.worker.status("late-id"), (1, "stopped", "session-a"))
         self.assertEqual(self.sender.stopped, 1)
 
+    def test_async_renderer_failure_reuses_durable_cancel_and_verified_stop(self):
+        self.worker.create("gpu-failure", 1)
+        self.sender.failed_renderer_sessions = lambda: (("gpu-failure", 1),)
+        self.worker.reconcile()
+        self.assertEqual(
+            self.worker.status_with_stop_confirmation("gpu-failure"),
+            (1, "stopped", "session-a", True),
+        )
+        self.assertEqual(self.sender.stopped, 1)
+        # Reconciliation must not invent or duplicate remote STOP receipts.
+        self.worker.reconcile()
+        self.assertEqual(self.sender.stopped, 1)
+
+    def test_failed_gpu_stop_remains_uncertain_until_independent_receipt(self):
+        self.worker.create("gpu-uncertain", 1)
+        self.sender.failed_renderer_sessions = lambda: (("gpu-uncertain", 1),)
+        self.sender.partial = True
+        with self.assertRaisesRegex(RuntimeError, "STOP"):
+            self.worker.reconcile()
+        self.assertFalse(
+            self.worker.status_with_stop_confirmation("gpu-uncertain")[3]
+        )
+        self.sender.partial = False
+        self.worker.reconcile()
+        self.assertTrue(
+            self.worker.status_with_stop_confirmation("gpu-uncertain")[3]
+        )
+
     def test_idempotent_create_and_strict_stop(self):
         self.assertEqual(self.worker.create("op-a", 1), "session-a")
         self.assertEqual(self.worker.create("op-a", 1), "session-a")

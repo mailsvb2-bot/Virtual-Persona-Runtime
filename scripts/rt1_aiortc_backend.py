@@ -422,6 +422,28 @@ class AiortcSenderBackend:
                 # direct audio path, but cannot authorize public Persona links.
                 entry.audio.push_pcm(pcm)
 
+    def failed_renderer_sessions(self) -> tuple[tuple[str, int], ...]:
+        """Read-only health evidence for the ONE durable STOP reconciler.
+
+        A GPU error is asynchronous to the accepted PCM HTTP request.
+        Quarantine live sessions through MediaLifecycle.cancel(), never
+        close RTP peers here or invent an audio/video STOP receipt.
+        """
+        if self._video_renderer is None:
+            return ()
+        with self._lock:
+            sessions = tuple(self._sessions.values())
+        renderer_failed = not self.persona_video_ready()
+        return tuple(
+            (entry.operation_id, entry.generation)
+            for entry in sessions
+            if not entry.closed and (
+                renderer_failed or
+                (callable(getattr(entry.video, "render_failed", None))
+                 and entry.video.render_failed())
+            )
+        )
+
     def stop(self, operation_id: str, session_id: str, generation: int) -> StopReceipt:
         return self._call(self._stop(operation_id, session_id, generation))
 
