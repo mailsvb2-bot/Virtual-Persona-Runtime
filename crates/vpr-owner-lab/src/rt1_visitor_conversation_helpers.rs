@@ -1,6 +1,31 @@
 //! RT1 visitor admission, operation identity, failure prioritization and PCM validation.
 use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
+use super::{Arc, LabSignalBundle, LiveVisitorInterrupt, OwnerLabEngine, OwnerLabStartRequest};
+
+/// Admit visitor CREATE/offer through the same publication-scoped provider
+/// egress lease used by text and streaming voice. The lease remains live
+/// until the canonical interruptible runtime startup returns.
+pub(super) fn start_engine_with_provider_egress(
+    manager: &VisitorSessionManager,
+    session_id: &str,
+    engine: &mut OwnerLabEngine,
+    consent: bool,
+    interrupt: Arc<LiveVisitorInterrupt>,
+) -> Result<LabSignalBundle, String> {
+    let _egress = manager.begin_provider_egress(session_id)?;
+    let started = engine.start_visitor_with_interrupt(
+        OwnerLabStartRequest { consent },
+        move |handle| {
+            *interrupt.turn.lock() = Some(handle.clone());
+            if interrupt.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = handle.interrupt();
+            }
+        },
+    );
+    *interrupt.turn.lock() = None;
+    started.map_err(|error| error.code().to_owned())
+}
 
 /// Generate the existing per-operation cancellation identity before admission.
 pub(super) fn diagnostic_operation_id() -> Result<String, String> {

@@ -138,29 +138,13 @@ impl Rt1VisitorConversation {
             return manager.close(&id).and(Err(error));
         }
 
-        // CREATE/offer is provider egress too. Register it under the same
-        // canonical publication transaction as later STT/LLM/TTS turns, and
-        // keep the lease until the cancellable runtime startup returns. Owner
-        // pause can revoke the turn immediately; the worker's durable
-        // operation ledger compensates any late session ID.
-        let startup_egress = match manager.begin_provider_egress(&id) {
-            Ok(permit) => permit,
-            Err(error) => {
-                let _ = manager.close(&id);
-                return Err(error);
-            }
-        };
-        let startup_interrupt = Arc::clone(&interrupt);
-        let started =
-            engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
-                *startup_interrupt.turn.lock() = Some(handle.clone());
-                if startup_interrupt.cancelled.load(Ordering::Acquire) {
-                    let _ = handle.interrupt();
-                }
-            });
-        drop(startup_egress);
-        *interrupt.turn.lock() = None;
-        let bundle = match started {
+        let bundle = match helpers::start_engine_with_provider_egress(
+            &manager,
+            &id,
+            &mut engine,
+            consent,
+            Arc::clone(&interrupt),
+        ) {
             Ok(bundle) => bundle,
             Err(error) => {
                 // A failed remote CREATE can still have allocated an avatar.
@@ -188,7 +172,7 @@ impl Rt1VisitorConversation {
                 if matches!(cleanup, Some(Err(_))) {
                     return Err("RT1_PROVIDER_START_FAILED_STOP_UNCONFIRMED".into());
                 }
-                return Err(error.code().to_owned());
+                return Err(error);
             }
         };
         if let Some(worker) = &remote

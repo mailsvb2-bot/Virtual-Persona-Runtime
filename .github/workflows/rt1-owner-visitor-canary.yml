@@ -38,6 +38,7 @@ jobs:
         run: python -m pip install 'aiortc>=1.10,<2' 'numpy>=1.26,<3'
       - name: Install pinned Rust toolchain
         run: |
+          rustup toolchain uninstall 1.88.0 || true
           rustup toolchain install 1.88.0 --profile minimal --component rustfmt --component clippy
           rustup show active-toolchain
           rustc --version
