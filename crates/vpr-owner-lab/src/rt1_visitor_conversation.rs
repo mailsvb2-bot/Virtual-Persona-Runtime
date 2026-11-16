@@ -518,9 +518,11 @@ impl Drop for Rt1VisitorConversation {
     fn drop(&mut self) {
         let _ = self.manager.close(&self.id);
         self.interrupt.stop();
-        // Best-effort retry is never treated as a durable STOP receipt.
+        // The HTTP state retains the canonical remote STOP handle in its
+        // cleanup registry. Drop must only wake that reconciler: a synchronous
+        // worker request here can block whichever thread releases the final Arc.
         if let Some(remote) = &self.remote {
-            let _ = remote.revoke_confirmed();
+            remote.request_revoke();
         }
         // Drop cannot wait for a provider that still owns the engine mutex.
         // This is best-effort cleanup, never a verified remote STOP receipt.

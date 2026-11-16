@@ -246,3 +246,59 @@ fn busy_engine_stop_releases_lease_and_does_not_fake_remote_confirmation() {
     assert!(!interrupt.stop_in_flight.load(Ordering::Acquire));
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
+
+
+#[test]
+fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{Duration, Instant};
+    use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
+    use vpr_provider_local_open_source::{LocalOpenSourceAvatar, LocalOpenSourceAvatarConfig};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let client =
+        RemoteOperationClient::new(&endpoint, "worker-secret", Duration::from_secs(5)).unwrap();
+    let remote = Arc::new(
+        Rt1RemoteMediaRevocation::new(client, "drop-nonblocking".into(), 1).unwrap(),
+    );
+    let wakes = Arc::new(AtomicUsize::new(0));
+    let observed_wakes = Arc::clone(&wakes);
+    remote.install_revoke_notifier(move || {
+        observed_wakes.fetch_add(1, Ordering::SeqCst);
+    });
+    let observed_remote = Arc::clone(&remote);
+
+    let provider = LocalOpenSourceAvatar::new(LocalOpenSourceAvatarConfig::new(
+        "http://127.0.0.1:1",
+        "test-only",
+    ))
+    .unwrap();
+    let engine = OwnerLabEngine::new(Box::new(provider), true).unwrap();
+    let conversation = Rt1VisitorConversation {
+        manager: Arc::new(VisitorSessionManager::new(Arc::new(
+            crate::rt1_workspace_service::Rt1WorkspaceService::new(),
+        ))),
+        id: "unregistered-drop-test".into(),
+        engine: Mutex::new(engine),
+        interrupt: Arc::new(LiveVisitorInterrupt::default()),
+        remote: Some(remote),
+        verified_worker_voice: true,
+    };
+
+    let started = Instant::now();
+    drop(conversation);
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "Drop must not wait for the remote worker HTTP STOP request"
+    );
+    assert!(observed_remote.is_revoked());
+    assert_eq!(wakes.load(Ordering::SeqCst), 1);
+    assert!(!observed_remote.is_stop_confirmed());
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+}
