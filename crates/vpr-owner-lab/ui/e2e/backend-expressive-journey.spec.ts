@@ -77,6 +77,20 @@ const postJson = async (
   data,
 });
 
+/** D-ID V2 has no independently verified remote A/V STOP receipt. The
+ * private Echo sender may stop locally, but revoke must remain fail-closed. */
+const expectUnconfirmedDidStop = async (
+  request: APIRequestContext,
+  csrf: string,
+): Promise<void> => {
+  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
+  expect(revoke.status()).toBe(502);
+  expect(await revoke.json()).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  const status = await request.get(`${ownerLabUrl}/api/status`);
+  expect(status.ok()).toBeTruthy();
+  expect((await status.json() as { session_state: string }).session_state).toBe("revoked");
+};
+
 const setupReviewedPersona = async (
   request: APIRequestContext,
   csrf: string,
@@ -378,8 +392,7 @@ test("Expressive server STOP is sent from backend and prevents stale replay", as
   expect(stopped.ok()).toBeTruthy();
   await expect.poll(async () => (await echoEvents(request)).slice(before), { timeout: 15000 })
     .toEqual(expect.arrayContaining(["provider_stop_sent"]));
-  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoke.ok()).toBeTruthy();
+  await expectUnconfirmedDidStop(request, csrf);
   const replay = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
   expect(replay.status()).toBe(409);
 });
@@ -390,8 +403,7 @@ test("Expressive server local Echo sender stops on revoke while D-ID remote STOP
   const before = (await echoEvents(request)).length;
   const turn = await submitOwnerTurn(request, csrf, 1, sequence, "Привет из браузера");
   expect(turn.ok()).toBeTruthy();
-  const revoke = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoke.ok()).toBeTruthy();
+  await expectUnconfirmedDidStop(request, csrf);
   // Canonical revoke deliberately kills the private subprocess after the
   // local Echo sender STOP is dispatched. This is not a D-ID remote A/V receipt;
   // the session must remain revoked and no further audio may be published.
@@ -405,8 +417,7 @@ test("Expressive server local Echo sender stops on revoke while D-ID remote STOP
 
 test("second caller cannot restart speech after canonical revoke", async ({ request }) => {
   const { csrf, sequence } = await startEcho(request);
-  const revoked = await postJson(request, csrf, "/api/session/revoke", {});
-  expect(revoked.ok()).toBeTruthy();
+  await expectUnconfirmedDidStop(request, csrf);
   const before = await echoEvents(request);
   const rejected = await postJson(request, csrf, "/api/avatar/resume-answer", { request_sequence: 1, sentence_index: 0 });
   expect(rejected.status()).toBe(409);
