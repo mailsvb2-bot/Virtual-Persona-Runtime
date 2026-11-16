@@ -1423,7 +1423,7 @@ fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
         tx.send(read_request(&mut first)).unwrap();
         let body = expressive_agent_body();
         let headers = format!(
-            "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
         first.write_all(headers.as_bytes()).unwrap();
@@ -1434,7 +1434,7 @@ fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
         thread::sleep(Duration::from_millis(300));
         let late = r#"{\"id\":\"echo-created-after-timeout\",\"session_url\":\"wss://livekit.example.test/room/agent-echo\",\"session_token\":\"viewer-token\",\"echo_token\":\"server-ONLY-echo-token\"}"#;
         let headers = format!(
-            "HTTP/1.1 201 Created\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             late.len()
         );
         let _ = second.write_all(headers.as_bytes());
