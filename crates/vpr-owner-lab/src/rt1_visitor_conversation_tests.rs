@@ -247,7 +247,8 @@ fn busy_engine_stop_releases_lease_and_does_not_fake_remote_confirmation() {
     assert!(!interrupt.stop_confirmed.load(Ordering::Acquire));
 }
 
-#[test]_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
+#[test]
+fn dropping_visitor_wakes_remote_stop_reconciler_without_blocking_on_worker_http() {
     use std::net::TcpListener;
     use std::sync::atomic::AtomicUsize;
     use std::time::{Duration, Instant};
