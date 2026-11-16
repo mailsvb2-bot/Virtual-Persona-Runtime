@@ -1,13 +1,9 @@
 //! D-ID Echo `LiveKit` session creation: private speaker opens before browser receives viewer grant.
 use crate::protocol::CreateV2SessionResponse;
 use crate::response_json::decode_json_response;
-use crate::{
-    DidAgentStreamsAvatar, expect_success, invalid_response, policy_denied, unavailable,
-};
+use crate::{DidAgentStreamsAvatar, expect_success, invalid_response, policy_denied, unavailable};
 use serde_json::Value;
-use vpr_integration::{
-    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
-};
+use vpr_integration::{CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession};
 
 impl DidAgentStreamsAvatar {
     fn compensate_v2_create(&self, session_id: Option<&str>) -> Result<(), ProviderError> {

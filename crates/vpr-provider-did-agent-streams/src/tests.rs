@@ -1087,8 +1087,8 @@ fn did_v2_echo_close_retries_provider_delete_after_local_sender_stop() {
 
 #[test]
 fn revoke_during_v2_create_body_read_compensates_exact_session_id() {
-    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
 
     struct RevokeAtFinalCheck(AtomicUsize);
     impl CancellationProbe for RevokeAtFinalCheck {
@@ -1113,15 +1113,21 @@ fn revoke_during_v2_create_body_read_compensates_exact_session_id() {
     assert!(backend.calls.lock().unwrap().is_empty());
 
     assert!(
-        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
             .starts_with("GET /agents/agent-7 ")
     );
     assert!(
-        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
             .starts_with("POST /v2/agents/agent-7/sessions ")
     );
     assert!(
-        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
             .starts_with("DELETE /v2/agents/sessions/echo-late-session ")
     );
 }
@@ -1144,10 +1150,16 @@ fn malformed_v2_create_with_recoverable_id_is_compensated() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
     assert!(backend.calls.lock().unwrap().is_empty());
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(
-        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
             .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
     );
 }
@@ -1170,10 +1182,16 @@ fn failed_v2_create_compensation_remains_unconfirmed() {
         .unwrap_err();
     assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(error.retryable);
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
-    let _ = captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
+    let _ = captured
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .unwrap();
     assert!(
-        captured.recv_timeout(std::time::Duration::from_secs(3)).unwrap()
+        captured
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
             .starts_with("DELETE /v2/agents/sessions/echo-schema-orphan ")
     );
 }

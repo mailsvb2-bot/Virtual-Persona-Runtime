@@ -21,10 +21,7 @@ impl DidAgentStreamsAvatar {
 
     /// Deletes one exact V2 session. Only the documented 204 response is a
     /// provider deletion receipt; 404 and other 2xx responses remain unknown.
-    pub(crate) fn delete_v2_session_identity(
-        &self,
-        session_id: &str,
-    ) -> Result<(), ProviderError> {
+    pub(crate) fn delete_v2_session_identity(&self, session_id: &str) -> Result<(), ProviderError> {
         let response = self
             .authorized(self.client.delete(self.v2_session_url(session_id)?))
             .send()

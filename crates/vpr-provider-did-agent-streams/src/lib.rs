@@ -4,7 +4,7 @@ use std::time::Duration;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use vpr_integration::{
-    CancellationProbe, ProviderDescriptor, ProviderError, ProviderErrorKind,
+    CancellationProbe, ProviderDescriptor, ProviderError,
     RealtimeAvatarCapabilities, RealtimeAvatarClientCommand, RealtimeAvatarClientControl,
     RealtimeAvatarClientEvent, RealtimeAvatarClientRoute, RealtimeAvatarPcmStream,
     RealtimeAvatarPort, RealtimeAvatarSession, RealtimeAvatarTransport, WebRtcIceCandidate,
