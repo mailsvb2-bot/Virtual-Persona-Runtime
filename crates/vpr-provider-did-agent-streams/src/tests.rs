@@ -1369,7 +1369,6 @@ fn failed_compensation_of_invalid_offer_is_never_reported_as_clean() {
     );
 }
 
-
 #[test]
 fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
     use std::sync::Arc;
@@ -1408,7 +1407,6 @@ fn did_v2_echo_local_stop_does_not_claim_remote_session_stop() {
     // Local Echo STOP must not be followed by an invented V2 DELETE request.
     assert!(captured.try_recv().is_err());
 }
-
 
 #[test]
 fn ambiguous_v2_create_timeout_is_not_marked_retryable() {
