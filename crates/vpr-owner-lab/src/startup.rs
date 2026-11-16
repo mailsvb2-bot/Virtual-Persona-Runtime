@@ -35,15 +35,17 @@ pub(super) fn run() -> Result<(), Box<dyn Error + Send + Sync>> {
         .map(|value| value.parse::<u16>())
         .transpose()?
         .unwrap_or(DEFAULT_PORT);
+    let _persona_store_lease = vpr_owner_lab::acquire_persona_store_lease()?;
+    // Revoke any worker-owned media from the previous process before provider
+    // assembly or listener startup can expose another visitor session.
+    rt1_startup::recover_before_listener()?;
     let providers = ProviderBundle::from_env(false)?;
     let evidence_provenance = evidence_provenance::resolve(&providers, rt0_evidence_mode)?;
     let voice_profile = providers.voice_profile.clone();
-    let _persona_store_lease = vpr_owner_lab::acquire_persona_store_lease()?;
     let mut engine = engine_bootstrap::assemble(providers, egress_enabled)?;
     if restore_reviewed_persona(&mut engine)? {
         println!("Restored reviewed Persona from persistent store.");
     }
-    rt1_startup::recover_before_listener()?;
     let voice_playback = engine.voice_playback_registry();
     let mut evidence_recorder = LabSessionEvidenceRecorder::default();
     if let Some((candidate_sha, provider_state_sha256)) = evidence_provenance {

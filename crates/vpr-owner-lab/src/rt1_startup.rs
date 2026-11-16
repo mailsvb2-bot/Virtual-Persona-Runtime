@@ -9,15 +9,22 @@ use vpr_provider_local_open_source::operation_client::RemoteOperationClient;
 /// Invalidate persisted visitor session leases before binding the HTTP listener.
 /// Ephemeral non-Windows labs have no durable publication to recover.
 pub(super) fn recover_before_listener() -> Result<(), String> {
-    if recovery_required(
+    let publication = if recovery_required(
         cfg!(windows),
         env::var_os("VPR_OWNER_LAB_PERSONA_STORE_PATH").as_deref(),
     ) {
         vpr_owner_lab::Rt1WorkspaceService::new()
             .recover_before_listener()
-            .map_err(|_| "RT1 publication recovery failed before listener startup".to_owned())?;
-    }
-    recover_worker_before_listener()
+            .map_err(|_| "RT1 publication recovery failed before listener startup".to_owned())
+    } else {
+        Ok(())
+    };
+    // Even a corrupt/unavailable Persona store must not skip best-effort
+    // remote sender cleanup. Startup still fails if either authority recovery
+    // or the worker's verified audio/video STOP remains unresolved.
+    let worker = recover_worker_before_listener();
+    publication?;
+    worker
 }
 
 /// Reconcile the worker's durable operation inventory after Owner Lab loses
