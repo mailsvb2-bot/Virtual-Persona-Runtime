@@ -138,6 +138,8 @@ local_lab_files = {
     Path("crates/vpr-owner-lab/ui/e2e/rt1-voice-inflight-stop.spec.ts"),
     # Test-only caller of the explicitly gated local worker experiment.
     Path("crates/vpr-owner-lab/ui/e2e/rt1-worker-voice-journey.spec.ts"),
+    # This end-to-end spec calls the local, opt-in worker API; it is not a shipped public API surface.
+    Path("crates/vpr-owner-lab/ui/e2e/rt1-worker-owner-visitor-isolation.spec.ts"),
 }
 entry = (ROOT / "crates/vpr-owner-lab/src/main.rs").read_text(encoding="utf-8")
 local_lab = (ROOT / "crates/vpr-owner-lab/src/http_rt1.rs").read_text(encoding="utf-8")
