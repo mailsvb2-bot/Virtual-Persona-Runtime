@@ -987,7 +987,12 @@ fn echo_sender_stays_server_private_and_browser_speak_is_impossible() {
     // An Echo STOP is server-owned and contains no browser did.interrupt
     // command, nor any extra utterance.
     provider.interrupt(&session, &probe).unwrap();
-    provider.close_session(&session).unwrap();
+    // The private Echo sender is stopped locally, but that is not a D-ID
+    // remote A/V STOP receipt. Keep the provider session quarantined.
+    let remote_stop = provider.close_session(&session).unwrap_err();
+    assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
+    assert!(!remote_stop.retryable);
+    assert!(!provider.echo_sessions.contains(&session.provider_session_id).unwrap());
     assert!(provider.interrupt(&session, &probe).is_err());
     assert!(
         provider
@@ -1029,7 +1034,12 @@ fn duplicate_echo_session_id_never_opens_a_second_sender_or_replaces_the_first()
     provider
         .speak_text(&first, "Серверный ответ.", &probe)
         .unwrap();
-    provider.close_session(&first).unwrap();
+    // Duplicate-ID protection retains the first local sender until its
+    // local STOP succeeds, but D-ID remote A/V termination remains unknown.
+    let remote_stop = provider.close_session(&first).unwrap_err();
+    assert_eq!(remote_stop.kind, ProviderErrorKind::Unavailable);
+    assert!(!remote_stop.retryable);
+    assert!(!provider.echo_sessions.contains(&first.provider_session_id).unwrap());
     assert_eq!(
         *backend.calls.lock().unwrap(),
         vec!["open", "speak", "stop"]
