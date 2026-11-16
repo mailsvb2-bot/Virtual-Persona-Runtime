@@ -1,7 +1,8 @@
 //! RT1 visitor admission, operation identity, failure prioritization and PCM validation.
 use crate::rt1_remote_media_revocation::Rt1RemoteMediaRevocation;
 use crate::rt1_visitor_session_manager::VisitorSessionManager;
-use super::{Arc, LabSignalBundle, LiveVisitorInterrupt, OwnerLabEngine, OwnerLabStartRequest};
+use super::{Arc, LabSignalBundle, LiveVisitorInterrupt, OwnerLabEngine};
+use crate::state::OwnerLabStartRequest;
 
 /// Admit visitor CREATE/offer through the same publication-scoped provider
 /// egress lease used by text and streaming voice. The lease remains live
