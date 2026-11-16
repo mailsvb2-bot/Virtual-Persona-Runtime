@@ -4,7 +4,9 @@ use crate::response_json::decode_json_response;
 use crate::{
     DidAgentStreamsAvatar, expect_success, invalid_response, map_transport_error, policy_denied,
 };
-use vpr_integration::{CancellationProbe, ProviderError, RealtimeAvatarSession};
+use vpr_integration::{
+    CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
+};
 
 impl DidAgentStreamsAvatar {
     pub(super) fn create_livekit_session(
@@ -18,36 +20,80 @@ impl DidAgentStreamsAvatar {
         if self.echo_backend.is_none() {
             return Err(policy_denied());
         }
-        let request = self.authorized(self.client.post(self.v2_sessions_url()?));
-        let request = if self.echo_backend.is_some() {
-            request.json(&serde_json::json!({"session_type": "echo"}))
-        } else {
-            request
-        };
-        let response = request
+        let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
+        let response = self
+            .authorized(self.client.post(self.v2_sessions_url()?))
+            .json(&serde_json::json!({"session_type": "echo"}))
             .send()
-            .map_err(|error| map_transport_error(&error))?;
-        let response = expect_success(response)?;
-        let body: CreateV2SessionResponse = decode_json_response(response, Some(cancellation))?;
-        if let Some(backend) = &self.echo_backend {
-            let secret = body
-                .echo_token
-                .as_deref()
-                .filter(|token| !token.trim().is_empty())
-                .ok_or_else(invalid_response)?
-                .to_owned();
-            let session_url = body.session_url.clone();
-            let session: RealtimeAvatarSession = body.try_into()?;
-            self.echo_sessions.open_session(
+            .map_err(|error| {
+                // A timed-out CREATE may already have allocated a billable
+                // provider session. V2 remote STOP is not verified, so this
+                // ambiguous operation must never be retried as a fresh CREATE.
+                if error.is_timeout() {
+                    ProviderError {
+                        kind: ProviderErrorKind::Timeout,
+                        retryable: false,
+                    }
+                } else {
+                    ProviderError {
+                        kind: ProviderErrorKind::Unavailable,
+                        retryable: false,
+                    }
+                }
+            })?;
+
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            // A provider may allocate before returning 408/429/5xx. Preserve
+            // the uncertainty and prohibit automatic retry/duplicate CREATE.
+            if status == 408 {
+                return Err(ProviderError {
+                    kind: ProviderErrorKind::Timeout,
+                    retryable: false,
+                });
+            }
+            if status == 429 || (500..=599).contains(&status) {
+                return Err(ProviderError {
+                    kind: ProviderErrorKind::Unavailable,
+                    retryable: false,
+                });
+            }
+            return expect_success(response).map(|_| unreachable!());
+        }
+        if status != 201 {
+            return Err(invalid_response());
+        }
+
+        let body: CreateV2SessionResponse =
+            decode_json_response(response, Some(cancellation)).map_err(|error| ProviderError {
+                kind: error.kind,
+                retryable: false,
+            })?;
+        let secret = body
+            .echo_token
+            .as_deref()
+            .filter(|token| !token.trim().is_empty())
+            .ok_or_else(invalid_response)?
+            .to_owned();
+        let session_url = body.session_url.clone();
+        let session: RealtimeAvatarSession = body.try_into().map_err(|error: ProviderError| {
+            ProviderError {
+                kind: error.kind,
+                retryable: false,
+            }
+        })?;
+        self.echo_sessions
+            .open_session(
                 backend.as_ref(),
                 &session.provider_session_id,
                 &session_url,
                 &secret,
                 cancellation,
-            )?;
-            Ok(session)
-        } else {
-            body.try_into()
-        }
+            )
+            .map_err(|error| ProviderError {
+                kind: error.kind,
+                retryable: false,
+            })?;
+        Ok(session)
     }
 }
