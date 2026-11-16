@@ -7,17 +7,22 @@ Requires an operator-prepared MuseTalk avatar and local CUDA model weights.
 from __future__ import annotations
 
 import asyncio
-from collections import deque
+from fractions import Fraction
 import logging
 import os
 from pathlib import Path
 import queue
 import sys
 import threading
+import time
 
 LOG = logging.getLogger("rt1.musetalk")
 SAMPLE_RATE = 16000
-SAMPLES_PER_FRAME = 640  # 25 video fps, 40 ms per video frame
+VIDEO_FPS = 25
+VIDEO_RTP_CLOCK_HZ = 90000
+VIDEO_FRAME_PTS = VIDEO_RTP_CLOCK_HZ // VIDEO_FPS
+VIDEO_TIME_BASE = Fraction(1, VIDEO_RTP_CLOCK_HZ)
+SAMPLES_PER_FRAME = SAMPLE_RATE // VIDEO_FPS  # 40 ms / generated video frame
 CHUNK_FRAMES = 10         # 400 ms of authorized PCM for Whisper context
 MAX_AUDIO_CHUNKS = 4
 MAX_VIDEO_FRAMES = 25
@@ -272,6 +277,25 @@ class _MuseTalkVideoTrack:
                     self._failed = error
                     renderer._healthy = False
                     LOG.exception("MuseTalk inference failed; renderer not ready")
+
+            async def next_timestamp(self):
+                """Pace *model-generated* frames at 25 fps, not aiortc's 30.
+
+                RTP's 90 kHz video clock advances 3,600 ticks per frame.
+                Match MuseTalk's 40 ms PCM/frame and never accelerate video
+                to aiortc's 30 fps diagnostic VideoStreamTrack default.
+                """
+                from aiortc.mediastreams import MediaStreamError
+                if self.readyState != "live" or self._stop.is_set():
+                    raise MediaStreamError
+                if not hasattr(self, "_timestamp"):
+                    self._start = time.monotonic()
+                    self._timestamp = 0
+                else:
+                    self._timestamp += VIDEO_FRAME_PTS
+                    deadline = self._start + self._timestamp / VIDEO_RTP_CLOCK_HZ
+                    await asyncio.sleep(max(0.0, deadline - time.monotonic()))
+                return self._timestamp, VIDEO_TIME_BASE
 
             async def recv(self):
                 from aiortc.mediastreams import MediaStreamError

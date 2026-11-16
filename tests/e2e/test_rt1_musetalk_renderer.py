@@ -3,6 +3,8 @@
 GPU inference and live A/V timing require a separately measured CUDA host.
 No synthetic renderer is allowed to authorize production publication.
 """
+import asyncio
+from fractions import Fraction
 import os
 from pathlib import Path
 import sys
@@ -60,6 +62,36 @@ class MuseTalkFactoryTest(unittest.TestCase):
         self.assertEqual(model.CHUNK_FRAMES * model.SAMPLES_PER_FRAME, 6400)
         self.assertLessEqual(model.MAX_AUDIO_CHUNKS, 4)
         self.assertLessEqual(model.MAX_VIDEO_FRAMES, 25)
+
+
+class MuseTalkRtpTimingTest(unittest.IsolatedAsyncioTestCase):
+    async def test_inferred_video_uses_25_fps_rtp_clock_not_aiortc_default(self):
+        import numpy as np
+
+        class PreparedAvatar:
+            _prepare_sample = np.zeros((48, 64, 3), dtype=np.uint8)
+
+            def ready(self):
+                return True
+
+            def _infer(self, samples, frame_index):
+                self.fail("no inference is needed for idle track timestamps")
+
+        avatar = PreparedAvatar()
+        track = model._MuseTalkVideoTrack(avatar, "timing", 1)
+        try:
+            first = await track.recv()
+            second = await track.recv()
+            self.assertEqual((first.pts, second.pts), (0, 3600))
+            self.assertEqual(first.time_base, Fraction(1, 90000))
+            self.assertEqual(second.time_base, first.time_base)
+            self.assertEqual(model.VIDEO_FPS, 25)
+            self.assertEqual(model.VIDEO_FRAME_PTS, 3600)
+            self.assertEqual(model.SAMPLES_PER_FRAME * model.VIDEO_FPS,
+                             model.SAMPLE_RATE)
+        finally:
+            track.stop()
+            self.assertTrue(track.wait_quiesced(1.0))
 
 
 if __name__ == "__main__":
