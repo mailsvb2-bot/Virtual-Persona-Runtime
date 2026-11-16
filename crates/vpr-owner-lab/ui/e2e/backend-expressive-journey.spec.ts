@@ -323,6 +323,14 @@ const submitVoiceTurn = async (
 
 test("real browser owner voice reaches private server Echo audio", async ({ page, request }) => {
   test.setTimeout(120000);
+  // This isolated Playwright invocation starts with a fresh private Persona store.
+  // Review it through the canonical owner API before the browser can connect;
+  // otherwise the visible Connect control correctly remains disabled forever.
+  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
+  expect(bootstrap.ok()).toBeTruthy();
+  const csrf = String((await bootstrap.json()).csrf_token);
+  await setupReviewedPersona(request, csrf);
+  const cleared = await request.delete(mailboxUrl);
   const cleared = await request.delete(mailboxUrl);
   expect(cleared.ok()).toBeTruthy();
   const before = (await echoEvents(request)).length;
