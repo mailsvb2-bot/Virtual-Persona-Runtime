@@ -143,7 +143,7 @@ impl Rt1VisitorConversation {
             &id,
             &mut engine,
             consent,
-            Arc::clone(&interrupt),
+            &interrupt,
         ) {
             Ok(bundle) => bundle,
             Err(error) => {
