@@ -50,6 +50,7 @@ jobs:
             test_rt1_aiortc_backend_timeout.py \
             test_rt1_musetalk_renderer.py \
             test_rt1_musetalk_asset_digest.py \
+            test_rt1_musetalk_gpu_acceptance.py \
             test_rt1_webrtc_rtp_revoke.py; do
             python "tests/e2e/$test" -v
           done
