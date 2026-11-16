@@ -162,6 +162,17 @@ class AiortcSenderBackend:
         self._completed_stops: dict[str, StopReceipt] = {}
         self._thread.start()
 
+    def persona_identity(self) -> tuple[str, int] | None:
+        """Identity of explicitly configured, GPU-rendered Persona assets.
+
+        The backend is not an owner registry. The canonical HTTP owner and
+        worker CREATE must independently match this immutable binding.
+        """
+        if self._video_renderer is None:
+            return None
+        identity = getattr(self._video_renderer, "persona_identity", None)
+        return identity() if callable(identity) else None
+
     def persona_video_ready(self) -> bool:
         """A diagnostic VideoStreamTrack can never certify Persona readiness.
 

@@ -31,11 +31,15 @@ class Backend:
         self.pcm_pushes = []
         self.pcm_final_markers = []
         self.video_renderer_ready = False
+        self.bound_identity = None
 
     def persona_video_ready(self):
         # This HTTP fixture tests the readiness contract only; it does not
         # claim that a real renderer or human-visible avatar exists.
         return self.video_renderer_ready
+
+    def persona_identity(self):
+        return self.bound_identity
 
     def push_pcm(self, operation_id, session_id, generation, pcm, *, final=False):
         self.pcm_pushes.append((operation_id, session_id, generation, pcm))
@@ -624,6 +628,47 @@ class HttpLifecycleTests(unittest.TestCase):
         self.url = self.url.replace("operation-1", "operation-2")
         self.assertEqual(self.request("PUT")[0], 200)
         self.assertEqual(self.backend.allocations, 2)
+        self.assertEqual(self.request("DELETE")[0], 200)
+
+    def test_gpu_binding_rejects_stale_or_cross_persona_create(self):
+        self.backend.bound_identity = ("approved-persona", 7)
+        ready = Request(
+            "http://127.0.0.1:" + str(self.server.server_port)
+            + "/v1/avatar/readiness",
+            headers={"Authorization": "Bearer test-secret"},
+        )
+        with urlopen(ready, timeout=3) as response:
+            state = json.load(response)
+        self.assertEqual(state["persona_id"], "approved-persona")
+        self.assertEqual(state["persona_version"], 7)
+
+        def put(body):
+            req = Request(
+                self.url, data=json.dumps(body).encode(),
+                method="PUT",
+                headers={"Authorization": "Bearer test-secret",
+                         "Content-Type": "application/json"},
+            )
+            try:
+                with urlopen(req, timeout=3) as response:
+                    return response.status, json.load(response)
+            except HTTPError as error:
+                return error.code, json.load(error)
+
+        for payload in (
+            {"generation": 1},
+            {"generation": 1, "persona_id": "another-owner", "persona_version": 7},
+            {"generation": 1, "persona_id": "approved-persona", "persona_version": 6},
+            {"generation": 1, "persona_id": "approved-persona", "persona_version": True},
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(put(payload)[0], 400)
+                self.assertEqual(self.backend.allocations, 0)
+                self.assertIsNone(self.lifecycle.status("operation-1"))
+        good = {"generation": 1, "persona_id": "approved-persona",
+                "persona_version": 7}
+        self.assertEqual(put(good)[0], 200)
+        self.assertEqual(self.backend.allocations, 1)
         self.assertEqual(self.request("DELETE")[0], 200)
 
     def test_authenticated_final_pcm_marker_reaches_existing_worker_sender(self):

@@ -442,6 +442,16 @@ def handler_for(
                 generation = payload["generation"]
                 if type(generation) is not int or generation < 1:
                     raise ValueError("invalid generation")
+                if method == "PUT":
+                    identity = lifecycle.persona_identity()
+                    if identity is not None:
+                        # The bearer token alone is insufficient to choose
+                        # another owner's GPU face. Check against the same
+                        # renderer binding probed at public publication.
+                        if (payload.get("persona_id") != identity[0]
+                                or type(payload.get("persona_version")) is not int
+                                or payload["persona_version"] != identity[1]):
+                            raise ValueError("Persona renderer identity mismatch")
             except (ValueError, KeyError, TypeError, OSError, json.JSONDecodeError):
                 self._send(400, {"error": "invalid request"})
                 return

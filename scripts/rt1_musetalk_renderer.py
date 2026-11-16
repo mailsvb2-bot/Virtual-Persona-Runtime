@@ -34,7 +34,19 @@ MAX_VIDEO_FRAMES = 25
 class MuseTalkRenderer:
     """One loaded model and one GPU inference lock for all owned RTP sessions."""
 
-    def __init__(self, root: str, avatar_dir: str, *, gpu_id: int = 0):
+    def __init__(
+        self, root: str, avatar_dir: str, *,
+        persona_id: str, persona_version: int, gpu_id: int = 0,
+    ):
+        # This binding is supplied by an operator-controlled deployment and
+        # checked against the canonical reviewed Persona on every admission.
+        # Match vpr-domain::PersonaId, not a second ASCII-only policy.
+        if (not isinstance(persona_id, str) or not persona_id.strip()
+                or len(persona_id) > 256
+                or type(persona_version) is not int or persona_version < 1):
+            raise ValueError("invalid bound MuseTalk Persona identity")
+        self._persona_id = persona_id
+        self._persona_version = persona_version
         root_path = Path(root).resolve(strict=True)
         avatar = Path(avatar_dir).resolve(strict=True)
         if not root_path.is_dir() or not avatar.is_dir():
@@ -117,6 +129,10 @@ class MuseTalkRenderer:
         )
         if len(warmup) != CHUNK_FRAMES:
             raise RuntimeError("MuseTalk GPU model warmup produced no video")
+
+    def persona_identity(self) -> tuple[str, int]:
+        """Return the immutable, operator-approved Persona/asset binding."""
+        return self._persona_id, self._persona_version
 
     def ready(self) -> bool:
         if not self._healthy:
@@ -345,6 +361,10 @@ def renderer_from_environment():
         raise ValueError("unsupported RT1_VIDEO_RENDERER configuration")
     root = os.environ["RT1_MUSETALK_ROOT"]
     avatar = os.environ["RT1_MUSETALK_AVATAR_DIR"]
+    persona_id = os.environ["RT1_MUSETALK_PERSONA_ID"]
+    persona_version = int(os.environ["RT1_MUSETALK_PERSONA_VERSION"])
     return MuseTalkRenderer(
-        root, avatar, gpu_id=int(os.environ.get("RT1_MUSETALK_GPU_ID", "0"))
+        root, avatar, persona_id=persona_id,
+        persona_version=persona_version,
+        gpu_id=int(os.environ.get("RT1_MUSETALK_GPU_ID", "0"))
     )

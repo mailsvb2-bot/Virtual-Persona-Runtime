@@ -71,6 +71,11 @@ class SyntheticPersonaSenderBackend(AiortcSenderBackend):
     def persona_video_ready(self) -> bool:
         return True
 
+    def persona_identity(self) -> tuple[str, int]:
+        # The browser E2E uses exactly this reviewed Persona revision.
+        # It is a synthetic visual fixture, NEVER production GPU evidence.
+        return "rt1-worker-voice-browser-e2e", 2
+
     def push_pcm(
         self, operation_id: str, session_id: str, generation: int,
         pcm: bytes, *, final: bool = False,

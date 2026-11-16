@@ -18,11 +18,17 @@ pub struct RemoteOperationClient {
     client: Client,
     base: reqwest::Url,
     token: String,
+    persona_id: Option<String>,
+    persona_version: Option<u64>,
 }
 
 #[derive(Serialize)]
-struct Generation {
+struct Generation<'a> {
     generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persona_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persona_version: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -30,6 +36,10 @@ struct Generation {
 struct PublicationReadiness {
     ready: bool,
     persona_video_ready: bool,
+    #[serde(default)]
+    persona_id: Option<String>,
+    #[serde(default)]
+    persona_version: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,7 +114,34 @@ impl RemoteOperationClient {
             client,
             base,
             token: token.to_owned(),
+            persona_id: None,
+            persona_version: None,
         })
+    }
+
+    /// Bind this client to the exact, canonical, server-retained reviewed Persona.
+    /// Every readiness and CREATE uses this binding; no visitor-provided
+    /// identity may override it.
+    ///
+    /// # Errors
+    /// Denies missing or malformed Persona identities and zero versions.
+    pub fn bind_persona(
+        mut self,
+        persona_id: &str,
+        persona_version: u64,
+    ) -> Result<Self, ProviderError> {
+        // Exactly mirror vpr-domain::PersonaId: Unicode scalar count,
+        // nonblank after trimming, at most 256 scalars. Never introduce
+        // an ASCII-only alias of canonical owner identity.
+        if persona_id.trim().is_empty() || persona_id.chars().count() > 256 || persona_version == 0 {
+            return Err(denied());
+        }
+        if self.persona_id.is_some() {
+            return Err(denied());
+        }
+        self.persona_id = Some(persona_id.to_owned());
+        self.persona_version = Some(persona_version);
+        Ok(self)
     }
 
     /// Authenticated, read-only worker admission preflight. This cannot
@@ -129,6 +166,13 @@ impl RemoteOperationClient {
             super::decode_json_response(response, None).map_err(|_| "RT1_WORKER_NOT_READY")?;
         if !result.persona_video_ready {
             return Err("RT1_VIDEO_RENDERER_UNAVAILABLE");
+        }
+        if let Some(expected) = &self.persona_id {
+            if result.persona_id.as_deref() != Some(expected.as_str())
+                || result.persona_version != self.persona_version
+            {
+                return Err("RT1_PERSONA_RENDERER_IDENTITY_MISMATCH");
+            }
         }
         if status != reqwest::StatusCode::OK || !result.ready {
             return Err("RT1_WORKER_NOT_READY");
@@ -210,7 +254,11 @@ impl RemoteOperationClient {
             .client
             .put(self.url(operation_id)?)
             .bearer_auth(&self.token)
-            .json(&Generation { generation })
+            .json(&Generation {
+                generation,
+                persona_id: self.persona_id.as_deref(),
+                persona_version: self.persona_version,
+            })
             .send()
             .map_err(|_| denied())?;
         if !response.status().is_success() {
@@ -372,5 +420,66 @@ impl RemoteOperationClient {
             return Err(denied());
         }
         Ok(state)
+    }
+}
+
+#[cfg(test)]
+mod persona_binding_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    fn probe(body: &'static str, persona_id: &str, version: u64) -> Result<(), &'static str> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut data = [0; 2048];
+            let read = stream.read(&mut data).unwrap();
+            assert!(String::from_utf8_lossy(&data[..read])
+                .starts_with("GET /v1/avatar/readiness "));
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(reply.as_bytes()).unwrap();
+        });
+        let result = RemoteOperationClient::new(&endpoint, "local-token", Duration::from_secs(2))
+            .unwrap()
+            .bind_persona(persona_id, version)
+            .unwrap()
+            .publication_ready();
+        worker.join().unwrap();
+        result
+    }
+
+    #[test]
+    fn canonical_persona_binding_rejects_stale_and_cross_owner_readiness() {
+        let actual = r#"{"ready":true,"persona_video_ready":true,"persona_id":"owner-a","persona_version":3}"#;
+        assert_eq!(probe(actual, "owner-a", 3), Ok(()));
+        assert_eq!(
+            probe(actual, "owner-b", 3),
+            Err("RT1_PERSONA_RENDERER_IDENTITY_MISMATCH")
+        );
+        assert_eq!(
+            probe(actual, "owner-a", 2),
+            Err("RT1_PERSONA_RENDERER_IDENTITY_MISMATCH")
+        );
+        assert_eq!(
+            probe(r#"{"ready":true,"persona_video_ready":true}"#, "owner-a", 3),
+            Err("RT1_PERSONA_RENDERER_IDENTITY_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn malformed_bound_persona_identity_is_rejected_before_worker_io() {
+        let client = RemoteOperationClient::new(
+            "http://127.0.0.1:1", "local-token", Duration::from_secs(2)
+        ).unwrap();
+        assert!(client.clone().bind_persona("", 1).is_err());
+        assert!(client.clone().bind_persona(" ", 1).is_err());
+        assert!(client.clone().bind_persona(&"Ж".repeat(257), 1).is_err());
+        assert!(client.clone().bind_persona("Говорящая персона", 2).is_ok());
+        assert!(client.clone().bind_persona("owner-a", 0).is_err());
     }
 }

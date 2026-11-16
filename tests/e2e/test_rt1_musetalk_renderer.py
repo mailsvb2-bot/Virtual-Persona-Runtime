@@ -38,11 +38,14 @@ class MuseTalkFactoryTest(unittest.TestCase):
             "RT1_VIDEO_RENDERER": "musetalk-v15",
             "RT1_MUSETALK_ROOT": "/srv/musetalk",
             "RT1_MUSETALK_AVATAR_DIR": "/srv/avatar/persona",
+            "RT1_MUSETALK_PERSONA_ID": "persona-a",
+            "RT1_MUSETALK_PERSONA_VERSION": "3",
             "RT1_MUSETALK_GPU_ID": "2",
         }, clear=True), patch.object(model, "MuseTalkRenderer") as renderer:
             result = model.renderer_from_environment()
             renderer.assert_called_once_with(
-                "/srv/musetalk", "/srv/avatar/persona", gpu_id=2
+                "/srv/musetalk", "/srv/avatar/persona",
+                persona_id="persona-a", persona_version=3, gpu_id=2
             )
             self.assertIs(result, renderer.return_value)
 
@@ -54,7 +57,35 @@ class MuseTalkFactoryTest(unittest.TestCase):
             avatar.mkdir()
             with patch("pathlib.Path.cwd", return_value=source):
                 with self.assertRaisesRegex(RuntimeError, "source tree unavailable"):
-                    model.MuseTalkRenderer(str(source), str(avatar))
+                    model.MuseTalkRenderer(
+                        str(source), str(avatar), persona_id="persona-a",
+                        persona_version=3,
+                    )
+
+    def test_bound_identity_validation_fails_before_gpu_loading(self):
+        with tempfile.TemporaryDirectory() as base:
+            for persona_id, version in (
+                ("", 1), (" ", 1), ("Ж" * 257, 1),
+                ("persona-a", 0), ("persona-a", True),
+            ):
+                with self.subTest(persona_id=persona_id, version=version):
+                    with self.assertRaisesRegex(ValueError, "identity"):
+                        model.MuseTalkRenderer(
+                            base, base, persona_id=persona_id,
+                            persona_version=version,
+                        )
+
+    def test_unicode_reviewed_persona_identity_is_accepted_before_asset_probe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, avatar = Path(temp) / "musetalk", Path(temp) / "avatar"
+            source.mkdir()
+            avatar.mkdir()
+            with patch("pathlib.Path.cwd", return_value=source):
+                with self.assertRaisesRegex(RuntimeError, "source tree unavailable"):
+                    model.MuseTalkRenderer(
+                        str(source), str(avatar),
+                        persona_id="Говорящая персона", persona_version=2,
+                    )
 
     def test_track_uses_exact_authorized_pcm_window_size(self):
         self.assertEqual(model.SAMPLE_RATE, 16000)

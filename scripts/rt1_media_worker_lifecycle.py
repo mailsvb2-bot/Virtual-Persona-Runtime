@@ -137,7 +137,22 @@ class MediaLifecycle:
         except Exception:
             return False
 
-    def publication_readiness(self) -> dict[str, bool]:
+    def persona_identity(self) -> tuple[str, int] | None:
+        """Read the backend's immutable asset binding, not a second registry."""
+        identity = getattr(self._backend, "persona_identity", None)
+        if not callable(identity):
+            return None
+        result = identity()
+        if result is None:
+            return None
+        if (not isinstance(result, tuple) or len(result) != 2
+                or not isinstance(result[0], str)
+                or not result[0] or type(result[1]) is not int
+                or result[1] < 1):
+            raise RuntimeError("invalid worker Persona binding")
+        return result
+
+    def publication_readiness(self) -> dict[str, bool | str | int]:
         """Read-only admission snapshot; never CREATE, CANCEL or claim STOP.
 
         A real Persona video renderer is mandatory for public publication.
@@ -146,8 +161,13 @@ class MediaLifecycle:
         CREATE still rechecks that state under BEGIN IMMEDIATE.
         """
         persona_video_ready = self.persona_video_ready()
+        identity = self.persona_identity()
+        metadata = (
+            {"persona_id": identity[0], "persona_version": identity[1]}
+            if identity is not None else {}
+        )
         if self._closing.is_set():
-            return {"ready": False, "persona_video_ready": persona_video_ready}
+            return {"ready": False, "persona_video_ready": persona_video_ready, **metadata}
         with self._lock:
             if self._closing.is_set():
                 ledger_ready = False
@@ -161,6 +181,7 @@ class MediaLifecycle:
         return {
             "ready": ledger_ready and persona_video_ready,
             "persona_video_ready": persona_video_ready,
+            **metadata,
         }
 
     def publication_ready(self) -> bool:

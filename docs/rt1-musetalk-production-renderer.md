@@ -28,6 +28,9 @@ Configure the existing RT1 worker:
 export RT1_VIDEO_RENDERER=musetalk-v15
 export RT1_MUSETALK_ROOT=/opt/MuseTalk
 export RT1_MUSETALK_AVATAR_DIR=/srv/vpr-persona/prepared
+# MUST equal the canonical reviewed Persona identity/version in Owner Lab.
+export RT1_MUSETALK_PERSONA_ID=persona-a
+export RT1_MUSETALK_PERSONA_VERSION=3
 export RT1_MUSETALK_GPU_ID=0
 export RT1_WORKER_TOKEN='(secret, from deployment secret store)'
 export RT1_WORKER_DB=/var/lib/vpr/rt1-worker.sqlite3
@@ -90,3 +93,16 @@ the exact model/assets/GPU are installed and all requirements below pass:
 
 This does not resolve unsupported remote D-ID V2 STOP and does not claim the
 test-only synthetic E2E as production proof.
+
+
+## Owner identity / media isolation
+
+This deployment supports **one reviewed Persona per GPU worker**. The worker
+operator pins `RT1_MUSETALK_PERSONA_ID` and `RT1_MUSETALK_PERSONA_VERSION` to
+the exact prepared avatar. Both canonical readiness and authenticated CREATE
+must match the *existing* owner workspace identity; a stale or different
+Persona cannot reuse this renderer. Never accept a visitor-supplied Persona ID,
+never select an avatar by a client-provided path, and do not claim this is a
+multi-tenant per-owner GPU asset registry. A reviewed Persona correction or
+asset replacement requires a new explicitly pinned worker deployment before
+publication can succeed.
