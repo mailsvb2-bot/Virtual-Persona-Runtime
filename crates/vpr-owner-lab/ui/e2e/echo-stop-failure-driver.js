@@ -53,10 +53,13 @@
         throw new Error("ECHO_STOP_NOT_LOCALLY_MUTED");
       }
       stop.click();
-      await poll(() =>
-        control("status").textContent.includes("PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED"),
-        "canonical-revoked-after-stop-denial",
-      );
+      await poll(() => {
+        const status = control("status").textContent || "";
+        // A failed remote STOP can leave bounded cleanup pending even though
+        // canonical authority is already revoked. Never accept REVOKE_FAILED.
+        return status.includes("PROVIDER_STOP_UNCONFIRMED_SESSION_REVOKED")
+          || status.includes("PROVIDER_STOP_UNCONFIRMED_CANONICAL_REVOKED_CLEANUP_PENDING");
+      }, "canonical-revoked-after-stop-denial");
       if (!stop.disabled || window.__vprExpressiveRoomDisconnectCount < 1) {
         throw new Error("ECHO_STOP_DENIAL_LEFT_VIEWER_CONNECTED");
       }
