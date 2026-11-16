@@ -109,10 +109,16 @@ impl AuthorizationController {
             .state
             .write()
             .map_err(|_| RuntimeDenyReason::InternalError)?;
-        state
-            .authorization
-            .revoke()
-            .map_err(|_| RuntimeDenyReason::InternalError)?;
+        // Revocation-only handles may already have invalidated this shared
+        // authority while the mutable ActiveSession was unavailable. The
+        // later engine-owned state transition must still commit; repeated
+        // revoke is monotonic and must not strand the public session as active.
+        if !state.authorization.is_revoked() {
+            state
+                .authorization
+                .revoke()
+                .map_err(|_| RuntimeDenyReason::InternalError)?;
+        }
         Self::cancel_stale_bound_turns(&mut state);
         self.gate
             .revoke_tcp_response_writers_locked()
