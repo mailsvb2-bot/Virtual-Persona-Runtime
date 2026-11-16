@@ -602,9 +602,6 @@ test("Expressive browser STOP failure revokes provider authority and closes view
       ? "ready" : "pending";
   }, { timeout: 40000 }).toBe("ready");
 
-  const bootstrap = await request.get(`${ownerLabUrl}/api/bootstrap`);
-  expect(bootstrap.ok()).toBeTruthy();
-  const csrf = String((await bootstrap.json()).csrf_token);
   const before = (await echoEvents(request)).length;
   const speech = await postJson(request, csrf, "/api/avatar/speak", {
     text: "Это реальный серверный голос перед подтверждённой остановкой.",
