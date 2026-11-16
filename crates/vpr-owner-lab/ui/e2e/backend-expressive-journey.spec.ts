@@ -331,7 +331,6 @@ test("real browser owner voice reaches private server Echo audio", async ({ page
   const csrf = String((await bootstrap.json()).csrf_token);
   await setupReviewedPersona(request, csrf);
   const cleared = await request.delete(mailboxUrl);
-  const cleared = await request.delete(mailboxUrl);
   expect(cleared.ok()).toBeTruthy();
   const before = (await echoEvents(request)).length;
   await page.addInitScript({ path: "e2e/fake-livekit-client.js" });
