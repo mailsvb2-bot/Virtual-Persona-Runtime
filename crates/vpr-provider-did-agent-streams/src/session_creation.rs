@@ -2,7 +2,7 @@
 use crate::protocol::CreateV2SessionResponse;
 use crate::response_json::decode_json_response;
 use crate::{
-    DidAgentStreamsAvatar, expect_success, invalid_response, map_transport_error, policy_denied,
+    DidAgentStreamsAvatar, expect_success, invalid_response, policy_denied,
 };
 use vpr_integration::{
     CancellationProbe, ProviderError, ProviderErrorKind, RealtimeAvatarSession,
@@ -17,9 +17,6 @@ impl DidAgentStreamsAvatar {
         // A viewer-side LiveKit token cannot be atomically revoked with a
         // browser-published did.speak. No expressive session is issued without
         // a separately credentialed server-owned Echo audio publisher.
-        if self.echo_backend.is_none() {
-            return Err(policy_denied());
-        }
         let backend = self.echo_backend.as_ref().ok_or_else(policy_denied)?;
         let response = self
             .authorized(self.client.post(self.v2_sessions_url()?))
