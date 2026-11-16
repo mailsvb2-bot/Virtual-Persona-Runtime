@@ -139,9 +139,16 @@ class _Session:
 class AiortcSenderBackend:
     """Dedicated event loop for the synchronous canonical worker coordinator."""
 
-    def __init__(self, timeout: float = 8.0):
+    def __init__(self, timeout: float = 8.0, *, video_renderer=None):
+        """Optional trusted in-process video source; never a second session owner.
+
+        The default diagnostic track cannot authorize public Persona links.
+        A production GPU renderer must be passed explicitly by the worker
+        composition root and must independently prove model readiness.
+        """
         if timeout <= 0:
             raise ValueError("timeout must be positive")
+        self._video_renderer = video_renderer
         self._timeout = timeout
         self._ice_servers = parse_ice_servers(os.environ.get('RT1_ICE_SERVERS_JSON'))
         self._loop = asyncio.new_event_loop()
@@ -156,13 +163,18 @@ class AiortcSenderBackend:
         self._thread.start()
 
     def persona_video_ready(self) -> bool:
-        """This backend has no Persona renderer.
+        """A diagnostic VideoStreamTrack can never certify Persona readiness.
 
-        _allocate currently attaches aiortc's default VideoStreamTrack solely
-        to exercise signaling/RTP lifecycle. It is a transport diagnostic, not
-        a generated Persona face, so public publication must remain blocked.
+        Only an explicitly injected renderer with a successful real-model
+        readiness probe can authorize publication. Probe failures deny access;
+        the durable lifecycle checks readiness again before CREATE.
         """
-        return False
+        if self._video_renderer is None:
+            return False
+        try:
+            return self._video_renderer.ready() is True
+        except Exception:
+            return False
 
     def _run_loop(self):
         asyncio.set_event_loop(self._loop)
@@ -298,8 +310,24 @@ class AiortcSenderBackend:
             for item in self._ice_servers
         ]))
         audio = _make_pcm_audio_track()
-        video = VideoStreamTrack()
+        video = None
         try:
+            if self._video_renderer is None:
+                # Diagnostic-only RTP: never a publishable Persona.
+                video = VideoStreamTrack()
+            else:
+                # Publication readiness alone is not an allocation permit.
+                # Re-probe before creating a sender to reject failed models.
+                if not self.persona_video_ready():
+                    raise RuntimeError("Persona video renderer unavailable")
+                video = self._video_renderer.create_video_track(
+                    operation_id, generation
+                )
+                # Reject a bare aiortc diagnostic source even when the
+                # renderer incorrectly advertises itself as ready.
+                if (not isinstance(video, VideoStreamTrack)
+                        or type(video) is VideoStreamTrack):
+                    raise RuntimeError("Persona renderer returned a diagnostic video track")
             peer.addTrack(audio)
             peer.addTrack(video)
             await peer.setLocalDescription(await peer.createOffer())
@@ -322,7 +350,8 @@ class AiortcSenderBackend:
             return session_id
         except BaseException:
             audio.stop()
-            video.stop()
+            if video is not None:
+                video.stop()
             await peer.close()
             raise
 

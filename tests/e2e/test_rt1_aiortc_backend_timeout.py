@@ -29,6 +29,90 @@ class SenderTimeoutTests(unittest.TestCase):
         finally:
             backend.shutdown()
 
+    def test_missing_or_unready_renderer_never_admits_public_media(self):
+        class UnreadyRenderer:
+            def ready(self):
+                return False
+
+            def create_video_track(self, operation_id, generation):
+                self.fail("CREATE must not call an unready renderer")
+
+        backend = AiortcSenderBackend(timeout=2.0, video_renderer=UnreadyRenderer())
+        try:
+            self.assertFalse(backend.persona_video_ready())
+            with self.assertRaisesRegex(RuntimeError, "renderer unavailable"):
+                backend.allocate("renderer-unready", 1)
+            self.assertFalse(backend._sessions)
+        finally:
+            backend.shutdown()
+
+    def test_renderer_probe_exception_fails_closed(self):
+        class FailedRenderer:
+            def ready(self):
+                raise RuntimeError("model loading failed")
+
+        backend = AiortcSenderBackend(timeout=2.0, video_renderer=FailedRenderer())
+        try:
+            self.assertFalse(backend.persona_video_ready())
+            with self.assertRaisesRegex(RuntimeError, "renderer unavailable"):
+                backend.allocate("renderer-failed", 1)
+        finally:
+            backend.shutdown()
+
+    def test_renderer_cannot_disguise_default_diagnostic_track(self):
+        from aiortc import VideoStreamTrack
+
+        class MisconfiguredRenderer:
+            def ready(self):
+                return True
+
+            def create_video_track(self, operation_id, generation):
+                return VideoStreamTrack()
+
+        backend = AiortcSenderBackend(timeout=2.0, video_renderer=MisconfiguredRenderer())
+        try:
+            with self.assertRaisesRegex(RuntimeError, "diagnostic video track"):
+                backend.allocate("renderer-diagnostic", 1)
+            self.assertFalse(backend._sessions)
+        finally:
+            backend.shutdown()
+
+    def test_injected_renderer_track_uses_existing_rtp_sender_and_stop(self):
+        from aiortc import VideoStreamTrack
+
+        class RendererTrack(VideoStreamTrack):
+            pass
+
+        class Renderer:
+            def __init__(self):
+                self.created = []
+
+            def ready(self):
+                return True
+
+            def create_video_track(self, operation_id, generation):
+                track = RendererTrack()
+                self.created.append((operation_id, generation, track))
+                return track
+
+        renderer = Renderer()
+        backend = AiortcSenderBackend(timeout=4.0, video_renderer=renderer)
+        try:
+            self.assertTrue(backend.persona_video_ready())
+            session = backend.allocate("renderer-allocated", 1)
+            self.assertEqual(len(renderer.created), 1)
+            self.assertEqual(renderer.created[0][:2], ("renderer-allocated", 1))
+            with backend._lock:
+                entry = backend._sessions[session]
+            self.assertIs(entry.video, renderer.created[0][2])
+            receipt = backend.stop("renderer-allocated", session, 1)
+            self.assertTrue(receipt.audio_stopped)
+            self.assertTrue(receipt.video_stopped)
+            self.assertEqual(renderer.created[0][2].readyState, "ended")
+            self.assertFalse(backend._sessions)
+        finally:
+            backend.shutdown()
+
     def test_successful_loop_call(self):
         backend = AiortcSenderBackend(timeout=2.0)
         try:
