@@ -383,6 +383,33 @@ fn provider_call_before_turn_authorization_is_rejected() {
 }
 
 #[test]
+fn session_revoke_commits_state_after_revoke_only_handle_already_invalidated_authority() {
+    let (scope, _authority) = allowed_provider_authority();
+    let mut session = active_session();
+    let revoker = session.revocation_handle();
+    let turn = turn(&session, "revoke-handle-before-engine");
+    turn.authorize().unwrap();
+    turn.begin_processing().unwrap();
+    let permit = turn
+        .issue_provider_permit(&scope, DataClass::Public)
+        .unwrap();
+
+    // The HTTP termination path can revoke authority while the engine mutex
+    // is unavailable. The later engine cleanup must still publish Revoked.
+    revoker.revoke_authority().unwrap();
+    assert_eq!(session.state(), RealtimeSessionState::Active);
+    assert!(permit.cancellation.is_cancelled());
+
+    session.revoke().unwrap();
+    assert_eq!(session.state(), RealtimeSessionState::Revoked);
+    assert!(revoker.revoke_authority().is_ok(), "repeated revoke is idempotent");
+    assert!(matches!(
+        turn.issue_provider_permit(&scope, DataClass::Public),
+        Err(RuntimeDenyReason::AuthorizationStale)
+    ));
+}
+
+#[test]
 fn session_revoke_cancels_existing_permit_and_denies_new_work() {
     let (scope, _authority) = allowed_provider_authority();
     let mut session = active_session();
