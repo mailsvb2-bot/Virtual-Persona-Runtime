@@ -158,7 +158,13 @@ impl DidAgentStreamsAvatar {
             return Err(crate::cancelled());
         }
 
-        self.open_private_echo_sender(backend, &provider_session_id, &session_url, &secret, cancellation)?;
+        self.open_private_echo_sender(
+            backend,
+            &provider_session_id,
+            &session_url,
+            &secret,
+            cancellation,
+        )?;
         Ok(session)
     }
 }
