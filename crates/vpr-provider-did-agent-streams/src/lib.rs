@@ -22,7 +22,6 @@ mod echo_python;
 mod protocol;
 mod provider_error;
 mod response_json;
-mod session_close;
 mod session_creation;
 mod webrtc_creation;
 
@@ -521,25 +520,20 @@ impl RealtimeAvatarPort for DidAgentStreamsAvatar {
         match session.transport {
             RealtimeAvatarTransport::LiveKit { .. } => {
                 // V2 session conversion binds both identifiers to the same
-                // provider-issued session id. Refuse mismatched resource/session
-                // identities rather than deleting a caller-selected resource.
+                // provider-issued session id. Refuse mismatched identities.
                 if session.provider_resource_id != session.provider_session_id {
                     return Err(policy_denied());
                 }
 
-                // Fence the private Echo publisher first. Keep this local
-                // sender STOP separate from the provider-side session DELETE:
-                // a failure below must remain retryable by the canonical owner.
+                // Stop the private Echo audio sender when present, but never
+                // equate local Echo closure with D-ID's remote A/V termination.
                 if let Some(backend) = &self.echo_backend {
                     self.echo_sessions
                         .close_session(backend.as_ref(), &session.provider_session_id)?;
                 }
-
-                // D-ID documents DELETE /v2/agents/sessions/{sessionId} with
-                // 204 Deleted. Only that exact acknowledgement confirms the
-                // provider resource deletion; ambiguous responses remain
-                // retryable and quarantined.
-                self.delete_v2_session_identity(&session.provider_session_id)
+                // The repository's release contract has no verified D-ID V2
+                // remote termination operation. Preserve an unconfirmed STOP.
+                Err(unavailable())
             }
             RealtimeAvatarTransport::WebRtc { .. } => {
                 let response = self
