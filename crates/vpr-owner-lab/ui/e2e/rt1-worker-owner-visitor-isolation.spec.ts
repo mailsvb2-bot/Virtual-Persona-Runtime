@@ -1,6 +1,8 @@
 // Real Chromium RTCPeerConnection and local aiortc RTP with a synthetic renderer/provider fixture; never D-ID evidence.
 import { expect, test } from "@playwright/test";
 
+const ownerLabUrl = "http://127.0.0.1:18787";
+
 test("separate owner and visitor contexts receive local aiortc RTP; revoke rejects late signaling (synthetic renderer; not D-ID)", async ({ browser }) => {
   const ownerContext = await browser.newContext();
   const visitorContext = await browser.newContext();
