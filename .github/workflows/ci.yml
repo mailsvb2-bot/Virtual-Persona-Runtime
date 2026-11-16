@@ -316,7 +316,7 @@ jobs:
             "real browser owner voice reaches private server Echo audio"
             "Expressive server Echo publishes synthesized voice without browser did.speak"
             "Expressive server STOP is sent from backend and prevents stale replay"
-            "Expressive server Echo closes privately on session revoke"
+            "Expressive server local Echo sender stops on revoke while D-ID remote STOP remains unconfirmed"
             "second caller cannot restart speech after canonical revoke"
             "Expressive server resume is reauthorized and delivered through canonical Echo"
             "Expressive browser STOP failure revokes provider authority and closes viewer"
