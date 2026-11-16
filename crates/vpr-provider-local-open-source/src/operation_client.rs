@@ -133,7 +133,8 @@ impl RemoteOperationClient {
         // Exactly mirror vpr-domain::PersonaId: Unicode scalar count,
         // nonblank after trimming, at most 256 scalars. Never introduce
         // an ASCII-only alias of canonical owner identity.
-        if persona_id.trim().is_empty() || persona_id.chars().count() > 256 || persona_version == 0 {
+        if persona_id.trim().is_empty() || persona_id.chars().count() > 256 || persona_version == 0
+        {
             return Err(denied());
         }
         if self.persona_id.is_some() {
@@ -436,8 +437,9 @@ mod persona_binding_tests {
             let (mut stream, _) = listener.accept().unwrap();
             let mut data = [0; 2048];
             let read = stream.read(&mut data).unwrap();
-            assert!(String::from_utf8_lossy(&data[..read])
-                .starts_with("GET /v1/avatar/readiness "));
+            assert!(
+                String::from_utf8_lossy(&data[..read]).starts_with("GET /v1/avatar/readiness ")
+            );
             let reply = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
@@ -473,9 +475,9 @@ mod persona_binding_tests {
 
     #[test]
     fn malformed_bound_persona_identity_is_rejected_before_worker_io() {
-        let client = RemoteOperationClient::new(
-            "http://127.0.0.1:1", "local-token", Duration::from_secs(2)
-        ).unwrap();
+        let client =
+            RemoteOperationClient::new("http://127.0.0.1:1", "local-token", Duration::from_secs(2))
+                .unwrap();
         assert!(client.clone().bind_persona("", 1).is_err());
         assert!(client.clone().bind_persona(" ", 1).is_err());
         assert!(client.clone().bind_persona(&"Ж".repeat(257), 1).is_err());
