@@ -290,6 +290,10 @@ class MediaLifecycle:
             if not session_id:
                 raise RuntimeError("backend supplied an empty session identifier")
         except BaseException as create_error:
+            # Capture owner cancellation before our own compensating cancel_bounded()
+            # call sets the same event. Otherwise a normal lost CREATE reply would
+            # be misreported as an owner revoke after compensation starts.
+            owner_cancelled = cancellation.is_set()
             # Some adapters receive the actual provider-generated session ID
             # before a later CREATE validation/transport step fails. Preserve
             # that *authenticated* ID even when the ordinary CREATE reply was
@@ -333,7 +337,7 @@ class MediaLifecycle:
                 raise RuntimeError(
                     "CREATE deadline exceeded; remote STOP unconfirmed"
                 ) from create_error
-            if cancellation.is_set():
+            if owner_cancelled:
                 raise RuntimeError(
                     "provider CREATE cancelled; remote STOP may remain unconfirmed"
                 ) from create_error
