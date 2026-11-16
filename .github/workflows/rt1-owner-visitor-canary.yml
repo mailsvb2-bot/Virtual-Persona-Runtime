@@ -57,7 +57,13 @@ jobs:
         run: npx playwright test --config playwright.rt1.config.ts
       - name: RT1 visitor microphone to STT/LLM/TTS and RTP STOP (synthetic renderer; not D-ID)
         working-directory: crates/vpr-owner-lab/ui
-        run: npx playwright test --config playwright.rt1.voice.config.ts
+        run: |
+          # Each owner journey provisions a fresh in-memory workspace. Restart the
+          # real HTTP/worker fixtures between journeys instead of sharing one
+          # publication and accidentally testing a second provision against it.
+          npx playwright test --config playwright.rt1.voice.config.ts e2e/rt1-worker-owner-visitor-isolation.spec.ts
+          npx playwright test --config playwright.rt1.voice.config.ts e2e/rt1-worker-voice-journey.spec.ts
+          npx playwright test --config playwright.rt1.voice.config.ts e2e/rt1-late-livekit-connect.spec.ts e2e/rt1-late-microphone-revoke.spec.ts e2e/rt1-voice-inflight-stop.spec.ts
       - name: D-ID-shaped provider fixture safety and unconfirmed STOP (not live D-ID)
         working-directory: crates/vpr-owner-lab/ui
         run: npx playwright test --config playwright.rt1.canonical.config.ts
