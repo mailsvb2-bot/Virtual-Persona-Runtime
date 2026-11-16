@@ -150,9 +150,10 @@ const setupReviewedPersona = async (
 // does NOT release its strict evidence-export gate: the next real Connect
 // must not bypass or silently discard a previous session's proof. This
 // teardown closes and exports through the same canonical HTTP paths as UI.
-test.afterEach(async ({ request }, testInfo) => {
-  // Always release a held chunked TTS response, including when an assertion
-  // fails before the in-flight STOP scenario reaches its explicit release.
+test.afterEach(async ({ request }) => {
+  // Always release a held chunked TTS response before inspecting the durable
+  // session state. Each CI invocation gets a fresh backend process because an
+  // unconfirmed D-ID V2 STOP must remain quarantined and cannot be reset safely.
   try {
     await request.post(`${providerUrl}/__release-held-tts`);
   } catch {
@@ -164,43 +165,41 @@ test.afterEach(async ({ request }, testInfo) => {
   const status = await request.get(`${ownerLabUrl}/api/status`);
   if (!status.ok()) return;
   const state = (await status.json() as { session_state: string }).session_state;
-  // This case deliberately leaves an unconfirmed provider STOP quarantined.
-  // Its browser viewer is closed, but the server session must remain revoked;
-  // forcing local teardown to call it closed would falsify remote STOP evidence.
-  if (
-    testInfo.title === "Expressive server STOP cancels in-flight TTS and quarantines unconfirmed provider STOP"
-    || testInfo.title === "Expressive browser STOP failure revokes provider authority and closes viewer"
-  ) {
-    // These are deliberate negative cases. A revoked session is quarantined
-    // until the provider STOP receipt is confirmed; teardown must not rewrite
-    // that state as Closed or export it as a successful stop.
-    expect(state).toBe("revoked");
+  if (state === "none") return;
+
+  if (state === "revoked") {
+    // A local Echo STOP is not a D-ID remote A/V receipt. Never rewrite an
+    // unconfirmed provider session as Closed or export it as successful.
+    await expect.poll(async () => echoEvents(request), { timeout: 15000 })
+      .toContain("provider_stop_sent");
     return;
   }
-  if (state === "none") return;
-  if (state !== "closed") {
-    const close = await postJson(request, csrf, "/api/session/close", {});
-    if (!close.ok()) {
-      console.error("session close after expressive voice turn failed", close.status(), await close.text());
-      // A cancelled in-flight provider call may make Close return 504 after
-      // authority has already been revoked. The server schedules bounded
-      // cleanup for that exact generation; wait for the observable Closed/None
-      // state instead of leaking a revoked session into the next E2E case.
-      await expect.poll(async () => {
-        const current = await request.get(`${ownerLabUrl}/api/status`);
-        if (!current.ok()) return "unavailable";
-        const snapshot = await current.json() as { session_state: string };
-        return snapshot.session_state;
-      }, { timeout: 50000, intervals: [100, 250, 500, 1000] }).toMatch(/^(none|closed)$/);
-    }
+
+  const close = await postJson(request, csrf, "/api/session/close", {});
+  if (!close.ok()) {
+    expect(close.status()).toBe(502);
+    expect(await close.json()).toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect.poll(async () => {
+      const current = await request.get(`${ownerLabUrl}/api/status`);
+      if (!current.ok()) return "unavailable";
+      return (await current.json() as { session_state: string }).session_state;
+    }, { timeout: 20000, intervals: [100, 250, 500, 1000] }).toBe("revoked");
+    await expect.poll(async () => echoEvents(request), { timeout: 15000 })
+      .toContain("provider_stop_sent");
+    return;
   }
+
+  const finalStatus = await request.get(`${ownerLabUrl}/api/status`);
+  expect(finalStatus.ok()).toBeTruthy();
+  const finalState = (await finalStatus.json() as { session_state: string }).session_state;
+  expect(["none", "closed"]).toContain(finalState);
   const exported = await postJson(request, csrf, "/api/evidence/session/export", {});
   expect(exported.ok(), "E2E teardown must satisfy the next session's evidence export gate").toBeTruthy();
   const evidence = await exported.json() as { session_sequence?: number };
   expect(evidence.session_sequence).toBeGreaterThan(0);
 });
 
-// The fixture launches a real server-owned Echo worker with a hermetic
+// // The fixture launches a real server-owned Echo worker with a hermetic
 // LiveKit transport. The browser must receive only a viewer token.
 test("Expressive Echo keeps its sender credentials private", async ({
   page,
