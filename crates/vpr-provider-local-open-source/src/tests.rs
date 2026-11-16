@@ -502,3 +502,32 @@ fn remote_operation_startup_recovery_rejects_invalid_inventory_before_stop() {
             .contains("authorization: bearer worker-secret")
     );
 }
+
+#[test]
+fn startup_recovery_retries_legacy_stopped_rows_without_verified_dual_track_receipt() {
+    let (endpoint, captured) = serve(vec![
+        (
+            "200 OK",
+            r#"{"operations":[{"operation_id":"op-1","generation":1,"phase":"stopped"}]}"#
+                .to_owned(),
+        ),
+        (
+            "200 OK",
+            r#"{"operation_id":"op-1","session_id":"media-1","generation":1,"audio_stopped":true,"video_stopped":true}"#
+                .to_owned(),
+        ),
+        ("200 OK", r#"{"operations":[]}"#.to_owned()),
+    ]);
+    let client = operation_client::RemoteOperationClient::new(
+        &endpoint,
+        "worker-secret",
+        Duration::from_secs(2),
+    )
+    .unwrap();
+
+    assert_eq!(client.revoke_unresolved().unwrap(), 1);
+    let requests: Vec<_> = (0..3).map(|_| captured.recv().unwrap()).collect();
+    assert!(requests[0].starts_with("GET /v1/avatar/operations "));
+    assert!(requests[1].starts_with("DELETE /v1/avatar/operations/op-1 "));
+    assert!(requests[2].starts_with("GET /v1/avatar/operations "));
+}

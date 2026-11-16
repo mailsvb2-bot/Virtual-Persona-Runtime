@@ -189,7 +189,7 @@ fn unresolved_operations_until(
         if operation.generation == 0
             || !matches!(
                 operation.phase.as_str(),
-                "creating" | "active" | "stopping" | "uncertain"
+                "creating" | "active" | "stopping" | "stopped" | "uncertain"
             )
             || !identities.insert(operation.operation_id.as_str())
         {
