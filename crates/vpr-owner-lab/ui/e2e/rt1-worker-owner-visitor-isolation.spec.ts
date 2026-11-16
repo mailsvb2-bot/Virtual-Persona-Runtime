@@ -39,7 +39,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
   });
 
   try {
-    await owner.goto("/", { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await owner.goto(ownerLabUrl + "/", { waitUntil: "domcontentloaded", timeout: 30_000 });
     await expect(owner.locator("#workflow-state")).toContainText("Ожидает проверки владельцем", { timeout: 25_000 });
 
     await owner.getByLabel("Идентификатор Persona").fill("rt1-local-canary-persona");
@@ -60,7 +60,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     await expect(owner.locator("#persona-progress")).toContainText("версия 2");
 
     // Publication is issued only after canonical server-side Persona review.
-    await owner.goto("/rt1");
+    await owner.goto(ownerLabUrl + "/rt1");
     await expect(owner.getByRole("heading", { name: "Persona · RT1" })).toBeVisible();
     await owner.locator("#provision").click();
     await expect(owner.locator("#status")).toContainText("Кабинет создан");
@@ -73,7 +73,7 @@ test("separate owner and visitor contexts receive local aiortc RTP; revoke rejec
     expect(invite.length).toBeGreaterThan(30);
 
     // Distinct browser context, no shared cookie or owner identity.
-    await visitor.goto("/rt1");
+    await visitor.goto(ownerLabUrl + "/rt1");
     await visitor.locator("#visitor-token").fill(invite);
     await visitor.locator("#consent").check();
     await visitor.locator("#join").click();
