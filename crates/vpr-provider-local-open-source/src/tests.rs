@@ -483,8 +483,7 @@ fn remote_operation_startup_recovery_stops_listed_operations_and_rechecks_ledger
 fn remote_operation_startup_recovery_rejects_invalid_inventory_before_stop() {
     let (endpoint, captured) = serve(vec![(
         "200 OK",
-        r#"{"operations":[{"operation_id":"op-1","generation":0,"phase":"active"}]}"#
-            .to_owned(),
+        r#"{"operations":[{"operation_id":"op-1","generation":0,"phase":"active"}]}"#.to_owned(),
     )]);
     let client = operation_client::RemoteOperationClient::new(
         &endpoint,

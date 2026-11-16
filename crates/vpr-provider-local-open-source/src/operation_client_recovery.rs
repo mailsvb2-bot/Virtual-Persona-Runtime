@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use vpr_integration::ProviderError;
 
-use super::{denied, Generation, RemoteOperationClient};
+use super::{Generation, RemoteOperationClient, denied};
 
 #[derive(Debug, Deserialize)]
 struct CancelReply {

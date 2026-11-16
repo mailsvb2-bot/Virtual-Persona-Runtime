@@ -102,5 +102,4 @@ mod tests {
         assert!(worker_recovery_required(true, true, false).is_err());
         assert!(worker_recovery_required(true, false, true).is_err());
     }
-
 }
