@@ -109,6 +109,17 @@ impl DidAgentStreamsAvatar {
             return Err(crate::cancelled());
         }
 
+        // A repeated provider session ID must not tear down an existing
+        // Echo publisher. The registry's atomic insert remains the final
+        // race fence after this read-only precheck.
+        if self
+            .echo_sessions
+            .contains(&provider_session_id)
+            .map_err(|_| unavailable())?
+        {
+            return Err(invalid_response());
+        }
+
         if let Err(error) = self.echo_sessions.open_session(
             backend.as_ref(),
             &provider_session_id,

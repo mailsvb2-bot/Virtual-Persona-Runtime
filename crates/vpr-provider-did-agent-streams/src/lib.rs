@@ -186,7 +186,7 @@ impl DidAgentStreamsAvatar {
 
     /// Deletes one exact V2 session. Only the documented 204 response is a
     /// provider deletion receipt; 404 and other 2xx responses remain unknown.
-    pub(super) fn delete_v2_session_identity(
+    pub(crate) fn delete_v2_session_identity(
         &self,
         session_id: &str,
     ) -> Result<(), ProviderError> {
