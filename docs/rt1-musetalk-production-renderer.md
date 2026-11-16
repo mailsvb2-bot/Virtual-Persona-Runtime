@@ -28,6 +28,10 @@ Configure the existing RT1 worker:
 export RT1_VIDEO_RENDERER=musetalk-v15
 export RT1_MUSETALK_ROOT=/opt/MuseTalk
 export RT1_MUSETALK_AVATAR_DIR=/srv/vpr-persona/prepared
+# SHA-256 over precisely the prepared avatar inputs, computed on a trusted
+# staging host and independently reviewed/pinned BEFORE starting the worker.
+# Do not generate this value from the live avatar directory at startup.
+export RT1_MUSETALK_AVATAR_SHA256='<64-lowercase-hex-approved-digest>'
 # MUST equal the canonical reviewed Persona identity/version in Owner Lab.
 export RT1_MUSETALK_PERSONA_ID=persona-a
 export RT1_MUSETALK_PERSONA_VERSION=3
@@ -41,6 +45,38 @@ python /opt/Virtual-Persona-Runtime/scripts/rt1_media_worker_server.py
 The process must start from MuseTalk's root to resolve the upstream VAE
 folder under \`models/sd-vae\`. It binds **loopback only**; use the existing
 authenticated TLS proxy and canonical worker operations for external traffic.
+
+## Prepared face integrity gate
+
+A reviewed Persona ID/version by itself is not proof that the operator's
+prepared face files remain unchanged. The worker now requires a separate
+deployment-pinned digest of the exact files it consumes: `latents.pt`,
+`coords.pkl`, `mask_coords.pkl` and all PNGs in `full_imgs/` and `mask/`.
+Symlinked entries are rejected. Verify the prepared inputs on a trusted,
+isolated staging host, then record the digest in the deployment secret/config
+store independently of the avatar directory:
+
+```sh
+python - <<'PY'
+import sys
+sys.path.insert(0, '/opt/Virtual-Persona-Runtime/scripts')
+from rt1_musetalk_renderer import prepared_avatar_digest
+print(prepared_avatar_digest('/srv/vpr-persona/prepared'))
+PY
+```
+
+The approved digest must then be set in `RT1_MUSETALK_AVATAR_SHA256`.
+It is checked before any local PyTorch model import or unpickling of
+prepared avatar files. If any approved file changes, the worker aborts.
+Do not recompute the pinned value automatically on production startup:
+doing that would make a malicious replacement self-authorizing.
+
+**Security boundary:** SHA-256 pinning detects change against a separately
+approved copy, but does not establish the legal identity or consent of the
+person depicted. Record consent, ownership, upstream model licensing,
+and authorized review outside the asset directory. Lock down filesystem
+write access while the worker is running: hashing before deserialization
+does not eliminate malicious concurrent file replacement (TOCTOU).
 
 ## Media behavior
 
