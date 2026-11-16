@@ -138,6 +138,18 @@ impl Rt1VisitorConversation {
             return manager.close(&id).and(Err(error));
         }
 
+        // CREATE/offer is provider egress too. Register it under the same
+        // canonical publication transaction as later STT/LLM/TTS turns, and
+        // keep the lease until the cancellable runtime startup returns. Owner
+        // pause can revoke the turn immediately; the worker's durable
+        // operation ledger compensates any late session ID.
+        let startup_egress = match manager.begin_provider_egress(&id) {
+            Ok(permit) => permit,
+            Err(error) => {
+                let _ = manager.close(&id);
+                return Err(error);
+            }
+        };
         let startup_interrupt = Arc::clone(&interrupt);
         let started =
             engine.start_visitor_with_interrupt(OwnerLabStartRequest { consent }, move |handle| {
@@ -146,6 +158,7 @@ impl Rt1VisitorConversation {
                     let _ = handle.interrupt();
                 }
             });
+        drop(startup_egress);
         *interrupt.turn.lock() = None;
         let bundle = match started {
             Ok(bundle) => bundle,
